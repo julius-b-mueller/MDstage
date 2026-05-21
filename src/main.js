@@ -441,9 +441,9 @@ function buildTrigger(codeblockYaml, index) {
     if (codeblockYaml.mic) {
         let roles = codeblockYaml.mic
         if (roles === "muteall") {
-            triggerMic.innerText = "◉ alle aus"
+            triggerMic.innerText = "ψ alle aus"
         } else {
-            triggerMic.innerText = "◉ "
+            triggerMic.innerText = "ψ "
             if (typeof roles === "string") roles = [roles]
             for (let i = 0; i < roles.length; i++) {
                 const roleSpan = document.createElement("span")
@@ -453,21 +453,21 @@ function buildTrigger(codeblockYaml, index) {
             }
         }
     } else {
-        triggerMic.innerText = "◉ -"
+        triggerMic.innerText = "ψ -"
     }
 
     // music info
     if (codeblockYaml.music) {
         if (typeof codeblockYaml.music === "string") {
-            triggerMusic.innerText = "♪ " + codeblockYaml.music
+            triggerMusic.innerText = "◎ " + codeblockYaml.music
         } else if (codeblockYaml.music.file) {
-            triggerMusic.innerText = "♪ " + codeblockYaml.music.file
+            triggerMusic.innerText = "◎ " + codeblockYaml.music.file
         }
         if (codeblockYaml.music.adjust) {
             const adjTn = codeblockYaml.music.adjust.trigger_note
             const adjRef = adjTn ? `${adjTn.ch}.${adjTn.note}` : '?'
             if (codeblockYaml.music.file) triggerMusic.innerText += ", "
-            else triggerMusic.innerText = "♪ "
+            else triggerMusic.innerText = "◎ "
             if (codeblockYaml.music.adjust.fadeout) {
                 triggerMusic.innerText += `⇢ ${adjRef} ausfaden`
             } else if (codeblockYaml.music.adjust.volume !== undefined) {
@@ -475,7 +475,7 @@ function buildTrigger(codeblockYaml, index) {
             }
         }
     } else {
-        triggerMusic.innerText = "♪ -"
+        triggerMusic.innerText = "◎ -"
     }
 
     // text note
