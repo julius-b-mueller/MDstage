@@ -463,13 +463,14 @@ function buildTrigger(codeblockYaml, index) {
             triggerMusic.innerText = "🎶 " + codeblockYaml.music.file
         }
         if (codeblockYaml.music.adjust) {
+            const adjTn = codeblockYaml.music.adjust.trigger_note
+            const adjRef = adjTn ? `${adjTn.ch}.${adjTn.note}` : '?'
             if (codeblockYaml.music.file) triggerMusic.innerText += ", "
             else triggerMusic.innerText = "🎶 "
             if (codeblockYaml.music.adjust.fadeout) {
-                triggerMusic.innerText += codeblockYaml.music.adjust.file + " ausfaden"
-            } else if (codeblockYaml.music.adjust.volume) {
-                triggerMusic.innerText += "Lautstärke von " + codeblockYaml.music.adjust.file +
-                    " auf " + codeblockYaml.music.adjust.volume * 100 + "%"
+                triggerMusic.innerText += `⇢ ${adjRef} ausfaden`
+            } else if (codeblockYaml.music.adjust.volume !== undefined) {
+                triggerMusic.innerText += `⇢ ${adjRef} auf ${codeblockYaml.music.adjust.volume * 100}%`
             }
         }
     } else {

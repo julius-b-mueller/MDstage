@@ -297,7 +297,7 @@ body.trigger-pick-mode .waveform-wrapper { pointer-events: none; }
     vertical-align: middle;
     opacity: 0.85;
 }
-.trigger-controlled-indicator::before { content: '◀◀'; }
+.trigger-controlled-indicator::before { content: '◀'; }
 
 /* ── Adjust dialog volume inline input ─────────────────────────────── */
 .dialog-volume-inline {
