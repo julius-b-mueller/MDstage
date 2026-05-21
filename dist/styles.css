@@ -82,6 +82,15 @@ p {
     background-color: #484c54;
 }
 
+.trigger:hover .trigger-action-btn {
+    color: #abb2bf;
+    border-color: #5c6370;
+}
+
+.trigger:hover .trigger-move-btn {
+    color: #abb2bf;
+}
+
 .trigger:active {
     box-shadow: none;
     background-color: #383c44;
