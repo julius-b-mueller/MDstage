@@ -365,26 +365,31 @@ function buildTrigger(codeblockYaml, index) {
     triggerUpBtn.addEventListener("mousedown",   (e) => { e.stopPropagation(); moveTriggerInScript(index, 'up') })
     triggerDownBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); moveTriggerInScript(index, 'down') })
 
-    const triggerEditBtn = document.createElement("button")
-    triggerEditBtn.classList.add("trigger-edit-btn")
-    triggerEditBtn.textContent = "✎"
-    triggerEditBtn.title = "Trigger bearbeiten"
-    triggerEditBtn.addEventListener("mousedown", (e) => { e.stopPropagation() })
-    triggerEditBtn.addEventListener("click", (e) => {
-        e.stopPropagation()
-        showTriggerDialog({ triggerIndex: index, existingYaml: codeblockYaml })
-    })
-
     const rightWrapper = document.createElement("div")
-    rightWrapper.style.cssText = "display:flex;align-items:center;gap:0.3rem"
+    rightWrapper.style.cssText = "display:flex;align-items:center"
     rightWrapper.appendChild(triggerNoteDisplay)
-    rightWrapper.appendChild(triggerEditBtn)
     rightWrapper.appendChild(triggerMoveDiv)
 
     triggerRow.appendChild(triggerInfo)
     if (codeblockYaml.note) triggerRow.appendChild(triggerNote)
     triggerRow.appendChild(rightWrapper)
     triggerDiv.appendChild(triggerRow)
+
+    // ── action buttons row ──────────────────────────────────────────────
+    const triggerActions = document.createElement("div")
+    triggerActions.classList.add("trigger-actions")
+
+    const triggerEditBtn = document.createElement("button")
+    triggerEditBtn.classList.add("trigger-action-btn")
+    triggerEditBtn.textContent = "✎ Bearbeiten"
+    triggerEditBtn.title = "Trigger bearbeiten"
+    triggerEditBtn.addEventListener("mousedown", (e) => { e.stopPropagation() })
+    triggerEditBtn.addEventListener("click", (e) => {
+        e.stopPropagation()
+        showTriggerDialog({ triggerIndex: index, existingYaml: codeblockYaml })
+    })
+    triggerActions.appendChild(triggerEditBtn)
+    triggerDiv.appendChild(triggerActions)
 
     triggers[index] = triggerDiv
 
