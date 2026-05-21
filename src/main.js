@@ -710,9 +710,9 @@ function buildInsertZones() {
     }
 }
 
-// insertAfterBlockIdx: insert after this block index (null = split case, use onConfirm)
-// onConfirm: optional callback(newYaml) that overrides the default insert
-function showAddTriggerDialog(insertAfterBlockIdx, onConfirm) {
+async function showAddTriggerDialog(insertAfterBlockIdx, onConfirm) {
+    const audioFiles = await window.electronAPI.listAudioFiles()
+
     const overlay = document.createElement('div')
     overlay.classList.add('dialog-overlay')
 
@@ -761,44 +761,24 @@ function showAddTriggerDialog(insertAfterBlockIdx, onConfirm) {
     box.appendChild(micWrap)
 
     // ── Musik-Datei ─────────────────────────────────────────────────
-    const { wrap: mfWrap, input: mfInput } = mkDialogField('Musik-Datei', 'text', '')
-    mfInput.placeholder = 'dateiname.mp3'
+    const mfWrap = document.createElement('div')
+    mfWrap.classList.add('dialog-field')
+    const mfLabel = document.createElement('label')
+    mfLabel.textContent = 'Musik-Datei'
+    const mfSelect = document.createElement('select')
+    mfSelect.classList.add('dialog-select')
+    const emptyOpt = document.createElement('option')
+    emptyOpt.value = ''
+    emptyOpt.textContent = '— keine —'
+    mfSelect.appendChild(emptyOpt)
+    for (const f of audioFiles) {
+        const opt = document.createElement('option')
+        opt.value = f
+        opt.textContent = f
+        mfSelect.appendChild(opt)
+    }
+    mfWrap.append(mfLabel, mfSelect)
     box.appendChild(mfWrap)
-
-    // Musik-Details (werden sichtbar sobald Datei gesetzt)
-    const musicDetails = document.createElement('div')
-    musicDetails.style.display = 'none'
-
-    const { wrap: volWrap, input: volInput } = mkDialogField('Lautstärke (0–1)', 'number', '0.8')
-    volInput.min = '0'; volInput.max = '1'; volInput.step = '0.01'
-
-    const { wrap: startWrap, input: startInput } = mkDialogField('Start (s)', 'number', '0')
-    startInput.min = '0'; startInput.step = '0.001'
-
-    const { wrap: endWrap, input: endInput } = mkDialogField('Ende (s)', 'number', '')
-    endInput.min = '0'; endInput.step = '0.001'; endInput.placeholder = 'leer = bis zum Ende'
-
-    const { wrap: fiWrap, input: fiInput } = mkDialogField('Fade-In (s)', 'number', '0')
-    fiInput.min = '0'; fiInput.step = '0.001'
-
-    const { wrap: foWrap, input: foInput } = mkDialogField('Fade-Out (s)', 'number', '0')
-    foInput.min = '0'; foInput.step = '0.001'
-
-    const loopField = document.createElement('div')
-    loopField.classList.add('dialog-field')
-    const loopLabel = document.createElement('label')
-    loopLabel.classList.add('dialog-loop-label')
-    const loopCb = document.createElement('input')
-    loopCb.type = 'checkbox'
-    loopLabel.append(loopCb, ' Loop')
-    loopField.appendChild(loopLabel)
-
-    musicDetails.append(volWrap, startWrap, endWrap, fiWrap, foWrap, loopField)
-    box.appendChild(musicDetails)
-
-    mfInput.addEventListener('input', () => {
-        musicDetails.style.display = mfInput.value.trim() ? '' : 'none'
-    })
 
     // ── Hinweis ─────────────────────────────────────────────────────
     const { wrap: noteWrap, input: noteInput } = mkDialogField('Hinweis', 'text', '')
@@ -841,27 +821,8 @@ function showAddTriggerDialog(insertAfterBlockIdx, onConfirm) {
         }
 
         // music
-        const mf = mfInput.value.trim()
-        if (mf) {
-            const vol     = parseFloat(volInput.value) || 0.8
-            const start   = parseFloat(startInput.value) || 0
-            const endVal  = endInput.value.trim() !== '' ? parseFloat(endInput.value) : null
-            const fadein  = parseFloat(fiInput.value) || 0
-            const fadeout = parseFloat(foInput.value) || 0
-            const loop    = loopCb.checked
-            const hasExtra = vol !== 0.8 || start > 0 || endVal !== null || fadein > 0 || fadeout > 0 || loop
-            if (hasExtra) {
-                newYaml.music = { file: mf }
-                if (vol !== 0.8)     newYaml.music.volume  = vol
-                if (start > 0)       newYaml.music.start   = start
-                if (endVal !== null) newYaml.music.end     = endVal
-                if (fadein > 0)      newYaml.music.fadein  = fadein
-                if (fadeout > 0)     newYaml.music.fadeout = fadeout
-                if (loop)            newYaml.music.loop    = true
-            } else {
-                newYaml.music = mf
-            }
-        }
+        const mf = mfSelect.value
+        if (mf) newYaml.music = mf
 
         // note
         const noteVal = noteInput.value.trim()

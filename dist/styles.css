@@ -451,7 +451,8 @@ body.shift-held .ws-grip:hover { filter: brightness(1.3); }
 }
 
 .dialog-field input[type="text"],
-.dialog-field input[type="number"] {
+.dialog-field input[type="number"],
+.dialog-select {
     width: 100%;
     background: #383c44;
     color: #abb2bf;
@@ -463,8 +464,14 @@ body.shift-held .ws-grip:hover { filter: brightness(1.3); }
     box-sizing: border-box;
 }
 
+.dialog-select {
+    appearance: none;
+    cursor: pointer;
+}
+
 .dialog-field input[type="text"]:focus,
-.dialog-field input[type="number"]:focus { outline: none; border-color: #61afef; }
+.dialog-field input[type="number"]:focus,
+.dialog-select:focus { outline: none; border-color: #61afef; }
 
 .dialog-check-group {
     display: flex;

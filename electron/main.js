@@ -128,6 +128,15 @@ app.whenReady().then(() => {
         fs.writeFileSync(scriptPath, content, 'utf8')
     })
 
+    ipcMain.handle('list-audio-files', () => {
+        const audioDir = path.join(__dirname, '../dist/audio')
+        try {
+            return fs.readdirSync(audioDir).filter(f => /\.(mp3|wav)$/i.test(f)).sort()
+        } catch {
+            return []
+        }
+    })
+
     Menu.setApplicationMenu(buildMenu())
     createMainWindow()
 
