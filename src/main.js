@@ -688,12 +688,15 @@ function buildInsertZones() {
     for (let i = 0; i <= blockEls.length; i++) {
         const zone = document.createElement('div')
         zone.classList.add('insert-zone')
-        zone.addEventListener('mousedown', e => e.stopPropagation())
+        const hotspot = document.createElement('div')
+        hotspot.classList.add('insert-hotspot')
+        hotspot.addEventListener('mousedown', e => e.stopPropagation())
         const btn = document.createElement('button')
         btn.classList.add('insert-btn')
         btn.textContent = '+'
         btn.title = 'Trigger hier einfügen'
-        zone.appendChild(btn)
+        hotspot.appendChild(btn)
+        zone.appendChild(hotspot)
         const insertAfterBlockIdx = i
         btn.addEventListener('click', (e) => {
             e.stopPropagation()
