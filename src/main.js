@@ -365,9 +365,20 @@ function buildTrigger(codeblockYaml, index) {
     triggerUpBtn.addEventListener("mousedown",   (e) => { e.stopPropagation(); moveTriggerInScript(index, 'up') })
     triggerDownBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); moveTriggerInScript(index, 'down') })
 
+    const triggerEditBtn = document.createElement("button")
+    triggerEditBtn.classList.add("trigger-edit-btn")
+    triggerEditBtn.textContent = "✎"
+    triggerEditBtn.title = "Trigger bearbeiten"
+    triggerEditBtn.addEventListener("mousedown", (e) => { e.stopPropagation() })
+    triggerEditBtn.addEventListener("click", (e) => {
+        e.stopPropagation()
+        showTriggerDialog({ triggerIndex: index, existingYaml: codeblockYaml })
+    })
+
     const rightWrapper = document.createElement("div")
-    rightWrapper.style.cssText = "display:flex;align-items:center"
+    rightWrapper.style.cssText = "display:flex;align-items:center;gap:0.3rem"
     rightWrapper.appendChild(triggerNoteDisplay)
+    rightWrapper.appendChild(triggerEditBtn)
     rightWrapper.appendChild(triggerMoveDiv)
 
     triggerRow.appendChild(triggerInfo)
@@ -700,7 +711,7 @@ function buildInsertZones() {
         const insertAfterBlockIdx = i
         btn.addEventListener('click', (e) => {
             e.stopPropagation()
-            showAddTriggerDialog(insertAfterBlockIdx)
+            showTriggerDialog({ insertAfterBlockIdx })
         })
         if (i < blockEls.length) {
             content.insertBefore(zone, blockEls[i])
@@ -710,7 +721,48 @@ function buildInsertZones() {
     }
 }
 
-async function showAddTriggerDialog(insertAfterBlockIdx, onConfirm) {
+function editTriggerInScript(triggerIndex, newYaml) {
+    if (!scriptText) return
+    const blocks = tokenizeScript(scriptText)
+    let yamlCount = 0
+    for (let i = 0; i < blocks.length; i++) {
+        if (blocks[i].type === 'yaml') {
+            yamlCount++
+            if (yamlCount === triggerIndex + 1) {
+                blocks[i] = { type: 'yaml', content: '```yaml\n' + yaml.dump(newYaml, { indent: 4 }).trimEnd() + '\n```' }
+                break
+            }
+        }
+    }
+    const updated = blocks.map(b => b.content).join('\n\n') + '\n'
+    scriptText = updated
+    window.electronAPI.writeScriptMd(updated)
+    rerender(updated)
+}
+
+function deleteTriggerInScript(triggerIndex) {
+    if (!scriptText) return
+    const blocks = tokenizeScript(scriptText)
+    let yamlCount = 0
+    for (let i = 0; i < blocks.length; i++) {
+        if (blocks[i].type === 'yaml') {
+            yamlCount++
+            if (yamlCount === triggerIndex + 1) {
+                blocks.splice(i, 1)
+                break
+            }
+        }
+    }
+    const updated = blocks.map(b => b.content).join('\n\n') + '\n'
+    scriptText = updated
+    window.electronAPI.writeScriptMd(updated)
+    rerender(updated)
+}
+
+// insertAfterBlockIdx: for new triggers (add mode)
+// triggerIndex + existingYaml: for editing an existing trigger (edit mode)
+async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = null, existingYaml = null } = {}) {
+    const isEdit = triggerIndex !== null
     const audioFiles = await window.electronAPI.listAudioFiles()
 
     const overlay = document.createElement('div')
@@ -722,7 +774,7 @@ async function showAddTriggerDialog(insertAfterBlockIdx, onConfirm) {
     box.addEventListener('click', e => e.stopPropagation())
 
     const titleEl = document.createElement('h3')
-    titleEl.textContent = 'Neuer Trigger'
+    titleEl.textContent = isEdit ? 'Trigger bearbeiten' : 'Neuer Trigger'
     box.appendChild(titleEl)
 
     // ── Mikrofon ────────────────────────────────────────────────────
@@ -760,6 +812,15 @@ async function showAddTriggerDialog(insertAfterBlockIdx, onConfirm) {
     micWrap.append(micTopLabel, micGroup)
     box.appendChild(micWrap)
 
+    if (isEdit && existingYaml.mic) {
+        if (existingYaml.mic === 'muteall') {
+            muteallCb.checked = true
+        } else {
+            const roles = Array.isArray(existingYaml.mic) ? existingYaml.mic : [existingYaml.mic]
+            for (const r of roles) { if (roleCheckboxes[r]) roleCheckboxes[r].checked = true }
+        }
+    }
+
     // ── Musik-Datei ─────────────────────────────────────────────────
     const mfWrap = document.createElement('div')
     mfWrap.classList.add('dialog-field')
@@ -780,25 +841,43 @@ async function showAddTriggerDialog(insertAfterBlockIdx, onConfirm) {
     mfWrap.append(mfLabel, mfSelect)
     box.appendChild(mfWrap)
 
+    if (isEdit && existingYaml.music) {
+        const currentFile = typeof existingYaml.music === 'string' ? existingYaml.music : existingYaml.music.file
+        if (currentFile) mfSelect.value = currentFile
+    }
+
     // ── Hinweis ─────────────────────────────────────────────────────
     const { wrap: noteWrap, input: noteInput } = mkDialogField('Hinweis', 'text', '')
+    if (isEdit && existingYaml.note) noteInput.value = existingYaml.note
     box.appendChild(noteWrap)
 
     // ── Start-Timecode ───────────────────────────────────────────────
     const { wrap: tcWrap, input: tcInput } = mkDialogField('Start-Timecode (HH:MM:SS:FF)', 'text', '')
     tcInput.placeholder = '00:00:00:00'
+    if (isEdit && existingYaml.start_tc) tcInput.value = existingYaml.start_tc
     box.appendChild(tcWrap)
 
     // ── Buttons ──────────────────────────────────────────────────────
     const actions = document.createElement('div')
     actions.classList.add('dialog-actions')
+
     const cancelBtn = document.createElement('button')
     cancelBtn.classList.add('dialog-btn')
     cancelBtn.textContent = 'Abbrechen'
-    const addBtn = document.createElement('button')
-    addBtn.classList.add('dialog-btn', 'dialog-btn-primary')
-    addBtn.textContent = 'Hinzufügen'
-    actions.append(cancelBtn, addBtn)
+
+    const confirmBtn = document.createElement('button')
+    confirmBtn.classList.add('dialog-btn', 'dialog-btn-primary')
+    confirmBtn.textContent = isEdit ? 'Speichern' : 'Hinzufügen'
+
+    if (isEdit) {
+        const deleteBtn = document.createElement('button')
+        deleteBtn.classList.add('dialog-btn', 'dialog-btn-danger')
+        deleteBtn.textContent = 'Löschen'
+        deleteBtn.addEventListener('click', () => { close(); deleteTriggerInScript(triggerIndex) })
+        actions.append(deleteBtn, cancelBtn, confirmBtn)
+    } else {
+        actions.append(cancelBtn, confirmBtn)
+    }
     box.appendChild(actions)
 
     overlay.appendChild(box)
@@ -808,7 +887,7 @@ async function showAddTriggerDialog(insertAfterBlockIdx, onConfirm) {
     cancelBtn.addEventListener('click', close)
     overlay.addEventListener('mousedown', e => { if (e.target === overlay) close() })
 
-    addBtn.addEventListener('click', () => {
+    confirmBtn.addEventListener('click', () => {
         const newYaml = {}
 
         // mic
@@ -820,9 +899,15 @@ async function showAddTriggerDialog(insertAfterBlockIdx, onConfirm) {
             else if (sel.length > 1) newYaml.mic = sel
         }
 
-        // music
+        // music (preserve existing object props like volume/start/end when editing)
         const mf = mfSelect.value
-        if (mf) newYaml.music = mf
+        if (mf) {
+            if (isEdit && existingYaml.music && typeof existingYaml.music === 'object') {
+                newYaml.music = { ...existingYaml.music, file: mf }
+            } else {
+                newYaml.music = mf
+            }
+        }
 
         // note
         const noteVal = noteInput.value.trim()
@@ -832,9 +917,12 @@ async function showAddTriggerDialog(insertAfterBlockIdx, onConfirm) {
         const tcVal = tcInput.value.trim()
         if (tcVal) newYaml.start_tc = tcVal
 
+        // preserve trigger_note when editing
+        if (isEdit && existingYaml.trigger_note) newYaml.trigger_note = existingYaml.trigger_note
+
         close()
-        if (onConfirm) {
-            onConfirm(newYaml)
+        if (isEdit) {
+            editTriggerInScript(triggerIndex, newYaml)
         } else {
             insertTriggerInScript(insertAfterBlockIdx, newYaml)
         }
