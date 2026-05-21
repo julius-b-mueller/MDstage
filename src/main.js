@@ -34,16 +34,6 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Shift') { shiftHeld
 document.addEventListener('keyup',   (e) => { if (e.key === 'Shift') { shiftHeld = false; document.body.classList.remove('shift-held') } }, { capture: true })
 window.addEventListener('blur', () => { shiftHeld = false; document.body.classList.remove('shift-held') })
 
-const _insertCursorEl = document.createElement('div')
-_insertCursorEl.classList.add('shift-insert-cursor')
-_insertCursorEl.textContent = '+'
-document.body.appendChild(_insertCursorEl)
-document.addEventListener('mousemove', (e) => {
-    if (!shiftHeld) { _insertCursorEl.style.opacity = '0'; return }
-    _insertCursorEl.style.opacity = '1'
-    _insertCursorEl.style.left = e.clientX + 'px'
-    _insertCursorEl.style.top  = e.clientY + 'px'
-})
 
 const converter = new showdown.Converter
 
@@ -207,6 +197,7 @@ function rerender(newText) {
     convertCodeblocks()
     colorText()
     annotateBlocks()
+    buildInsertZones()
 
     requestAnimationFrame(() => window.scrollTo({ top: scrollY, behavior: 'instant' }))
 }
@@ -634,7 +625,6 @@ function buildTrigger(codeblockYaml, index) {
         waveformContainer.addEventListener("mouseleave", () => { waveformContainer.style.cursor = "" })
 
         waveformContainer.addEventListener("mousedown", (e) => {
-            if (shiftHeld) return
             e.stopPropagation()
             let dragging = false
             const startX = e.clientX
@@ -663,7 +653,6 @@ function buildTrigger(codeblockYaml, index) {
     triggerYamls[index] = codeblockYaml
 
     triggerDiv.addEventListener("mousedown", (e) => {
-        if (shiftHeld) return
         currentCue = index
         markTriggers(index)
         triggerAction(index)
@@ -692,82 +681,30 @@ function mkDialogField(labelText, type, defaultVal) {
     return { wrap, input }
 }
 
-function htmlToMarkdown(html) {
-    return html
-        .replace(/<strong>([\s\S]*?)<\/strong>/gi, '**$1**')
-        .replace(/<em>([\s\S]*?)<\/em>/gi, '*$1*')
-        .replace(/<br\s*\/?>/gi, '\n')
-        .replace(/<[^>]+>/g, '')
-        .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
-        .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n)))
-}
-
-function installShiftClickHandler() {
+function buildInsertZones() {
     const content = document.getElementById('script-content')
-    content.addEventListener('click', (e) => {
-        if (!shiftHeld) return
-        e.stopPropagation()
-
-        // Find the caret position at the click coordinates
-        let caretNode = null, caretOffset = 0
-        if (document.caretRangeFromPoint) {
-            const r = document.caretRangeFromPoint(e.clientX, e.clientY)
-            if (r) { caretNode = r.startContainer; caretOffset = r.startOffset }
-        } else if (document.caretPositionFromPoint) {
-            const p = document.caretPositionFromPoint(e.clientX, e.clientY)
-            if (p) { caretNode = p.offsetNode; caretOffset = p.offset }
-        }
-
-        // Walk up to find the direct child of #script-content
-        let blockEl = caretNode
-        if (blockEl && blockEl.nodeType === Node.TEXT_NODE) blockEl = blockEl.parentElement
-        while (blockEl && blockEl.parentElement !== content) blockEl = blockEl.parentElement
-
-        // Fallback: find the element whose bounding box contains the click Y
-        if (!blockEl || blockEl === content) {
-            const kids = [...content.children]
-            blockEl = kids.findLast(el => el.getBoundingClientRect().top <= e.clientY) || kids[0]
-        }
-        if (!blockEl) return
-
-        const blockIdx = parseInt(blockEl.dataset.blockIdx)
-        if (isNaN(blockIdx)) return
-
-        // Trigger div: insert after it
-        if (blockEl.classList.contains('trigger')) {
-            showAddTriggerDialog(blockIdx)
-            return
-        }
-
-        // Text block: determine split point
-        const blocks = tokenizeScript(scriptText)
-        const block = blocks[blockIdx]
-        if (!block || block.type !== 'text') { showAddTriggerDialog(blockIdx); return }
-
-        // Build markdown for the text before the caret
-        let mdBefore = ''
-        if (caretNode) {
-            const preRange = document.createRange()
-            preRange.setStart(blockEl, 0)
-            preRange.setEnd(caretNode, caretOffset)
-            const div = document.createElement('div')
-            div.appendChild(preRange.cloneContents())
-            mdBefore = htmlToMarkdown(div.innerHTML).trimEnd()
-        }
-
-        const fullMd = block.content
-        if (mdBefore.length === 0) {
-            // Click at start → insert before this block (= after previous block)
-            showAddTriggerDialog(blockIdx - 1)
-        } else if (mdBefore.length >= fullMd.trimEnd().length) {
-            // Click at end → insert after this block
-            showAddTriggerDialog(blockIdx)
+    document.querySelectorAll('.insert-zone').forEach(z => z.remove())
+    const blockEls = [...content.children]
+    for (let i = 0; i <= blockEls.length; i++) {
+        const zone = document.createElement('div')
+        zone.classList.add('insert-zone')
+        zone.addEventListener('mousedown', e => e.stopPropagation())
+        const btn = document.createElement('button')
+        btn.classList.add('insert-btn')
+        btn.textContent = '+'
+        btn.title = 'Trigger hier einfügen'
+        zone.appendChild(btn)
+        const insertAfterBlockIdx = i
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation()
+            showAddTriggerDialog(insertAfterBlockIdx)
+        })
+        if (i < blockEls.length) {
+            content.insertBefore(zone, blockEls[i])
         } else {
-            // Mid-sentence split
-            const mdAfter = fullMd.slice(mdBefore.length).trimStart()
-            showAddTriggerDialog(null, (newYaml) => splitBlockAndInsertTrigger(blockIdx, mdBefore, mdAfter, newYaml))
+            content.appendChild(zone)
         }
-    })
+    }
 }
 
 // insertAfterBlockIdx: insert after this block index (null = split case, use onConfirm)
@@ -1170,8 +1107,8 @@ async function initApp() {
     convertCodeblocks()
     colorText()
     annotateBlocks()
+    buildInsertZones()
     initButtons()
-    installShiftClickHandler()
 
     mtc = new MTCTransmitter()
     mtc.setDisplay(document.querySelector('.tc-display'))
