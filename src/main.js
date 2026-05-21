@@ -195,6 +195,7 @@ function rerender(newText) {
     document.getElementById('script-content').innerHTML = converter.makeHtml(newText)
     convertCodeblocks()
     colorText()
+    buildInsertZones()
 
     requestAnimationFrame(() => window.scrollTo({ top: scrollY, behavior: 'instant' }))
 }
@@ -239,6 +240,40 @@ function moveTriggerInScript(triggerIndex, direction) {
     }
 
     const updated = blocks.map(b => b.content).join('\n\n') + '\n'
+    scriptText = updated
+    window.electronAPI.writeScriptMd(updated)
+    rerender(updated)
+}
+
+// Inserts a new trigger YAML block at zoneIndex (0 = before first trigger, n = after last).
+function insertTriggerInScript(zoneIndex, newYaml) {
+    if (!scriptText) return
+
+    const blocks = []
+    const yamlRe = /```yaml\n[\s\S]*?```/g
+    let lastEnd = 0, m
+    while ((m = yamlRe.exec(scriptText)) !== null) {
+        const before = scriptText.slice(lastEnd, m.index)
+        before.split(/\n\n+/).forEach(p => { if (p.trim()) blocks.push({ type: 'text', content: p.trim() }) })
+        blocks.push({ type: 'yaml', content: m[0] })
+        lastEnd = m.index + m[0].length
+    }
+    scriptText.slice(lastEnd).split(/\n\n+/).forEach(p => { if (p.trim()) blocks.push({ type: 'text', content: p.trim() }) })
+
+    // yamlIndices[0] = config, yamlIndices[1] = trigger[0], yamlIndices[2] = trigger[1], ...
+    // zoneIndex 0 → insert after config; zoneIndex k → insert after trigger[k-1]
+    const yamlIndices = blocks.reduce((acc, b, i) => { if (b.type === 'yaml') acc.push(i); return acc }, [])
+    const insertAfter = yamlIndices[zoneIndex]
+    if (insertAfter === undefined) return
+
+    const newBlock = { type: 'yaml', content: '```yaml\n' + yaml.dump(newYaml, { indent: 4 }).trimEnd() + '\n```' }
+    blocks.splice(insertAfter + 1, 0, newBlock)
+
+    let updated = blocks.map(b => b.content).join('\n\n') + '\n'
+
+    const { text: assigned, changed } = assignTriggerNotes(updated)
+    if (changed) updated = assigned
+
     scriptText = updated
     window.electronAPI.writeScriptMd(updated)
     rerender(updated)
@@ -623,6 +658,211 @@ function makeWaveBtn(label, title) {
     return btn
 }
 
+function mkDialogField(labelText, type, defaultVal) {
+    const wrap = document.createElement('div')
+    wrap.classList.add('dialog-field')
+    const label = document.createElement('label')
+    label.textContent = labelText
+    const input = document.createElement('input')
+    input.type = type
+    input.value = defaultVal
+    wrap.append(label, input)
+    return { wrap, input }
+}
+
+function buildInsertZones() {
+    const content = document.getElementById('script-content')
+    const triggerEls = [...content.querySelectorAll('.trigger')]
+
+    for (let i = 0; i <= triggerEls.length; i++) {
+        const zone = document.createElement('div')
+        zone.classList.add('insert-zone')
+        zone.addEventListener('mousedown', e => e.stopPropagation())
+
+        const btn = document.createElement('button')
+        btn.classList.add('insert-btn')
+        btn.textContent = '+'
+        btn.title = 'Trigger hier einfügen'
+        zone.appendChild(btn)
+
+        const zoneIndex = i
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation()
+            showAddTriggerDialog(zoneIndex)
+        })
+
+        if (i < triggerEls.length) {
+            content.insertBefore(zone, triggerEls[i])
+        } else {
+            content.appendChild(zone)
+        }
+    }
+}
+
+function showAddTriggerDialog(zoneIndex) {
+    const overlay = document.createElement('div')
+    overlay.classList.add('dialog-overlay')
+
+    const box = document.createElement('div')
+    box.classList.add('dialog-box')
+    box.addEventListener('mousedown', e => e.stopPropagation())
+    box.addEventListener('click', e => e.stopPropagation())
+
+    const titleEl = document.createElement('h3')
+    titleEl.textContent = 'Neuer Trigger'
+    box.appendChild(titleEl)
+
+    // ── Mikrofon ────────────────────────────────────────────────────
+    const micWrap = document.createElement('div')
+    micWrap.classList.add('dialog-field')
+    const micTopLabel = document.createElement('label')
+    micTopLabel.textContent = 'Mikrofon'
+    const micGroup = document.createElement('div')
+    micGroup.classList.add('dialog-check-group')
+
+    const muteallLbl = document.createElement('label')
+    const muteallCb = document.createElement('input')
+    muteallCb.type = 'checkbox'
+    muteallLbl.append(muteallCb, ' Alle aus')
+    micGroup.appendChild(muteallLbl)
+
+    const roleCheckboxes = {}
+    for (const [roleName, roleCfg] of Object.entries(config.roles)) {
+        const lbl = document.createElement('label')
+        const cb = document.createElement('input')
+        cb.type = 'checkbox'
+        const span = document.createElement('span')
+        span.textContent = roleName
+        span.classList.add('color-' + roleCfg.color)
+        lbl.append(cb, span)
+        micGroup.appendChild(lbl)
+        roleCheckboxes[roleName] = cb
+    }
+    muteallCb.addEventListener('change', () => {
+        if (muteallCb.checked) for (const cb of Object.values(roleCheckboxes)) cb.checked = false
+    })
+    for (const cb of Object.values(roleCheckboxes)) {
+        cb.addEventListener('change', () => { if (cb.checked) muteallCb.checked = false })
+    }
+    micWrap.append(micTopLabel, micGroup)
+    box.appendChild(micWrap)
+
+    // ── Musik-Datei ─────────────────────────────────────────────────
+    const { wrap: mfWrap, input: mfInput } = mkDialogField('Musik-Datei', 'text', '')
+    mfInput.placeholder = 'dateiname.mp3'
+    box.appendChild(mfWrap)
+
+    // Musik-Details (werden sichtbar sobald Datei gesetzt)
+    const musicDetails = document.createElement('div')
+    musicDetails.style.display = 'none'
+
+    const { wrap: volWrap, input: volInput } = mkDialogField('Lautstärke (0–1)', 'number', '0.8')
+    volInput.min = '0'; volInput.max = '1'; volInput.step = '0.01'
+
+    const { wrap: startWrap, input: startInput } = mkDialogField('Start (s)', 'number', '0')
+    startInput.min = '0'; startInput.step = '0.001'
+
+    const { wrap: endWrap, input: endInput } = mkDialogField('Ende (s)', 'number', '')
+    endInput.min = '0'; endInput.step = '0.001'; endInput.placeholder = 'leer = bis zum Ende'
+
+    const { wrap: fiWrap, input: fiInput } = mkDialogField('Fade-In (s)', 'number', '0')
+    fiInput.min = '0'; fiInput.step = '0.001'
+
+    const { wrap: foWrap, input: foInput } = mkDialogField('Fade-Out (s)', 'number', '0')
+    foInput.min = '0'; foInput.step = '0.001'
+
+    const loopField = document.createElement('div')
+    loopField.classList.add('dialog-field')
+    const loopLabel = document.createElement('label')
+    loopLabel.classList.add('dialog-loop-label')
+    const loopCb = document.createElement('input')
+    loopCb.type = 'checkbox'
+    loopLabel.append(loopCb, ' Loop')
+    loopField.appendChild(loopLabel)
+
+    musicDetails.append(volWrap, startWrap, endWrap, fiWrap, foWrap, loopField)
+    box.appendChild(musicDetails)
+
+    mfInput.addEventListener('input', () => {
+        musicDetails.style.display = mfInput.value.trim() ? '' : 'none'
+    })
+
+    // ── Hinweis ─────────────────────────────────────────────────────
+    const { wrap: noteWrap, input: noteInput } = mkDialogField('Hinweis', 'text', '')
+    box.appendChild(noteWrap)
+
+    // ── Start-Timecode ───────────────────────────────────────────────
+    const { wrap: tcWrap, input: tcInput } = mkDialogField('Start-Timecode (HH:MM:SS:FF)', 'text', '')
+    tcInput.placeholder = '00:00:00:00'
+    box.appendChild(tcWrap)
+
+    // ── Buttons ──────────────────────────────────────────────────────
+    const actions = document.createElement('div')
+    actions.classList.add('dialog-actions')
+    const cancelBtn = document.createElement('button')
+    cancelBtn.classList.add('dialog-btn')
+    cancelBtn.textContent = 'Abbrechen'
+    const addBtn = document.createElement('button')
+    addBtn.classList.add('dialog-btn', 'dialog-btn-primary')
+    addBtn.textContent = 'Hinzufügen'
+    actions.append(cancelBtn, addBtn)
+    box.appendChild(actions)
+
+    overlay.appendChild(box)
+    document.body.appendChild(overlay)
+
+    const close = () => overlay.remove()
+    cancelBtn.addEventListener('click', close)
+    overlay.addEventListener('mousedown', e => { if (e.target === overlay) close() })
+
+    addBtn.addEventListener('click', () => {
+        const newYaml = {}
+
+        // mic
+        if (muteallCb.checked) {
+            newYaml.mic = 'muteall'
+        } else {
+            const sel = Object.entries(roleCheckboxes).filter(([, cb]) => cb.checked).map(([n]) => n)
+            if (sel.length === 1) newYaml.mic = sel[0]
+            else if (sel.length > 1) newYaml.mic = sel
+        }
+
+        // music
+        const mf = mfInput.value.trim()
+        if (mf) {
+            const vol     = parseFloat(volInput.value) || 0.8
+            const start   = parseFloat(startInput.value) || 0
+            const endVal  = endInput.value.trim() !== '' ? parseFloat(endInput.value) : null
+            const fadein  = parseFloat(fiInput.value) || 0
+            const fadeout = parseFloat(foInput.value) || 0
+            const loop    = loopCb.checked
+            const hasExtra = vol !== 0.8 || start > 0 || endVal !== null || fadein > 0 || fadeout > 0 || loop
+            if (hasExtra) {
+                newYaml.music = { file: mf }
+                if (vol !== 0.8)     newYaml.music.volume  = vol
+                if (start > 0)       newYaml.music.start   = start
+                if (endVal !== null) newYaml.music.end     = endVal
+                if (fadein > 0)      newYaml.music.fadein  = fadein
+                if (fadeout > 0)     newYaml.music.fadeout = fadeout
+                if (loop)            newYaml.music.loop    = true
+            } else {
+                newYaml.music = mf
+            }
+        }
+
+        // note
+        const noteVal = noteInput.value.trim()
+        if (noteVal) newYaml.note = noteVal
+
+        // start_tc
+        const tcVal = tcInput.value.trim()
+        if (tcVal) newYaml.start_tc = tcVal
+
+        close()
+        insertTriggerInScript(zoneIndex, newYaml)
+    })
+}
+
 function triggerAction(cue) {
     // Second press while playing → stop (undo accidental trigger)
     const ta = triggerAudio.get(cue)
@@ -852,6 +1092,7 @@ async function initApp() {
     document.getElementById('script-content').innerHTML = converter.makeHtml(text)
     convertCodeblocks()
     colorText()
+    buildInsertZones()
     initButtons()
 
     mtc = new MTCTransmitter()
