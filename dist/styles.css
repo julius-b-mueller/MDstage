@@ -273,6 +273,41 @@ p {
     background: #383c44;
 }
 
+.trigger-action-btn-active {
+    border-color: #e5c07b;
+    color: #e5c07b;
+}
+.trigger-action-btn-active:hover { color: #e5c07b; }
+
+/* ── Pick mode ─────────────────────────────────────────────────────── */
+body.trigger-pick-mode .trigger {
+    border-left: 5px #e5c07b solid !important;
+    cursor: crosshair;
+}
+body.trigger-pick-mode .trigger:hover { background-color: #3e422c; }
+body.trigger-pick-mode .trigger-actions { pointer-events: none; }
+body.trigger-pick-mode .waveform-wrapper { pointer-events: none; }
+
+/* ── Controlled indicator ──────────────────────────────────────────── */
+.trigger-controlled-indicator {
+    display: inline-block;
+    margin-left: 0.5rem;
+    font-size: 0.7rem;
+    color: #e5c07b;
+    vertical-align: middle;
+    opacity: 0.85;
+}
+.trigger-controlled-indicator::before { content: '◀◀'; }
+
+/* ── Adjust dialog volume inline input ─────────────────────────────── */
+.dialog-volume-inline {
+    width: 5rem !important;
+    padding: 0.2rem 0.4rem !important;
+    font-size: 0.9rem;
+    display: inline-block;
+    vertical-align: middle;
+}
+
 .waveform-wrapper {
     margin-top: 0.5rem;
     width: 100%;

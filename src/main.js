@@ -17,6 +17,7 @@ const fileToTriggers = new Map()
 let scriptText = ''
 
 let currentCue = 0
+let pickModeCallback = null
 let midiAccess = null
 let midiX32 = null
 let midiTrigger = null
@@ -196,6 +197,7 @@ function rerender(newText) {
     document.getElementById('script-content').innerHTML = converter.makeHtml(newText)
     convertCodeblocks()
     colorText()
+    markControlledTriggers()
     annotateBlocks()
     buildInsertZones()
 
@@ -220,6 +222,47 @@ function tokenizeScript(text) {
 function annotateBlocks() {
     const content = document.getElementById('script-content')
     ;[...content.children].forEach((el, k) => { el.dataset.blockIdx = k + 1 })
+}
+
+function findTriggerByNote(tn) {
+    if (!tn) return null
+    for (let i = 1; i < triggerYamls.length; i++) {
+        const t = triggerYamls[i]
+        if (t && t.trigger_note && t.trigger_note.ch === tn.ch && t.trigger_note.note === tn.note) return i
+    }
+    return null
+}
+
+function _pickEscHandler(e) { if (e.key === 'Escape') exitPickMode() }
+
+function enterPickMode(cb) {
+    pickModeCallback = cb
+    document.body.classList.add('trigger-pick-mode')
+    document.addEventListener('keydown', _pickEscHandler)
+}
+
+function exitPickMode() {
+    pickModeCallback = null
+    document.body.classList.remove('trigger-pick-mode')
+    document.removeEventListener('keydown', _pickEscHandler)
+}
+
+function markControlledTriggers() {
+    document.querySelectorAll('.trigger-controlled-indicator').forEach(el => el.remove())
+    for (let i = 1; i < triggerYamls.length; i++) {
+        const ty = triggerYamls[i]
+        if (!ty?.music || typeof ty.music !== 'object') continue
+        const adj = ty.music.adjust
+        if (!adj?.trigger_note) continue
+        const targetIdx = findTriggerByNote(adj.trigger_note)
+        if (targetIdx !== null && triggers[targetIdx]) {
+            const tn = ty.trigger_note
+            const indicator = document.createElement('span')
+            indicator.classList.add('trigger-controlled-indicator')
+            indicator.title = `Wird von ${tn ? tn.ch + '.' + tn.note : '?'} gesteuert`
+            triggers[targetIdx].querySelector('.trigger-music')?.appendChild(indicator)
+        }
+    }
 }
 
 // Moves a trigger block one step up or down in the script and rerenders in place.
@@ -669,10 +712,36 @@ function buildTrigger(codeblockYaml, index) {
     triggerYamls[index] = codeblockYaml
 
     triggerDiv.addEventListener("mousedown", (e) => {
+        if (pickModeCallback) {
+            e.stopPropagation()
+            const cb = pickModeCallback
+            exitPickMode()
+            cb(index)
+            return
+        }
         currentCue = index
         markTriggers(index)
         triggerAction(index)
     })
+
+    // ── Bezug button ─────────────────────────────────────────────────────
+    const hasAdjust = codeblockYaml.music && typeof codeblockYaml.music === 'object' && codeblockYaml.music.adjust
+    const adjustBtn = document.createElement("button")
+    adjustBtn.classList.add("trigger-action-btn")
+    if (hasAdjust) adjustBtn.classList.add("trigger-action-btn-active")
+    adjustBtn.textContent = "⇢ Bezug"
+    adjustBtn.title = "Anderen Trigger beeinflussen"
+    adjustBtn.addEventListener("mousedown", e => e.stopPropagation())
+    adjustBtn.addEventListener("click", e => {
+        e.stopPropagation()
+        const adj = triggerYamls[index]?.music?.adjust
+        if (adj) {
+            showAdjustDialog(index, triggerYamls[index], findTriggerByNote(adj.trigger_note))
+        } else {
+            enterPickMode(targetIdx => showAdjustDialog(index, triggerYamls[index], targetIdx))
+        }
+    })
+    triggerDiv.querySelector('.trigger-actions').appendChild(adjustBtn)
 
     return triggerDiv
 }
@@ -934,6 +1003,136 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     })
 }
 
+function setAdjustOnTrigger(triggerIndex, existingYaml, adjustConfig) {
+    const newYaml = { ...existingYaml }
+    if (!adjustConfig) {
+        if (newYaml.music && typeof newYaml.music === 'object') {
+            const { adjust, ...rest } = newYaml.music
+            newYaml.music = Object.keys(rest).length ? rest : undefined
+            if (!newYaml.music) delete newYaml.music
+        }
+    } else {
+        if (!newYaml.music) {
+            newYaml.music = { adjust: adjustConfig }
+        } else if (typeof newYaml.music === 'string') {
+            newYaml.music = { file: newYaml.music, adjust: adjustConfig }
+        } else {
+            newYaml.music = { ...newYaml.music, adjust: adjustConfig }
+        }
+    }
+    editTriggerInScript(triggerIndex, newYaml)
+}
+
+function showAdjustDialog(triggerIndex, existingYaml, targetIdx) {
+    const existingAdj = existingYaml?.music?.adjust
+    const targetYaml  = triggerYamls[targetIdx] ?? null
+
+    const overlay = document.createElement('div')
+    overlay.classList.add('dialog-overlay')
+    const box = document.createElement('div')
+    box.classList.add('dialog-box')
+    box.addEventListener('mousedown', e => e.stopPropagation())
+    box.addEventListener('click',     e => e.stopPropagation())
+
+    const titleEl = document.createElement('h3')
+    titleEl.textContent = 'Bezug konfigurieren'
+    box.appendChild(titleEl)
+
+    // ── Bezugs-Trigger ──────────────────────────────────────────────
+    const targetWrap = document.createElement('div')
+    targetWrap.classList.add('dialog-field')
+    const targetLbl = document.createElement('label')
+    targetLbl.textContent = 'Bezugs-Trigger'
+    const targetInfo = document.createElement('div')
+    targetInfo.style.cssText = 'margin: 0.3rem 0 0.5rem; font-size: 0.9rem; color: #abb2bf'
+    function refreshTargetInfo(idx) {
+        const ty = triggerYamls[idx] ?? null
+        if (ty && ty.trigger_note) {
+            const tn = ty.trigger_note
+            const mf = ty.music ? (typeof ty.music === 'string' ? ty.music : ty.music.file) : null
+            targetInfo.textContent = `${tn.ch}.${tn.note}` + (mf ? `  –  ${mf}` : '')
+        } else {
+            targetInfo.textContent = '(kein Trigger ausgewählt)'
+        }
+    }
+    refreshTargetInfo(targetIdx)
+    const repickBtn = document.createElement('button')
+    repickBtn.classList.add('dialog-btn')
+    repickBtn.textContent = 'Anderen auswählen…'
+    repickBtn.style.fontSize = '0.8rem'
+    repickBtn.addEventListener('click', () => {
+        close()
+        enterPickMode(newIdx => showAdjustDialog(triggerIndex, triggerYamls[triggerIndex], newIdx))
+    })
+    targetWrap.append(targetLbl, targetInfo, repickBtn)
+    box.appendChild(targetWrap)
+
+    // ── Aktion ──────────────────────────────────────────────────────
+    const actionWrap = document.createElement('div')
+    actionWrap.classList.add('dialog-field')
+    const actionLbl = document.createElement('label')
+    actionLbl.textContent = 'Aktion'
+    actionWrap.appendChild(actionLbl)
+
+    const fadeoutLbl = document.createElement('label')
+    fadeoutLbl.classList.add('dialog-loop-label')
+    const fadeoutRb = document.createElement('input')
+    fadeoutRb.type = 'radio'; fadeoutRb.name = `adj-${triggerIndex}`; fadeoutRb.value = 'fadeout'
+    fadeoutLbl.append(fadeoutRb, ' Fadeout (stoppen)')
+
+    const volLbl = document.createElement('label')
+    volLbl.classList.add('dialog-loop-label')
+    const volRb = document.createElement('input')
+    volRb.type = 'radio'; volRb.name = `adj-${triggerIndex}`; volRb.value = 'volume'
+    const volInput = document.createElement('input')
+    volInput.type = 'number'; volInput.min = '0'; volInput.max = '1'; volInput.step = '0.01'
+    volInput.value = existingAdj?.volume ?? '0.5'
+    volInput.style.cssText = 'width: 5rem; margin-left: 0.5rem'
+    volInput.classList.add('dialog-volume-inline')
+    volLbl.append(volRb, ' Lautstärke auf ', volInput)
+
+    if (existingAdj?.volume !== undefined) volRb.checked = true
+    else fadeoutRb.checked = true
+
+    actionWrap.append(fadeoutLbl, volLbl)
+    box.appendChild(actionWrap)
+
+    // ── Buttons ─────────────────────────────────────────────────────
+    const actions = document.createElement('div')
+    actions.classList.add('dialog-actions')
+    const cancelBtn = document.createElement('button')
+    cancelBtn.classList.add('dialog-btn')
+    cancelBtn.textContent = 'Abbrechen'
+    const saveBtn = document.createElement('button')
+    saveBtn.classList.add('dialog-btn', 'dialog-btn-primary')
+    saveBtn.textContent = 'Speichern'
+    if (existingAdj) {
+        const delBtn = document.createElement('button')
+        delBtn.classList.add('dialog-btn', 'dialog-btn-danger')
+        delBtn.textContent = 'Deaktivieren'
+        delBtn.addEventListener('click', () => { close(); setAdjustOnTrigger(triggerIndex, triggerYamls[triggerIndex], null) })
+        actions.append(delBtn, cancelBtn, saveBtn)
+    } else {
+        actions.append(cancelBtn, saveBtn)
+    }
+    box.appendChild(actions)
+    overlay.appendChild(box)
+    document.body.appendChild(overlay)
+
+    const close = () => overlay.remove()
+    cancelBtn.addEventListener('click', close)
+    overlay.addEventListener('mousedown', e => { if (e.target === overlay) close() })
+
+    saveBtn.addEventListener('click', () => {
+        if (!targetYaml) return
+        const adjConfig = { trigger_note: targetYaml.trigger_note }
+        if (fadeoutRb.checked) adjConfig.fadeout = true
+        else adjConfig.volume = parseFloat(volInput.value) || 0.5
+        close()
+        setAdjustOnTrigger(triggerIndex, triggerYamls[triggerIndex], adjConfig)
+    })
+}
+
 function triggerAction(cue) {
     // Second press while playing → stop (undo accidental trigger)
     const ta = triggerAudio.get(cue)
@@ -982,9 +1181,10 @@ function playMusic(cue) {
     }
 
     if (typeof music === 'object' && music.adjust) {
-        const { file: adjustFile, fadeout, volume: targetVol } = music.adjust
-        for (const idx of (fileToTriggers.get(adjustFile) || [])) {
-            const adjustTa = triggerAudio.get(idx)
+        const { trigger_note: adjTn, fadeout, volume: targetVol } = music.adjust
+        const targetIdx = findTriggerByNote(adjTn)
+        if (targetIdx !== null) {
+            const adjustTa = triggerAudio.get(targetIdx)
             if (adjustTa && adjustTa.ws.isPlaying()) {
                 if (fadeout) {
                     fadeWaveSurfer(adjustTa.ws, 0, 3, true)
@@ -1163,6 +1363,7 @@ async function initApp() {
     document.getElementById('script-content').innerHTML = converter.makeHtml(text)
     convertCodeblocks()
     colorText()
+    markControlledTriggers()
     annotateBlocks()
     buildInsertZones()
     initButtons()

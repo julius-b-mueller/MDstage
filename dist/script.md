@@ -115,6 +115,10 @@ projection: black-1
 music:
     file: einlass.mp3
     volume: 0.27
+    start: 12.7
+    end: 38.185
+    fadein: 7.75
+    fadeout: 9.3
     loop: true
 start_tc: "01:00:00:00"
 trigger_note: {ch: 1, note: 1}
@@ -150,7 +154,7 @@ music:
     file: ansage.mp3
     volume: 0.79
     adjust:
-        file: einlass.mp3
+        trigger_note: {ch: 1, note: 1}
         fadeout: true
 qlcplus: ansage
 trigger_note: {ch: 1, note: 5}
@@ -191,7 +195,15 @@ trigger_note: {ch: 1, note: 7}
 **Erzähler**
 Entschuldigung, bin ich zu früh? Mir wurde gesagt, die Vorstellung begänne um 15 Uhr.  Aber es scheinen noch nicht alle Zuschauer da zu sein. Ich habe mit einem größeren Publikum gerechnet. Es muss am Wetter liegen.  Da braut sich ein Sturm zusammen. Aber euch scheint das Wetter keine Angst zu machen. Ihr seid nicht von hier, kann das sein? Ihr müsst wissen, hier in Kansas ist mit Stürmen nicht zu spaßen. Wirbelstürme, und die sind hier keine Seltenheit, sind eine ernste Gefahr. Deshalb gibt es an den meisten Orten sogenannte Sturmkeller, in denen man sich in Sicherheit bringen kann, bis der Sturm vorbei ist. Wenn ich mir den Himmel so ansehe, steht uns heute noch ein heftiger Wirbelsturm bevor, darauf verwette ich meinen Zauberstab. Zauberstab, richtig! Schließlich habt ihr Euch nicht auf den weiten Weg mitten in die Prärie von Kansas gemacht, um übers Wetter zu reden. Ihr seid hier, weil ich ein großartiger Zauberer bin und ihr meine magischen Künste bestaunen wollt. Doch bevor ich beginne, muss ich euch etwas fragen: Glaubt Ihr an Zauberei?  Es ist ganz wichtig, dass Ihr daran glaubt, denn Magie funktioniert nur für diejenigen, die auch an sie glauben. Zu dem Thema kann ich Euch eine tolle Geschichte erzählen und wie der Zufall es will, beginnt diese Geschichte genau hier, in Kansas. Es geht um ein kleines Mädchen. Ihr Name ist Dorothy und sie lebt auf einer Farm bei ihrem Onkel und ihrer Tante in einem kleinen Holzhaus.
 
-*Erzähler stellt sich zum Holzhaus*
+**
+
+```yaml
+mic: Vogelscheuche
+note: Test
+trigger_note: {ch: 1, note: 124}
+```
+
+rzähler stellt sich zum Holzhaus*
 
 ```yaml
 mic:
@@ -200,7 +212,7 @@ mic:
 qlcplus: Kansas
 music:
     adjust:
-        file: erzaehler.mp3
+        trigger_note: {ch: 1, note: 7}
         fadeout: true
 trigger_note: {ch: 1, note: 8}
 ```
@@ -220,8 +232,12 @@ Ich sage dir, da braut sich etwas zusammen.
 Seht ihr, das hier ist "Onkel Henry" und das ist seine Frau "Tante Em". Ich muss zugeben, die beiden sehen etwas mürrisch aus. Aber das dürfen wir ihnen nicht zum Vorwurf machen. Die beiden haben den ganzen Tag hart gearbeitet.
 
 ```yaml
-mic: Erzähler
-trigger_note: {ch: 1, note: 9}
+mic:
+    - Erzähler
+    - Zauberer
+trigger_note:
+    ch: 1
+    note: 9
 ```
 
 *Onkel Henry steht auf, geht auf die linkes Bühnenseite und hackt dort Holz*
@@ -236,12 +252,24 @@ Bei Dorothy jedoch ist es anders. Sie ist ein sehr glückliches Mädchen, das of
 
 *Tante Em und Dorothy gehen gemeinsam ins Haus*
 
+```yaml
+mic: Dorothy
+trigger_note: {ch: 1, note: 127}
+```
+
 *Erzähler geht zum Lagerfeuer und nimmt sich einen Marshmallow weg*
 
 **Erzähler**
 Nach einem langen Tag sitzt Dorothy gerne mit ihrer Tante und ihrem Onkel an einem Lagerfeuer zusammen.
 
-*Erzähler geht nach links ab*
+**
+
+```yaml
+note: foo
+trigger_note: {ch: 1, note: 125}
+```
+
+rzähler geht nach links ab*
 
 *Wenn der Erzähler abgegangen ist, kommt Tante Em mit Wäschekorb aus dem Haus und beginnt Wäsche aufzuhängen*
 
@@ -288,6 +316,15 @@ in Kansas sind wir gern.
 *Onkel Hery vergist beim Singen der 2. Strophe das Holzhacken und schweift ab*
 
 *Tante Em ist mittlerweile fertig mit dem Wäsche aufhängen und geht zum Haus, um Wäschekorb wegzubringen*
+
+```yaml
+mic: Erzähler
+music:
+    file: oz-palast-dieter.mp3
+    volume: 0.8
+    start: 1.097
+trigger_note: {ch: 2, note: 2}
+```
 
 *In der Mitte der Strophe kommt sie wieder raus und geht zu Onkel Henry*
 
@@ -391,7 +428,14 @@ Ich kann Toto nicht finden. Vielleicht ist er im Haus.
 **Onkel Henry**
 Nein, Dorothy. Dafür bleibt keine Zeit mehr.
 
-**Tante Em**
+****
+
+```yaml
+note: bar
+trigger_note: {ch: 1, note: 126}
+```
+
+nte Em**
 Henry, siehst du das? Das Haus, es fliegt. Es fliegt durch die Luft, mit Dorothy!
 
 ```yaml
@@ -413,7 +457,7 @@ music:
     file: erzaehler.mp3
     volume: 0.5
     adjust:
-        file: oz-wirbelsturm.mp3
+        trigger_note: {ch: 1, note: 12}
         fadeout: true
 trigger_note: {ch: 1, note: 15}
 ```
@@ -446,7 +490,7 @@ mic:
 qlcplus: Munchkin Country
 music:
     adjust:
-        file: erzaehler.mp3
+        trigger_note: {ch: 1, note: 15}
         fadeout: true
 trigger_note: {ch: 1, note: 17}
 ```
@@ -708,7 +752,7 @@ mic:
 qlcplus: yellow road
 music:
     adjust:
-        file: erzaehler.mp3
+        trigger_note: {ch: 1, note: 21}
         fadeout: true
 trigger_note: {ch: 1, note: 23}
 ```
@@ -843,7 +887,7 @@ mic:
 qlcplus: yellow road
 music:
     adjust:
-        file: oz-umbau.mp3
+        trigger_note: {ch: 1, note: 26}
         fadeout: true
 trigger_note: {ch: 1, note: 28}
 ```
@@ -1603,7 +1647,7 @@ qlcplus: Zauberer 1
 music:
     file: oz-palast-dieter.mp3
     adjust:
-        file: oz-umbau.mp3
+        trigger_note: {ch: 1, note: 48}
         fadeout: true
 projection: Palast 1
 note: Dieter
@@ -1615,7 +1659,7 @@ qlcplus: Zauberer 1
 music:
     file: oz-palast-meusi.mp3
     adjust:
-        file: oz-umbau.mp3
+        trigger_note: {ch: 1, note: 48}
         fadeout: true
 projection: Palast 1
 note: Meusi
@@ -1758,7 +1802,7 @@ mic:
 projection: Torwächter 2
 music:
     adjust:
-        file: oz-umbau.mp3
+        trigger_note: {ch: 1, note: 48}
         fadeout: true
 trigger_note: {ch: 1, note: 59}
 ```
