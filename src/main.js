@@ -259,6 +259,7 @@ function markControlledTriggers() {
             const tn = ty.trigger_note
             const indicator = document.createElement('span')
             indicator.classList.add('trigger-controlled-indicator')
+            indicator.textContent = `⇠ ${tn ? tn.ch + '.' + tn.note : '?'}`
             indicator.title = `Wird von ${tn ? tn.ch + '.' + tn.note : '?'} gesteuert`
             triggers[targetIdx].querySelector('.trigger-music')?.appendChild(indicator)
         }
