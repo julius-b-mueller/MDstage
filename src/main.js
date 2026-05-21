@@ -34,6 +34,17 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Shift') { shiftHeld
 document.addEventListener('keyup',   (e) => { if (e.key === 'Shift') { shiftHeld = false; document.body.classList.remove('shift-held') } }, { capture: true })
 window.addEventListener('blur', () => { shiftHeld = false; document.body.classList.remove('shift-held') })
 
+const _insertCursorEl = document.createElement('div')
+_insertCursorEl.classList.add('shift-insert-cursor')
+_insertCursorEl.textContent = '+'
+document.body.appendChild(_insertCursorEl)
+document.addEventListener('mousemove', (e) => {
+    if (!shiftHeld) { _insertCursorEl.style.opacity = '0'; return }
+    _insertCursorEl.style.opacity = '1'
+    _insertCursorEl.style.left = e.clientX + 'px'
+    _insertCursorEl.style.top  = e.clientY + 'px'
+})
+
 const converter = new showdown.Converter
 
 class MTCTransmitter {
@@ -195,26 +206,36 @@ function rerender(newText) {
     document.getElementById('script-content').innerHTML = converter.makeHtml(newText)
     convertCodeblocks()
     colorText()
-    buildInsertZones()
+    annotateBlocks()
 
     requestAnimationFrame(() => window.scrollTo({ top: scrollY, behavior: 'instant' }))
+}
+
+function tokenizeScript(text) {
+    const blocks = []
+    const yamlRe = /```yaml\n[\s\S]*?```/g
+    let lastEnd = 0, m
+    while ((m = yamlRe.exec(text)) !== null) {
+        const before = text.slice(lastEnd, m.index)
+        before.split(/\n\n+/).forEach(p => { if (p.trim()) blocks.push({ type: 'text', content: p.trim() }) })
+        blocks.push({ type: 'yaml', content: m[0] })
+        lastEnd = m.index + m[0].length
+    }
+    text.slice(lastEnd).split(/\n\n+/).forEach(p => { if (p.trim()) blocks.push({ type: 'text', content: p.trim() }) })
+    return blocks
+}
+
+// Annotates each direct child of #script-content with data-block-idx (1-based, skipping config).
+function annotateBlocks() {
+    const content = document.getElementById('script-content')
+    ;[...content.children].forEach((el, k) => { el.dataset.blockIdx = k + 1 })
 }
 
 // Moves a trigger block one step up or down in the script and rerenders in place.
 function moveTriggerInScript(triggerIndex, direction) {
     if (!scriptText) return
 
-    // Tokenise into a flat list of {type:'text'|'yaml', content} blocks.
-    const blocks = []
-    const yamlRe = /```yaml\n[\s\S]*?```/g
-    let lastEnd = 0, m
-    while ((m = yamlRe.exec(scriptText)) !== null) {
-        const before = scriptText.slice(lastEnd, m.index)
-        before.split(/\n\n+/).forEach(p => { if (p.trim()) blocks.push({ type: 'text', content: p.trim() }) })
-        blocks.push({ type: 'yaml', content: m[0] })
-        lastEnd = m.index + m[0].length
-    }
-    scriptText.slice(lastEnd).split(/\n\n+/).forEach(p => { if (p.trim()) blocks.push({ type: 'text', content: p.trim() }) })
+    const blocks = tokenizeScript(scriptText)
 
     // Identify the config block (first yaml) so we never move past it.
     const configIdx = blocks.findIndex(b => b.type === 'yaml')
@@ -245,35 +266,34 @@ function moveTriggerInScript(triggerIndex, direction) {
     rerender(updated)
 }
 
-// Inserts a new trigger YAML block at zoneIndex (0 = before first trigger, n = after last).
-function insertTriggerInScript(zoneIndex, newYaml) {
+// Inserts a new trigger YAML block after the block at insertAfterBlockIdx.
+// Block indices correspond to DOM child index + 1 (blocks[0] = config, not in DOM).
+function insertTriggerInScript(insertAfterBlockIdx, newYaml) {
     if (!scriptText) return
-
-    const blocks = []
-    const yamlRe = /```yaml\n[\s\S]*?```/g
-    let lastEnd = 0, m
-    while ((m = yamlRe.exec(scriptText)) !== null) {
-        const before = scriptText.slice(lastEnd, m.index)
-        before.split(/\n\n+/).forEach(p => { if (p.trim()) blocks.push({ type: 'text', content: p.trim() }) })
-        blocks.push({ type: 'yaml', content: m[0] })
-        lastEnd = m.index + m[0].length
-    }
-    scriptText.slice(lastEnd).split(/\n\n+/).forEach(p => { if (p.trim()) blocks.push({ type: 'text', content: p.trim() }) })
-
-    // yamlIndices[0] = config, yamlIndices[1] = trigger[0], yamlIndices[2] = trigger[1], ...
-    // zoneIndex 0 → insert after config; zoneIndex k → insert after trigger[k-1]
-    const yamlIndices = blocks.reduce((acc, b, i) => { if (b.type === 'yaml') acc.push(i); return acc }, [])
-    const insertAfter = yamlIndices[zoneIndex]
-    if (insertAfter === undefined) return
-
+    const blocks = tokenizeScript(scriptText)
+    if (insertAfterBlockIdx < 0 || insertAfterBlockIdx >= blocks.length) return
     const newBlock = { type: 'yaml', content: '```yaml\n' + yaml.dump(newYaml, { indent: 4 }).trimEnd() + '\n```' }
-    blocks.splice(insertAfter + 1, 0, newBlock)
-
+    blocks.splice(insertAfterBlockIdx + 1, 0, newBlock)
     let updated = blocks.map(b => b.content).join('\n\n') + '\n'
-
     const { text: assigned, changed } = assignTriggerNotes(updated)
     if (changed) updated = assigned
+    scriptText = updated
+    window.electronAPI.writeScriptMd(updated)
+    rerender(updated)
+}
 
+// Splits the text block at blockIdx into two halves and inserts a trigger between them.
+function splitBlockAndInsertTrigger(blockIdx, mdBefore, mdAfter, newYaml) {
+    const blocks = tokenizeScript(scriptText)
+    const newYamlBlock = { type: 'yaml', content: '```yaml\n' + yaml.dump(newYaml, { indent: 4 }).trimEnd() + '\n```' }
+    const replacements = []
+    if (mdBefore.trim()) replacements.push({ type: 'text', content: mdBefore.trim() })
+    replacements.push(newYamlBlock)
+    if (mdAfter.trim()) replacements.push({ type: 'text', content: mdAfter.trim() })
+    blocks.splice(blockIdx, 1, ...replacements)
+    let updated = blocks.map(b => b.content).join('\n\n') + '\n'
+    const { text: assigned, changed } = assignTriggerNotes(updated)
+    if (changed) updated = assigned
     scriptText = updated
     window.electronAPI.writeScriptMd(updated)
     rerender(updated)
@@ -614,6 +634,7 @@ function buildTrigger(codeblockYaml, index) {
         waveformContainer.addEventListener("mouseleave", () => { waveformContainer.style.cursor = "" })
 
         waveformContainer.addEventListener("mousedown", (e) => {
+            if (shiftHeld) return
             e.stopPropagation()
             let dragging = false
             const startX = e.clientX
@@ -641,7 +662,8 @@ function buildTrigger(codeblockYaml, index) {
 
     triggerYamls[index] = codeblockYaml
 
-    triggerDiv.addEventListener("mousedown", () => {
+    triggerDiv.addEventListener("mousedown", (e) => {
+        if (shiftHeld) return
         currentCue = index
         markTriggers(index)
         triggerAction(index)
@@ -670,36 +692,87 @@ function mkDialogField(labelText, type, defaultVal) {
     return { wrap, input }
 }
 
-function buildInsertZones() {
-    const content = document.getElementById('script-content')
-    const triggerEls = [...content.querySelectorAll('.trigger')]
-
-    for (let i = 0; i <= triggerEls.length; i++) {
-        const zone = document.createElement('div')
-        zone.classList.add('insert-zone')
-        zone.addEventListener('mousedown', e => e.stopPropagation())
-
-        const btn = document.createElement('button')
-        btn.classList.add('insert-btn')
-        btn.textContent = '+'
-        btn.title = 'Trigger hier einfügen'
-        zone.appendChild(btn)
-
-        const zoneIndex = i
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation()
-            showAddTriggerDialog(zoneIndex)
-        })
-
-        if (i < triggerEls.length) {
-            content.insertBefore(zone, triggerEls[i])
-        } else {
-            content.appendChild(zone)
-        }
-    }
+function htmlToMarkdown(html) {
+    return html
+        .replace(/<strong>([\s\S]*?)<\/strong>/gi, '**$1**')
+        .replace(/<em>([\s\S]*?)<\/em>/gi, '*$1*')
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+        .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n)))
 }
 
-function showAddTriggerDialog(zoneIndex) {
+function installShiftClickHandler() {
+    const content = document.getElementById('script-content')
+    content.addEventListener('click', (e) => {
+        if (!shiftHeld) return
+        e.stopPropagation()
+
+        // Find the caret position at the click coordinates
+        let caretNode = null, caretOffset = 0
+        if (document.caretRangeFromPoint) {
+            const r = document.caretRangeFromPoint(e.clientX, e.clientY)
+            if (r) { caretNode = r.startContainer; caretOffset = r.startOffset }
+        } else if (document.caretPositionFromPoint) {
+            const p = document.caretPositionFromPoint(e.clientX, e.clientY)
+            if (p) { caretNode = p.offsetNode; caretOffset = p.offset }
+        }
+
+        // Walk up to find the direct child of #script-content
+        let blockEl = caretNode
+        if (blockEl && blockEl.nodeType === Node.TEXT_NODE) blockEl = blockEl.parentElement
+        while (blockEl && blockEl.parentElement !== content) blockEl = blockEl.parentElement
+
+        // Fallback: find the element whose bounding box contains the click Y
+        if (!blockEl || blockEl === content) {
+            const kids = [...content.children]
+            blockEl = kids.findLast(el => el.getBoundingClientRect().top <= e.clientY) || kids[0]
+        }
+        if (!blockEl) return
+
+        const blockIdx = parseInt(blockEl.dataset.blockIdx)
+        if (isNaN(blockIdx)) return
+
+        // Trigger div: insert after it
+        if (blockEl.classList.contains('trigger')) {
+            showAddTriggerDialog(blockIdx)
+            return
+        }
+
+        // Text block: determine split point
+        const blocks = tokenizeScript(scriptText)
+        const block = blocks[blockIdx]
+        if (!block || block.type !== 'text') { showAddTriggerDialog(blockIdx); return }
+
+        // Build markdown for the text before the caret
+        let mdBefore = ''
+        if (caretNode) {
+            const preRange = document.createRange()
+            preRange.setStart(blockEl, 0)
+            preRange.setEnd(caretNode, caretOffset)
+            const div = document.createElement('div')
+            div.appendChild(preRange.cloneContents())
+            mdBefore = htmlToMarkdown(div.innerHTML).trimEnd()
+        }
+
+        const fullMd = block.content
+        if (mdBefore.length === 0) {
+            // Click at start → insert before this block (= after previous block)
+            showAddTriggerDialog(blockIdx - 1)
+        } else if (mdBefore.length >= fullMd.trimEnd().length) {
+            // Click at end → insert after this block
+            showAddTriggerDialog(blockIdx)
+        } else {
+            // Mid-sentence split
+            const mdAfter = fullMd.slice(mdBefore.length).trimStart()
+            showAddTriggerDialog(null, (newYaml) => splitBlockAndInsertTrigger(blockIdx, mdBefore, mdAfter, newYaml))
+        }
+    })
+}
+
+// insertAfterBlockIdx: insert after this block index (null = split case, use onConfirm)
+// onConfirm: optional callback(newYaml) that overrides the default insert
+function showAddTriggerDialog(insertAfterBlockIdx, onConfirm) {
     const overlay = document.createElement('div')
     overlay.classList.add('dialog-overlay')
 
@@ -859,7 +932,11 @@ function showAddTriggerDialog(zoneIndex) {
         if (tcVal) newYaml.start_tc = tcVal
 
         close()
-        insertTriggerInScript(zoneIndex, newYaml)
+        if (onConfirm) {
+            onConfirm(newYaml)
+        } else {
+            insertTriggerInScript(insertAfterBlockIdx, newYaml)
+        }
     })
 }
 
@@ -1092,8 +1169,9 @@ async function initApp() {
     document.getElementById('script-content').innerHTML = converter.makeHtml(text)
     convertCodeblocks()
     colorText()
-    buildInsertZones()
+    annotateBlocks()
     initButtons()
+    installShiftClickHandler()
 
     mtc = new MTCTransmitter()
     mtc.setDisplay(document.querySelector('.tc-display'))
