@@ -1,0 +1,21 @@
+{
+  "name": "evb-ai",
+  "version": "1.0.0",
+  "main": "electron/main.js",
+  "scripts": {
+    "build": "webpack",
+    "develop": "webpack --watch --progress",
+    "start": "electron ."
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "showdown": "^2.1.0",
+    "wavesurfer.js": "^7.12.7",
+    "webmidi": "^3.0.21"
+  },
+  "devDependencies": {
+    "electron": "^36.0.0",
+    "webpack": "^5.88.2",
+    "webpack-cli": "^5.1.4"
+  }
+}

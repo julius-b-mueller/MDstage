@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Einstellungen</title>
+    <link rel="stylesheet" href="styles.css">
+    <meta charset="UTF-8">
+    <style>
+        body { padding: 1.5rem; }
+        .field { margin-bottom: 1.2rem; }
+        label { display: block; margin-bottom: 0.4rem; font-size: 0.85rem; color: #5c6370; text-transform: uppercase; letter-spacing: 0.05em; }
+        select {
+            width: 100%;
+            background: #383c44;
+            color: #abb2bf;
+            border: 1px solid #4b5263;
+            padding: 0.5rem 0.75rem;
+            border-radius: 5px;
+            font-size: 1rem;
+            font-family: inherit;
+            cursor: pointer;
+        }
+        select:focus { outline: none; border-color: #61afef; }
+        .actions { margin-top: 1.5rem; display: flex; justify-content: flex-end; gap: 0.5rem; }
+        .btn {
+            background: #4b5263;
+            color: #abb2bf;
+            border: none;
+            padding: 0.5rem 1.25rem;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.95rem;
+            font-family: inherit;
+        }
+        .btn:hover { background: #5c6370; }
+        .btn-primary { background: #61afef; color: #282c34; }
+        .btn-primary:hover { background: #71bfff; }
+        .error { color: #e06c75; font-size: 0.9rem; margin-top: 1rem; }
+    </style>
+</head>
+<body>
+    <div class="field">
+        <label>X32 Fernbedienung</label>
+        <select id="x32-device">
+            <option value="">— kein Gerät —</option>
+        </select>
+    </div>
+    <div class="field">
+        <label>Trigger-Noten</label>
+        <select id="trigger-device">
+            <option value="">— kein Gerät —</option>
+        </select>
+    </div>
+    <div class="field">
+        <label>MIDI-Timecode</label>
+        <select id="tc-device">
+            <option value="">— kein Gerät —</option>
+        </select>
+    </div>
+    <div class="actions">
+        <button class="btn" id="cancel">Abbrechen</button>
+        <button class="btn btn-primary" id="save">Speichern</button>
+    </div>
+    <script>
+        async function init() {
+            const settings = await window.electronAPI.getSettings()
+
+            let midiAccess
+            try {
+                midiAccess = await navigator.requestMIDIAccess({ sysex: true })
+            } catch (e) {
+                document.body.insertAdjacentHTML('beforeend', '<p class="error">MIDI nicht verfügbar: ' + e.message + '</p>')
+                return
+            }
+
+            const x32Select = document.getElementById('x32-device')
+            const triggerSelect = document.getElementById('trigger-device')
+            const tcSelect = document.getElementById('tc-device')
+
+            for (const output of midiAccess.outputs.values()) {
+                const o1 = new Option(output.name, output.name)
+                const o2 = new Option(output.name, output.name)
+                const o3 = new Option(output.name, output.name)
+                if (settings.midiX32Device === output.name) o1.selected = true
+                if (settings.midiTriggerDevice === output.name) o2.selected = true
+                if (settings.midiTCDevice === output.name) o3.selected = true
+                x32Select.appendChild(o1)
+                triggerSelect.appendChild(o2)
+                tcSelect.appendChild(o3)
+            }
+
+            document.getElementById('cancel').addEventListener('click', () => window.close())
+
+            document.getElementById('save').addEventListener('click', async () => {
+                await window.electronAPI.saveSettings({
+                    midiX32Device: x32Select.value || null,
+                    midiTriggerDevice: triggerSelect.value || null,
+                    midiTCDevice: tcSelect.value || null,
+                })
+                window.close()
+            })
+        }
+        init()
+    </script>
+</body>
+</html>
