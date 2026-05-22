@@ -218,6 +218,7 @@ function applyAudioDevices() {
                 monAudioEl.setSinkId(monitorAudioDevice).catch(() => {})
             } else {
                 if (wsMonitor?.isPlaying()) wsMonitor.stop()
+                else if (!monAudioEl.paused) monAudioEl.pause()
             }
         }
     }
@@ -803,13 +804,10 @@ function buildTrigger(codeblockYaml, index) {
         let monAudioEl = null, wsMonitor = null
         let monSyncRaf = null
 
-        if (monitorShouldPlay()) {
-            // Two-player approach for all monitor scenarios.
-            // Explicit monitor file if provided, otherwise same file as main.
-            const monFile = monitorFile !== null ? monitorFile : musicFile
+        if (monitorFile !== null && monitorShouldPlay()) {
+            // ── Path A: explicit monitor file — WaveSurfer + sync loop ────
             monAudioEl = new Audio()
-            if (monitorAudioDevice && monitorAudioDevice !== mainAudioDevice)
-                monAudioEl.setSinkId(monitorAudioDevice).catch(() => {})
+            monAudioEl.setSinkId(monitorAudioDevice).catch(() => {})
             const monContainer = document.createElement('div')
             monContainer.style.cssText = 'position:absolute;height:0;overflow:hidden;opacity:0;pointer-events:none'
             triggerDiv.appendChild(monContainer)
@@ -817,17 +815,8 @@ function buildTrigger(codeblockYaml, index) {
                 container: monContainer, media: monAudioEl,
                 height: 0, interact: false, normalize: true, minPxPerSec: 1,
             })
-            wsMonitor.load('audio/' + monFile)
+            wsMonitor.load('audio/' + monitorFile)
             wsMonitor.setVolume(mp.volume)
-
-            // For same-file monitors, pre-seek to the start position so the
-            // sync loop can fire play() immediately without an extra seek round-trip.
-            if (monitorFile === null) {
-                wsMonitor.once('ready', () => {
-                    const t = Math.max(0, (mp.start ?? 0) - monitorOffsetMs / 1000)
-                    monAudioEl.currentTime = t
-                })
-            }
 
             // Timecode-follower sync loop (targetT = mainT - offsetMs/1000)
             const syncMonitor = () => {
@@ -865,6 +854,34 @@ function buildTrigger(codeblockYaml, index) {
                 const dur = wsMonitor.getDuration()
                 if (dur > 0) monAudioEl.currentTime = Math.min(Math.max(t - monitorOffsetMs / 1000, 0), dur)
             })
+
+        } else if (monitorFile === null && monitorShouldPlay()) {
+            // ── Path B: same file as main — plain Audio mirror ────────────
+            // No WaveSurfer wrapper and no sync loop needed: same file means
+            // both players stay in sync naturally. Preload the file so the
+            // browser has the audio ready before the user clicks.
+            monAudioEl = new Audio()
+            monAudioEl.src = 'audio/' + musicFile
+            monAudioEl.preload = 'auto'
+            monAudioEl.volume = mp.volume
+            monAudioEl.setSinkId(monitorAudioDevice).catch(() => {})
+            // Pre-seek to start position once loadable so first click is instant
+            const monStart = mp.start ?? 0
+            if (monStart > 0) {
+                monAudioEl.addEventListener('canplay', () => {
+                    monAudioEl.currentTime = monStart
+                }, { once: true })
+            }
+            ws.on('play', () => {
+                if (!monitorShouldPlay() || !monAudioEl.paused) return
+                monAudioEl.play().catch(() => {})
+            })
+            ws.on('pause', () => {
+                if (!monAudioEl.paused) monAudioEl.pause()
+            })
+            ws.on('seeking', (t) => {
+                if (monitorShouldPlay()) monAudioEl.currentTime = t
+            })
         }
 
         // ── Common patches ────────────────────────────────────────────────
@@ -872,17 +889,14 @@ function buildTrigger(codeblockYaml, index) {
         ws.setVolume = (v) => {
             _wsSetVol(v)
             if (wsMonitor) wsMonitor.setVolume(v)
+            else if (monAudioEl) monAudioEl.volume = v
         }
         const _wsStop = ws.stop.bind(ws)
         ws.stop = () => {
             if (monSyncRaf) { cancelAnimationFrame(monSyncRaf); monSyncRaf = null }
             if (monAudioEl && !monAudioEl.paused) monAudioEl.pause()
-            if (monAudioEl) {
-                // Reset to pre-seek position so next play() needs no seek delay
-                monAudioEl.currentTime = monitorFile === null
-                    ? Math.max(0, (mp.start ?? 0) - monitorOffsetMs / 1000)
-                    : 0
-            }
+            // Reset to the correct start position so next click needs no seek
+            if (monAudioEl) monAudioEl.currentTime = monitorFile === null ? (mp.start ?? 0) : 0
             _wsStop()
         }
 
@@ -1671,6 +1685,12 @@ function updateClock() {
 async function initApp() {
     const settings = await window.electronAPI.getSettings()
 
+    // Apply device settings before building triggers so monitorShouldPlay()
+    // returns the correct value inside buildTrigger().
+    mainAudioDevice = settings.mainAudioDevice ?? null
+    monitorAudioDevice = settings.monitorAudioDevice ?? null
+    monitorOffsetMs = settings.monitorOffsetMs ?? 0
+
     const response = await fetch('script.md')
     let text = await response.text()
 
@@ -1693,9 +1713,6 @@ async function initApp() {
     mtc = new MTCTransmitter()
     mtc.setDisplay(document.querySelector('.tc-display'))
 
-    mainAudioDevice = settings.mainAudioDevice ?? null
-    monitorAudioDevice = settings.monitorAudioDevice ?? null
-    monitorOffsetMs = settings.monitorOffsetMs ?? 0
     applyAudioDevices()
 
     await initMidi(settings)
