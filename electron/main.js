@@ -1,9 +1,11 @@
 const { app, BrowserWindow, Menu, ipcMain } = require('electron')
 const path = require('path')
 const fs = require('fs')
+const os = require('os')
 const yaml = require('js-yaml')
 
 const scriptMdPath = path.join(__dirname, '../dist/script.md')
+const hostname = os.hostname()
 
 const defaultSettings = {
     mainAudioDevice: null, monitorAudioDevice: null, monitorOffsetMs: 0,
@@ -20,8 +22,13 @@ function readConfigBlock() {
 function loadSettings() {
     try {
         const { parsed } = readConfigBlock()
-        if (parsed?.config?.settings != null)
-            return { ...defaultSettings, ...parsed.config.settings }
+        const s = parsed?.config?.settings
+        if (s != null) {
+            // New format: keyed by hostname
+            if (s[hostname] != null) return { ...defaultSettings, ...s[hostname] }
+            // Legacy flat format (single-PC, no hostname key) — still readable
+            if ('mainAudioDevice' in s) return { ...defaultSettings, ...s }
+        }
     } catch (e) {
         console.warn('settings read error:', e.message)
     }
@@ -36,7 +43,13 @@ function loadSettings() {
 function persistSettings(settings) {
     const { text, parsed, block } = readConfigBlock()
     if (!parsed?.config) return
-    parsed.config.settings = settings
+
+    let existing = parsed.config.settings ?? {}
+    // Migrate from legacy flat format to hostname-keyed on first save
+    if ('mainAudioDevice' in existing) existing = {}
+    existing[hostname] = settings
+    parsed.config.settings = existing
+
     const newYaml = yaml.dump(parsed, { indent: 4, lineWidth: -1, noRefs: true })
     const newBlock = '```yaml\n' + newYaml.trimEnd() + '\n```'
     fs.writeFileSync(scriptMdPath, text.replace(block, newBlock), 'utf8')
@@ -148,6 +161,8 @@ app.whenReady().then(() => {
             win.webContents.send('settings-changed', settings)
         })
     })
+
+    ipcMain.handle('get-hostname', () => hostname)
 
     ipcMain.handle('get-script-md', () => fs.readFileSync(scriptMdPath, 'utf8'))
 

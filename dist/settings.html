@@ -64,6 +64,7 @@
     </style>
 </head>
 <body>
+    <div id="hostname-label" style="font-size:0.78rem;color:#5c6370;margin-bottom:1rem;"></div>
     <div class="section-title">Audio-Ausgabe</div>
     <div class="field">
         <label>Haupt-Audio</label>
@@ -166,7 +167,11 @@
 
         // ── Init ─────────────────────────────────────────────────────────
         async function init() {
-            const settings = await window.electronAPI.getSettings()
+            const [settings, hn] = await Promise.all([
+                window.electronAPI.getSettings(),
+                window.electronAPI.getHostname(),
+            ])
+            document.getElementById('hostname-label').textContent = 'Dieser PC: ' + hn
 
             const mainAudioSel    = document.getElementById('main-audio-device')
             const monitorAudioSel = document.getElementById('monitor-audio-device')
