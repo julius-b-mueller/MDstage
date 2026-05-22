@@ -41,6 +41,17 @@ p {
     margin: .4rem 1rem;
 }
 
+.trigger-group {
+    display: flex;
+    align-items: flex-start;
+    gap: 0;
+}
+
+.trigger-group .trigger {
+    flex: 1;
+    min-width: 0;
+}
+
 .trigger {
     display: flex;
     flex-direction: column;
@@ -79,7 +90,7 @@ p {
 }
 
 .trigger:hover {
-    background-color: #484c54;
+    background-color: #2e323a;
 }
 
 .trigger:hover .trigger-action-btn {
@@ -118,17 +129,23 @@ p {
 
 .button {
     cursor: pointer;
-    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     width: 3rem;
     height: 3rem;
     border-radius: 5px;
-    line-height: 1.5rem;
     font-weight: bold;
     box-shadow: #223 0 0 5px;
     margin: 0rem 0.5rem;
     background-color: #282c34;
     border: black 1px solid;
     box-sizing: border-box;
+}
+
+.t-icon {
+    vertical-align: middle;
+    flex-shrink: 0;
 }
 
 .button:hover {
@@ -274,12 +291,12 @@ p {
 }
 
 .trigger-action-btn:hover {
-    background: #4b5263;
+    background: #282c34;
     color: #abb2bf;
 }
 
 .trigger-action-btn:active {
-    background: #383c44;
+    background: #1e2127;
 }
 
 .trigger-action-btn-active {
@@ -287,6 +304,10 @@ p {
     color: #e5c07b;
 }
 .trigger-action-btn-active:hover { color: #e5c07b; }
+.trigger:hover .trigger-action-btn-active {
+    border-color: #e5c07b;
+    color: #e5c07b;
+}
 
 /* ── Pick mode ─────────────────────────────────────────────────────── */
 body.trigger-pick-mode .trigger {

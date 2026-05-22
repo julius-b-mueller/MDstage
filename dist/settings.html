@@ -8,7 +8,7 @@
         body { padding: 1.5rem; }
         .field { margin-bottom: 1.2rem; }
         label { display: block; margin-bottom: 0.4rem; font-size: 0.85rem; color: #5c6370; text-transform: uppercase; letter-spacing: 0.05em; }
-        select {
+        select, input[type="number"] {
             width: 100%;
             background: #383c44;
             color: #abb2bf;
@@ -17,9 +17,22 @@
             border-radius: 5px;
             font-size: 1rem;
             font-family: inherit;
-            cursor: pointer;
+            box-sizing: border-box;
         }
-        select:focus { outline: none; border-color: #61afef; }
+        select { cursor: pointer; }
+        select:focus, input[type="number"]:focus { outline: none; border-color: #61afef; }
+        .section-title {
+            font-size: 0.75rem;
+            color: #5c6370;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin: 1.5rem 0 0.8rem;
+            padding-bottom: 0.3rem;
+            border-bottom: 1px solid #383c44;
+        }
+        .section-title:first-child { margin-top: 0; }
+        .offset-row { display: flex; gap: 0.5rem; align-items: flex-end; }
+        .offset-row input { flex: 1; }
         .actions { margin-top: 1.5rem; display: flex; justify-content: flex-end; gap: 0.5rem; }
         .btn {
             background: #4b5263;
@@ -30,14 +43,39 @@
             cursor: pointer;
             font-size: 0.95rem;
             font-family: inherit;
+            white-space: nowrap;
         }
         .btn:hover { background: #5c6370; }
         .btn-primary { background: #61afef; color: #282c34; }
         .btn-primary:hover { background: #71bfff; }
+        .btn-active { background: #e5c07b; color: #282c34; }
+        .btn-active:hover { background: #f5d08b; }
         .error { color: #e06c75; font-size: 0.9rem; margin-top: 1rem; }
     </style>
 </head>
 <body>
+    <div class="section-title">Audio-Ausgabe</div>
+    <div class="field">
+        <label>Haupt-Audio</label>
+        <select id="main-audio-device">
+            <option value="">— Standard —</option>
+        </select>
+    </div>
+    <div class="field">
+        <label>Monitor-Mix</label>
+        <select id="monitor-audio-device">
+            <option value="">— kein Monitor —</option>
+        </select>
+    </div>
+    <div class="field">
+        <label>Monitor-Versatz (ms, negativ = vorziehen)</label>
+        <div class="offset-row">
+            <input type="number" id="monitor-offset" value="0" step="1">
+            <button class="btn" id="metro-btn">▶ Latenz-Test</button>
+        </div>
+    </div>
+
+    <div class="section-title">MIDI</div>
     <div class="field">
         <label>X32 Fernbedienung</label>
         <select id="x32-device">
@@ -61,40 +99,135 @@
         <button class="btn btn-primary" id="save">Speichern</button>
     </div>
     <script>
+        // ── Metronome ────────────────────────────────────────────────────
+        let metroActive = false
+        let mainCtx = null, monCtx = null
+        let metroTimer = null
+
+        function scheduleClick(ctx, time, freq) {
+            const osc  = ctx.createOscillator()
+            const gain = ctx.createGain()
+            osc.connect(gain)
+            gain.connect(ctx.destination)
+            osc.frequency.value = freq
+            osc.type = 'sine'
+            gain.gain.setValueAtTime(0.45, time)
+            gain.gain.exponentialRampToValueAtTime(0.001, time + 0.07)
+            osc.start(time)
+            osc.stop(time + 0.07)
+        }
+
+        async function startMetro() {
+            const mainDev = document.getElementById('main-audio-device').value
+            const monDev  = document.getElementById('monitor-audio-device').value
+
+            mainCtx = new AudioContext()
+            if (mainDev && mainCtx.setSinkId) await mainCtx.setSinkId(mainDev).catch(() => {})
+
+            monCtx = monDev ? new AudioContext() : null
+            if (monCtx && monCtx.setSinkId) await monCtx.setSinkId(monDev).catch(() => {})
+
+            const INTERVAL = 0.5   // seconds (120 BPM)
+            let nextBeat = mainCtx.currentTime + 0.05
+            let beat = 0
+
+            metroTimer = setInterval(() => {
+                const lookahead = mainCtx.currentTime + 0.12
+                while (nextBeat < lookahead) {
+                    const freq = (beat % 4 === 0) ? 1320 : 880   // accent on bar downbeat
+                    scheduleClick(mainCtx, nextBeat, freq)
+                    if (monCtx) {
+                        const offsetS = (parseInt(document.getElementById('monitor-offset').value) || 0) / 1000
+                        const monTime = monCtx.currentTime + (nextBeat - mainCtx.currentTime) + offsetS
+                        scheduleClick(monCtx, Math.max(monCtx.currentTime + 0.005, monTime), freq)
+                    }
+                    nextBeat += INTERVAL
+                    beat++
+                }
+            }, 25)
+        }
+
+        function stopMetro() {
+            clearInterval(metroTimer)
+            metroTimer = null
+            if (mainCtx) { mainCtx.close(); mainCtx = null }
+            if (monCtx)  { monCtx.close();  monCtx  = null }
+        }
+
+        // ── Init ─────────────────────────────────────────────────────────
         async function init() {
             const settings = await window.electronAPI.getSettings()
 
-            let midiAccess
+            const mainAudioSel    = document.getElementById('main-audio-device')
+            const monitorAudioSel = document.getElementById('monitor-audio-device')
+            const monitorOffsetEl = document.getElementById('monitor-offset')
+            const metroBtn        = document.getElementById('metro-btn')
+
+            if (settings.monitorOffsetMs != null) monitorOffsetEl.value = settings.monitorOffsetMs
+
             try {
-                midiAccess = await navigator.requestMIDIAccess({ sysex: true })
+                await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => {})
+                const devices = await navigator.mediaDevices.enumerateDevices()
+                const outputs = devices.filter(d => d.kind === 'audiooutput')
+                for (const dev of outputs) {
+                    const label = dev.label || dev.deviceId
+                    const o1 = new Option(label, dev.deviceId)
+                    const o2 = new Option(label, dev.deviceId)
+                    if (settings.mainAudioDevice === dev.deviceId)    o1.selected = true
+                    if (settings.monitorAudioDevice === dev.deviceId) o2.selected = true
+                    mainAudioSel.appendChild(o1)
+                    monitorAudioSel.appendChild(o2)
+                }
+            } catch (e) {
+                document.body.insertAdjacentHTML('beforeend', '<p class="error">Audio-Geräte nicht verfügbar: ' + e.message + '</p>')
+            }
+
+            metroBtn.addEventListener('click', async () => {
+                metroActive = !metroActive
+                if (metroActive) {
+                    metroBtn.textContent = '⏹ Latenz-Test'
+                    metroBtn.classList.add('btn-active')
+                    await startMetro()
+                } else {
+                    metroBtn.textContent = '▶ Latenz-Test'
+                    metroBtn.classList.remove('btn-active')
+                    stopMetro()
+                }
+            })
+
+            // ── MIDI ──────────────────────────────────────────────────
+            const x32Select     = document.getElementById('x32-device')
+            const triggerSelect = document.getElementById('trigger-device')
+            const tcSelect      = document.getElementById('tc-device')
+
+            try {
+                const midiAccess = await navigator.requestMIDIAccess({ sysex: true })
+                for (const output of midiAccess.outputs.values()) {
+                    const o1 = new Option(output.name, output.name)
+                    const o2 = new Option(output.name, output.name)
+                    const o3 = new Option(output.name, output.name)
+                    if (settings.midiX32Device === output.name)     o1.selected = true
+                    if (settings.midiTriggerDevice === output.name) o2.selected = true
+                    if (settings.midiTCDevice === output.name)      o3.selected = true
+                    x32Select.appendChild(o1)
+                    triggerSelect.appendChild(o2)
+                    tcSelect.appendChild(o3)
+                }
             } catch (e) {
                 document.body.insertAdjacentHTML('beforeend', '<p class="error">MIDI nicht verfügbar: ' + e.message + '</p>')
-                return
             }
 
-            const x32Select = document.getElementById('x32-device')
-            const triggerSelect = document.getElementById('trigger-device')
-            const tcSelect = document.getElementById('tc-device')
-
-            for (const output of midiAccess.outputs.values()) {
-                const o1 = new Option(output.name, output.name)
-                const o2 = new Option(output.name, output.name)
-                const o3 = new Option(output.name, output.name)
-                if (settings.midiX32Device === output.name) o1.selected = true
-                if (settings.midiTriggerDevice === output.name) o2.selected = true
-                if (settings.midiTCDevice === output.name) o3.selected = true
-                x32Select.appendChild(o1)
-                triggerSelect.appendChild(o2)
-                tcSelect.appendChild(o3)
-            }
-
-            document.getElementById('cancel').addEventListener('click', () => window.close())
+            document.getElementById('cancel').addEventListener('click', () => { stopMetro(); window.close() })
 
             document.getElementById('save').addEventListener('click', async () => {
+                stopMetro()
                 await window.electronAPI.saveSettings({
-                    midiX32Device: x32Select.value || null,
-                    midiTriggerDevice: triggerSelect.value || null,
-                    midiTCDevice: tcSelect.value || null,
+                    mainAudioDevice:    mainAudioSel.value    || null,
+                    monitorAudioDevice: monitorAudioSel.value || null,
+                    monitorOffsetMs:    parseInt(monitorOffsetEl.value) || 0,
+                    midiX32Device:      x32Select.value       || null,
+                    midiTriggerDevice:  triggerSelect.value   || null,
+                    midiTCDevice:       tcSelect.value        || null,
                 })
                 window.close()
             })

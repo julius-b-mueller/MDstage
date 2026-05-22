@@ -9,12 +9,26 @@ let usedChs = []
 let triggers = []
 let triggerYamls = []
 
-// triggerIndex -> { ws: WaveSurfer, musicFile: string }
+// triggerIndex -> { ws: WaveSurfer, wsMonitor: WaveSurfer|null, musicFile: string }
 const triggerAudio = new Map()
 // musicFile -> triggerIndex[]  (for cross-trigger fade lookups)
 const fileToTriggers = new Map()
 
+let mainAudioDevice = null
+let monitorAudioDevice = null
+let monitorOffsetMs = 0
+
+function monitorShouldPlay() {
+    if (!monitorAudioDevice) return false
+    if (monitorAudioDevice === mainAudioDevice) return false
+    return true
+}
+
 let scriptText = ''
+
+const MIC_SVG = `<svg class="t-icon" viewBox="0 0 12 18" width="10" height="15" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"><rect x="3" y="0.5" width="6" height="9" rx="3"/><line x1="3.5" y1="3.5" x2="8.5" y2="3.5" stroke-width="0.55"/><line x1="3.5" y1="6" x2="8.5" y2="6" stroke-width="0.55"/><path d="M1 8 Q6 13.5 11 8"/><line x1="6" y1="11.5" x2="6" y2="15"/><line x1="3" y1="15" x2="9" y2="15"/></svg>`
+
+const TAPE_SVG = `<svg class="t-icon" viewBox="0 0 22 12" width="22" height="12" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round"><circle cx="5" cy="6" r="4"/><circle cx="5" cy="6" r="1.3"/><line x1="5" y1="2" x2="5" y2="4.7"/><line x1="1.5" y1="8" x2="3.9" y2="6.7"/><line x1="8.5" y1="8" x2="6.1" y2="6.7"/><circle cx="17" cy="6" r="4"/><circle cx="17" cy="6" r="1.3"/><line x1="17" y1="2" x2="17" y2="4.7"/><line x1="13.5" y1="8" x2="15.9" y2="6.7"/><line x1="20.5" y1="8" x2="18.1" y2="6.7"/><line x1="9" y1="2" x2="13" y2="2"/><line x1="9" y1="10" x2="13" y2="10"/></svg>`
 
 let currentCue = 0
 let pickModeCallback = null
@@ -171,20 +185,70 @@ function scrollToTrigger(cue) {
     triggers[cue].scrollIntoView({ behavior: "smooth", block: "center" })
 }
 
+function groupRootOf(idx) {
+    while (idx >= 1 && triggerYamls[idx]?.sibling) idx--
+    return idx
+}
+
 function markTriggers(cue) {
-    for (let index = 1; index <= cue; index++) {
-        triggers[index].classList.add("trigger-marked")
+    const cueRoot = groupRootOf(cue)
+    for (let index = 1; index < triggers.length; index++) {
+        if (!triggers[index]) continue
+        const root = groupRootOf(index)
+        let shouldMark
+        if (root === cueRoot) {
+            // Same group as current cue: only the clicked trigger gets marked
+            shouldMark = index === cue
+        } else if (root < cueRoot) {
+            // Past group: only mark the group root (shows "this position was passed")
+            shouldMark = index === root
+        } else {
+            shouldMark = false
+        }
+        triggers[index].classList.toggle("trigger-marked", shouldMark)
     }
-    for (let index = cue + 1; index < triggers.length; index++) {
-        triggers[index].classList.remove("trigger-marked")
+}
+
+function applyAudioDevices() {
+    for (const { mainAudioEl, monAudioEl, wsMonitor } of triggerAudio.values()) {
+        if (mainAudioEl?.setSinkId)
+            mainAudioEl.setSinkId(mainAudioDevice || '').catch(() => {})
+        if (monAudioEl) {
+            if (monitorShouldPlay()) {
+                monAudioEl.setSinkId(monitorAudioDevice).catch(() => {})
+            } else {
+                if (wsMonitor?.isPlaying()) wsMonitor.stop()
+            }
+        }
+    }
+}
+
+function groupSiblingTriggers() {
+    const content = document.getElementById('script-content')
+    const children = [...content.children]
+    for (const el of children) {
+        const tidx = el.dataset.triggerIndex !== undefined ? parseInt(el.dataset.triggerIndex) : NaN
+        if (isNaN(tidx) || !triggerYamls[tidx]?.sibling) continue
+        const prev = el.previousElementSibling
+        if (!prev) continue
+        if (prev.classList.contains('trigger-group')) {
+            prev.appendChild(el)
+        } else {
+            const group = document.createElement('div')
+            group.classList.add('trigger-group')
+            prev.replaceWith(group)
+            group.appendChild(prev)
+            group.appendChild(el)
+        }
     }
 }
 
 function rerender(newText) {
     const scrollY = window.scrollY
 
-    for (const { ws } of triggerAudio.values()) {
+    for (const { ws, wsMonitor } of triggerAudio.values()) {
         try { ws.destroy() } catch (e) {}
+        if (wsMonitor) { try { wsMonitor.destroy() } catch (e) {} }
     }
 
     triggers = []
@@ -198,6 +262,7 @@ function rerender(newText) {
     convertCodeblocks()
     colorText()
     markControlledTriggers()
+    groupSiblingTriggers()
     annotateBlocks()
     buildInsertZones()
 
@@ -372,9 +437,19 @@ function updateMusicPropsInScript(triggerIndex, mp) {
     }
 }
 
+function blockIdxForTrigger(triggerIndex) {
+    const blocks = tokenizeScript(scriptText)
+    let yamlCount = 0
+    for (let i = 0; i < blocks.length; i++) {
+        if (blocks[i].type === 'yaml' && ++yamlCount === triggerIndex + 1) return i
+    }
+    return -1
+}
+
 function buildTrigger(codeblockYaml, index) {
     const triggerDiv = document.createElement("div")
     triggerDiv.classList.add("trigger")
+    triggerDiv.dataset.triggerIndex = index
 
     // ── header row (always present) ─────────────────────────────────────
     const triggerRow = document.createElement("div")
@@ -430,7 +505,16 @@ function buildTrigger(codeblockYaml, index) {
     triggerEditBtn.addEventListener("mousedown", (e) => { e.stopPropagation() })
     triggerEditBtn.addEventListener("click", (e) => {
         e.stopPropagation()
-        showTriggerDialog({ triggerIndex: index, existingYaml: codeblockYaml })
+        let parentTriggerNote = null
+        if (codeblockYaml.sibling) {
+            for (let i = index - 1; i >= 1; i--) {
+                if (triggerYamls[i] && !triggerYamls[i].sibling) {
+                    parentTriggerNote = triggerYamls[i].trigger_note ?? null
+                    break
+                }
+            }
+        }
+        showTriggerDialog({ triggerIndex: index, existingYaml: codeblockYaml, parentTriggerNote })
     })
     triggerActions.appendChild(triggerEditBtn)
     triggerDiv.appendChild(triggerActions)
@@ -438,12 +522,13 @@ function buildTrigger(codeblockYaml, index) {
     triggers[index] = triggerDiv
 
     // mic info
+    triggerMic.innerHTML = MIC_SVG
     if (codeblockYaml.mic) {
         let roles = codeblockYaml.mic
         if (roles === "muteall") {
-            triggerMic.innerText = "ψ alle aus"
+            triggerMic.appendChild(document.createTextNode(" alle aus"))
         } else {
-            triggerMic.innerText = "ψ "
+            triggerMic.appendChild(document.createTextNode(" "))
             if (typeof roles === "string") roles = [roles]
             for (let i = 0; i < roles.length; i++) {
                 const roleSpan = document.createElement("span")
@@ -453,29 +538,31 @@ function buildTrigger(codeblockYaml, index) {
             }
         }
     } else {
-        triggerMic.innerText = "ψ -"
+        triggerMic.appendChild(document.createTextNode(" -"))
     }
 
     // music info
+    triggerMusic.innerHTML = TAPE_SVG
     if (codeblockYaml.music) {
         if (typeof codeblockYaml.music === "string") {
-            triggerMusic.innerText = "◎ " + codeblockYaml.music
+            triggerMusic.appendChild(document.createTextNode(" " + codeblockYaml.music))
         } else if (codeblockYaml.music.file) {
-            triggerMusic.innerText = "◎ " + codeblockYaml.music.file
+            triggerMusic.appendChild(document.createTextNode(" " + codeblockYaml.music.file))
         }
         if (codeblockYaml.music.adjust) {
             const adjTn = codeblockYaml.music.adjust.trigger_note
             const adjRef = adjTn ? `${adjTn.ch}.${adjTn.note}` : '?'
-            if (codeblockYaml.music.file) triggerMusic.innerText += ", "
-            else triggerMusic.innerText = "◎ "
+            if (codeblockYaml.music.file) {
+                triggerMusic.appendChild(document.createTextNode(", "))
+            }
             if (codeblockYaml.music.adjust.fadeout) {
-                triggerMusic.innerText += `⇢ ${adjRef} ausfaden`
+                triggerMusic.appendChild(document.createTextNode(`⇢ ${adjRef} ausfaden`))
             } else if (codeblockYaml.music.adjust.volume !== undefined) {
-                triggerMusic.innerText += `⇢ ${adjRef} auf ${codeblockYaml.music.adjust.volume * 100}%`
+                triggerMusic.appendChild(document.createTextNode(`⇢ ${adjRef} auf ${codeblockYaml.music.adjust.volume * 100}%`))
             }
         }
     } else {
-        triggerMusic.innerText = "◎ -"
+        triggerMusic.appendChild(document.createTextNode(" -"))
     }
 
     // text note
@@ -543,8 +630,11 @@ function buildTrigger(codeblockYaml, index) {
 
         const state = { zoom: 20 }
 
+        const mainAudioEl = new Audio()
+        if (mainAudioDevice) mainAudioEl.setSinkId(mainAudioDevice).catch(() => {})
         const ws = WaveSurfer.create({
             container: waveformContainer,
+            media: mainAudioEl,
             waveColor: '#4b5263', progressColor: '#61afef', cursorColor: '#e5c07b',
             height: 64, interact: false, normalize: true, minPxPerSec: state.zoom,
         })
@@ -707,7 +797,88 @@ function buildTrigger(codeblockYaml, index) {
             document.addEventListener("mouseup", onUp)
         })
 
-        triggerAudio.set(index, { ws, musicFile })
+        // ── Monitor mix ─────────────────────────────────────────────────
+        const monitorFile = typeof codeblockYaml.music === 'object' ? codeblockYaml.music.monitor ?? null : null
+        const monitorAudioFile = monitorFile ?? musicFile
+        const monAudioEl = new Audio()
+        if (monitorAudioDevice && monitorAudioDevice !== mainAudioDevice)
+            monAudioEl.setSinkId(monitorAudioDevice).catch(() => {})
+        const monContainer = document.createElement('div')
+        monContainer.style.cssText = 'position:absolute;height:0;overflow:hidden;opacity:0;pointer-events:none'
+        triggerDiv.appendChild(monContainer)
+        const wsMonitor = WaveSurfer.create({
+            container: monContainer,
+            media: monAudioEl,
+            height: 0,
+            interact: false,
+            normalize: true,
+            minPxPerSec: 1,
+        })
+        wsMonitor.load('audio/' + monitorAudioFile)
+        wsMonitor.setVolume(mp.volume)
+
+        // ── Continuous monitor sync (timecode-follower style) ──────────
+        // targetT = mainT - offsetMs/1000
+        //   offsetMs > 0  → monitor starts later, stays behind in file
+        //   offsetMs < 0  → monitor plays ahead in file (latency compensation)
+        let monSyncRaf = null
+
+        const syncMonitor = () => {
+            if (!ws.isPlaying() || !monitorShouldPlay()) {
+                monSyncRaf = null
+                return
+            }
+            const dur = wsMonitor.getDuration()
+            if (dur > 0 && !monAudioEl.seeking) {
+                const mainT = mainAudioEl.currentTime
+                const targetT = Math.min(Math.max(mainT - monitorOffsetMs / 1000, 0), dur)
+                if (!wsMonitor.isPlaying()) {
+                    // Start once delay period elapsed and not near end of monitor file
+                    if (mainT * 1000 >= monitorOffsetMs && targetT < dur - 0.1) {
+                        if (Math.abs(monAudioEl.currentTime - targetT) >= 0.05) {
+                            monAudioEl.currentTime = targetT  // Seek; browser starts after seek
+                        }
+                        wsMonitor.play()
+                    }
+                } else if (Math.abs(monAudioEl.currentTime - targetT) > 0.1) {
+                    // Drift > 100 ms — correct (brief monitor stutter, main unaffected)
+                    monAudioEl.currentTime = targetT
+                }
+            }
+            monSyncRaf = requestAnimationFrame(syncMonitor)
+        }
+
+        ws.on('play', () => {
+            if (!monitorShouldPlay()) return
+            if (monSyncRaf) cancelAnimationFrame(monSyncRaf)
+            syncMonitor()  // Start immediately, not deferred via rAF
+        })
+        ws.on('pause', () => {
+            if (monSyncRaf) { cancelAnimationFrame(monSyncRaf); monSyncRaf = null }
+            if (wsMonitor.isPlaying()) wsMonitor.pause()
+            const dur = wsMonitor.getDuration()
+            if (dur > 0) {
+                const mainT = mainAudioEl.currentTime
+                monAudioEl.currentTime = Math.min(Math.max(mainT - monitorOffsetMs / 1000, 0), dur)
+            }
+        })
+        // Keep monitor in sync when user scrubs while paused
+        ws.on('seeking', (t) => {
+            if (!monitorShouldPlay()) return
+            const dur = wsMonitor.getDuration()
+            if (dur > 0) monAudioEl.currentTime = Math.min(Math.max(t - monitorOffsetMs / 1000, 0), dur)
+        })
+        // Patch setVolume and stop to propagate to monitor
+        const _wsSetVol = ws.setVolume.bind(ws)
+        ws.setVolume = (v) => { _wsSetVol(v); wsMonitor.setVolume(v) }
+        const _wsStop = ws.stop.bind(ws)
+        ws.stop = () => {
+            if (monSyncRaf) { cancelAnimationFrame(monSyncRaf); monSyncRaf = null }
+            _wsStop()
+            wsMonitor.stop()
+        }
+
+        triggerAudio.set(index, { ws, wsMonitor, mainAudioEl, monAudioEl, musicFile })
         fileToTriggers.set(musicFile, [...(fileToTriggers.get(musicFile) || []), index])
     }
 
@@ -745,6 +916,22 @@ function buildTrigger(codeblockYaml, index) {
     })
     triggerDiv.querySelector('.trigger-actions').appendChild(adjustBtn)
 
+    // ── Variante button ──────────────────────────────────────────────────
+    const copyBtn = document.createElement("button")
+    copyBtn.classList.add("trigger-action-btn")
+    copyBtn.textContent = "⊕ Variante"
+    copyBtn.title = "Als nebenläufige Variante duplizieren"
+    copyBtn.addEventListener("mousedown", e => e.stopPropagation())
+    copyBtn.addEventListener("click", e => {
+        e.stopPropagation()
+        const copy = JSON.parse(JSON.stringify(codeblockYaml))
+        const parentTriggerNote = codeblockYaml.trigger_note ?? null
+        delete copy.trigger_note
+        copy.sibling = true
+        showTriggerDialog({ insertAfterBlockIdx: blockIdxForTrigger(index), existingYaml: copy, isCopy: true, parentTriggerNote })
+    })
+    triggerDiv.querySelector('.trigger-actions').appendChild(copyBtn)
+
     return triggerDiv
 }
 
@@ -772,7 +959,9 @@ function buildInsertZones() {
     const content = document.getElementById('script-content')
     document.querySelectorAll('.insert-zone').forEach(z => z.remove())
     const blockEls = [...content.children]
+    let blockCounter = 0
     for (let i = 0; i <= blockEls.length; i++) {
+        const insertAfterBlockIdx = blockCounter
         const zone = document.createElement('div')
         zone.classList.add('insert-zone')
         const hotspot = document.createElement('div')
@@ -784,13 +973,16 @@ function buildInsertZones() {
         btn.title = 'Trigger hier einfügen'
         hotspot.appendChild(btn)
         zone.appendChild(hotspot)
-        const insertAfterBlockIdx = i
         btn.addEventListener('click', (e) => {
             e.stopPropagation()
             showTriggerDialog({ insertAfterBlockIdx })
         })
         if (i < blockEls.length) {
             content.insertBefore(zone, blockEls[i])
+            const el = blockEls[i]
+            blockCounter += el.classList.contains('trigger-group')
+                ? el.querySelectorAll('.trigger').length
+                : 1
         } else {
             content.appendChild(zone)
         }
@@ -810,7 +1002,9 @@ function editTriggerInScript(triggerIndex, newYaml) {
             }
         }
     }
-    const updated = blocks.map(b => b.content).join('\n\n') + '\n'
+    let updated = blocks.map(b => b.content).join('\n\n') + '\n'
+    const { text: assigned, changed } = assignTriggerNotes(updated)
+    if (changed) updated = assigned
     scriptText = updated
     window.electronAPI.writeScriptMd(updated)
     rerender(updated)
@@ -837,7 +1031,7 @@ function deleteTriggerInScript(triggerIndex) {
 
 // insertAfterBlockIdx: for new triggers (add mode)
 // triggerIndex + existingYaml: for editing an existing trigger (edit mode)
-async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = null, existingYaml = null } = {}) {
+async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = null, existingYaml = null, isCopy = false, parentTriggerNote = null } = {}) {
     const isEdit = triggerIndex !== null
     const audioFiles = await window.electronAPI.listAudioFiles()
 
@@ -850,7 +1044,7 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     box.addEventListener('click', e => e.stopPropagation())
 
     const titleEl = document.createElement('h3')
-    titleEl.textContent = isEdit ? 'Trigger bearbeiten' : 'Neuer Trigger'
+    titleEl.textContent = isEdit ? 'Trigger bearbeiten' : isCopy ? 'Trigger duplizieren' : 'Neuer Trigger'
     box.appendChild(titleEl)
 
     // ── Mikrofon ────────────────────────────────────────────────────
@@ -888,7 +1082,7 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     micWrap.append(micTopLabel, micGroup)
     box.appendChild(micWrap)
 
-    if (isEdit && existingYaml.mic) {
+    if ((isEdit || isCopy) && existingYaml?.mic) {
         if (existingYaml.mic === 'muteall') {
             muteallCb.checked = true
         } else {
@@ -917,21 +1111,88 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     mfWrap.append(mfLabel, mfSelect)
     box.appendChild(mfWrap)
 
-    if (isEdit && existingYaml.music) {
+    if ((isEdit || isCopy) && existingYaml?.music) {
         const currentFile = typeof existingYaml.music === 'string' ? existingYaml.music : existingYaml.music.file
         if (currentFile) mfSelect.value = currentFile
     }
 
+    // ── Monitor-Mix ─────────────────────────────────────────────────
+    const monWrap = document.createElement('div')
+    monWrap.classList.add('dialog-field')
+    const monLabel = document.createElement('label')
+    monLabel.textContent = 'Monitor-Mix'
+    const monSelect = document.createElement('select')
+    monSelect.classList.add('dialog-select')
+    const monEmptyOpt = document.createElement('option')
+    monEmptyOpt.value = ''
+    monEmptyOpt.textContent = '— gleich wie Haupt-Audio —'
+    monSelect.appendChild(monEmptyOpt)
+    for (const f of audioFiles) {
+        const opt = document.createElement('option')
+        opt.value = f
+        opt.textContent = f
+        monSelect.appendChild(opt)
+    }
+    const monWarning = document.createElement('div')
+    monWarning.style.cssText = 'color:#e5c07b;font-size:0.82rem;margin-top:0.3rem;display:none'
+    monWrap.append(monLabel, monSelect, monWarning)
+    box.appendChild(monWrap)
+
+    if ((isEdit || isCopy) && existingYaml?.music && typeof existingYaml.music === 'object' && existingYaml.music.monitor) {
+        monSelect.value = existingYaml.music.monitor
+    }
+
+    async function checkMonitorDuration() {
+        const mf = mfSelect.value
+        const mf2 = monSelect.value
+        if (!mf || !mf2) { monWarning.style.display = 'none'; return }
+        const [d1, d2] = await Promise.all([
+            new Promise(res => { const a = new Audio('audio/' + mf);  a.addEventListener('loadedmetadata', () => res(a.duration)); a.addEventListener('error', () => res(null)) }),
+            new Promise(res => { const a = new Audio('audio/' + mf2); a.addEventListener('loadedmetadata', () => res(a.duration)); a.addEventListener('error', () => res(null)) }),
+        ])
+        if (d1 && d2 && Math.abs(d1 - d2) > 0.1) {
+            monWarning.textContent = `⚠ Unterschiedliche Längen: ${d1.toFixed(2)}s vs ${d2.toFixed(2)}s`
+            monWarning.style.display = 'block'
+        } else {
+            monWarning.style.display = 'none'
+        }
+    }
+    mfSelect.addEventListener('change', checkMonitorDuration)
+    monSelect.addEventListener('change', checkMonitorDuration)
+    checkMonitorDuration()
+
     // ── Hinweis ─────────────────────────────────────────────────────
     const { wrap: noteWrap, input: noteInput } = mkDialogField('Hinweis', 'text', '')
-    if (isEdit && existingYaml.note) noteInput.value = existingYaml.note
+    if ((isEdit || isCopy) && existingYaml?.note) noteInput.value = existingYaml.note
     box.appendChild(noteWrap)
 
     // ── Start-Timecode ───────────────────────────────────────────────
     const { wrap: tcWrap, input: tcInput } = mkDialogField('Start-Timecode (HH:MM:SS:FF)', 'text', '')
     tcInput.placeholder = '00:00:00:00'
-    if (isEdit && existingYaml.start_tc) tcInput.value = existingYaml.start_tc
+    if ((isEdit || isCopy) && existingYaml?.start_tc) tcInput.value = existingYaml.start_tc
     box.appendChild(tcWrap)
+
+    // ── Gleiche trigger_note ─────────────────────────────────────────
+    let sameTnCheckbox = null
+    if (isCopy || (isEdit && existingYaml?.sibling)) {
+        const sameTnWrap = document.createElement('div')
+        sameTnWrap.classList.add('dialog-field')
+        const sameTnLabel = document.createElement('label')
+        sameTnLabel.classList.add('dialog-loop-label')
+        sameTnCheckbox = document.createElement('input')
+        sameTnCheckbox.type = 'checkbox'
+        const ptn = parentTriggerNote
+        const ptnStr = ptn ? ` (${ptn.ch}.${ptn.note})` : ''
+        sameTnLabel.append(sameTnCheckbox, ` Gleiche trigger_note wie Original${ptnStr}`)
+        sameTnWrap.appendChild(sameTnLabel)
+        box.appendChild(sameTnWrap)
+        // default: checked; for edit, reflect actual state
+        sameTnCheckbox.checked = true
+        if (isEdit && existingYaml?.trigger_note && ptn) {
+            sameTnCheckbox.checked = existingYaml.trigger_note.ch === ptn.ch
+                && existingYaml.trigger_note.note === ptn.note
+        }
+    }
 
     // ── Buttons ──────────────────────────────────────────────────────
     const actions = document.createElement('div')
@@ -945,7 +1206,7 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     confirmBtn.classList.add('dialog-btn', 'dialog-btn-primary')
     confirmBtn.textContent = isEdit ? 'Speichern' : 'Hinzufügen'
 
-    if (isEdit) {
+    if (isEdit && !isCopy) {
         const deleteBtn = document.createElement('button')
         deleteBtn.classList.add('dialog-btn', 'dialog-btn-danger')
         deleteBtn.textContent = 'Löschen'
@@ -975,13 +1236,21 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
             else if (sel.length > 1) newYaml.mic = sel
         }
 
-        // music (preserve existing object props like volume/start/end when editing)
+        // music (preserve existing object props like volume/start/end when editing or copying)
         const mf = mfSelect.value
+        const mf2 = monSelect.value
         if (mf) {
-            if (isEdit && existingYaml.music && typeof existingYaml.music === 'object') {
+            if ((isEdit || isCopy) && existingYaml?.music && typeof existingYaml.music === 'object') {
                 newYaml.music = { ...existingYaml.music, file: mf }
             } else {
                 newYaml.music = mf
+            }
+            // monitor: expand to object form if needed
+            if (mf2) {
+                if (typeof newYaml.music === 'string') newYaml.music = { file: newYaml.music }
+                newYaml.music.monitor = mf2
+            } else if (typeof newYaml.music === 'object') {
+                delete newYaml.music.monitor
             }
         }
 
@@ -993,8 +1262,23 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         const tcVal = tcInput.value.trim()
         if (tcVal) newYaml.start_tc = tcVal
 
-        // preserve trigger_note when editing
-        if (isEdit && existingYaml.trigger_note) newYaml.trigger_note = existingYaml.trigger_note
+        // trigger_note: preserve when editing non-sibling; handle checkbox for siblings/copies
+        if (sameTnCheckbox) {
+            if (sameTnCheckbox.checked && parentTriggerNote) {
+                newYaml.trigger_note = parentTriggerNote
+            } else if (isEdit && existingYaml?.trigger_note) {
+                // unchecked edit: keep existing only if it differs from parent (otherwise let assignTriggerNotes re-assign)
+                const ptn = parentTriggerNote
+                const wasSame = ptn && existingYaml.trigger_note.ch === ptn.ch && existingYaml.trigger_note.note === ptn.note
+                if (!wasSame) newYaml.trigger_note = existingYaml.trigger_note
+            }
+            // isCopy + unchecked: no trigger_note set → assignTriggerNotes assigns new one
+        } else if (isEdit && existingYaml?.trigger_note) {
+            newYaml.trigger_note = existingYaml.trigger_note
+        }
+        // preserve sibling flag when editing; add it when copying
+        if (isEdit && existingYaml?.sibling) newYaml.sibling = true
+        if (isCopy) newYaml.sibling = true
 
         close()
         if (isEdit) {
@@ -1178,6 +1462,13 @@ function playMusic(cue) {
         const volume = typeof music === 'object' && music.volume != null ? music.volume : 0.8
         const start  = typeof music === 'object' && music.start  != null ? music.start  : 0
         const fadein = typeof music === 'object' && music.fadein != null ? music.fadein : 0
+        // Pre-position monitor so its seek runs in parallel with the main audio's seek
+        if (monitorShouldPlay() && ta.wsMonitor) {
+            const monDur = ta.wsMonitor.getDuration()
+            if (monDur > 0) {
+                ta.monAudioEl.currentTime = Math.min(Math.max(start - monitorOffsetMs / 1000, 0), monDur)
+            }
+        }
         ta.ws.setVolume(fadein > 0 ? 0 : volume)
         ta.ws.play(start)
     }
@@ -1366,6 +1657,7 @@ async function initApp() {
     convertCodeblocks()
     colorText()
     markControlledTriggers()
+    groupSiblingTriggers()
     annotateBlocks()
     buildInsertZones()
     initButtons()
@@ -1373,11 +1665,20 @@ async function initApp() {
     mtc = new MTCTransmitter()
     mtc.setDisplay(document.querySelector('.tc-display'))
 
+    mainAudioDevice = settings.mainAudioDevice ?? null
+    monitorAudioDevice = settings.monitorAudioDevice ?? null
+    monitorOffsetMs = settings.monitorOffsetMs ?? 0
+    applyAudioDevices()
+
     await initMidi(settings)
     mtc.setOutput(midiTC)
 
     window.electronAPI.onSettingsChanged((newSettings) => {
         refreshMidiDevices(newSettings)
+        mainAudioDevice = newSettings.mainAudioDevice ?? null
+        monitorAudioDevice = newSettings.monitorAudioDevice ?? null
+        monitorOffsetMs = newSettings.monitorOffsetMs ?? 0
+        applyAudioDevices()
     })
 }
 

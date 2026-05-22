@@ -132,7 +132,9 @@ music:
     end: 7.616
     fadein: 0.889
     fadeout: 1.235
-trigger_note: {ch: 1, note: 2}
+trigger_note:
+    ch: 1
+    note: 2
 ```
 
 ```yaml
@@ -154,10 +156,14 @@ music:
     file: ansage.mp3
     volume: 0.79
     adjust:
-        trigger_note: {ch: 1, note: 1}
+        trigger_note:
+            ch: 1
+            note: 1
         fadeout: true
 qlcplus: ansage
-trigger_note: {ch: 1, note: 5}
+trigger_note:
+    ch: 1
+    note: 5
 ```
 
 ## Der Wirbelsturm
@@ -175,6 +181,15 @@ trigger_note: {ch: 1, note: 6}
 
 *Marshmallows müssen an der Feuerstelle bereitstehen*
 
+```yaml
+music:
+    file: genug-v1.0.mp3
+    volume: 0.77
+trigger_note:
+    ch: 2
+    note: 1
+```
+
 *Tür darf nicht von innen verriegelt sein*
 
 *Erzähler tritt von links auf, bleibt links stehen*
@@ -189,7 +204,21 @@ music:
     file: erzaehler.mp3
     volume: 0.5
     loop: true
-trigger_note: {ch: 1, note: 7}
+start_tc: '02:00:00:00'
+trigger_note:
+    ch: 1
+    note: 7
+```
+
+```yaml
+mic: Erzähler
+music:
+    file: gong.mp3
+    volume: 0.5
+trigger_note:
+    ch: 1
+    note: 7
+sibling: true
 ```
 
 **Erzähler**

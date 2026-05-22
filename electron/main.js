@@ -8,7 +8,7 @@ function loadSettings() {
     try {
         return JSON.parse(fs.readFileSync(settingsPath, 'utf8'))
     } catch {
-        return { midiX32Device: null, midiTriggerDevice: null, midiTCDevice: null }
+        return { mainAudioDevice: null, monitorAudioDevice: null, monitorOffsetMs: 0, midiX32Device: null, midiTriggerDevice: null, midiTCDevice: null }
     }
 }
 
@@ -45,8 +45,8 @@ function createSettingsWindow() {
         return
     }
     settingsWindow = new BrowserWindow({
-        width: 420,
-        height: 330,
+        width: 440,
+        height: 520,
         title: 'Einstellungen',
         resizable: false,
         minimizable: false,
