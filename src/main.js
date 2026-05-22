@@ -210,14 +210,26 @@ function markTriggers(cue) {
 }
 
 function applyAudioDevices() {
-    for (const { mainAudioEl, monAudioEl, wsMonitor } of triggerAudio.values()) {
-        if (mainAudioEl?.setSinkId)
-            mainAudioEl.setSinkId(mainAudioDevice || '').catch(() => {})
-        if (monAudioEl) {
-            if (monitorShouldPlay()) {
-                monAudioEl.setSinkId(monitorAudioDevice).catch(() => {})
-            } else {
-                if (wsMonitor?.isPlaying()) wsMonitor.stop()
+    for (const { mainAudioEl, monAudioEl, wsMonitor, splitCtx, monStreamEl } of triggerAudio.values()) {
+        if (splitCtx) {
+            // Path B: stream split — reroute AudioContext and monitor stream element
+            if (splitCtx.setSinkId) splitCtx.setSinkId(mainAudioDevice || '').catch(() => {})
+            if (monStreamEl) {
+                if (monitorShouldPlay()) {
+                    monStreamEl.setSinkId(monitorAudioDevice).catch(() => {})
+                } else {
+                    if (!monStreamEl.paused) monStreamEl.pause()
+                }
+            }
+        } else {
+            if (mainAudioEl?.setSinkId)
+                mainAudioEl.setSinkId(mainAudioDevice || '').catch(() => {})
+            if (monAudioEl) {
+                if (monitorShouldPlay()) {
+                    monAudioEl.setSinkId(monitorAudioDevice).catch(() => {})
+                } else {
+                    if (wsMonitor?.isPlaying()) wsMonitor.stop()
+                }
             }
         }
     }
@@ -246,9 +258,10 @@ function groupSiblingTriggers() {
 function rerender(newText) {
     const scrollY = window.scrollY
 
-    for (const { ws, wsMonitor } of triggerAudio.values()) {
+    for (const { ws, wsMonitor, splitCtx } of triggerAudio.values()) {
         try { ws.destroy() } catch (e) {}
         if (wsMonitor) { try { wsMonitor.destroy() } catch (e) {} }
+        if (splitCtx) { try { splitCtx.close() } catch (e) {} }
     }
 
     triggers = []
@@ -799,92 +812,105 @@ function buildTrigger(codeblockYaml, index) {
 
         // ── Monitor mix ─────────────────────────────────────────────────
         const monitorFile = typeof codeblockYaml.music === 'object' ? codeblockYaml.music.monitor ?? null : null
-        const monitorAudioFile = monitorFile ?? musicFile
-        const monAudioEl = new Audio()
-        if (monitorAudioDevice && monitorAudioDevice !== mainAudioDevice)
-            monAudioEl.setSinkId(monitorAudioDevice).catch(() => {})
-        const monContainer = document.createElement('div')
-        monContainer.style.cssText = 'position:absolute;height:0;overflow:hidden;opacity:0;pointer-events:none'
-        triggerDiv.appendChild(monContainer)
-        const wsMonitor = WaveSurfer.create({
-            container: monContainer,
-            media: monAudioEl,
-            height: 0,
-            interact: false,
-            normalize: true,
-            minPxPerSec: 1,
-        })
-        wsMonitor.load('audio/' + monitorAudioFile)
-        wsMonitor.setVolume(mp.volume)
 
-        // ── Continuous monitor sync (timecode-follower style) ──────────
-        // targetT = mainT - offsetMs/1000
-        //   offsetMs > 0  → monitor starts later, stays behind in file
-        //   offsetMs < 0  → monitor plays ahead in file (latency compensation)
-        //
-        // IMPORTANT: use monAudioEl.paused (sync, set false instantly on play())
-        // NOT wsMonitor.isPlaying() which uses a WaveSurfer signal set only after
-        // the async 'play' DOM event fires — checking it every rAF frame caused
-        // repeated play() calls that Chrome stacked and flushed ~1 s later.
-        let monSyncRaf = null
+        // Variables for the two paths — only one set is populated per trigger.
+        let monAudioEl = null, wsMonitor = null   // Path A: explicit monitor file
+        let splitCtx = null, splitGain = null, monStreamEl = null  // Path B: stream split
+        let monSyncRaf = null  // Path A only
 
-        const syncMonitor = () => {
-            if (!ws.isPlaying() || !monitorShouldPlay()) {
-                monSyncRaf = null
-                return
-            }
-            const dur = wsMonitor.getDuration()
-            if (dur > 0 && !monAudioEl.seeking) {
-                const mainT = mainAudioEl.currentTime
-                const targetT = Math.min(Math.max(mainT - monitorOffsetMs / 1000, 0), dur)
-                if (monAudioEl.paused) {
-                    // Start once the positive-offset delay period has elapsed
-                    if (mainT * 1000 >= monitorOffsetMs && targetT < dur - 0.1) {
-                        if (Math.abs(monAudioEl.currentTime - targetT) >= 0.05) {
-                            monAudioEl.currentTime = targetT
+        if (monitorFile !== null) {
+            // ── Path A: explicit monitor file — two separate players ──────
+            // seekReady() in playMusic guarantees simultaneous start.
+            monAudioEl = new Audio()
+            if (monitorAudioDevice && monitorAudioDevice !== mainAudioDevice)
+                monAudioEl.setSinkId(monitorAudioDevice).catch(() => {})
+            const monContainer = document.createElement('div')
+            monContainer.style.cssText = 'position:absolute;height:0;overflow:hidden;opacity:0;pointer-events:none'
+            triggerDiv.appendChild(monContainer)
+            wsMonitor = WaveSurfer.create({
+                container: monContainer, media: monAudioEl,
+                height: 0, interact: false, normalize: true, minPxPerSec: 1,
+            })
+            wsMonitor.load('audio/' + monitorFile)
+            wsMonitor.setVolume(mp.volume)
+
+            // Timecode-follower sync loop (targetT = mainT - offsetMs/1000)
+            const syncMonitor = () => {
+                if (!ws.isPlaying() || !monitorShouldPlay()) { monSyncRaf = null; return }
+                const dur = wsMonitor.getDuration()
+                if (dur > 0 && !monAudioEl.seeking) {
+                    const mainT = mainAudioEl.currentTime
+                    const targetT = Math.min(Math.max(mainT - monitorOffsetMs / 1000, 0), dur)
+                    if (monAudioEl.paused) {
+                        if (mainT * 1000 >= monitorOffsetMs && targetT < dur - 0.1) {
+                            if (Math.abs(monAudioEl.currentTime - targetT) >= 0.05)
+                                monAudioEl.currentTime = targetT
+                            monAudioEl.play().catch(() => {})
                         }
-                        monAudioEl.play().catch(() => {})
+                    } else if (Math.abs(monAudioEl.currentTime - targetT) > 0.1) {
+                        monAudioEl.currentTime = targetT
                     }
-                } else if (Math.abs(monAudioEl.currentTime - targetT) > 0.1) {
-                    // Drift > 100 ms — correct (brief monitor stutter, main unaffected)
-                    monAudioEl.currentTime = targetT
                 }
+                monSyncRaf = requestAnimationFrame(syncMonitor)
             }
-            monSyncRaf = requestAnimationFrame(syncMonitor)
+            ws.on('play', () => {
+                if (!monitorShouldPlay()) return
+                if (monSyncRaf) cancelAnimationFrame(monSyncRaf)
+                syncMonitor()
+            })
+            ws.on('pause', () => {
+                if (monSyncRaf) { cancelAnimationFrame(monSyncRaf); monSyncRaf = null }
+                if (!monAudioEl.paused) monAudioEl.pause()
+                const dur = wsMonitor.getDuration()
+                if (dur > 0) monAudioEl.currentTime = Math.min(
+                    Math.max(mainAudioEl.currentTime - monitorOffsetMs / 1000, 0), dur)
+            })
+            ws.on('seeking', (t) => {
+                if (!monitorShouldPlay()) return
+                const dur = wsMonitor.getDuration()
+                if (dur > 0) monAudioEl.currentTime = Math.min(Math.max(t - monitorOffsetMs / 1000, 0), dur)
+            })
+
+        } else if (monitorShouldPlay()) {
+            // ── Path B: no monitor file — Web Audio stream split ──────────
+            // createMediaElementSource taps the signal BEFORE it reaches any
+            // output, then routes identical samples to both devices via a
+            // MediaStreamDestinationNode. Zero sync overhead — same samples,
+            // same clock, same instant.
+            splitCtx = new AudioContext()
+            if (mainAudioDevice) splitCtx.setSinkId(mainAudioDevice).catch(() => {})
+            const source = splitCtx.createMediaElementSource(mainAudioEl)
+            splitGain = splitCtx.createGain()
+            splitGain.gain.value = mp.volume
+            source.connect(splitGain)
+            splitGain.connect(splitCtx.destination)
+            const streamDest = splitCtx.createMediaStreamDestination()
+            splitGain.connect(streamDest)
+            monStreamEl = new Audio()
+            monStreamEl.srcObject = streamDest.stream
+            monStreamEl.setSinkId(monitorAudioDevice).catch(() => {})
+            ws.on('play', () => {
+                // Resume AudioContext if suspended (autoplay policy)
+                if (splitCtx.state !== 'running') splitCtx.resume().catch(() => {})
+                if (monitorShouldPlay() && monStreamEl.paused) monStreamEl.play().catch(() => {})
+            })
         }
 
-        ws.on('play', () => {
-            if (!monitorShouldPlay()) return
-            if (monSyncRaf) cancelAnimationFrame(monSyncRaf)
-            syncMonitor()  // Start immediately, not deferred via rAF
-        })
-        ws.on('pause', () => {
-            if (monSyncRaf) { cancelAnimationFrame(monSyncRaf); monSyncRaf = null }
-            if (!monAudioEl.paused) monAudioEl.pause()
-            const dur = wsMonitor.getDuration()
-            if (dur > 0) {
-                const mainT = mainAudioEl.currentTime
-                monAudioEl.currentTime = Math.min(Math.max(mainT - monitorOffsetMs / 1000, 0), dur)
-            }
-        })
-        // Keep monitor in sync when user scrubs while paused
-        ws.on('seeking', (t) => {
-            if (!monitorShouldPlay()) return
-            const dur = wsMonitor.getDuration()
-            if (dur > 0) monAudioEl.currentTime = Math.min(Math.max(t - monitorOffsetMs / 1000, 0), dur)
-        })
-        // Patch setVolume and stop to propagate to monitor
+        // ── Common patches ────────────────────────────────────────────────
         const _wsSetVol = ws.setVolume.bind(ws)
-        ws.setVolume = (v) => { _wsSetVol(v); wsMonitor.setVolume(v) }
+        ws.setVolume = (v) => {
+            if (splitGain) { splitGain.gain.value = v }        // Path B
+            else { _wsSetVol(v); if (wsMonitor) wsMonitor.setVolume(v) }  // Path A / no monitor
+        }
         const _wsStop = ws.stop.bind(ws)
         ws.stop = () => {
             if (monSyncRaf) { cancelAnimationFrame(monSyncRaf); monSyncRaf = null }
-            if (!monAudioEl.paused) monAudioEl.pause()
-            monAudioEl.currentTime = 0
+            if (monAudioEl && !monAudioEl.paused) monAudioEl.pause()
+            if (monAudioEl) monAudioEl.currentTime = 0
             _wsStop()
         }
 
-        triggerAudio.set(index, { ws, wsMonitor, mainAudioEl, monAudioEl, musicFile })
+        triggerAudio.set(index, { ws, wsMonitor, mainAudioEl, monAudioEl, musicFile, splitCtx, splitGain, monStreamEl })
         fileToTriggers.set(musicFile, [...(fileToTriggers.get(musicFile) || []), index])
     }
 
