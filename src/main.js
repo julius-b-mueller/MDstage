@@ -210,18 +210,10 @@ function markTriggers(cue) {
 }
 
 function applyAudioDevices() {
-    for (const { mainAudioEl, monAudioEl, wsMonitor, monStreamEl } of triggerAudio.values()) {
+    for (const { mainAudioEl, monAudioEl, wsMonitor } of triggerAudio.values()) {
         if (mainAudioEl?.setSinkId)
             mainAudioEl.setSinkId(mainAudioDevice || '').catch(() => {})
-        if (monStreamEl) {
-            // Path B: captureStream — reroute monitor stream element
-            if (monitorShouldPlay()) {
-                monStreamEl.setSinkId(monitorAudioDevice).catch(() => {})
-            } else {
-                if (!monStreamEl.paused) monStreamEl.pause()
-            }
-        } else if (monAudioEl) {
-            // Path A: explicit monitor file
+        if (monAudioEl) {
             if (monitorShouldPlay()) {
                 monAudioEl.setSinkId(monitorAudioDevice).catch(() => {})
             } else {
@@ -808,14 +800,13 @@ function buildTrigger(codeblockYaml, index) {
         // ── Monitor mix ─────────────────────────────────────────────────
         const monitorFile = typeof codeblockYaml.music === 'object' ? codeblockYaml.music.monitor ?? null : null
 
-        // Variables for the two paths — only one set is populated per trigger.
-        let monAudioEl = null, wsMonitor = null   // Path A: explicit monitor file
-        let splitCtx = null, splitGain = null, monStreamEl = null  // Path B: stream split
-        let monSyncRaf = null  // Path A only
+        let monAudioEl = null, wsMonitor = null
+        let monSyncRaf = null
 
-        if (monitorFile !== null) {
-            // ── Path A: explicit monitor file — two separate players ──────
-            // seekReady() in playMusic guarantees simultaneous start.
+        if (monitorShouldPlay()) {
+            // Two-player approach for all monitor scenarios.
+            // Explicit monitor file if provided, otherwise same file as main.
+            const monFile = monitorFile !== null ? monitorFile : musicFile
             monAudioEl = new Audio()
             if (monitorAudioDevice && monitorAudioDevice !== mainAudioDevice)
                 monAudioEl.setSinkId(monitorAudioDevice).catch(() => {})
@@ -826,7 +817,7 @@ function buildTrigger(codeblockYaml, index) {
                 container: monContainer, media: monAudioEl,
                 height: 0, interact: false, normalize: true, minPxPerSec: 1,
             })
-            wsMonitor.load('audio/' + monitorFile)
+            wsMonitor.load('audio/' + monFile)
             wsMonitor.setVolume(mp.volume)
 
             // Timecode-follower sync loop (targetT = mainT - offsetMs/1000)
@@ -865,21 +856,6 @@ function buildTrigger(codeblockYaml, index) {
                 const dur = wsMonitor.getDuration()
                 if (dur > 0) monAudioEl.currentTime = Math.min(Math.max(t - monitorOffsetMs / 1000, 0), dur)
             })
-
-        } else if (monitorShouldPlay()) {
-            // ── Path B: no monitor file — captureStream() tap ─────────────
-            // captureStream() taps the rendered audio from mainAudioEl and
-            // feeds the identical samples to a second element on the monitor
-            // device. Same clock, zero sync overhead, no AudioContext needed.
-            monStreamEl = new Audio()
-            monStreamEl.srcObject = mainAudioEl.captureStream()
-            monStreamEl.setSinkId(monitorAudioDevice).catch(() => {})
-            ws.on('play', () => {
-                if (monitorShouldPlay() && monStreamEl.paused) monStreamEl.play().catch(() => {})
-            })
-            ws.on('pause', () => {
-                if (!monStreamEl.paused) monStreamEl.pause()
-            })
         }
 
         // ── Common patches ────────────────────────────────────────────────
@@ -893,11 +869,10 @@ function buildTrigger(codeblockYaml, index) {
             if (monSyncRaf) { cancelAnimationFrame(monSyncRaf); monSyncRaf = null }
             if (monAudioEl && !monAudioEl.paused) monAudioEl.pause()
             if (monAudioEl) monAudioEl.currentTime = 0
-            if (monStreamEl && !monStreamEl.paused) monStreamEl.pause()
             _wsStop()
         }
 
-        triggerAudio.set(index, { ws, wsMonitor, mainAudioEl, monAudioEl, musicFile, splitCtx, splitGain, monStreamEl })
+        triggerAudio.set(index, { ws, wsMonitor, mainAudioEl, monAudioEl, musicFile })
         fileToTriggers.set(musicFile, [...(fileToTriggers.get(musicFile) || []), index])
     }
 
@@ -1484,8 +1459,7 @@ async function playMusic(cue) {
 
         ta.ws.setVolume(fadein > 0 ? 0 : volume)
 
-        const hasExplicitMonitor = typeof music === 'object' && music.monitor != null
-        const useMonitor = hasExplicitMonitor && monitorShouldPlay() && ta.wsMonitor && ta.wsMonitor.getDuration() > 0
+        const useMonitor = monitorShouldPlay() && ta.wsMonitor && ta.wsMonitor.getDuration() > 0
         if (useMonitor) {
             // Seek both elements to their target positions in parallel, then fire
             // play() on both in the same microtask — zero relative start-time offset.
