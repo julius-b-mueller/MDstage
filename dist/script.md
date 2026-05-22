@@ -2,39 +2,6 @@
 
 ```yaml
 config:
-    qlcplus:
-        functionNotes:
-            0: Kansas
-            1: Kansas Dorothy Strophe Opera
-            2: Kansas Tante Pos
-            3: Kansas Tante Light
-            4: Kansas Onkel Pos 1
-            5: Kansas Onkel Light
-            6: Kansas Dorothy Traum
-            7: Kansas Feuer
-            8: Kansas Dorothy Bridge Pos
-            9: Kansas Dorothy Bridge Light
-            10: Kansas Dorothy Regenbogen
-            11: Par Hair Links
-            12: Par Hair Rechs
-            13: Par Links
-            14: Par Rechts
-            15: Par Front Links
-            16: Par Front Rechts
-            17: red full
-            18: red half
-            19: Blechmann Stein
-            20: Blechmann Song Basislicht
-            21: blinders
-            22: blechmann flame
-            23: Blechmann Song Vogelscheuche
-            24: Blechmann
-            25: black
-            26: Kansas Feuer Aufheller
-        widgetControllers:
-            1: Kansas Sturm
-            2: Kansas dim
-            3: snowflakes
     roles:
         Erzähler:
             ch: 5
@@ -104,6 +71,14 @@ config:
             ch: 10
             color: purple
             midi: 52
+    settings:
+        MacBook-Pro-von-Julius:
+            mainAudioDevice: MacBook Pro-Lautsprecher (Built-in)
+            monitorAudioDevice: Externe Kopfhörer (Built-in)
+            monitorOffsetMs: 0
+            midiX32Device: null
+            midiTriggerDevice: IAC-Treiber Bus 1
+            midiTCDevice: IAC-Treiber Bus 1
 ```
 
 ## Einlass
@@ -185,6 +160,7 @@ trigger_note: {ch: 1, note: 6}
 music:
     file: genug-v1.0.mp3
     volume: 0.77
+    monitor: genug-score.mp3
 trigger_note:
     ch: 2
     note: 1

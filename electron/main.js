@@ -5,7 +5,7 @@ const os = require('os')
 const yaml = require('js-yaml')
 
 const scriptMdPath = path.join(__dirname, '../dist/script.md')
-const hostname = os.hostname()
+const hostname = os.hostname().split('.')[0]
 
 const defaultSettings = {
     mainAudioDevice: null, monitorAudioDevice: null, monitorOffsetMs: 0,

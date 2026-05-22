@@ -61,6 +61,7 @@
         .btn-active { background: #e5c07b; color: #282c34; }
         .btn-active:hover { background: #f5d08b; }
         .error { color: #e06c75; font-size: 0.9rem; margin-top: 1rem; }
+        .device-warning { color: #e06c75; font-size: 0.8rem; margin: 0.3rem 0 0; }
     </style>
 </head>
 <body>
@@ -114,6 +115,7 @@
         let metroActive = false
         let mainCtx = null, monCtx = null
         let metroTimer = null
+        let deviceIdMap = new Map()  // label → deviceId
 
         function scheduleClick(ctx, time, freq) {
             const osc  = ctx.createOscillator()
@@ -129,13 +131,15 @@
         }
 
         async function startMetro() {
-            const mainDev = document.getElementById('main-audio-device').value
-            const monDev  = document.getElementById('monitor-audio-device').value
+            const mainLabel = document.getElementById('main-audio-device').value
+            const monLabel  = document.getElementById('monitor-audio-device').value
+            const mainDev = deviceIdMap.get(mainLabel) || ''
+            const monDev  = deviceIdMap.get(monLabel)  || ''
 
             mainCtx = new AudioContext()
             if (mainDev && mainCtx.setSinkId) await mainCtx.setSinkId(mainDev).catch(() => {})
 
-            monCtx = monDev ? new AudioContext() : null
+            monCtx = monLabel ? new AudioContext() : null
             if (monCtx && monCtx.setSinkId) await monCtx.setSinkId(monDev).catch(() => {})
 
             const INTERVAL = 0.5   // seconds (120 BPM)
@@ -183,15 +187,24 @@
             try {
                 const devices = await navigator.mediaDevices.enumerateDevices()
                 const outputs = devices.filter(d => d.kind === 'audiooutput')
+                const audioLabels = new Set()
                 for (const dev of outputs) {
                     const label = dev.label || dev.deviceId
-                    const o1 = new Option(label, dev.deviceId)
-                    const o2 = new Option(label, dev.deviceId)
-                    if (settings.mainAudioDevice === dev.deviceId)    o1.selected = true
-                    if (settings.monitorAudioDevice === dev.deviceId) o2.selected = true
+                    audioLabels.add(label)
+                    if (!deviceIdMap.has(label)) deviceIdMap.set(label, dev.deviceId)
+                    const o1 = new Option(label, label)
+                    const o2 = new Option(label, label)
+                    if (settings.mainAudioDevice === label)    o1.selected = true
+                    if (settings.monitorAudioDevice === label) o2.selected = true
                     mainAudioSel.appendChild(o1)
                     monitorAudioSel.appendChild(o2)
                 }
+                if (settings.mainAudioDevice && !audioLabels.has(settings.mainAudioDevice))
+                    mainAudioSel.insertAdjacentHTML('afterend',
+                        '<p class="device-warning">Gerät „' + settings.mainAudioDevice + '" nicht gefunden – auf Standard zurückgefallen</p>')
+                if (settings.monitorAudioDevice && !audioLabels.has(settings.monitorAudioDevice))
+                    monitorAudioSel.insertAdjacentHTML('afterend',
+                        '<p class="device-warning">Gerät „' + settings.monitorAudioDevice + '" nicht gefunden – Monitormix deaktiviert</p>')
             } catch (e) {
                 document.body.insertAdjacentHTML('beforeend', '<p class="error">Audio-Geräte nicht verfügbar: ' + e.message + '</p>')
             }
@@ -216,7 +229,9 @@
 
             try {
                 const midiAccess = await navigator.requestMIDIAccess({ sysex: true })
+                const midiNames = new Set()
                 for (const output of midiAccess.outputs.values()) {
+                    midiNames.add(output.name)
                     const o1 = new Option(output.name, output.name)
                     const o2 = new Option(output.name, output.name)
                     const o3 = new Option(output.name, output.name)
@@ -227,6 +242,15 @@
                     triggerSelect.appendChild(o2)
                     tcSelect.appendChild(o3)
                 }
+                if (settings.midiX32Device && !midiNames.has(settings.midiX32Device))
+                    x32Select.insertAdjacentHTML('afterend',
+                        '<p class="device-warning">Gerät „' + settings.midiX32Device + '" nicht gefunden – MIDI-Ausgabe deaktiviert</p>')
+                if (settings.midiTriggerDevice && !midiNames.has(settings.midiTriggerDevice))
+                    triggerSelect.insertAdjacentHTML('afterend',
+                        '<p class="device-warning">Gerät „' + settings.midiTriggerDevice + '" nicht gefunden – MIDI-Ausgabe deaktiviert</p>')
+                if (settings.midiTCDevice && !midiNames.has(settings.midiTCDevice))
+                    tcSelect.insertAdjacentHTML('afterend',
+                        '<p class="device-warning">Gerät „' + settings.midiTCDevice + '" nicht gefunden – MIDI-Ausgabe deaktiviert</p>')
             } catch (e) {
                 document.body.insertAdjacentHTML('beforeend', '<p class="error">MIDI nicht verfügbar: ' + e.message + '</p>')
             }

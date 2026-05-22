@@ -17,6 +17,13 @@ const fileToTriggers = new Map()
 let mainAudioDevice = null
 let monitorAudioDevice = null
 let monitorOffsetMs = 0
+let audioOutputDevices = []
+
+function resolveDeviceId(label) {
+    if (!label) return null
+    const found = audioOutputDevices.find(d => d.label === label)
+    return found ? found.deviceId : null
+}
 
 function monitorShouldPlay() {
     if (!monitorAudioDevice) return false
@@ -1685,21 +1692,17 @@ function updateClock() {
 async function initApp() {
     const savedSettings = await window.electronAPI.getSettings()
 
-    // Enumerate available audio outputs and apply fallback for unavailable devices.
-    // Main audio falls back to system default (null); monitor is disabled (null).
-    // Runs without requesting microphone permission — audiooutput enumeration works
-    // without it in Electron.
-    const availableOutputIds = new Set()
+    // Enumerate available audio outputs, cache for label→deviceId resolution.
+    // Main audio falls back to system default (null) if label not found;
+    // monitor is disabled (null) if label not found.
     try {
-        for (const d of await navigator.mediaDevices.enumerateDevices())
-            if (d.kind === 'audiooutput') availableOutputIds.add(d.deviceId)
+        audioOutputDevices = (await navigator.mediaDevices.enumerateDevices())
+            .filter(d => d.kind === 'audiooutput')
     } catch {}
 
-    const deviceAvailable = id => !id || availableOutputIds.size === 0 || availableOutputIds.has(id)
-
-    mainAudioDevice   = deviceAvailable(savedSettings.mainAudioDevice)   ? savedSettings.mainAudioDevice   : null
-    monitorAudioDevice = deviceAvailable(savedSettings.monitorAudioDevice) ? savedSettings.monitorAudioDevice : null
-    monitorOffsetMs   = savedSettings.monitorOffsetMs ?? 0
+    mainAudioDevice    = resolveDeviceId(savedSettings.mainAudioDevice)
+    monitorAudioDevice = resolveDeviceId(savedSettings.monitorAudioDevice)
+    monitorOffsetMs    = savedSettings.monitorOffsetMs ?? 0
 
     const response = await fetch('script.md')
     let text = await response.text()
@@ -1733,10 +1736,19 @@ async function initApp() {
         // saved settings section in the config YAML block.
         window.electronAPI.getScriptMd().then(text => { scriptText = text })
         refreshMidiDevices(newSettings)
-        mainAudioDevice   = newSettings.mainAudioDevice   ?? null
-        monitorAudioDevice = newSettings.monitorAudioDevice ?? null
-        monitorOffsetMs   = newSettings.monitorOffsetMs   ?? 0
-        applyAudioDevices()
+        // Re-enumerate to pick up newly connected devices, then resolve labels.
+        navigator.mediaDevices.enumerateDevices().then(devs => {
+            audioOutputDevices = devs.filter(d => d.kind === 'audiooutput')
+            mainAudioDevice    = resolveDeviceId(newSettings.mainAudioDevice)
+            monitorAudioDevice = resolveDeviceId(newSettings.monitorAudioDevice)
+            monitorOffsetMs    = newSettings.monitorOffsetMs ?? 0
+            applyAudioDevices()
+        }).catch(() => {
+            mainAudioDevice    = resolveDeviceId(newSettings.mainAudioDevice)
+            monitorAudioDevice = resolveDeviceId(newSettings.monitorAudioDevice)
+            monitorOffsetMs    = newSettings.monitorOffsetMs ?? 0
+            applyAudioDevices()
+        })
     })
 }
 
