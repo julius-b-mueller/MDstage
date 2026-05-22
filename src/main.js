@@ -1471,7 +1471,8 @@ async function playMusic(cue) {
 
         ta.ws.setVolume(fadein > 0 ? 0 : volume)
 
-        const useMonitor = monitorShouldPlay() && ta.wsMonitor && ta.wsMonitor.getDuration() > 0
+        const hasExplicitMonitor = typeof music === 'object' && music.monitor != null
+        const useMonitor = hasExplicitMonitor && monitorShouldPlay() && ta.wsMonitor && ta.wsMonitor.getDuration() > 0
         if (useMonitor) {
             // Seek both elements to their target positions in parallel, then fire
             // play() on both in the same microtask — zero relative start-time offset.
