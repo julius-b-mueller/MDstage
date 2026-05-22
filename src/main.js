@@ -821,6 +821,11 @@ function buildTrigger(codeblockYaml, index) {
         // targetT = mainT - offsetMs/1000
         //   offsetMs > 0  → monitor starts later, stays behind in file
         //   offsetMs < 0  → monitor plays ahead in file (latency compensation)
+        //
+        // IMPORTANT: use monAudioEl.paused (sync, set false instantly on play())
+        // NOT wsMonitor.isPlaying() which uses a WaveSurfer signal set only after
+        // the async 'play' DOM event fires — checking it every rAF frame caused
+        // repeated play() calls that Chrome stacked and flushed ~1 s later.
         let monSyncRaf = null
 
         const syncMonitor = () => {
@@ -832,13 +837,13 @@ function buildTrigger(codeblockYaml, index) {
             if (dur > 0 && !monAudioEl.seeking) {
                 const mainT = mainAudioEl.currentTime
                 const targetT = Math.min(Math.max(mainT - monitorOffsetMs / 1000, 0), dur)
-                if (!wsMonitor.isPlaying()) {
-                    // Start once delay period elapsed and not near end of monitor file
+                if (monAudioEl.paused) {
+                    // Start once the positive-offset delay period has elapsed
                     if (mainT * 1000 >= monitorOffsetMs && targetT < dur - 0.1) {
                         if (Math.abs(monAudioEl.currentTime - targetT) >= 0.05) {
-                            monAudioEl.currentTime = targetT  // Seek; browser starts after seek
+                            monAudioEl.currentTime = targetT
                         }
-                        wsMonitor.play()
+                        monAudioEl.play().catch(() => {})
                     }
                 } else if (Math.abs(monAudioEl.currentTime - targetT) > 0.1) {
                     // Drift > 100 ms — correct (brief monitor stutter, main unaffected)
@@ -855,7 +860,7 @@ function buildTrigger(codeblockYaml, index) {
         })
         ws.on('pause', () => {
             if (monSyncRaf) { cancelAnimationFrame(monSyncRaf); monSyncRaf = null }
-            if (wsMonitor.isPlaying()) wsMonitor.pause()
+            if (!monAudioEl.paused) monAudioEl.pause()
             const dur = wsMonitor.getDuration()
             if (dur > 0) {
                 const mainT = mainAudioEl.currentTime
@@ -874,8 +879,9 @@ function buildTrigger(codeblockYaml, index) {
         const _wsStop = ws.stop.bind(ws)
         ws.stop = () => {
             if (monSyncRaf) { cancelAnimationFrame(monSyncRaf); monSyncRaf = null }
+            if (!monAudioEl.paused) monAudioEl.pause()
+            monAudioEl.currentTime = 0
             _wsStop()
-            wsMonitor.stop()
         }
 
         triggerAudio.set(index, { ws, wsMonitor, mainAudioEl, monAudioEl, musicFile })
@@ -1462,11 +1468,17 @@ function playMusic(cue) {
         const volume = typeof music === 'object' && music.volume != null ? music.volume : 0.8
         const start  = typeof music === 'object' && music.start  != null ? music.start  : 0
         const fadein = typeof music === 'object' && music.fadein != null ? music.fadein : 0
-        // Pre-position monitor so its seek runs in parallel with the main audio's seek
+        // Start monitor in parallel with main: pre-position and (for zero/negative
+        // offset) play immediately so both seeks run simultaneously. monAudioEl.paused
+        // becomes false synchronously, preventing repeated play() calls in syncMonitor.
         if (monitorShouldPlay() && ta.wsMonitor) {
             const monDur = ta.wsMonitor.getDuration()
             if (monDur > 0) {
-                ta.monAudioEl.currentTime = Math.min(Math.max(start - monitorOffsetMs / 1000, 0), monDur)
+                const monTargetT = Math.min(Math.max(start - monitorOffsetMs / 1000, 0), monDur)
+                ta.monAudioEl.currentTime = monTargetT
+                if (monitorOffsetMs <= 0) {
+                    ta.monAudioEl.play().catch(() => {})  // Play immediately; seek runs in parallel
+                }
             }
         }
         ta.ws.setVolume(fadein > 0 ? 0 : volume)
