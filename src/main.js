@@ -1459,7 +1459,7 @@ function sendTriggerNote(cue) {
     setTimeout(() => midiTrigger.send([0x80 | (tn.ch - 1), tn.note, 0]), 100)
 }
 
-function playMusic(cue) {
+async function playMusic(cue) {
     const music = triggerYamls[cue].music
     if (!music) return
 
@@ -1468,21 +1468,31 @@ function playMusic(cue) {
         const volume = typeof music === 'object' && music.volume != null ? music.volume : 0.8
         const start  = typeof music === 'object' && music.start  != null ? music.start  : 0
         const fadein = typeof music === 'object' && music.fadein != null ? music.fadein : 0
-        // Start monitor in parallel with main: pre-position and (for zero/negative
-        // offset) play immediately so both seeks run simultaneously. monAudioEl.paused
-        // becomes false synchronously, preventing repeated play() calls in syncMonitor.
-        if (monitorShouldPlay() && ta.wsMonitor) {
-            const monDur = ta.wsMonitor.getDuration()
-            if (monDur > 0) {
-                const monTargetT = Math.min(Math.max(start - monitorOffsetMs / 1000, 0), monDur)
-                ta.monAudioEl.currentTime = monTargetT
-                if (monitorOffsetMs <= 0) {
-                    ta.monAudioEl.play().catch(() => {})  // Play immediately; seek runs in parallel
-                }
-            }
-        }
+
         ta.ws.setVolume(fadein > 0 ? 0 : volume)
-        ta.ws.play(start)
+
+        const useMonitor = monitorShouldPlay() && ta.wsMonitor && ta.wsMonitor.getDuration() > 0
+        if (useMonitor) {
+            // Seek both elements to their target positions in parallel, then fire
+            // play() on both in the same microtask — zero relative start-time offset.
+            const monDur = ta.wsMonitor.getDuration()
+            const monTargetT = Math.min(Math.max(start - monitorOffsetMs / 1000, 0), monDur)
+            const seekReady = (el, t) => new Promise(resolve => {
+                el.currentTime = t
+                if (!el.seeking) { resolve(); return }
+                const guard = setTimeout(resolve, 2000)  // Never hang on a stuck seek
+                el.addEventListener('seeked', () => { clearTimeout(guard); resolve() }, { once: true })
+            })
+            await Promise.all([
+                seekReady(ta.mainAudioEl, start),
+                seekReady(ta.monAudioEl, monTargetT),
+            ])
+            ta.mainAudioEl.play().catch(() => {})
+            if (monitorOffsetMs <= 0) ta.monAudioEl.play().catch(() => {})
+            // positive offset: syncMonitor starts monitor once delay has elapsed
+        } else {
+            ta.ws.play(start)
+        }
     }
 
     if (typeof music === 'object' && music.adjust) {
