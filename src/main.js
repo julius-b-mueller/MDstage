@@ -9,10 +9,16 @@ let usedChs = []
 let triggers = []
 let triggerYamls = []
 
-// triggerIndex -> { ws: WaveSurfer, wsMonitor: WaveSurfer|null, musicFile: string }
+// triggerIndex -> { ws, wsMonitor, mainAudioEl, monAudioEl, musicFile, overlay, getX, autoMarkerState }
 const triggerAudio = new Map()
 // musicFile -> triggerIndex[]  (for cross-trigger fade lookups)
 const fileToTriggers = new Map()
+// targetIdx → <button> element for auto-cue progress bar updates
+const autoTriggerBtns = new Map()
+// sourceIdx → { links, unPlay, unTime, unPause, unFin, markFired, getUnfiredPast }
+const autoTriggerSetup = new Map()
+// sourceIdx currently being scrubbed (drag on waveform while playing)
+const scrubbingSet = new Set()
 
 let mainAudioDevice = null
 let monitorAudioDevice = null
@@ -52,8 +58,24 @@ const _midiAccessPromise = navigator.requestMIDIAccess({ sysex: true })
     .catch(e => { console.error('MIDI-Zugriff fehlgeschlagen:', e); return null })
 
 let shiftHeld = false
-document.addEventListener('keydown', (e) => { if (e.key === 'Shift') { shiftHeld = true; document.body.classList.add('shift-held') } }, { capture: true })
-document.addEventListener('keyup',   (e) => { if (e.key === 'Shift') { shiftHeld = false; document.body.classList.remove('shift-held') } }, { capture: true })
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Shift') {
+        shiftHeld = true
+        document.body.classList.add('shift-held')
+        document.querySelectorAll('.trigger-action-btn-auto').forEach(btn => {
+            updateAutoBtnAppearance(btn, parseInt(btn._triggerIndex))
+        })
+    }
+}, { capture: true })
+document.addEventListener('keyup', (e) => {
+    if (e.key === 'Shift') {
+        shiftHeld = false
+        document.body.classList.remove('shift-held')
+        document.querySelectorAll('.trigger-action-btn-auto').forEach(btn => {
+            updateAutoBtnAppearance(btn, parseInt(btn._triggerIndex))
+        })
+    }
+}, { capture: true })
 window.addEventListener('blur', () => { shiftHeld = false; document.body.classList.remove('shift-held') })
 
 
@@ -254,6 +276,13 @@ function groupSiblingTriggers() {
 function rerender(newText) {
     const scrollY = window.scrollY
 
+    // Teardown auto-trigger listeners before destroying WaveSurfer instances
+    for (const [, setup] of autoTriggerSetup) {
+        setup.unPlay?.(); setup.unTime?.(); setup.unPause?.(); setup.unFin?.()
+    }
+    autoTriggerSetup.clear()
+    autoTriggerBtns.clear()
+
     for (const { ws, wsMonitor } of triggerAudio.values()) {
         try { ws.destroy() } catch (e) {}
         if (wsMonitor) { try { wsMonitor.destroy() } catch (e) {} }
@@ -273,6 +302,7 @@ function rerender(newText) {
     groupSiblingTriggers()
     annotateBlocks()
     buildInsertZones()
+    setupAutoTriggers()
 
     requestAnimationFrame(() => window.scrollTo({ top: scrollY, behavior: 'instant' }))
 }
@@ -306,18 +336,45 @@ function findTriggerByNote(tn) {
     return null
 }
 
+let pickModeEligibilityFn = null
+
 function _pickEscHandler(e) { if (e.key === 'Escape') exitPickMode() }
 
-function enterPickMode(cb) {
+function enterPickMode(cb, eligibilityFn = null) {
     pickModeCallback = cb
-    document.body.classList.add('trigger-pick-mode')
+    pickModeEligibilityFn = eligibilityFn
+    if (eligibilityFn) {
+        document.body.classList.add('trigger-pick-mode-filtered')
+        for (let i = 1; i < triggers.length; i++) {
+            if (triggers[i]) triggers[i].classList.toggle('trigger-pick-eligible', eligibilityFn(i))
+        }
+    } else {
+        document.body.classList.add('trigger-pick-mode')
+    }
     document.addEventListener('keydown', _pickEscHandler)
 }
 
 function exitPickMode() {
     pickModeCallback = null
-    document.body.classList.remove('trigger-pick-mode')
+    pickModeEligibilityFn = null
+    document.body.classList.remove('trigger-pick-mode', 'trigger-pick-mode-filtered')
+    document.querySelectorAll('.trigger-pick-eligible').forEach(el => el.classList.remove('trigger-pick-eligible'))
     document.removeEventListener('keydown', _pickEscHandler)
+}
+
+function updateAutoBtnAppearance(btn, idx) {
+    const aty = triggerYamls[idx]?.auto_trigger
+    if (shiftHeld && aty) {
+        btn.textContent = '✕ Auto-Cue'
+        btn.classList.remove('trigger-action-btn-active')
+        btn.classList.add('trigger-action-btn-danger')
+        btn.title = 'Auto-Cue löschen (Shift+Klick)'
+    } else {
+        btn.textContent = '⏱ Auto-Cue'
+        btn.classList.remove('trigger-action-btn-danger')
+        btn.classList.toggle('trigger-action-btn-active', !!aty)
+        btn.title = aty ? 'Auto-Cue bearbeiten' : 'Auto-Cue setzen'
+    }
 }
 
 function markControlledTriggers() {
@@ -336,6 +393,157 @@ function markControlledTriggers() {
             indicator.title = `Wird von ${tn ? tn.ch + '.' + tn.note : '?'} gesteuert`
             triggers[targetIdx].querySelector('.trigger-music')?.appendChild(indicator)
         }
+    }
+}
+
+function setupAutoTriggers() {
+    // Teardown old listeners
+    for (const [, setup] of autoTriggerSetup) {
+        setup.unPlay?.()
+        setup.unTime?.()
+        setup.unPause?.()
+        setup.unFin?.()
+    }
+    autoTriggerSetup.clear()
+
+    // Remove old waveform markers
+    document.querySelectorAll('.ws-auto-marker').forEach(el => el.remove())
+
+    // Clear any stale progress bars
+    for (const [, btn] of autoTriggerBtns) {
+        btn.style.background = ''
+        btn.style.color = ''
+    }
+
+    // Build source → links map (keyed by source trigger index).
+    // Expands each explicit source to include all its siblings so that variant
+    // music tracks auto-trigger the same cue at the same position.
+    const sourceLinks = new Map()
+    for (let targetIdx = 1; targetIdx < triggerYamls.length; targetIdx++) {
+        const aty = triggerYamls[targetIdx]?.auto_trigger
+        if (!aty?.trigger_note) continue
+        const explicitSourceIdx = findTriggerByNote(aty.trigger_note)
+        if (explicitSourceIdx === null) continue
+
+        // Collect all group members of the source (root + consecutive siblings)
+        const sourceRoot = groupRootOf(explicitSourceIdx)
+        const allSourceIdxs = [sourceRoot]
+        for (let i = sourceRoot + 1; i < triggerYamls.length; i++) {
+            if (!triggerYamls[i]?.sibling) break
+            allSourceIdxs.push(i)
+        }
+
+        for (const srcIdx of allSourceIdxs) {
+            if (!sourceLinks.has(srcIdx)) sourceLinks.set(srcIdx, [])
+            const existing = sourceLinks.get(srcIdx)
+            if (!existing.find(l => l.targetIdx === targetIdx)) {
+                existing.push({
+                    targetIdx,
+                    at: aty.at,
+                    tn: triggerYamls[targetIdx]?.trigger_note ?? null,
+                    markerEl: null,
+                })
+            }
+        }
+    }
+
+    for (const [sourceIdx, links] of sourceLinks) {
+        const ta = triggerAudio.get(sourceIdx)
+        if (!ta) continue
+
+        // Add waveform markers to source overlay
+        for (const link of links) {
+            if (!ta.overlay) continue
+            const marker = document.createElement('div')
+            marker.classList.add('ws-auto-marker')
+            if (link.tn) {
+                const label = document.createElement('span')
+                label.classList.add('ws-auto-marker-label')
+                label.textContent = `${link.tn.ch}.${link.tn.note}`
+                marker.appendChild(label)
+            }
+            ta.overlay.appendChild(marker)
+            link.markerEl = marker
+        }
+
+        const positionMarkers = () => {
+            for (const link of links) {
+                if (!link.markerEl) continue
+                link.markerEl.style.left = ta.getX(link.at) + 'px'
+            }
+        }
+        if (ta.autoMarkerState) {
+            ta.autoMarkerState.refresh = positionMarkers
+            positionMarkers()
+        }
+
+        // Firing + progress bar state
+        const firedSet = new Set()
+
+        const onPlay = () => {
+            firedSet.clear()
+            // Use currentTime directly — it's already at the correct position whether
+            // play was triggered by triggerAction, the waveform ▶ button, or after
+            // a manual scrub while paused.
+            const ct = ta.mainAudioEl.currentTime
+            let lastPast = null
+            for (const link of links) {
+                if (link.at <= ct) {
+                    firedSet.add(link.targetIdx)
+                    if (lastPast === null || link.at > lastPast.at) lastPast = link
+                }
+            }
+            // Fire the last past auto-trigger (scrub-then-play, resume mid-track, etc.)
+            if (lastPast !== null) {
+                currentCue = lastPast.targetIdx
+                markTriggers(lastPast.targetIdx)
+                scrollToTrigger(lastPast.targetIdx)
+                triggerAction(lastPast.targetIdx)
+            }
+        }
+
+        const onTime = (ct) => {
+            // Don't fire during seeks or waveform scrubbing — only during actual playback
+            if (ta.mainAudioEl.paused || scrubbingSet.has(sourceIdx)) return
+            for (const link of links) {
+                if (!firedSet.has(link.targetIdx) && ct >= link.at) {
+                    firedSet.add(link.targetIdx)
+                    const btn = autoTriggerBtns.get(link.targetIdx)
+                    if (btn) { btn.style.background = ''; btn.style.color = '' }
+                    currentCue = link.targetIdx
+                    markTriggers(link.targetIdx)
+                    scrollToTrigger(link.targetIdx)
+                    triggerAction(link.targetIdx)
+                    continue
+                }
+                // Progress bar fill
+                const btn = autoTriggerBtns.get(link.targetIdx)
+                if (btn && !firedSet.has(link.targetIdx) && link.at > 0) {
+                    const pct = Math.min(100, Math.max(0, ct / link.at * 100))
+                    btn.style.background = `linear-gradient(to right, rgba(152,195,121,0.35) ${pct}%, transparent ${pct}%)`
+                }
+            }
+        }
+
+        const onPause = () => {
+            for (const link of links) {
+                const btn = autoTriggerBtns.get(link.targetIdx)
+                if (btn) { btn.style.background = ''; btn.style.color = '' }
+            }
+        }
+
+        const unPlay  = ta.ws.on('play',       onPlay)
+        const unTime  = ta.ws.on('timeupdate', onTime)
+        const unPause = ta.ws.on('pause',      onPause)
+        const unFin   = ta.ws.on('finish',     onPause)
+
+        autoTriggerSetup.set(sourceIdx, {
+            links, unPlay, unTime, unPause, unFin,
+            markFired:      (targetIdx) => firedSet.add(targetIdx),
+            getUnfiredPast: (ct) => links
+                .filter(l => !firedSet.has(l.targetIdx) && l.at <= ct)
+                .sort((a, b) => b.at - a.at),
+        })
     }
 }
 
@@ -443,6 +651,36 @@ function updateMusicPropsInScript(triggerIndex, mp) {
         }
         Object.assign(triggerYamls[triggerIndex].music, mp)
     }
+}
+
+function updateAutoTriggerInScript(targetIndex, autoYaml) {
+    let blockIdx = 0
+    const updated = scriptText.replace(/```yaml\n([\s\S]*?)```/g, (match, content) => {
+        blockIdx++
+        if (blockIdx !== targetIndex + 1) return match
+        // Remove existing auto_trigger block (key + all indented sub-lines)
+        let c = content.replace(/^auto_trigger:(?:\n    [^\n]*)*/m, '').replace(/\n{3,}/g, '\n\n')
+        if (autoYaml !== null) {
+            const { trigger_note: tn, at } = autoYaml
+            const lines = ['auto_trigger:']
+            if (tn) lines.push(`    trigger_note: {ch: ${tn.ch}, note: ${tn.note}}`)
+            lines.push(`    at: ${parseFloat(at.toFixed(3))}`)
+            c = c.trimEnd() + '\n' + lines.join('\n') + '\n'
+        }
+        return `\`\`\`yaml\n${c}\`\`\``
+    })
+    scriptText = updated
+    window.electronAPI.writeScriptMd(updated)
+    if (triggerYamls[targetIndex]) {
+        if (autoYaml !== null) {
+            triggerYamls[targetIndex].auto_trigger = autoYaml
+        } else {
+            delete triggerYamls[targetIndex].auto_trigger
+        }
+    }
+    const btn = autoTriggerBtns.get(targetIndex)
+    if (btn) updateAutoBtnAppearance(btn, targetIndex)
+    setupAutoTriggers()
 }
 
 function blockIdxForTrigger(triggerIndex) {
@@ -650,6 +888,12 @@ function buildTrigger(codeblockYaml, index) {
         ws.setVolume(mp.volume)
 
         const totalWaveWidth = () => ws.getWrapper().clientWidth || ws.getDuration() * state.zoom
+        const getX = (t) => {
+            const dur = ws.getDuration()
+            if (!dur) return 0
+            return (t / dur) * totalWaveWidth() - ws.getScroll()
+        }
+        const autoMarkerState = { refresh: null }
 
         // ── Marker overlay ──────────────────────────────────────────────
         const overlay    = document.createElement("div")
@@ -728,10 +972,10 @@ function buildTrigger(codeblockYaml, index) {
         shiftDrag(startTopGrip, (t) => { mp.fadein  = Math.max(0, Math.min(t - mp.start, (mp.end ?? ws.getDuration()) - mp.start)) })
         shiftDrag(endTopGrip,   (t) => { const e = mp.end ?? ws.getDuration(); mp.fadeout = Math.max(0, Math.min(e - t, e - mp.start)) })
 
-        ws.on("ready",  () => { waveformContainer.appendChild(overlay); updateMarkers() })
-        ws.on("scroll", updateMarkers)
-        ws.on("zoom",   updateMarkers)
-        ws.on("redraw", updateMarkers)
+        ws.on("ready",  () => { waveformContainer.appendChild(overlay); updateMarkers(); autoMarkerState.refresh?.() })
+        ws.on("scroll", () => { updateMarkers(); autoMarkerState.refresh?.() })
+        ws.on("zoom",   () => { updateMarkers(); autoMarkerState.refresh?.() })
+        ws.on("redraw", () => { updateMarkers(); autoMarkerState.refresh?.() })
 
         // ── Playback: fade + stop-at-end + loop ─────────────────────────
         ws.on("timeupdate", (ct) => {
@@ -788,7 +1032,10 @@ function buildTrigger(codeblockYaml, index) {
             let dragging = false
             const startX = e.clientX
             const onMove = (me) => {
-                if (!dragging && Math.abs(me.clientX - startX) > 3) dragging = true
+                if (!dragging && Math.abs(me.clientX - startX) > 3) {
+                    dragging = true
+                    scrubbingSet.add(index)
+                }
                 if (dragging) {
                     const rect = waveformContainer.getBoundingClientRect()
                     const tw = totalWaveWidth()
@@ -799,7 +1046,24 @@ function buildTrigger(codeblockYaml, index) {
             const onUp = () => {
                 document.removeEventListener("mousemove", onMove)
                 document.removeEventListener("mouseup", onUp)
-                if (!dragging) { currentCue = index; markTriggers(index); triggerAction(index) }
+                if (dragging) {
+                    scrubbingSet.delete(index)
+                    // If audio was playing during scrub, fire the last past auto-trigger (no scroll)
+                    if (!mainAudioEl.paused) {
+                        const atSetup = autoTriggerSetup.get(index)
+                        if (atSetup) {
+                            const past = atSetup.getUnfiredPast(mainAudioEl.currentTime)
+                            if (past.length > 0) {
+                                atSetup.markFired(past[0].targetIdx)
+                                currentCue = past[0].targetIdx
+                                markTriggers(past[0].targetIdx)
+                                triggerAction(past[0].targetIdx)
+                            }
+                        }
+                    }
+                } else {
+                    currentCue = index; markTriggers(index); triggerAction(index)
+                }
             }
             document.addEventListener("mousemove", onMove)
             document.addEventListener("mouseup", onUp)
@@ -907,7 +1171,7 @@ function buildTrigger(codeblockYaml, index) {
             _wsStop()
         }
 
-        triggerAudio.set(index, { ws, wsMonitor, mainAudioEl, monAudioEl, musicFile })
+        triggerAudio.set(index, { ws, wsMonitor, mainAudioEl, monAudioEl, musicFile, overlay, getX, autoMarkerState })
         fileToTriggers.set(musicFile, [...(fileToTriggers.get(musicFile) || []), index])
     }
 
@@ -916,6 +1180,11 @@ function buildTrigger(codeblockYaml, index) {
     triggerDiv.addEventListener("mousedown", (e) => {
         if (pickModeCallback) {
             e.stopPropagation()
+            // In filtered pick mode: ineligible click = accidental, just exit
+            if (pickModeEligibilityFn && !pickModeEligibilityFn(index)) {
+                exitPickMode()
+                return
+            }
             const cb = pickModeCallback
             exitPickMode()
             cb(index)
@@ -944,6 +1213,55 @@ function buildTrigger(codeblockYaml, index) {
         }
     })
     triggerDiv.querySelector('.trigger-actions').appendChild(adjustBtn)
+
+    // ── Auto-Cue button ──────────────────────────────────────────────────
+    const autoBtn = document.createElement('button')
+    autoBtn.classList.add('trigger-action-btn', 'trigger-action-btn-auto')
+    autoBtn._triggerIndex = index
+    autoBtn._hovering = false
+    if (codeblockYaml.auto_trigger) autoBtn.classList.add('trigger-action-btn-active')
+    autoBtn.textContent = '⏱ Auto-Cue'
+    autoBtn.title = codeblockYaml.auto_trigger ? 'Auto-Cue bearbeiten' : 'Auto-Cue setzen'
+    autoTriggerBtns.set(index, autoBtn)
+
+    autoBtn.addEventListener('mouseenter', () => { autoBtn._hovering = true;  updateAutoBtnAppearance(autoBtn, index) })
+    autoBtn.addEventListener('mouseleave', () => { autoBtn._hovering = false; updateAutoBtnAppearance(autoBtn, index) })
+    autoBtn.addEventListener('mousedown', e => e.stopPropagation())
+    autoBtn.addEventListener('click', e => {
+        e.stopPropagation()
+        if (shiftHeld) {
+            if (triggerYamls[index]?.auto_trigger) updateAutoTriggerInScript(index, null)
+            return
+        }
+        // Eligibility: has audio + paused + not at start or end
+        const isEligible = (idx) => {
+            if (idx === index) return false
+            const ta = triggerAudio.get(idx)
+            if (!ta) return false
+            if (!ta.mainAudioEl.paused) return false
+            if (!triggerYamls[idx]?.trigger_note) return false
+            const el = ta.mainAudioEl
+            const srcYaml = triggerYamls[idx]
+            const srcStart = (typeof srcYaml?.music === 'object' ? srcYaml.music.start : null) ?? 0
+            const srcEnd   = (typeof srcYaml?.music === 'object' ? srcYaml.music.end   : null) ?? ta.ws.getDuration()
+            if (Math.abs(el.currentTime - srcStart) < 0.3) return false
+            if (el.currentTime >= srcEnd - 0.3) return false
+            return true
+        }
+        // Pick source trigger (only eligible ones highlight), then record its playhead position
+        enterPickMode(sourceIdx => {
+            const ta = triggerAudio.get(sourceIdx)
+            const el = ta.mainAudioEl
+            const srcYaml = triggerYamls[sourceIdx]
+            const srcStart = (typeof srcYaml?.music === 'object' ? srcYaml.music.start : null) ?? 0
+            const srcEnd   = (typeof srcYaml?.music === 'object' ? srcYaml.music.end   : null) ?? ta.ws.getDuration()
+            // Abort if at start or end (covered by eligibilityFn for playing; this catches edge positions)
+            if (Math.abs(el.currentTime - srcStart) < 0.3) return
+            if (el.currentTime >= srcEnd - 0.3) return
+            updateAutoTriggerInScript(index, { trigger_note: srcYaml.trigger_note, at: el.currentTime })
+        }, isEligible)
+    })
+    triggerDiv.querySelector('.trigger-actions').appendChild(autoBtn)
 
     // ── Variante button ──────────────────────────────────────────────────
     const copyBtn = document.createElement("button")
@@ -1308,6 +1626,8 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         // preserve sibling flag when editing; add it when copying
         if (isEdit && existingYaml?.sibling) newYaml.sibling = true
         if (isCopy) newYaml.sibling = true
+        // preserve auto_trigger when editing or copying (variants share the same auto-cue point)
+        if (existingYaml?.auto_trigger) newYaml.auto_trigger = existingYaml.auto_trigger
 
         close()
         if (isEdit) {
@@ -1722,6 +2042,7 @@ async function initApp() {
     annotateBlocks()
     buildInsertZones()
     initButtons()
+    setupAutoTriggers()
 
     mtc = new MTCTransmitter()
     mtc.setDisplay(document.querySelector('.tc-display'))

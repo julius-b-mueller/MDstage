@@ -170,7 +170,23 @@ trigger_note:
 
 *Erzähler tritt von links auf, bleibt links stehen*
 
+```yaml
+mic: Dorothy
+trigger_note: {ch: 2, note: 3}
+auto_trigger:
+    trigger_note: {ch: 2, note: 1}
+    at: 44.84
+```
+
 *Tante Em hängt Wäsche ab*
+
+```yaml
+mic: Blechmann
+trigger_note: {ch: 2, note: 4}
+auto_trigger:
+    trigger_note: {ch: 2, note: 1}
+    at: 53.32
+```
 
 *Onkel Henry sitzt im Campingstuhl und schärft seine Axt*
 
@@ -206,6 +222,9 @@ Entschuldigung, bin ich zu früh? Mir wurde gesagt, die Vorstellung begänne um 
 mic: Vogelscheuche
 note: Test
 trigger_note: {ch: 1, note: 124}
+auto_trigger:
+    trigger_note: {ch: 1, note: 7}
+    at: 1.865
 ```
 
 rzähler stellt sich zum Holzhaus*
