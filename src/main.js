@@ -820,6 +820,15 @@ function buildTrigger(codeblockYaml, index) {
             wsMonitor.load('audio/' + monFile)
             wsMonitor.setVolume(mp.volume)
 
+            // For same-file monitors, pre-seek to the start position so the
+            // sync loop can fire play() immediately without an extra seek round-trip.
+            if (monitorFile === null) {
+                wsMonitor.once('ready', () => {
+                    const t = Math.max(0, (mp.start ?? 0) - monitorOffsetMs / 1000)
+                    monAudioEl.currentTime = t
+                })
+            }
+
             // Timecode-follower sync loop (targetT = mainT - offsetMs/1000)
             const syncMonitor = () => {
                 if (!ws.isPlaying() || !monitorShouldPlay()) { monSyncRaf = null; return }
@@ -868,7 +877,12 @@ function buildTrigger(codeblockYaml, index) {
         ws.stop = () => {
             if (monSyncRaf) { cancelAnimationFrame(monSyncRaf); monSyncRaf = null }
             if (monAudioEl && !monAudioEl.paused) monAudioEl.pause()
-            if (monAudioEl) monAudioEl.currentTime = 0
+            if (monAudioEl) {
+                // Reset to pre-seek position so next play() needs no seek delay
+                monAudioEl.currentTime = monitorFile === null
+                    ? Math.max(0, (mp.start ?? 0) - monitorOffsetMs / 1000)
+                    : 0
+            }
             _wsStop()
         }
 
@@ -1459,16 +1473,17 @@ async function playMusic(cue) {
 
         ta.ws.setVolume(fadein > 0 ? 0 : volume)
 
+        const hasExplicitMonitor = typeof music === 'object' && music.monitor != null
         const useMonitor = monitorShouldPlay() && ta.wsMonitor && ta.wsMonitor.getDuration() > 0
-        if (useMonitor) {
-            // Seek both elements to their target positions in parallel, then fire
-            // play() on both in the same microtask — zero relative start-time offset.
+        if (useMonitor && hasExplicitMonitor) {
+            // Explicit monitor file (e.g. a song with a separate mix):
+            // seek both elements in parallel, then fire play() simultaneously.
             const monDur = ta.wsMonitor.getDuration()
             const monTargetT = Math.min(Math.max(start - monitorOffsetMs / 1000, 0), monDur)
             const seekReady = (el, t) => new Promise(resolve => {
                 el.currentTime = t
                 if (!el.seeking) { resolve(); return }
-                const guard = setTimeout(resolve, 2000)  // Never hang on a stuck seek
+                const guard = setTimeout(resolve, 2000)
                 el.addEventListener('seeked', () => { clearTimeout(guard); resolve() }, { once: true })
             })
             await Promise.all([
@@ -1479,6 +1494,9 @@ async function playMusic(cue) {
             if (monitorOffsetMs <= 0) ta.monAudioEl.play().catch(() => {})
             // positive offset: syncMonitor starts monitor once delay has elapsed
         } else {
+            // Same-file monitor or no monitor: play immediately via WaveSurfer.
+            // monAudioEl is pre-seeked at load time, so the sync loop fires
+            // play() in the same event-handler tick as the main play event.
             ta.ws.play(start)
         }
     }
