@@ -5,7 +5,7 @@
     <link rel="stylesheet" href="styles.css">
     <meta charset="UTF-8">
     <style>
-        body { padding: 1.5rem; }
+        body { padding: 1.5rem; padding-bottom: 5rem; }
         .field { margin-bottom: 1.2rem; }
         label { display: block; margin-bottom: 0.4rem; font-size: 0.85rem; color: #5c6370; text-transform: uppercase; letter-spacing: 0.05em; }
         select, input[type="number"] {
@@ -33,7 +33,17 @@
         .section-title:first-child { margin-top: 0; }
         .offset-row { display: flex; gap: 0.5rem; align-items: flex-end; }
         .offset-row input { flex: 1; }
-        .actions { margin-top: 1.5rem; display: flex; justify-content: flex-end; gap: 0.5rem; }
+        .actions {
+            position: fixed;
+            bottom: 0; left: 0; right: 0;
+            padding: 0.75rem 1.5rem;
+            background: #282c34;
+            border-top: 1px solid #383c44;
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.5rem;
+            z-index: 10;
+        }
         .btn {
             background: #4b5263;
             color: #abb2bf;
@@ -166,7 +176,6 @@
             if (settings.monitorOffsetMs != null) monitorOffsetEl.value = settings.monitorOffsetMs
 
             try {
-                await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => {})
                 const devices = await navigator.mediaDevices.enumerateDevices()
                 const outputs = devices.filter(d => d.kind === 'audiooutput')
                 for (const dev of outputs) {

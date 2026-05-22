@@ -1,19 +1,45 @@
 const { app, BrowserWindow, Menu, ipcMain } = require('electron')
 const path = require('path')
 const fs = require('fs')
+const yaml = require('js-yaml')
 
-const settingsPath = path.join(app.getPath('userData'), 'settings.json')
+const scriptMdPath = path.join(__dirname, '../dist/script.md')
+
+const defaultSettings = {
+    mainAudioDevice: null, monitorAudioDevice: null, monitorOffsetMs: 0,
+    midiX32Device: null, midiTriggerDevice: null, midiTCDevice: null,
+}
+
+function readConfigBlock() {
+    const text = fs.readFileSync(scriptMdPath, 'utf8')
+    const m = text.match(/```yaml\n([\s\S]*?)\n```/)
+    if (!m) return { text, parsed: null, block: '' }
+    return { text, parsed: yaml.load(m[1]), block: m[0] }
+}
 
 function loadSettings() {
     try {
-        return JSON.parse(fs.readFileSync(settingsPath, 'utf8'))
-    } catch {
-        return { mainAudioDevice: null, monitorAudioDevice: null, monitorOffsetMs: 0, midiX32Device: null, midiTriggerDevice: null, midiTCDevice: null }
+        const { parsed } = readConfigBlock()
+        if (parsed?.config?.settings != null)
+            return { ...defaultSettings, ...parsed.config.settings }
+    } catch (e) {
+        console.warn('settings read error:', e.message)
     }
+    // Legacy fallback: settings.json
+    try {
+        const legacyPath = path.join(app.getPath('userData'), 'settings.json')
+        return { ...defaultSettings, ...JSON.parse(fs.readFileSync(legacyPath, 'utf8')) }
+    } catch {}
+    return { ...defaultSettings }
 }
 
 function persistSettings(settings) {
-    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
+    const { text, parsed, block } = readConfigBlock()
+    if (!parsed?.config) return
+    parsed.config.settings = settings
+    const newYaml = yaml.dump(parsed, { indent: 4, lineWidth: -1, noRefs: true })
+    const newBlock = '```yaml\n' + newYaml.trimEnd() + '\n```'
+    fs.writeFileSync(scriptMdPath, text.replace(block, newBlock), 'utf8')
 }
 
 let mainWindow = null
@@ -123,9 +149,10 @@ app.whenReady().then(() => {
         })
     })
 
+    ipcMain.handle('get-script-md', () => fs.readFileSync(scriptMdPath, 'utf8'))
+
     ipcMain.handle('write-script-md', (_, content) => {
-        const scriptPath = path.join(__dirname, '../dist/script.md')
-        fs.writeFileSync(scriptPath, content, 'utf8')
+        fs.writeFileSync(scriptMdPath, content, 'utf8')
     })
 
     ipcMain.handle('list-audio-files', () => {

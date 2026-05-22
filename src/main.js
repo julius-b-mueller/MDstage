@@ -1683,13 +1683,23 @@ function updateClock() {
 }
 
 async function initApp() {
-    const settings = await window.electronAPI.getSettings()
+    const savedSettings = await window.electronAPI.getSettings()
 
-    // Apply device settings before building triggers so monitorShouldPlay()
-    // returns the correct value inside buildTrigger().
-    mainAudioDevice = settings.mainAudioDevice ?? null
-    monitorAudioDevice = settings.monitorAudioDevice ?? null
-    monitorOffsetMs = settings.monitorOffsetMs ?? 0
+    // Enumerate available audio outputs and apply fallback for unavailable devices.
+    // Main audio falls back to system default (null); monitor is disabled (null).
+    // Runs without requesting microphone permission — audiooutput enumeration works
+    // without it in Electron.
+    const availableOutputIds = new Set()
+    try {
+        for (const d of await navigator.mediaDevices.enumerateDevices())
+            if (d.kind === 'audiooutput') availableOutputIds.add(d.deviceId)
+    } catch {}
+
+    const deviceAvailable = id => !id || availableOutputIds.size === 0 || availableOutputIds.has(id)
+
+    mainAudioDevice   = deviceAvailable(savedSettings.mainAudioDevice)   ? savedSettings.mainAudioDevice   : null
+    monitorAudioDevice = deviceAvailable(savedSettings.monitorAudioDevice) ? savedSettings.monitorAudioDevice : null
+    monitorOffsetMs   = savedSettings.monitorOffsetMs ?? 0
 
     const response = await fetch('script.md')
     let text = await response.text()
@@ -1715,14 +1725,17 @@ async function initApp() {
 
     applyAudioDevices()
 
-    await initMidi(settings)
+    await initMidi(savedSettings)
     mtc.setOutput(midiTC)
 
     window.electronAPI.onSettingsChanged((newSettings) => {
+        // Sync scriptText so trigger-editing operations don't overwrite the newly
+        // saved settings section in the config YAML block.
+        window.electronAPI.getScriptMd().then(text => { scriptText = text })
         refreshMidiDevices(newSettings)
-        mainAudioDevice = newSettings.mainAudioDevice ?? null
+        mainAudioDevice   = newSettings.mainAudioDevice   ?? null
         monitorAudioDevice = newSettings.monitorAudioDevice ?? null
-        monitorOffsetMs = newSettings.monitorOffsetMs ?? 0
+        monitorOffsetMs   = newSettings.monitorOffsetMs   ?? 0
         applyAudioDevices()
     })
 }
