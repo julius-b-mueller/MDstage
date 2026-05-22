@@ -210,26 +210,22 @@ function markTriggers(cue) {
 }
 
 function applyAudioDevices() {
-    for (const { mainAudioEl, monAudioEl, wsMonitor, splitCtx, monStreamEl } of triggerAudio.values()) {
-        if (splitCtx) {
-            // Path B: stream split — reroute AudioContext and monitor stream element
-            if (splitCtx.setSinkId) splitCtx.setSinkId(mainAudioDevice || '').catch(() => {})
-            if (monStreamEl) {
-                if (monitorShouldPlay()) {
-                    monStreamEl.setSinkId(monitorAudioDevice).catch(() => {})
-                } else {
-                    if (!monStreamEl.paused) monStreamEl.pause()
-                }
+    for (const { mainAudioEl, monAudioEl, wsMonitor, monStreamEl } of triggerAudio.values()) {
+        if (mainAudioEl?.setSinkId)
+            mainAudioEl.setSinkId(mainAudioDevice || '').catch(() => {})
+        if (monStreamEl) {
+            // Path B: captureStream — reroute monitor stream element
+            if (monitorShouldPlay()) {
+                monStreamEl.setSinkId(monitorAudioDevice).catch(() => {})
+            } else {
+                if (!monStreamEl.paused) monStreamEl.pause()
             }
-        } else {
-            if (mainAudioEl?.setSinkId)
-                mainAudioEl.setSinkId(mainAudioDevice || '').catch(() => {})
-            if (monAudioEl) {
-                if (monitorShouldPlay()) {
-                    monAudioEl.setSinkId(monitorAudioDevice).catch(() => {})
-                } else {
-                    if (wsMonitor?.isPlaying()) wsMonitor.stop()
-                }
+        } else if (monAudioEl) {
+            // Path A: explicit monitor file
+            if (monitorShouldPlay()) {
+                monAudioEl.setSinkId(monitorAudioDevice).catch(() => {})
+            } else {
+                if (wsMonitor?.isPlaying()) wsMonitor.stop()
             }
         }
     }
@@ -258,10 +254,9 @@ function groupSiblingTriggers() {
 function rerender(newText) {
     const scrollY = window.scrollY
 
-    for (const { ws, wsMonitor, splitCtx } of triggerAudio.values()) {
+    for (const { ws, wsMonitor } of triggerAudio.values()) {
         try { ws.destroy() } catch (e) {}
         if (wsMonitor) { try { wsMonitor.destroy() } catch (e) {} }
-        if (splitCtx) { try { splitCtx.close() } catch (e) {} }
     }
 
     triggers = []
@@ -872,41 +867,33 @@ function buildTrigger(codeblockYaml, index) {
             })
 
         } else if (monitorShouldPlay()) {
-            // ── Path B: no monitor file — Web Audio stream split ──────────
-            // createMediaElementSource taps the signal BEFORE it reaches any
-            // output, then routes identical samples to both devices via a
-            // MediaStreamDestinationNode. Zero sync overhead — same samples,
-            // same clock, same instant.
-            splitCtx = new AudioContext()
-            if (mainAudioDevice) splitCtx.setSinkId(mainAudioDevice).catch(() => {})
-            const source = splitCtx.createMediaElementSource(mainAudioEl)
-            splitGain = splitCtx.createGain()
-            splitGain.gain.value = mp.volume
-            source.connect(splitGain)
-            splitGain.connect(splitCtx.destination)
-            const streamDest = splitCtx.createMediaStreamDestination()
-            splitGain.connect(streamDest)
+            // ── Path B: no monitor file — captureStream() tap ─────────────
+            // captureStream() taps the rendered audio from mainAudioEl and
+            // feeds the identical samples to a second element on the monitor
+            // device. Same clock, zero sync overhead, no AudioContext needed.
             monStreamEl = new Audio()
-            monStreamEl.srcObject = streamDest.stream
+            monStreamEl.srcObject = mainAudioEl.captureStream()
             monStreamEl.setSinkId(monitorAudioDevice).catch(() => {})
             ws.on('play', () => {
-                // Resume AudioContext if suspended (autoplay policy)
-                if (splitCtx.state !== 'running') splitCtx.resume().catch(() => {})
                 if (monitorShouldPlay() && monStreamEl.paused) monStreamEl.play().catch(() => {})
+            })
+            ws.on('pause', () => {
+                if (!monStreamEl.paused) monStreamEl.pause()
             })
         }
 
         // ── Common patches ────────────────────────────────────────────────
         const _wsSetVol = ws.setVolume.bind(ws)
         ws.setVolume = (v) => {
-            if (splitGain) { splitGain.gain.value = v }        // Path B
-            else { _wsSetVol(v); if (wsMonitor) wsMonitor.setVolume(v) }  // Path A / no monitor
+            _wsSetVol(v)
+            if (wsMonitor) wsMonitor.setVolume(v)
         }
         const _wsStop = ws.stop.bind(ws)
         ws.stop = () => {
             if (monSyncRaf) { cancelAnimationFrame(monSyncRaf); monSyncRaf = null }
             if (monAudioEl && !monAudioEl.paused) monAudioEl.pause()
             if (monAudioEl) monAudioEl.currentTime = 0
+            if (monStreamEl && !monStreamEl.paused) monStreamEl.pause()
             _wsStop()
         }
 
