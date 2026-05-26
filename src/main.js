@@ -8,6 +8,7 @@ let config = {}
 let usedChs = []
 let triggers = []
 let triggerYamls = []
+let parseErrors = []  // {blockNum, line, message}
 
 // triggerIndex -> { ws, wsMonitor, mainAudioEl, monAudioEl, musicFile, overlay, getX, autoMarkerState }
 const triggerAudio = new Map()
@@ -295,9 +296,11 @@ function rerender(newText) {
     usedChs = []
     config = {}
 
+    validateYamlBlocks(newText)
     document.getElementById('script-content').innerHTML = converter.makeHtml(newText)
     convertCodeblocks()
     colorText()
+    showParseErrors()
     markControlledTriggers()
     groupSiblingTriggers()
     annotateBlocks()
@@ -305,6 +308,40 @@ function rerender(newText) {
     setupAutoTriggers()
 
     requestAnimationFrame(() => window.scrollTo({ top: scrollY, behavior: 'instant' }))
+}
+
+function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+function validateYamlBlocks(text) {
+    parseErrors = []
+    let blockNum = 0
+    for (const m of text.matchAll(/```yaml\n([\s\S]*?)\n```/g)) {
+        blockNum++
+        const line = text.slice(0, m.index).split('\n').length
+        try { yaml.load(m[1]) } catch (e) {
+            parseErrors.push({ blockNum, line, message: e.message })
+        }
+    }
+}
+
+function showParseErrors() {
+    const existing = document.getElementById('parse-error-banner')
+    if (existing) existing.remove()
+    if (!parseErrors.length) return
+    const banner = document.createElement('div')
+    banner.id = 'parse-error-banner'
+    banner.className = 'parse-error-banner'
+    const items = parseErrors.map(({ blockNum, line, message }) => {
+        const loc = blockNum != null
+            ? `Block ${blockNum}${line != null ? `, Zeile ${line}` : ''}`
+            : ''
+        return `<li>${loc ? loc + ': ' : ''}${escapeHtml(message)}</li>`
+    }).join('')
+    banner.innerHTML = `<button class="parse-error-close" onclick="this.parentElement.remove()">×</button>
+<strong>${parseErrors.length} YAML-Fehler</strong><ul>${items}</ul>`
+    document.body.prepend(banner)
 }
 
 function tokenizeScript(text) {
@@ -1932,28 +1969,47 @@ function assignTriggerNotes(text) {
 
 function convertCodeblocks() {
     const codeblocks = document.querySelectorAll("pre")
-    config = yaml.load(codeblocks[0].firstChild.textContent).config
+    try {
+        config = yaml.load(codeblocks[0].firstChild.textContent).config ?? {}
+    } catch (e) {
+        config = { roles: {}, settings: {} }
+        parseErrors.unshift({ blockNum: 1, line: 1, message: 'Config-Block: ' + e.message })
+    }
     codeblocks[0].remove()
     for (let index = 1; index < codeblocks.length; index++) {
         const codeblock = codeblocks[index]
-        const codeblockYaml = yaml.load(codeblock.firstChild.textContent)
+        let codeblockYaml
+        try {
+            codeblockYaml = yaml.load(codeblock.firstChild.textContent)
+        } catch (e) {
+            const err = parseErrors.find(pe => pe.blockNum === index + 1)
+            const errEl = document.createElement('div')
+            errEl.className = 'trigger-parse-error'
+            const loc = err ? `Block ${err.blockNum}, Zeile ${err.line}` : `Block ${index + 1}`
+            errEl.textContent = `YAML-Fehler (${loc}): ${e.message}`
+            codeblock.replaceWith(errEl)
+            continue
+        }
         codeblock.replaceWith(buildTrigger(codeblockYaml, index))
     }
-    for (let index = 0; index < Object.keys(config.roles).length; index++) {
-        if (!usedChs.includes(config.roles[Object.keys(config.roles)[index]].ch)) {
-            usedChs.push(config.roles[Object.keys(config.roles)[index]].ch)
-        }
+    for (const roleName of Object.keys(config.roles ?? {})) {
+        const ch = config.roles[roleName].ch
+        if (!usedChs.includes(ch)) usedChs.push(ch)
     }
 }
 
 function colorText() {
     const paragraphs = document.querySelectorAll("p")
-    for (let index = 0; index < paragraphs.length; index++) {
-        const paragraph = paragraphs[index]
-        if (paragraph.firstChild.tagName === "STRONG") {
-            const roleName = paragraph.firstChild.textContent
-            paragraph.classList.add("color-" + config.roles[roleName].color)
+    for (const paragraph of paragraphs) {
+        if (paragraph.firstChild?.tagName !== 'STRONG') continue
+        const roleName = paragraph.firstChild.textContent
+        const role = config.roles?.[roleName]
+        if (!role) {
+            if (!parseErrors.some(e => e.message === `Unbekannte Rolle: "${roleName}"`))
+                parseErrors.push({ blockNum: null, line: null, message: `Unbekannte Rolle: "${roleName}"` })
+            continue
         }
+        paragraph.classList.add('color-' + role.color)
     }
 }
 
@@ -2024,8 +2080,7 @@ async function initApp() {
     monitorAudioDevice = resolveDeviceId(savedSettings.monitorAudioDevice)
     monitorOffsetMs    = savedSettings.monitorOffsetMs ?? 0
 
-    const response = await fetch('script.md')
-    let text = await response.text()
+    let text = await window.electronAPI.getScriptMd()
 
     const { text: modifiedText, changed } = assignTriggerNotes(text)
     if (changed) {
@@ -2033,10 +2088,16 @@ async function initApp() {
         text = modifiedText
     }
 
+    // Show current file name in title bar
+    const scriptPath = await window.electronAPI.getScriptPath()
+    document.title = scriptPath.split(/[\\/]/).pop()
+
+    validateYamlBlocks(text)
     scriptText = text
     document.getElementById('script-content').innerHTML = converter.makeHtml(text)
     convertCodeblocks()
     colorText()
+    showParseErrors()
     markControlledTriggers()
     groupSiblingTriggers()
     annotateBlocks()

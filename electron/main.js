@@ -1,10 +1,36 @@
-const { app, BrowserWindow, Menu, ipcMain } = require('electron')
+const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
 const yaml = require('js-yaml')
 
-const scriptMdPath = path.join(__dirname, '../dist/script.md')
+let scriptMdPath = path.join(__dirname, '../dist/script.md')
+
+function getLastFilePath() {
+    try {
+        const data = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'last-file.json'), 'utf8'))
+        if (data.path && fs.existsSync(data.path)) return data.path
+    } catch {}
+    return path.join(__dirname, '../dist/script.md')
+}
+
+function saveLastFilePath(p) {
+    try {
+        fs.writeFileSync(path.join(app.getPath('userData'), 'last-file.json'), JSON.stringify({ path: p }), 'utf8')
+    } catch {}
+}
+
+async function openFile() {
+    const result = await dialog.showOpenDialog(mainWindow, {
+        filters: [{ name: 'Markdown', extensions: ['md'] }],
+        properties: ['openFile'],
+    })
+    if (!result.canceled && result.filePaths.length > 0) {
+        scriptMdPath = result.filePaths[0]
+        saveLastFilePath(scriptMdPath)
+        mainWindow.reload()
+    }
+}
 const hostname = os.hostname().split('.')[0]
 
 const defaultSettings = {
@@ -107,6 +133,12 @@ function buildMenu() {
                 { role: 'about' },
                 { type: 'separator' },
                 {
+                    label: 'Datei öffnen…',
+                    accelerator: 'Cmd+O',
+                    click: openFile,
+                },
+                { type: 'separator' },
+                {
                     label: 'Einstellungen…',
                     accelerator: 'Cmd+,',
                     click: createSettingsWindow,
@@ -118,6 +150,15 @@ function buildMenu() {
                 { role: 'quit' },
             ],
         }] : [{
+            label: 'Datei',
+            submenu: [
+                {
+                    label: 'Öffnen…',
+                    accelerator: 'Ctrl+O',
+                    click: openFile,
+                },
+            ],
+        }, {
             label: 'Einstellungen',
             submenu: [{
                 label: 'MIDI-Geräte…',
@@ -153,6 +194,8 @@ function buildMenu() {
 }
 
 app.whenReady().then(() => {
+    scriptMdPath = getLastFilePath()
+
     ipcMain.handle('get-settings', () => loadSettings())
 
     ipcMain.handle('save-settings', (_, settings) => {
@@ -169,6 +212,8 @@ app.whenReady().then(() => {
     ipcMain.handle('write-script-md', (_, content) => {
         fs.writeFileSync(scriptMdPath, content, 'utf8')
     })
+
+    ipcMain.handle('get-script-path', () => scriptMdPath)
 
     ipcMain.handle('list-audio-files', () => {
         const audioDir = path.join(__dirname, '../dist/audio')
