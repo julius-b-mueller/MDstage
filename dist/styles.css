@@ -922,8 +922,18 @@ body.shift-held #script-content [data-block-idx]:not(.trigger):not(.trigger-grou
     background: transparent;
     border: none;
     padding: 0.4rem 1rem;
-    resize: none;
-    overflow: hidden;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow: visible;
+    min-height: 1.6em;
+    cursor: text;
+}
+.editor-role-name {
+    font-weight: bold;
+}
+.editor-stage-inline, .editor-stage-text {
+    color: #7c8898;
+    font-style: italic;
 }
 .editor-controls {
     display: flex;

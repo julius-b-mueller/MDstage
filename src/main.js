@@ -47,6 +47,7 @@ const ROLE_COLORS = {
     purple: '#c678dd', cyan: '#56b6c2', darkred: '#b03c45', darkgreen: '#68b349',
     darkyellow: '#b5904b', darkblue: '#317fbf', darkpurple: '#9648ad', darkcyan: '#268692',
 }
+const STAGE_COLOR = '#7c8898'
 
 const MIC_SVG = `<svg class="t-icon" viewBox="0 0 12 18" width="10" height="15" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"><rect x="3" y="0.5" width="6" height="9" rx="3"/><line x1="3.5" y1="3.5" x2="8.5" y2="3.5" stroke-width="0.55"/><line x1="3.5" y1="6" x2="8.5" y2="6" stroke-width="0.55"/><path d="M1 8 Q6 13.5 11 8"/><line x1="6" y1="11.5" x2="6" y2="15"/><line x1="3" y1="15" x2="9" y2="15"/></svg>`
 
@@ -228,7 +229,170 @@ function isTriggerEl(el) {
            !!el.querySelector('.trigger, .trigger-group')
 }
 
-// ── Existing block editor (textarea, raw markdown) ────────────────────────────
+// ── Existing block editor helpers ─────────────────────────────────────────────
+
+// Character offset of cursor in a contenteditable element
+function getCaretOffset(root) {
+    const sel = window.getSelection()
+    if (!sel.rangeCount) return 0
+    const pre = sel.getRangeAt(0).cloneRange()
+    pre.selectNodeContents(root)
+    pre.setEnd(sel.getRangeAt(0).endContainer, sel.getRangeAt(0).endOffset)
+    return pre.toString().length
+}
+
+function setCaretOffset(root, offset) {
+    const sel = window.getSelection()
+    let chars = 0
+    function find(node) {
+        if (node.nodeType === Node.TEXT_NODE) {
+            if (chars + node.length >= offset) {
+                const r = document.createRange()
+                r.setStart(node, offset - chars)
+                r.collapse(true)
+                sel.removeAllRanges(); sel.addRange(r)
+                return true
+            }
+            chars += node.length
+        } else if (node.tagName === 'BR') {
+            chars++
+        } else {
+            for (const child of node.childNodes) if (find(child)) return true
+        }
+        return false
+    }
+    if (!find(root)) {
+        const r = document.createRange()
+        r.selectNodeContents(root); r.collapse(false)
+        sel.removeAllRanges(); sel.addRange(r)
+    }
+}
+
+// True when the cursor is visually on the first / last line of the element
+function editorCursorOnFirstLine(el) {
+    const sel = window.getSelection()
+    if (!sel.rangeCount || !sel.isCollapsed) return false
+    const rects = sel.getRangeAt(0).getClientRects()
+    if (!rects.length) return true
+    return rects[0].top < el.getBoundingClientRect().top + 26
+}
+
+function editorCursorOnLastLine(el) {
+    const sel = window.getSelection()
+    if (!sel.rangeCount || !sel.isCollapsed) return false
+    const rects = sel.getRangeAt(0).getClientRects()
+    if (!rects.length) return true
+    return rects[rects.length - 1].bottom > el.getBoundingClientRect().bottom - 26
+}
+
+// Append parsed dialogue text (with inline stage direction coloring) to parent element
+function appendDialogueParsed(parent, text, roleColor) {
+    const re = /\*\(([^)]+)\)\*/g
+    let last = 0, m
+    while ((m = re.exec(text)) !== null) {
+        if (m.index > last) {
+            const s = document.createElement('span')
+            s.className = 'editor-role-text'
+            if (roleColor) s.style.color = roleColor
+            s.textContent = text.slice(last, m.index)
+            parent.appendChild(s)
+        }
+        const s = document.createElement('span')
+        s.className = 'editor-stage-inline'
+        s.textContent = '(' + m[1] + ')'
+        parent.appendChild(s)
+        last = re.lastIndex
+    }
+    if (last < text.length) {
+        const s = document.createElement('span')
+        s.className = 'editor-role-text'
+        if (roleColor) s.style.color = roleColor
+        s.textContent = text.slice(last)
+        parent.appendChild(s)
+    }
+}
+
+// Parse markdown block content into styled HTML inside div
+function parseBlockToHTML(content, div) {
+    div.innerHTML = ''
+    // Stage direction: *...*
+    const stageM = content.match(/^\*((?:[^*]|\*(?!\*))+)\*$/)
+    if (stageM) {
+        div.dataset.editorType = 'stage'
+        const s = document.createElement('span')
+        s.className = 'editor-stage-text'
+        s.textContent = stageM[1].trim()
+        div.appendChild(s)
+        return
+    }
+    // Role block: **Name** with optional \nDialogue
+    const roleM = content.match(/^\*\*([^*]+)\*\*(?:\n([\s\S]*))?$/)
+    if (roleM) {
+        div.dataset.editorType = 'role'
+        const roleName = roleM[1]
+        const dialogue = (roleM[2] || '').trimEnd()
+        const roleColor = ROLE_COLORS[config.roles?.[roleName]?.color] || ''
+        const ns = document.createElement('span')
+        ns.className = 'editor-role-name'
+        ns.textContent = roleName
+        if (roleColor) ns.style.color = roleColor
+        div.appendChild(ns)
+        if (dialogue) {
+            div.appendChild(document.createElement('br'))
+            appendDialogueParsed(div, dialogue, roleColor)
+        }
+        return
+    }
+    div.dataset.editorType = 'text'
+    div.appendChild(document.createTextNode(content))
+}
+
+// Re-color parenthetical text in the dialogue portion after each keystroke
+function updateEditorParens(div) {
+    if (div.dataset.editorType !== 'role') return
+    const nameSpan = div.querySelector('.editor-role-name')
+    if (!nameSpan) return
+    const roleColor = ROLE_COLORS[config.roles?.[nameSpan.textContent]?.color] || ''
+    const brNode = [...div.childNodes].find(n => n.tagName === 'BR')
+    if (!brNode) return
+
+    const caretOffset = getCaretOffset(div)
+    const afterBr = []
+    let seen = false
+    for (const n of div.childNodes) { if (seen) afterBr.push(n); if (n === brNode) seen = true }
+    const dialogue = afterBr.map(n => n.nodeType === Node.TEXT_NODE ? n.textContent : n.textContent).join('')
+    afterBr.forEach(n => n.remove())
+    appendDialogueParsed(div, dialogue, roleColor)
+    setCaretOffset(div, caretOffset)
+}
+
+// Convert styled contenteditable HTML back to markdown
+function serializeEditorMarkdown(div) {
+    function textOf(node) {
+        let t = ''
+        for (const c of node.childNodes) {
+            if (c.nodeType === Node.TEXT_NODE) t += c.textContent
+            else if (c.tagName === 'BR') t += '\n'
+            else t += textOf(c)
+        }
+        return t
+    }
+    if (div.dataset.editorType === 'stage') return '*' + textOf(div).trim() + '*'
+    if (div.dataset.editorType === 'role') {
+        let result = ''
+        for (const node of div.childNodes) {
+            if (node.nodeType === Node.TEXT_NODE) result += node.textContent
+            else if (node.tagName === 'BR') result += '\n'
+            else if (node.classList.contains('editor-role-name')) result += '**' + node.textContent + '**'
+            else if (node.classList.contains('editor-stage-inline')) result += '*' + node.textContent + '*'
+            else result += textOf(node)
+        }
+        return result.trim()
+    }
+    return textOf(div).trim()
+}
+
+// ── Existing block editor ──────────────────────────────────────────────────────
 
 function openEditor(blockEl, clientX, clientY) {
     if (inlineEditor) closeEditor(true)
@@ -243,10 +407,11 @@ function openEditor(blockEl, clientX, clientY) {
     wrapper.className = 'editor-wrapper'
     wrapper.style.cssText = `left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;`
 
-    const ta = document.createElement('textarea')
-    ta.className = 'inline-editor'
-    ta.value = info.block.content
-    wrapper.appendChild(ta)
+    const el = document.createElement('div')
+    el.className = 'inline-editor'
+    el.contentEditable = 'true'
+    parseBlockToHTML(info.block.content, el)
+    wrapper.appendChild(el)
 
     const controls = document.createElement('div')
     controls.className = 'editor-controls'
@@ -260,15 +425,18 @@ function openEditor(blockEl, clientX, clientY) {
     wrapper.appendChild(controls)
 
     document.body.appendChild(wrapper)
-    ta.style.height = ta.scrollHeight + 'px'
-    ta.focus()
-    blockEl.style.visibility = 'hidden'
-    inlineEditor = { ta, blockEl, lineStart: info.lineStart, lineEnd: info.lineEnd, isNew: false }
+    el.focus()
+    // Place cursor at end
+    const r = document.createRange(); r.selectNodeContents(el); r.collapse(false)
+    const s = window.getSelection(); s.removeAllRanges(); s.addRange(r)
 
-    ta.addEventListener('keydown', onEditorKey)
-    ta.addEventListener('input',   onEditorInput)
-    ta.addEventListener('blur',    () => setTimeout(() => {
-        if (inlineEditor?.ta === ta) closeEditor(true)
+    blockEl.style.visibility = 'hidden'
+    inlineEditor = { el, blockEl, lineStart: info.lineStart, lineEnd: info.lineEnd, isNew: false }
+
+    el.addEventListener('keydown', onEditorKey)
+    el.addEventListener('input',   onEditorInput)
+    el.addEventListener('blur',    () => setTimeout(() => {
+        if (inlineEditor?.el === el) closeEditor(true)
     }, 180))
 
     btnUp.addEventListener('mousedown',   (e) => { e.preventDefault(); moveBlock(-1) })
@@ -291,47 +459,47 @@ function onEditorKey(e) {
         return
     }
     if (e.key === 'ArrowUp' && !e.shiftKey) {
-        const ta = inlineEditor?.ta
-        if (!ta || ta.value.slice(0, ta.selectionStart).includes('\n')) return
+        const el = inlineEditor?.el
+        if (!el || !editorCursorOnFirstLine(el)) return
         e.preventDefault()
         let prev = inlineEditor.blockEl?.previousElementSibling
         while (prev && (isTriggerEl(prev) || !prev.dataset?.blockIdx)) prev = prev.previousElementSibling
         const idx = prev ? parseInt(prev.dataset.blockIdx) : -1
         closeEditor(true)
         if (idx >= 0) requestAnimationFrame(() => {
-            const el = document.querySelector(`[data-block-idx="${idx}"]`)
-            if (el && !isTriggerEl(el)) openEditor(el)
+            const found = document.querySelector(`[data-block-idx="${idx}"]`)
+            if (found && !isTriggerEl(found)) openEditor(found)
         })
         return
     }
     if (e.key === 'ArrowDown' && !e.shiftKey) {
-        const ta = inlineEditor?.ta
-        if (!ta || ta.value.slice(ta.selectionEnd).includes('\n')) return
+        const el = inlineEditor?.el
+        if (!el || !editorCursorOnLastLine(el)) return
         e.preventDefault()
         let next = inlineEditor.blockEl?.nextElementSibling
         while (next && (isTriggerEl(next) || !next.dataset?.blockIdx)) next = next.nextElementSibling
         const idx = next ? parseInt(next.dataset.blockIdx) : -1
         closeEditor(true)
         if (idx >= 0) requestAnimationFrame(() => {
-            const el = document.querySelector(`[data-block-idx="${idx}"]`)
-            if (el && !isTriggerEl(el)) openEditor(el)
+            const found = document.querySelector(`[data-block-idx="${idx}"]`)
+            if (found && !isTriggerEl(found)) openEditor(found)
         })
         return
     }
 }
 
 function onEditorInput() {
-    this.style.height = 'auto'
-    this.style.height = this.scrollHeight + 'px'
     clearTimeout(this._st)
     this._st = setTimeout(saveCurrentEdit, 600)
+    updateEditorParens(this)
 }
 
 function saveCurrentEdit() {
     if (!inlineEditor || inlineEditor.isNew) return
-    const { ta, lineStart, lineEnd } = inlineEditor
-    const newLines = ta.value.split('\n')
-    const lines    = scriptText.split('\n')
+    const { el, lineStart, lineEnd } = inlineEditor
+    const newContent = serializeEditorMarkdown(el)
+    const newLines = newContent.split('\n')
+    const lines = scriptText.split('\n')
     lines.splice(lineStart, lineEnd - lineStart + 1, ...newLines)
     scriptText = lines.join('\n')
     window.electronAPI.writeScriptMd(scriptText)
@@ -341,7 +509,7 @@ function saveCurrentEdit() {
 function closeEditor(save) {
     if (!inlineEditor) return
     if (save) saveCurrentEdit()
-    ;(inlineEditor.ta.closest('.editor-wrapper') ?? inlineEditor.ta).remove()
+    ;(inlineEditor.el.closest('.editor-wrapper') ?? inlineEditor.el).remove()
     if (inlineEditor.blockEl) inlineEditor.blockEl.style.visibility = ''
     inlineEditor = null
     rerender(scriptText)
@@ -683,7 +851,7 @@ function openNextBlockAfterLine(targetLine, forceAfterRole) {
 function onScriptClick(e) {
     const blockEl    = e.target.closest('[data-block-idx]')
     const isEditable = blockEl && !isTriggerEl(blockEl)
-    const activeContainer = inlineEditor?.ta ?? inlineEditor?.wrapper ?? inlineEditor?.el
+    const activeContainer = inlineEditor?.wrapper ?? inlineEditor?.el
 
     if (inlineEditor) {
         if (activeContainer?.contains(e.target)) return
