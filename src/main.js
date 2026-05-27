@@ -9,6 +9,8 @@ let usedChs = []
 let triggers = []
 let triggerYamls = []
 let parseErrors = []  // {blockNum, line, message}
+const loopOutroPending = new Map()  // loopTriggerIdx → outroTriggerIdx
+const loopBtns = new Map()          // triggerIdx → button element
 
 // triggerIndex -> { ws, wsMonitor, mainAudioEl, monAudioEl, musicFile, overlay, getX, autoMarkerState }
 const triggerAudio = new Map()
@@ -295,6 +297,8 @@ function rerender(newText) {
     fileToTriggers.clear()
     usedChs = []
     config = {}
+    loopOutroPending.clear()
+    loopBtns.clear()
 
     validateYamlBlocks(newText)
     document.getElementById('script-content').innerHTML = converter.makeHtml(newText)
@@ -1015,10 +1019,44 @@ function buildTrigger(codeblockYaml, index) {
         ws.on("redraw", () => { updateMarkers(); autoMarkerState.refresh?.() })
 
         // ── Playback: fade + stop-at-end + loop ─────────────────────────
+        let chainEndArmed = false
         ws.on("timeupdate", (ct) => {
             const effEnd = mp.end ?? ws.getDuration()
             if (ct >= effEnd) {
-                if (mp.loop) { ws.play(mp.start) } else { ws.stop(); if (mtc && mtc.activeTcIndex === index) mtc.stopAndClear() }
+                const isManaged = !!triggerYamls[index]?.loop_outro
+                if (isManaged) {
+                    if (loopOutroPending.has(index)) {
+                        // Outro pending → fire it at this loop boundary
+                        const outroIdx = loopOutroPending.get(index)
+                        loopOutroPending.delete(index)
+                        setOutroPendingIndicator(outroIdx, false)
+                        ws.stop()
+                        ws.setVolume(currentVolume)
+                        currentCue = outroIdx
+                        markTriggers(outroIdx)
+                        scrollToTrigger(outroIdx)
+                        triggerAction(outroIdx)
+                    } else {
+                        ws.play(mp.start)   // next loop iteration
+                    }
+                } else if (mp.loop) {
+                    ws.play(mp.start)
+                } else {
+                    ws.stop()
+                    if (mtc && mtc.activeTcIndex === index) mtc.stopAndClear()
+                    // chain_end: fire next trigger seamlessly on audio end
+                    const chainEnd = triggerYamls[index]?.chain_end
+                    if (chainEnd && !chainEndArmed) {
+                        chainEndArmed = true
+                        const nextIdx = findTriggerByNote(chainEnd)
+                        if (nextIdx !== null) {
+                            currentCue = nextIdx
+                            markTriggers(nextIdx)
+                            scrollToTrigger(nextIdx)
+                            triggerAction(nextIdx)
+                        }
+                    }
+                }
                 ws.setVolume(currentVolume); return
             }
             let f = 1
@@ -1029,7 +1067,7 @@ function buildTrigger(codeblockYaml, index) {
         })
 
         ws.on("error",  (e) => console.error("WaveSurfer:", musicFile, e))
-        ws.on("play",   () => { pauseBtn.textContent = "⏸" })
+        ws.on("play",   () => { pauseBtn.textContent = "⏸"; chainEndArmed = false })
         ws.on("pause",  () => { pauseBtn.textContent = "⏵" })
         ws.on("finish", () => {
             pauseBtn.textContent = "⏵"
@@ -1299,6 +1337,27 @@ function buildTrigger(codeblockYaml, index) {
         }, isEligible)
     })
     triggerDiv.querySelector('.trigger-actions').appendChild(autoBtn)
+
+    // ── Loop-Gruppe button ───────────────────────────────────────────────
+    const loopGrpBtn = document.createElement('button')
+    loopGrpBtn.classList.add('trigger-action-btn')
+    loopGrpBtn._triggerIndex = index
+    loopBtns.set(index, loopGrpBtn)
+    updateLoopBtnAppearance(loopGrpBtn, index)
+
+    loopGrpBtn.addEventListener('mouseenter', () => updateLoopBtnAppearance(loopGrpBtn, index))
+    loopGrpBtn.addEventListener('mouseleave', () => updateLoopBtnAppearance(loopGrpBtn, index))
+    loopGrpBtn.addEventListener('mousedown', e => e.stopPropagation())
+    loopGrpBtn.addEventListener('click', e => {
+        e.stopPropagation()
+        if (shiftHeld) {
+            if (triggerYamls[index]?.chain_end) updateLoopGroupInScript(index, 'chain_end', null)
+            else if (triggerYamls[index]?.loop_outro) updateLoopGroupInScript(index, 'loop_outro', null)
+            return
+        }
+        showLoopGroupDialog(index, loopGrpBtn)
+    })
+    triggerDiv.querySelector('.trigger-actions').appendChild(loopGrpBtn)
 
     // ── Variante button ──────────────────────────────────────────────────
     const copyBtn = document.createElement("button")
@@ -1805,12 +1864,141 @@ function showAdjustDialog(triggerIndex, existingYaml, targetIdx) {
     })
 }
 
+function isOutroTrigger(idx) {
+    for (let i = 1; i < triggerYamls.length; i++) {
+        if (!triggerYamls[i]?.loop_outro) continue
+        if (findTriggerByNote(triggerYamls[i].loop_outro) === idx) return true
+    }
+    return false
+}
+
+function setOutroPendingIndicator(idx, on) {
+    const el = triggers[idx]
+    if (el) el.classList.toggle('trigger-outro-pending', on)
+}
+
+function updateLoopBtnAppearance(btn, idx) {
+    const ty = triggerYamls[idx]
+    if (shiftHeld && (ty?.chain_end || ty?.loop_outro)) {
+        btn.textContent = '✕ Loop'
+        btn.classList.remove('trigger-action-btn-active')
+        btn.classList.add('trigger-action-btn-danger')
+        btn.title = 'Loop-Verbindung löschen (Shift+Klick)'
+        return
+    }
+    btn.classList.remove('trigger-action-btn-danger')
+    if (ty?.chain_end) {
+        btn.textContent = '→ Kette'
+        btn.classList.add('trigger-action-btn-active')
+        btn.title = `Bei Ende auslösen → ${ty.chain_end.ch}.${ty.chain_end.note}`
+    } else if (ty?.loop_outro) {
+        btn.textContent = '⟲ Loop'
+        btn.classList.add('trigger-action-btn-active')
+        btn.title = `Verwalteter Loop, Outro: ${ty.loop_outro.ch}.${ty.loop_outro.note}`
+    } else if (isOutroTrigger(idx)) {
+        btn.textContent = '⟲ Outro'
+        btn.classList.add('trigger-action-btn-active')
+        btn.title = 'Outro für einen Loop-Trigger'
+    } else {
+        btn.textContent = '⟲ Loop'
+        btn.classList.remove('trigger-action-btn-active')
+        btn.title = 'Loop-Gruppe einrichten'
+    }
+}
+
+function updateLoopGroupInScript(triggerIndex, key, value) {
+    let blockIdx = 0
+    const keyRe = new RegExp(`^${key}:[ \\t]*\\{[^\\n]*\\}[ \\t]*\\n?`, 'm')
+    const updated = scriptText.replace(/```yaml\n([\s\S]*?)```/g, (match, content) => {
+        blockIdx++
+        if (blockIdx !== triggerIndex + 1) return match
+        let c = content.replace(keyRe, '').replace(/\n{3,}/g, '\n\n')
+        if (value !== null) c = c.trimEnd() + `\n${key}: {ch: ${value.ch}, note: ${value.note}}\n`
+        return `\`\`\`yaml\n${c}\`\`\``
+    })
+    scriptText = updated
+    window.electronAPI.writeScriptMd(updated)
+    if (triggerYamls[triggerIndex]) {
+        if (value !== null) triggerYamls[triggerIndex][key] = value
+        else delete triggerYamls[triggerIndex][key]
+    }
+    for (const [idx, btn] of loopBtns) updateLoopBtnAppearance(btn, idx)
+}
+
+function showLoopGroupDialog(index, anchorBtn) {
+    const existing = triggerYamls[index]
+    const overlay = document.createElement('div')
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:2000'
+    const box = document.createElement('div')
+    box.className = 'loop-dialog'
+    const rect = anchorBtn.getBoundingClientRect()
+    box.style.cssText = `position:fixed;top:${rect.bottom + 4}px;left:${rect.left}px;z-index:2001`
+
+    const close = () => { overlay.remove(); box.remove() }
+    overlay.addEventListener('click', close)
+
+    const makeOption = (html, onClick) => {
+        const btn = document.createElement('button')
+        btn.className = 'loop-dialog-option'
+        btn.innerHTML = html
+        btn.addEventListener('click', e => { e.stopPropagation(); close(); onClick() })
+        return btn
+    }
+
+    box.appendChild(makeOption(
+        '<strong>→ Bei Ende auslösen</strong><small>Intro: startet am Audio-Ende automatisch einen anderen Trigger</small>',
+        () => enterPickMode(targetIdx => {
+            if (targetIdx === index) return
+            updateLoopGroupInScript(index, 'chain_end', triggerYamls[targetIdx]?.trigger_note ?? null)
+        })
+    ))
+    box.appendChild(makeOption(
+        '<strong>⟲ Verwalteter Loop</strong><small>Loop: loopt bis der gewählte Outro-Trigger am Schleifenende ausgelöst wird</small>',
+        () => enterPickMode(outroIdx => {
+            if (outroIdx === index) return
+            updateLoopGroupInScript(index, 'loop_outro', triggerYamls[outroIdx]?.trigger_note ?? null)
+        })
+    ))
+
+    if (existing?.chain_end || existing?.loop_outro) {
+        const removeBtn = document.createElement('button')
+        removeBtn.className = 'loop-dialog-option loop-dialog-danger'
+        removeBtn.textContent = '✕ Verbindung entfernen'
+        removeBtn.addEventListener('click', e => {
+            e.stopPropagation(); close()
+            if (existing.chain_end) updateLoopGroupInScript(index, 'chain_end', null)
+            if (existing.loop_outro) updateLoopGroupInScript(index, 'loop_outro', null)
+        })
+        box.appendChild(removeBtn)
+    }
+
+    document.body.append(overlay, box)
+}
+
 function triggerAction(cue) {
     // Second press while playing → stop (undo accidental trigger)
     const ta = triggerAudio.get(cue)
     if (ta && ta.ws.isPlaying()) {
         ta.ws.stop()
         if (mtc && mtc.activeTcIndex === cue) mtc.stopAndClear()
+        return
+    }
+
+    // Outro-interception: if this trigger is the outro for a currently-playing managed loop,
+    // queue it instead of playing immediately. Second click cancels the queue.
+    for (let i = 1; i < triggerYamls.length; i++) {
+        if (!triggerYamls[i]?.loop_outro) continue
+        if (findTriggerByNote(triggerYamls[i].loop_outro) !== cue) continue
+        const loopTa = triggerAudio.get(i)
+        if (!loopTa?.ws.isPlaying()) continue
+        if (loopOutroPending.get(i) === cue) {
+            // Second click → cancel pending
+            loopOutroPending.delete(i)
+            setOutroPendingIndicator(cue, false)
+        } else {
+            loopOutroPending.set(i, cue)
+            setOutroPendingIndicator(cue, true)
+        }
         return
     }
 
