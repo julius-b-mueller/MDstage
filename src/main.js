@@ -288,6 +288,35 @@ function onEditorKey(e) {
                 if (newAfterEl) openNewBlock(newAfterEl)
             })
         }
+        return
+    }
+    if (e.key === 'ArrowUp' && !e.shiftKey) {
+        const ta = inlineEditor?.ta
+        if (!ta || ta.value.slice(0, ta.selectionStart).includes('\n')) return
+        e.preventDefault()
+        let prev = inlineEditor.blockEl?.previousElementSibling
+        while (prev && (isTriggerEl(prev) || !prev.dataset?.blockIdx)) prev = prev.previousElementSibling
+        const idx = prev ? parseInt(prev.dataset.blockIdx) : -1
+        closeEditor(true)
+        if (idx >= 0) requestAnimationFrame(() => {
+            const el = document.querySelector(`[data-block-idx="${idx}"]`)
+            if (el && !isTriggerEl(el)) openEditor(el)
+        })
+        return
+    }
+    if (e.key === 'ArrowDown' && !e.shiftKey) {
+        const ta = inlineEditor?.ta
+        if (!ta || ta.value.slice(ta.selectionEnd).includes('\n')) return
+        e.preventDefault()
+        let next = inlineEditor.blockEl?.nextElementSibling
+        while (next && (isTriggerEl(next) || !next.dataset?.blockIdx)) next = next.nextElementSibling
+        const idx = next ? parseInt(next.dataset.blockIdx) : -1
+        closeEditor(true)
+        if (idx >= 0) requestAnimationFrame(() => {
+            const el = document.querySelector(`[data-block-idx="${idx}"]`)
+            if (el && !isTriggerEl(el)) openEditor(el)
+        })
+        return
     }
 }
 
@@ -409,11 +438,24 @@ function openNewBlock(afterBlockEl, forceAfterRole) {
     div.contentEditable = 'true'
     div.dataset.placeholder = isAfterRole ? 'Dialogue…' : 'Regieanweisung oder Rolle…'
 
-    // Insert inline into document flow directly after the block
-    afterBlockEl.after(div)
-    div.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    const wrapper = document.createElement('div')
+    wrapper.className = 'new-block-wrapper'
+
+    const controls = document.createElement('div')
+    controls.className = 'editor-controls new-block-controls'
+    const btnUp   = document.createElement('button')
+    btnUp.className = 'editor-btn'; btnUp.textContent = '▲'; btnUp.title = 'Block darüber bearbeiten'
+    const btnDown = document.createElement('button')
+    btnDown.className = 'editor-btn'; btnDown.textContent = '▼'; btnDown.title = 'Block darunter bearbeiten'
+    const btnDel  = document.createElement('button')
+    btnDel.className = 'editor-btn editor-btn-delete'; btnDel.textContent = '✕'; btnDel.title = 'Abbrechen'
+    controls.append(btnUp, btnDown, btnDel)
+    wrapper.append(div, controls)
+
+    afterBlockEl.after(wrapper)
+    wrapper.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
     div.focus()
-    inlineEditor = { el: div, blockEl: null, lineStart: info.lineEnd + 1, isNew: true, isAfterRole }
+    inlineEditor = { el: div, wrapper, blockEl: null, afterBlockEl, lineStart: info.lineEnd + 1, isNew: true, isAfterRole }
 
     div.addEventListener('keydown',     onNewBlockKey)
     div.addEventListener('beforeinput', onNewBlockBeforeInput)
@@ -421,6 +463,23 @@ function openNewBlock(afterBlockEl, forceAfterRole) {
     div.addEventListener('blur',        () => setTimeout(() => {
         if (inlineEditor?.el === div) commitNewBlock()
     }, 180))
+
+    btnUp.addEventListener('mousedown', (e) => {
+        e.preventDefault()
+        clearGhost(); wrapper.remove(); inlineEditor = null
+        if (!isTriggerEl(afterBlockEl)) openEditor(afterBlockEl)
+    })
+    btnDown.addEventListener('mousedown', (e) => {
+        e.preventDefault()
+        let next = wrapper.nextElementSibling
+        while (next && (isTriggerEl(next) || !next.dataset?.blockIdx)) next = next.nextElementSibling
+        clearGhost(); wrapper.remove(); inlineEditor = null
+        if (next && !isTriggerEl(next)) openEditor(next)
+    })
+    btnDel.addEventListener('mousedown', (e) => {
+        e.preventDefault()
+        clearGhost(); wrapper.remove(); inlineEditor = null
+    })
 }
 
 function getTyped(el) {
@@ -471,11 +530,33 @@ function onNewBlockKey(e) {
     if (e.key === 'Escape') {
         e.preventDefault()
         if (inlineEditor?.confirmedRole) {
-            // Phase 2 (role confirmed): Escape commits what we have
             if (inlineEditor?.el === e.currentTarget) commitNewBlock()
         } else {
-            clearGhost(); inlineEditor?.el?.remove(); inlineEditor = null
+            clearGhost()
+            ;(inlineEditor?.wrapper ?? inlineEditor?.el)?.remove()
+            inlineEditor = null
         }
+        return
+    }
+    if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        const { afterBlockEl, wrapper, el } = inlineEditor ?? {}
+        clearGhost()
+        ;(wrapper ?? el)?.remove()
+        inlineEditor = null
+        if (afterBlockEl && !isTriggerEl(afterBlockEl)) openEditor(afterBlockEl)
+        return
+    }
+    if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        const { wrapper, el } = inlineEditor ?? {}
+        const container = wrapper ?? el
+        let next = container?.nextElementSibling
+        while (next && (isTriggerEl(next) || !next.dataset?.blockIdx)) next = next.nextElementSibling
+        clearGhost()
+        container?.remove()
+        inlineEditor = null
+        if (next && !isTriggerEl(next)) openEditor(next)
         return
     }
     if (e.key === 'Tab') {
@@ -530,7 +611,7 @@ function onNewBlockInput() {
 
 function commitNewBlock(asRole) {
     if (!inlineEditor) return
-    const { el, lineStart, isAfterRole, confirmedRole } = inlineEditor
+    const { el, wrapper, lineStart, isAfterRole, confirmedRole } = inlineEditor
 
     let insertLines, _target, _afterRole
 
@@ -538,7 +619,7 @@ function commitNewBlock(asRole) {
         // Phase 2: role name was confirmed via Tab; extract any dialogue typed after the space
         const dialogue = getDialogue(el).trim()
         clearGhost()
-        el.remove()
+        ;(wrapper ?? el).remove()
         inlineEditor = null
         if (dialogue) {
             // Role and dialogue on consecutive lines (no blank line) → one block, styled together
@@ -555,7 +636,7 @@ function commitNewBlock(asRole) {
         const typed = getTyped(el).trim()
         const text  = asRole ? (acState?.match || typed) : typed
         clearGhost()
-        el.remove()
+        ;(wrapper ?? el).remove()
         inlineEditor = null
         if (!text) return
 
@@ -602,12 +683,14 @@ function openNextBlockAfterLine(targetLine, forceAfterRole) {
 function onScriptClick(e) {
     const blockEl    = e.target.closest('[data-block-idx]')
     const isEditable = blockEl && !isTriggerEl(blockEl)
-    const activeEl   = inlineEditor?.ta || inlineEditor?.el
+    const activeContainer = inlineEditor?.ta ?? inlineEditor?.wrapper ?? inlineEditor?.el
 
     if (inlineEditor) {
-        if (activeEl?.contains(e.target)) return
+        if (activeContainer?.contains(e.target)) return
         if (inlineEditor.isNew) {
-            clearGhost(); inlineEditor.el?.remove(); inlineEditor = null
+            clearGhost()
+            ;(inlineEditor.wrapper ?? inlineEditor.el)?.remove()
+            inlineEditor = null
         } else {
             const targetIdx = isEditable ? parseInt(blockEl.dataset.blockIdx) : null
             closeEditor(true)
