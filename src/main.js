@@ -42,6 +42,12 @@ function monitorShouldPlay() {
 
 let scriptText = ''
 
+const ROLE_COLORS = {
+    red: '#e06c75', green: '#98c379', yellow: '#e5c07b', blue: '#61afef',
+    purple: '#c678dd', cyan: '#56b6c2', darkred: '#b03c45', darkgreen: '#68b349',
+    darkyellow: '#b5904b', darkblue: '#317fbf', darkpurple: '#9648ad', darkcyan: '#268692',
+}
+
 const MIC_SVG = `<svg class="t-icon" viewBox="0 0 12 18" width="10" height="15" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"><rect x="3" y="0.5" width="6" height="9" rx="3"/><line x1="3.5" y1="3.5" x2="8.5" y2="3.5" stroke-width="0.55"/><line x1="3.5" y1="6" x2="8.5" y2="6" stroke-width="0.55"/><path d="M1 8 Q6 13.5 11 8"/><line x1="6" y1="11.5" x2="6" y2="15"/><line x1="3" y1="15" x2="9" y2="15"/></svg>`
 
 const TAPE_SVG = `<svg class="t-icon" viewBox="0 0 22 12" width="22" height="12" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round"><circle cx="5" cy="6" r="4"/><circle cx="5" cy="6" r="1.3"/><line x1="5" y1="2" x2="5" y2="4.7"/><line x1="1.5" y1="8" x2="3.9" y2="6.7"/><line x1="8.5" y1="8" x2="6.1" y2="6.7"/><circle cx="17" cy="6" r="4"/><circle cx="17" cy="6" r="1.3"/><line x1="17" y1="2" x2="17" y2="4.7"/><line x1="13.5" y1="8" x2="15.9" y2="6.7"/><line x1="20.5" y1="8" x2="18.1" y2="6.7"/><line x1="9" y1="2" x2="13" y2="2"/><line x1="9" y1="10" x2="13" y2="10"/></svg>`
@@ -60,6 +66,564 @@ let mtc = null
 const _midiAccessPromise = navigator.requestMIDIAccess({ sysex: true })
     .catch(e => { console.error('MIDI-Zugriff fehlgeschlagen:', e); return null })
 
+// ── Scene Sidebar ────────────────────────────────────────────────────────────
+
+function buildSidebar() {
+    const list = document.getElementById('scene-list')
+    if (!list) return
+    list.innerHTML = ''
+    const headings = [...document.querySelectorAll('#script-content h2, #script-content h3')]
+    // Temporarily un-sticky all headings so getBoundingClientRect reflects natural positions
+    headings.forEach(h => { h.style.position = 'static' })
+    const tops = headings.map(h => h.getBoundingClientRect().top + window.scrollY)
+    headings.forEach(h => { h.style.position = '' })
+    headings.forEach((h, idx) => {
+        const btn = document.createElement('button')
+        const isSub = h.tagName === 'H3'
+        btn.className = 'scene-link' + (isSub ? ' scene-link-sub' : '')
+        btn.textContent = h.textContent
+        const top = tops[idx]
+        btn.addEventListener('click', () => {
+            window.scrollTo({ top, behavior: 'smooth' })
+        })
+        list.appendChild(btn)
+    })
+}
+
+function toggleSidebar() {
+    document.getElementById('scene-sidebar').classList.toggle('open')
+}
+
+// Highlight active scene in sidebar based on scroll position
+function updateSidebarActive() {
+    const headings = [...document.querySelectorAll('#script-content h2, #script-content h3')]
+    const links = [...document.querySelectorAll('#scene-list .scene-link')]
+    if (!headings.length) return
+    const scrollY = window.scrollY + 80
+    let activeIdx = 0
+    for (let i = 0; i < headings.length; i++) {
+        if (headings[i].getBoundingClientRect().top + window.scrollY <= scrollY) activeIdx = i
+        else break
+    }
+    links.forEach((l, i) => l.classList.toggle('scene-link-active', i === activeIdx))
+}
+
+// ── Search ───────────────────────────────────────────────────────────────────
+
+let searchMatches = []
+let searchIdx = -1
+
+function openSearch() {
+    const bar = document.getElementById('search-bar')
+    bar.classList.remove('hidden')
+    const input = document.getElementById('search-input')
+    input.focus()
+    input.select()
+}
+
+function closeSearch() {
+    document.getElementById('search-bar').classList.add('hidden')
+    clearSearchHighlights()
+    document.getElementById('search-count').textContent = ''
+    searchMatches = []
+    searchIdx = -1
+}
+
+function clearSearchHighlights() {
+    document.querySelectorAll('mark.search-highlight').forEach(m => {
+        m.replaceWith(document.createTextNode(m.textContent))
+    })
+    document.getElementById('script-content')?.normalize()
+}
+
+function doSearch(query) {
+    clearSearchHighlights()
+    searchMatches = []
+    searchIdx = -1
+    if (!query.trim()) {
+        document.getElementById('search-count').textContent = ''
+        return
+    }
+    const lower = query.toLowerCase()
+    const walker = document.createTreeWalker(
+        document.getElementById('script-content'), NodeFilter.SHOW_TEXT)
+    const textNodes = []
+    let node
+    while ((node = walker.nextNode())) textNodes.push(node)
+
+    for (const tn of textNodes) {
+        const txt = tn.textContent
+        const low = txt.toLowerCase()
+        let pos = 0, fragments = [], found = false
+        while (true) {
+            const idx = low.indexOf(lower, pos)
+            if (idx === -1) { fragments.push(document.createTextNode(txt.slice(pos))); break }
+            if (idx > pos) fragments.push(document.createTextNode(txt.slice(pos, idx)))
+            const mark = document.createElement('mark')
+            mark.className = 'search-highlight'
+            mark.textContent = txt.slice(idx, idx + query.length)
+            fragments.push(mark)
+            searchMatches.push(mark)
+            pos = idx + query.length
+            found = true
+        }
+        if (found) {
+            const parent = tn.parentNode
+            fragments.forEach(f => parent.insertBefore(f, tn))
+            parent.removeChild(tn)
+        }
+    }
+
+    const count = searchMatches.length
+    if (count === 0) {
+        document.getElementById('search-count').textContent = 'Nicht gefunden'
+        return
+    }
+    searchIdx = 0
+    applySearchCurrent()
+}
+
+function applySearchCurrent() {
+    searchMatches.forEach((m, i) => m.classList.toggle('search-current', i === searchIdx))
+    const cur = searchMatches[searchIdx]
+    if (cur) {
+        cur.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        document.getElementById('search-count').textContent =
+            `${searchIdx + 1} / ${searchMatches.length}`
+    }
+}
+
+function searchStep(delta) {
+    if (!searchMatches.length) return
+    searchIdx = (searchIdx + delta + searchMatches.length) % searchMatches.length
+    applySearchCurrent()
+}
+
+// ── Inline Text Editor ───────────────────────────────────────────────────────
+
+let inlineEditor = null  // { ta?, el?, blockEl, lineStart, lineEnd, isNew, isAfterRole }
+let acState = null       // { typed, match } — inline ghost text state
+
+// Map data-block-idx k → { block, lineStart, lineEnd } using sequential search to handle duplicates
+function getBlockInfo(k) {
+    if (!scriptText) return null
+    const blocks = tokenizeScript(scriptText)
+    if (k < 0 || k >= blocks.length) return null
+    let search = 0
+    for (let i = 0; i <= k; i++) {
+        const pos = scriptText.indexOf(blocks[i].content, search)
+        if (pos < 0) return null
+        if (i === k) {
+            const lineStart = (scriptText.slice(0, pos).match(/\n/g) || []).length
+            const lineEnd   = lineStart + blocks[k].content.split('\n').length - 1
+            return { block: blocks[k], lineStart, lineEnd }
+        }
+        search = pos + blocks[i].content.length
+    }
+    return null
+}
+
+function isTriggerEl(el) {
+    return el.classList.contains('trigger') || el.classList.contains('trigger-group') ||
+           !!el.querySelector('.trigger, .trigger-group')
+}
+
+// ── Existing block editor (textarea, raw markdown) ────────────────────────────
+
+function openEditor(blockEl, clientX, clientY) {
+    if (inlineEditor) closeEditor(true)
+    const k = parseInt(blockEl.dataset.blockIdx)
+    if (isNaN(k) || k < 0) return
+    const info = getBlockInfo(k)
+    if (!info || info.block.type === 'yaml') return
+
+    const rect = blockEl.getBoundingClientRect()
+
+    const wrapper = document.createElement('div')
+    wrapper.className = 'editor-wrapper'
+    wrapper.style.cssText = `left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;`
+
+    const ta = document.createElement('textarea')
+    ta.className = 'inline-editor'
+    ta.value = info.block.content
+    wrapper.appendChild(ta)
+
+    const controls = document.createElement('div')
+    controls.className = 'editor-controls'
+    const btnUp   = document.createElement('button')
+    btnUp.className = 'editor-btn'; btnUp.textContent = '▲'; btnUp.title = 'Nach oben'
+    const btnDown = document.createElement('button')
+    btnDown.className = 'editor-btn'; btnDown.textContent = '▼'; btnDown.title = 'Nach unten'
+    const btnDel  = document.createElement('button')
+    btnDel.className = 'editor-btn editor-btn-delete'; btnDel.textContent = '✕'; btnDel.title = 'Löschen'
+    controls.append(btnUp, btnDown, btnDel)
+    wrapper.appendChild(controls)
+
+    document.body.appendChild(wrapper)
+    ta.style.height = ta.scrollHeight + 'px'
+    ta.focus()
+    blockEl.style.visibility = 'hidden'
+    inlineEditor = { ta, blockEl, lineStart: info.lineStart, lineEnd: info.lineEnd, isNew: false }
+
+    ta.addEventListener('keydown', onEditorKey)
+    ta.addEventListener('input',   onEditorInput)
+    ta.addEventListener('blur',    () => setTimeout(() => {
+        if (inlineEditor?.ta === ta) closeEditor(true)
+    }, 180))
+
+    btnUp.addEventListener('mousedown',   (e) => { e.preventDefault(); moveBlock(-1) })
+    btnDown.addEventListener('mousedown', (e) => { e.preventDefault(); moveBlock(1) })
+    btnDel.addEventListener('mousedown',  (e) => { e.preventDefault(); deleteBlock() })
+}
+
+function onEditorKey(e) {
+    if (e.key === 'Escape') { e.preventDefault(); closeEditor(true); return }
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault()
+        const afterIdx = inlineEditor?.blockEl?.dataset.blockIdx
+        closeEditor(true)
+        if (afterIdx) {
+            requestAnimationFrame(() => {
+                const newAfterEl = document.querySelector(`[data-block-idx="${afterIdx}"]`)
+                if (newAfterEl) openNewBlock(newAfterEl)
+            })
+        }
+    }
+}
+
+function onEditorInput() {
+    this.style.height = 'auto'
+    this.style.height = this.scrollHeight + 'px'
+    clearTimeout(this._st)
+    this._st = setTimeout(saveCurrentEdit, 600)
+}
+
+function saveCurrentEdit() {
+    if (!inlineEditor || inlineEditor.isNew) return
+    const { ta, lineStart, lineEnd } = inlineEditor
+    const newLines = ta.value.split('\n')
+    const lines    = scriptText.split('\n')
+    lines.splice(lineStart, lineEnd - lineStart + 1, ...newLines)
+    scriptText = lines.join('\n')
+    window.electronAPI.writeScriptMd(scriptText)
+    inlineEditor.lineEnd = lineStart + newLines.length - 1
+}
+
+function closeEditor(save) {
+    if (!inlineEditor) return
+    if (save) saveCurrentEdit()
+    ;(inlineEditor.ta.closest('.editor-wrapper') ?? inlineEditor.ta).remove()
+    if (inlineEditor.blockEl) inlineEditor.blockEl.style.visibility = ''
+    inlineEditor = null
+    rerender(scriptText)
+}
+
+function deleteBlock() {
+    if (!inlineEditor) return
+    const { blockEl, lineStart, lineEnd } = inlineEditor
+
+    // Remember the previous editable block in the DOM before any changes
+    let prevEl = blockEl.previousElementSibling
+    while (prevEl && (isTriggerEl(prevEl) || prevEl.dataset.blockIdx === undefined)) {
+        prevEl = prevEl.previousElementSibling
+    }
+    const prevIdx = prevEl ? parseInt(prevEl.dataset.blockIdx) : -1
+
+    closeEditor(false)
+
+    // Remove block lines plus the blank separator line(s) that precede them
+    const lines = scriptText.split('\n')
+    let removeFrom = lineStart
+    while (removeFrom > 0 && lines[removeFrom - 1].trim() === '') removeFrom--
+    lines.splice(removeFrom, lineEnd - removeFrom + 1)
+    scriptText = lines.join('\n')
+    window.electronAPI.writeScriptMd(scriptText)
+    rerender(scriptText)
+
+    if (prevIdx >= 0) {
+        requestAnimationFrame(() => {
+            const el = document.querySelector(`[data-block-idx="${prevIdx}"]`)
+            if (el && !isTriggerEl(el)) openEditor(el)
+        })
+    }
+}
+
+function moveBlock(direction) {
+    if (!inlineEditor) return
+    saveCurrentEdit()
+
+    const k = parseInt(inlineEditor.blockEl.dataset.blockIdx)
+    if (isNaN(k)) return
+    const blocks = tokenizeScript(scriptText)
+
+    // Find the nearest text block in the given direction (skip yaml/trigger blocks)
+    let targetK = k + direction
+    while (targetK >= 0 && targetK < blocks.length && blocks[targetK].type !== 'text') {
+        targetK += direction
+    }
+    if (targetK < 0 || targetK >= blocks.length || blocks[targetK].type !== 'text') return
+
+    // Locate both blocks in scriptText and swap their content
+    let search = 0
+    const pos = []
+    for (let i = 0; i < blocks.length; i++) {
+        const p = scriptText.indexOf(blocks[i].content, search)
+        if (p < 0) break
+        pos[i] = p
+        search = p + blocks[i].content.length
+    }
+    if (pos[k] === undefined || pos[targetK] === undefined) return
+
+    const [lo, hi] = k < targetK ? [k, targetK] : [targetK, k]
+    const loC = blocks[lo].content, hiC = blocks[hi].content
+    let text = scriptText
+    text = text.slice(0, pos[hi]) + loC + text.slice(pos[hi] + hiC.length)
+    text = text.slice(0, pos[lo]) + hiC + text.slice(pos[lo] + loC.length)
+
+    scriptText = text
+    window.electronAPI.writeScriptMd(scriptText)
+
+    // After swap: the block we were editing is now at index targetK
+    const editIdx = targetK
+    closeEditor(false)
+    rerender(scriptText)
+    requestAnimationFrame(() => {
+        const el = document.querySelector(`[data-block-idx="${editIdx}"]`)
+        if (el && !isTriggerEl(el)) openEditor(el)
+    })
+}
+
+// ── New block editor (contenteditable div, inline ghost autocomplete) ─────────
+
+function openNewBlock(afterBlockEl, forceAfterRole) {
+    if (inlineEditor) return
+    const k = parseInt(afterBlockEl.dataset.blockIdx)
+    if (isNaN(k) || k < 0) return
+    const info = getBlockInfo(k)
+    if (!info) return
+
+    const isAfterRole = forceAfterRole ?? /^\*\*[^*]+\*\*$/.test(info.block.content.trim())
+
+    const div = document.createElement('div')
+    div.className = 'inline-editor inline-editor-new'
+    div.contentEditable = 'true'
+    div.dataset.placeholder = isAfterRole ? 'Dialogue…' : 'Regieanweisung oder Rolle…'
+
+    // Insert inline into document flow directly after the block
+    afterBlockEl.after(div)
+    div.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    div.focus()
+    inlineEditor = { el: div, blockEl: null, lineStart: info.lineEnd + 1, isNew: true, isAfterRole }
+
+    div.addEventListener('keydown',     onNewBlockKey)
+    div.addEventListener('beforeinput', onNewBlockBeforeInput)
+    div.addEventListener('input',       onNewBlockInput)
+    div.addEventListener('blur',        () => setTimeout(() => {
+        if (inlineEditor?.el === div) commitNewBlock()
+    }, 180))
+}
+
+function getTyped(el) {
+    return [...el.childNodes]
+        .filter(n => !(n.nodeType === Node.ELEMENT_NODE && (n.classList.contains('ac-ghost') || n.classList.contains('role-confirmed'))))
+        .map(n => n.textContent).join('')
+}
+
+function getDialogue(el) {
+    const roleSpan = el.querySelector('.role-confirmed')
+    if (!roleSpan) return ''
+    let after = false
+    let text = ''
+    for (const node of el.childNodes) {
+        if (node === roleSpan) { after = true; continue }
+        if (after && !(node.nodeType === Node.ELEMENT_NODE && node.classList.contains('ac-ghost'))) {
+            text += node.textContent
+        }
+    }
+    return text.replace(/^\s+/, '')
+}
+
+function updateInlineAc(typed) {
+    const el = inlineEditor?.el
+    if (!el) return
+    el.querySelector('.ac-ghost')?.remove()
+    if (!typed) { acState = null; return }
+    const roles = Object.keys(config.roles || {})
+    const match = roles.find(r => r.toLowerCase().startsWith(typed.toLowerCase()))
+    if (!match || match.toLowerCase() === typed.toLowerCase()) { acState = null; return }
+    acState = { typed, match }
+    const ghost = document.createElement('span')
+    ghost.className = 'ac-ghost'
+    ghost.contentEditable = 'false'
+    ghost.textContent = match.slice(typed.length)
+    const roleColor = ROLE_COLORS[config.roles?.[match]?.color]
+    if (roleColor) ghost.style.color = roleColor
+    const br = el.querySelector('br')
+    if (br) el.insertBefore(ghost, br); else el.appendChild(ghost)
+}
+
+function clearGhost() {
+    inlineEditor?.el?.querySelector('.ac-ghost')?.remove()
+    acState = null
+}
+
+function onNewBlockKey(e) {
+    if (e.key === 'Escape') {
+        e.preventDefault()
+        if (inlineEditor?.confirmedRole) {
+            // Phase 2 (role confirmed): Escape commits what we have
+            if (inlineEditor?.el === e.currentTarget) commitNewBlock()
+        } else {
+            clearGhost(); inlineEditor?.el?.remove(); inlineEditor = null
+        }
+        return
+    }
+    if (e.key === 'Tab') {
+        e.preventDefault()  // must be in keydown to prevent focus movement
+        if (inlineEditor?.el === e.currentTarget) acceptGhostInline()
+    }
+    // Enter is handled via onNewBlockBeforeInput (reliable in Electron/Chromium contenteditable)
+}
+
+function acceptGhostInline() {
+    if (!inlineEditor || !acState) return
+    const el = inlineEditor.el
+    const { match } = acState
+    acState = null
+
+    // Replace editor content with a styled role name + space for dialogue input
+    el.innerHTML = ''
+    const roleSpan = document.createElement('span')
+    roleSpan.className = 'role-confirmed'
+    roleSpan.contentEditable = 'false'
+    roleSpan.textContent = match
+    const roleColor = ROLE_COLORS[config.roles?.[match]?.color]
+    if (roleColor) roleSpan.style.color = roleColor
+    el.appendChild(roleSpan)
+    const space = document.createTextNode(' ')
+    el.appendChild(space)
+
+    inlineEditor.confirmedRole = match
+    el.dataset.placeholder = 'Text…'
+
+    el.focus()
+    const range = document.createRange()
+    range.setStartAfter(space)
+    range.collapse(true)
+    const sel = window.getSelection()
+    sel.removeAllRanges()
+    sel.addRange(range)
+}
+
+function onNewBlockBeforeInput(e) {
+    if (e.inputType === 'insertParagraph' || e.inputType === 'insertLineBreak') {
+        e.preventDefault()
+        if (inlineEditor?.el === this) commitNewBlock()
+    }
+}
+
+function onNewBlockInput() {
+    if (!inlineEditor?.confirmedRole) {
+        updateInlineAc(getTyped(this).trimStart())
+    }
+}
+
+function commitNewBlock(asRole) {
+    if (!inlineEditor) return
+    const { el, lineStart, isAfterRole, confirmedRole } = inlineEditor
+
+    let insertLines, _target, _afterRole
+
+    if (confirmedRole) {
+        // Phase 2: role name was confirmed via Tab; extract any dialogue typed after the space
+        const dialogue = getDialogue(el).trim()
+        clearGhost()
+        el.remove()
+        inlineEditor = null
+        if (dialogue) {
+            // Role and dialogue on consecutive lines (no blank line) → one block, styled together
+            insertLines = ['', `**${confirmedRole}**`, dialogue.replace(/\(([^)]+)\)/g, '*($1)*')]
+            _target = lineStart + 1   // start of the combined role+dialogue block
+            _afterRole = false
+        } else {
+            insertLines = ['', `**${confirmedRole}**`]
+            _target = lineStart + 1   // role line — next editor is for dialogue
+            _afterRole = true
+        }
+    } else {
+        // Phase 1: plain text committed directly
+        const typed = getTyped(el).trim()
+        const text  = asRole ? (acState?.match || typed) : typed
+        clearGhost()
+        el.remove()
+        inlineEditor = null
+        if (!text) return
+
+        const isRoleName = !asRole && !!config.roles?.[text]
+        let mdLine
+        if (asRole || isRoleName) {
+            mdLine = `**${text}**`
+            _afterRole = true
+        } else if (isAfterRole) {
+            mdLine = text.replace(/\(([^)]+)\)/g, '*($1)*')
+            _afterRole = false
+        } else {
+            mdLine = `*${text}*`
+            _afterRole = false
+        }
+        insertLines = ['', mdLine]
+        _target = lineStart + 1
+    }
+
+    const lines = scriptText.split('\n')
+    lines.splice(lineStart, 0, ...insertLines)
+    scriptText = lines.join('\n')
+    window.electronAPI.writeScriptMd(scriptText)
+    rerender(scriptText)
+    requestAnimationFrame(() => openNextBlockAfterLine(_target, _afterRole))
+}
+
+function openNextBlockAfterLine(targetLine, forceAfterRole) {
+    const blocks = tokenizeScript(scriptText)
+    let search = 0
+    for (let k = 0; k < blocks.length; k++) {
+        const pos = scriptText.indexOf(blocks[k].content, search)
+        if (pos < 0) break
+        const bLine = (scriptText.slice(0, pos).match(/\n/g) || []).length
+        if (bLine === targetLine) {
+            const el = document.querySelector(`[data-block-idx="${k}"]`)
+            if (el) openNewBlock(el, forceAfterRole)
+            return
+        }
+        search = pos + blocks[k].content.length
+    }
+}
+
+function onScriptClick(e) {
+    const blockEl    = e.target.closest('[data-block-idx]')
+    const isEditable = blockEl && !isTriggerEl(blockEl)
+    const activeEl   = inlineEditor?.ta || inlineEditor?.el
+
+    if (inlineEditor) {
+        if (activeEl?.contains(e.target)) return
+        if (inlineEditor.isNew) {
+            clearGhost(); inlineEditor.el?.remove(); inlineEditor = null
+        } else {
+            const targetIdx = isEditable ? parseInt(blockEl.dataset.blockIdx) : null
+            closeEditor(true)
+            if (targetIdx) {
+                const newEl = document.querySelector(`[data-block-idx="${targetIdx}"]`)
+                if (newEl && !isTriggerEl(newEl)) openEditor(newEl, e.clientX, e.clientY)
+            }
+        }
+        return
+    }
+
+    if (!shiftHeld || !isEditable) return
+    e.preventDefault()
+    openEditor(blockEl, e.clientX, e.clientY)
+}
+
 let shiftHeld = false
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Shift') {
@@ -68,6 +632,34 @@ document.addEventListener('keydown', (e) => {
         document.querySelectorAll('.trigger-action-btn-auto').forEach(btn => {
             updateAutoBtnAppearance(btn, parseInt(btn._triggerIndex))
         })
+        return
+    }
+    // Ctrl+F → open search
+    if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        e.preventDefault()
+        openSearch()
+        return
+    }
+    // Ctrl+B → toggle sidebar
+    if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+        e.preventDefault()
+        toggleSidebar()
+        return
+    }
+    // Escape → close search or sidebar
+    if (e.key === 'Escape') {
+        const bar = document.getElementById('search-bar')
+        if (!bar.classList.contains('hidden')) { closeSearch(); return }
+        document.getElementById('scene-sidebar').classList.remove('open')
+        return
+    }
+    // Enter / Shift+Enter in search bar → navigate
+    if (e.key === 'Enter') {
+        const input = document.getElementById('search-input')
+        if (document.activeElement === input) {
+            e.preventDefault()
+            searchStep(e.shiftKey ? -1 : 1)
+        }
     }
 }, { capture: true })
 document.addEventListener('keyup', (e) => {
@@ -80,6 +672,7 @@ document.addEventListener('keyup', (e) => {
     }
 }, { capture: true })
 window.addEventListener('blur', () => { shiftHeld = false; document.body.classList.remove('shift-held') })
+window.addEventListener('scroll', updateSidebarActive, { passive: true })
 
 
 const converter = new showdown.Converter
@@ -310,6 +903,8 @@ function rerender(newText) {
     annotateBlocks()
     buildInsertZones()
     setupAutoTriggers()
+    buildSidebar()
+    clearSearchHighlights()
 
     requestAnimationFrame(() => window.scrollTo({ top: scrollY, behavior: 'instant' }))
 }
@@ -365,7 +960,19 @@ function tokenizeScript(text) {
 // Annotates each direct child of #script-content with data-block-idx (1-based, skipping config).
 function annotateBlocks() {
     const content = document.getElementById('script-content')
-    ;[...content.children].forEach((el, k) => { el.dataset.blockIdx = k + 1 })
+    const blocks = tokenizeScript(scriptText)
+    let ti = 0
+    for (const child of content.children) {
+        // Skip yaml tokens with no DOM representation (config yaml is removed by convertCodeblocks)
+        while (ti < blocks.length && blocks[ti].type === 'yaml' && !isTriggerEl(child)) ti++
+        if (ti >= blocks.length) break
+        child.dataset.blockIdx = ti
+        if (child.classList.contains('trigger-group')) {
+            ti += child.querySelectorAll('[data-trigger-index]').length
+        } else {
+            ti++
+        }
+    }
 }
 
 function findTriggerByNote(tn) {
@@ -2227,6 +2834,25 @@ function initButtons() {
     document.querySelector(".em-mic").addEventListener("mousedown", () => x32UnmuteChannels("muteall"))
     document.querySelector(".current-trigger-button").addEventListener("mousedown", () => scrollToTrigger(currentCue))
     document.querySelector(".reload-button").addEventListener("mousedown", () => location.reload())
+    document.querySelector(".sidebar-toggle-button").addEventListener("mousedown", toggleSidebar)
+    document.getElementById('script-content').addEventListener('click', onScriptClick)
+    document.addEventListener('mousedown', (e) => {
+        const sidebar = document.getElementById('scene-sidebar')
+        if (!sidebar.classList.contains('open')) return
+        if (sidebar.contains(e.target)) return
+        if (e.target.closest('.sidebar-toggle-button')) return
+        sidebar.classList.remove('open')
+    })
+
+    const searchInput = document.getElementById('search-input')
+    let searchTimer = null
+    searchInput.addEventListener('input', () => {
+        clearTimeout(searchTimer)
+        searchTimer = setTimeout(() => doSearch(searchInput.value), 150)
+    })
+    document.getElementById('search-prev').addEventListener('click', () => searchStep(-1))
+    document.getElementById('search-next').addEventListener('click', () => searchStep(1))
+    document.getElementById('search-close').addEventListener('click', closeSearch)
 }
 
 function x32UnmuteChannels(mic) {
@@ -2313,6 +2939,7 @@ async function initApp() {
     buildInsertZones()
     initButtons()
     setupAutoTriggers()
+    buildSidebar()
 
     mtc = new MTCTransmitter()
     mtc.setDisplay(document.querySelector('.tc-display'))

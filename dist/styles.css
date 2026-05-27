@@ -9,11 +9,12 @@ body {
 h1,
 h2 {
     background-color: #383c44;
-    padding: 1rem;
+    padding: 1rem 1rem 1rem 4rem;
     position: sticky;
     top: 0;
     font-size: 1.5rem;
     z-index: 10;
+    transition: padding-left 0.2s ease;
 }
 
 h1 {
@@ -741,4 +742,252 @@ body.shift-held .ws-grip:hover { filter: brightness(1.3); }
     box-shadow: inset black 0 0 10px;
     color: #e5c07b;
     letter-spacing: 0.05em;
+}
+/* ── Scene Sidebar ─────────────────────────────────────────────────────── */
+.sidebar-toggle-button {
+    position: fixed;
+    top: 0.5rem;
+    left: 0.5rem;
+    z-index: 101;
+    margin: 0;
+    transition: opacity 0.2s ease;
+}
+#scene-sidebar.open ~ .sidebar-toggle-button {
+    opacity: 0;
+    pointer-events: none;
+}
+#scene-sidebar.open ~ #script-content h1,
+#scene-sidebar.open ~ #script-content h2 {
+    padding-left: calc(240px + 1rem);
+}
+#scene-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 240px;
+    background: #1e2127;
+    border-right: 1px solid #3e4451;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    box-shadow: 4px 0 16px rgba(0,0,0,0.5);
+}
+#scene-sidebar.open {
+    transform: translateX(0);
+}
+.scene-sidebar-header {
+    padding: 0.85rem 1rem;
+    font-size: 0.8rem;
+    font-weight: bold;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #5c6370;
+    border-bottom: 1px solid #3e4451;
+    flex-shrink: 0;
+}
+#scene-list {
+    overflow-y: auto;
+    flex: 1;
+    padding: 0.4rem 0;
+}
+#scene-list::-webkit-scrollbar { width: 4px; }
+#scene-list::-webkit-scrollbar-track { background: transparent; }
+#scene-list::-webkit-scrollbar-thumb { background: #3e4451; border-radius: 2px; }
+.scene-link {
+    display: block;
+    width: 100%;
+    background: none;
+    border: none;
+    color: #abb2bf;
+    text-align: left;
+    padding: 0.45rem 1rem;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.85rem;
+    line-height: 1.3;
+    border-left: 3px solid transparent;
+    box-sizing: border-box;
+}
+.scene-link:hover {
+    background: #2c313a;
+    color: #e5c07b;
+    border-left-color: #e5c07b;
+}
+.scene-link.scene-link-active {
+    color: #e5c07b;
+    border-left-color: #e5c07b;
+}
+.scene-link-sub {
+    padding-left: 1.75rem;
+    font-size: 0.78rem;
+    color: #5c6370;
+}
+.scene-link-sub:hover { color: #abb2bf; }
+
+/* ── Search Bar ────────────────────────────────────────────────────────── */
+#search-bar {
+    position: fixed;
+    top: 0.5rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    background: #2c313a;
+    border: 1px solid #4b5263;
+    border-radius: 6px;
+    padding: 0.35rem 0.5rem;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+#search-bar.hidden { display: none; }
+#search-input {
+    background: #1e2127;
+    border: 1px solid #3e4451;
+    border-radius: 4px;
+    color: #abb2bf;
+    font-family: inherit;
+    font-size: 0.9rem;
+    padding: 0.3rem 0.6rem;
+    width: 220px;
+    outline: none;
+}
+#search-input:focus { border-color: #61afef; }
+#search-count {
+    font-size: 0.78rem;
+    color: #5c6370;
+    min-width: 4rem;
+    text-align: center;
+}
+#search-prev, #search-next, #search-close {
+    background: none;
+    border: none;
+    color: #abb2bf;
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 0.2rem 0.4rem;
+    border-radius: 3px;
+    line-height: 1;
+}
+#search-prev:hover, #search-next:hover { background: #3e4451; }
+#search-close { color: #5c6370; font-size: 1.2rem; }
+#search-close:hover { color: #e06c75; background: none; }
+
+mark.search-highlight {
+    background: rgba(229, 192, 123, 0.3);
+    color: inherit;
+    border-radius: 2px;
+}
+mark.search-current {
+    background: #e5c07b;
+    color: #282c34;
+    border-radius: 2px;
+}
+
+/* ── Inline Text Editor ─────────────────────────────────────────────────────── */
+
+/* Pencil cursor while Shift is held over editable content */
+body.shift-held #script-content [data-block-idx]:not(.trigger):not(.trigger-group) {
+    cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16'><path d='M2 14l1-4L11.5 1l2.5 2.5-8.5 8.5z' fill='%23e5c07b'/><path d='M14 3.5l-2-2 1.5-1 2 2z' fill='%23c07b20'/></svg>") 0 14, text;
+}
+
+/* Shared text/font base for both editor types */
+.inline-editor {
+    color: #abb2bf;
+    font-family: 'Gill Sans', 'Gill Sans MT', Calibri, 'Trebuchet MS', sans-serif;
+    font-size: 1rem;
+    line-height: 1.5;
+    outline: none;
+    box-sizing: border-box;
+}
+.inline-editor::placeholder { color: #5c6370; font-style: italic; }
+
+/* Wrapper for existing-block editor — carries all the visual chrome */
+.editor-wrapper {
+    position: fixed;
+    z-index: 200;
+    background: #2c313a;
+    border: 1.5px solid #e5c07b;
+    border-radius: 4px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+    display: flex;
+    align-items: flex-start;
+}
+.editor-wrapper .inline-editor {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    padding: 0.4rem 1rem;
+    resize: none;
+    overflow: hidden;
+}
+.editor-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px;
+    border-left: 1px solid rgba(255,255,255,0.08);
+    flex-shrink: 0;
+}
+.editor-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 22px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    color: #5c6370;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    padding: 0;
+    transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.editor-btn:hover {
+    color: #abb2bf;
+    border-color: #4b5263;
+    background: rgba(255,255,255,0.06);
+}
+.editor-btn-delete:hover {
+    color: #e06c75;
+    border-color: rgba(224,108,117,0.4);
+    background: rgba(224,108,117,0.08);
+}
+
+/* New-block editor (contenteditable div, no wrapper) */
+.inline-editor-new {
+    position: static;
+    display: block;
+    width: auto;
+    margin: 0.3rem 1rem;
+    border: 1.5px solid #98c379;
+    border-radius: 4px;
+    background: #252c23;
+    padding: 0.4rem 1rem;
+    min-height: 2.2rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    box-shadow: none;
+}
+.inline-editor-new:empty::before {
+    content: attr(data-placeholder);
+    color: #5c6370;
+    font-style: italic;
+    pointer-events: none;
+}
+.ac-ghost {
+    color: #e5c07b;
+    pointer-events: none;
+    user-select: none;
+}
+.role-confirmed {
+    font-weight: bold;
+    pointer-events: none;
+    user-select: none;
 }
