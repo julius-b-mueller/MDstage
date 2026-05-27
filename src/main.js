@@ -1876,9 +1876,23 @@ function setOutroPendingIndicator(idx, on) {
     if (el) el.classList.toggle('trigger-outro-pending', on)
 }
 
+// Returns list of trigger indices whose loop_outro points to idx
+function loopSourcesOf(idx) {
+    const sources = []
+    for (let i = 1; i < triggerYamls.length; i++) {
+        if (triggerYamls[i]?.loop_outro && findTriggerByNote(triggerYamls[i].loop_outro) === idx) sources.push(i)
+    }
+    return sources
+}
+
 function updateLoopBtnAppearance(btn, idx) {
     const ty = triggerYamls[idx]
-    if (shiftHeld && (ty?.chain_end || ty?.loop_outro)) {
+    const hasCE  = !!ty?.chain_end
+    const hasLO  = !!ty?.loop_outro
+    const sources = loopSourcesOf(idx)   // loop triggers that treat this as their outro
+    const isOutro = sources.length > 0
+
+    if (shiftHeld && (hasCE || hasLO)) {
         btn.textContent = '✕ Loop'
         btn.classList.remove('trigger-action-btn-active')
         btn.classList.add('trigger-action-btn-danger')
@@ -1886,22 +1900,30 @@ function updateLoopBtnAppearance(btn, idx) {
         return
     }
     btn.classList.remove('trigger-action-btn-danger')
-    if (ty?.chain_end) {
-        btn.textContent = '→ Kette'
-        btn.classList.add('trigger-action-btn-active')
-        btn.title = `Bei Ende auslösen → ${ty.chain_end.ch}.${ty.chain_end.note}`
-    } else if (ty?.loop_outro) {
-        btn.textContent = '⟲ Loop'
-        btn.classList.add('trigger-action-btn-active')
-        btn.title = `Verwalteter Loop, Outro: ${ty.loop_outro.ch}.${ty.loop_outro.note}`
-    } else if (isOutroTrigger(idx)) {
+    btn.classList.add('trigger-action-btn-active')
+
+    if (hasCE && isOutro) {
+        // Zwischenteil: outro of one loop + transition into next loop
+        const ce = `${ty.chain_end.ch}.${ty.chain_end.note}`
+        const from = sources.map(i => { const tn = triggerYamls[i]?.trigger_note; return tn ? `${tn.ch}.${tn.note}` : '?' }).join(', ')
+        btn.textContent = `⟲ → ${ce}`
+        btn.title = `Zwischenteil: Ausgang von Schleife(n) ${from}, startet am Ende Trigger ${ce}`
+    } else if (hasCE) {
+        const ce = `${ty.chain_end.ch}.${ty.chain_end.note}`
+        btn.textContent = `→ ${ce}`
+        btn.title = `Übergang: startet am Ende automatisch Trigger ${ce}`
+    } else if (hasLO) {
+        const lo = `${ty.loop_outro.ch}.${ty.loop_outro.note}`
+        btn.textContent = `⟲ → ${lo}`
+        btn.title = `Schleife: loopt bis Trigger ${lo} am Schleifen-Ende angeklickt wurde`
+    } else if (isOutro) {
+        const from = sources.map(i => { const tn = triggerYamls[i]?.trigger_note; return tn ? `${tn.ch}.${tn.note}` : '?' }).join(', ')
         btn.textContent = '⟲ Outro'
-        btn.classList.add('trigger-action-btn-active')
-        btn.title = 'Outro für einen Loop-Trigger'
+        btn.title = `Outro: wird am Schleifen-Ende von Schleife(n) ${from} nahtlos gestartet`
     } else {
         btn.textContent = '⟲ Loop'
         btn.classList.remove('trigger-action-btn-active')
-        btn.title = 'Loop-Gruppe einrichten'
+        btn.title = 'Loop-Struktur einrichten (Übergang, Schleife …)'
     }
 }
 
@@ -1945,14 +1967,14 @@ function showLoopGroupDialog(index, anchorBtn) {
     }
 
     box.appendChild(makeOption(
-        '<strong>→ Bei Ende auslösen</strong><small>Intro: startet am Audio-Ende automatisch einen anderen Trigger</small>',
+        '<strong>→ Übergang am Ende</strong><small>Startet automatisch einen anderen Trigger, wenn dieses Audio endet (z.B. Intro → Loop, Zwischenspiel → Loop)</small>',
         () => enterPickMode(targetIdx => {
             if (targetIdx === index) return
             updateLoopGroupInScript(index, 'chain_end', triggerYamls[targetIdx]?.trigger_note ?? null)
         })
     ))
     box.appendChild(makeOption(
-        '<strong>⟲ Verwalteter Loop</strong><small>Loop: loopt bis der gewählte Outro-Trigger am Schleifenende ausgelöst wird</small>',
+        '<strong>⟲ Schleife</strong><small>Loopt diesen Trigger, bis ein gewählter Outro-Trigger am Schleifen-Ende nahtlos übernimmt</small>',
         () => enterPickMode(outroIdx => {
             if (outroIdx === index) return
             updateLoopGroupInScript(index, 'loop_outro', triggerYamls[outroIdx]?.trigger_note ?? null)
