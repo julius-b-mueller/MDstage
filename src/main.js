@@ -1034,7 +1034,6 @@ function buildTrigger(codeblockYaml, index) {
                         ws.setVolume(currentVolume)
                         currentCue = outroIdx
                         markTriggers(outroIdx)
-                        scrollToTrigger(outroIdx)
                         triggerAction(outroIdx)
                     } else {
                         ws.play(mp.start)   // next loop iteration
