@@ -8,7 +8,7 @@
         body { padding: 1.5rem; padding-bottom: 5rem; }
         .field { margin-bottom: 1.2rem; }
         label { display: block; margin-bottom: 0.4rem; font-size: 0.85rem; color: #5c6370; text-transform: uppercase; letter-spacing: 0.05em; }
-        select, input[type="number"] {
+        select, input[type="number"], input[type="text"] {
             width: 100%;
             background: #383c44;
             color: #abb2bf;
@@ -20,7 +20,8 @@
             box-sizing: border-box;
         }
         select { cursor: pointer; }
-        select:focus, input[type="number"]:focus { outline: none; border-color: #61afef; }
+        select:focus, input[type="number"]:focus, input[type="text"]:focus { outline: none; border-color: #61afef; }
+        .hint { font-size: 0.78rem; color: #5c6370; margin: 0.3rem 0 0; }
         .section-title {
             font-size: 0.75rem;
             color: #5c6370;
@@ -106,6 +107,22 @@
             <option value="">— kein Gerät —</option>
         </select>
     </div>
+    <div class="section-title">Text-Editor</div>
+    <div class="field">
+        <label>In Editor öffnen (Rechtsklick)</label>
+        <select id="editor-app">
+            <option value="">— deaktiviert —</option>
+            <option value="vscode">VS Code</option>
+            <option value="zed">Zed</option>
+            <option value="custom">Custom…</option>
+        </select>
+    </div>
+    <div class="field" id="custom-cmd-field" style="display:none">
+        <label>Befehl</label>
+        <input type="text" id="editor-custom-cmd" placeholder="z.B. myeditor {file}:{line}">
+        <p class="hint">{file} = Dateipfad &nbsp;·&nbsp; {line} = Zeilennummer (1-basiert)</p>
+    </div>
+
     <div class="actions">
         <button class="btn" id="cancel">Abbrechen</button>
         <button class="btn btn-primary" id="save">Speichern</button>
@@ -255,6 +272,19 @@
                 document.body.insertAdjacentHTML('beforeend', '<p class="error">MIDI nicht verfügbar: ' + e.message + '</p>')
             }
 
+            // ── Text-Editor ───────────────────────────────────────────
+            const editorAppSel   = document.getElementById('editor-app')
+            const customCmdField = document.getElementById('custom-cmd-field')
+            const editorCustomEl = document.getElementById('editor-custom-cmd')
+
+            if (settings.editorApp) editorAppSel.value = settings.editorApp
+            if (settings.editorCustomCmd) editorCustomEl.value = settings.editorCustomCmd
+            customCmdField.style.display = settings.editorApp === 'custom' ? '' : 'none'
+
+            editorAppSel.addEventListener('change', () => {
+                customCmdField.style.display = editorAppSel.value === 'custom' ? '' : 'none'
+            })
+
             document.getElementById('cancel').addEventListener('click', () => { stopMetro(); window.close() })
 
             document.getElementById('save').addEventListener('click', async () => {
@@ -266,6 +296,8 @@
                     midiX32Device:      x32Select.value       || null,
                     midiTriggerDevice:  triggerSelect.value   || null,
                     midiTCDevice:       tcSelect.value        || null,
+                    editorApp:          editorAppSel.value    || null,
+                    editorCustomCmd:    editorCustomEl.value.trim(),
                 })
                 window.close()
             })

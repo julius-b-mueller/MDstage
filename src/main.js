@@ -27,6 +27,7 @@ let mainAudioDevice = null
 let monitorAudioDevice = null
 let monitorOffsetMs = 0
 let audioOutputDevices = []
+let editorApp = null
 
 function resolveDeviceId(label) {
     if (!label) return null
@@ -1105,6 +1106,18 @@ document.addEventListener('keyup', (e) => {
 }, { capture: true })
 window.addEventListener('blur', () => { shiftHeld = false; document.body.classList.remove('shift-held') })
 window.addEventListener('scroll', updateSidebarActive, { passive: true })
+
+document.addEventListener('contextmenu', (e) => {
+    if (!editorApp) return
+    const blockEl = e.target.closest('[data-block-idx]')
+    if (!blockEl || isTriggerEl(blockEl)) return
+    const k = parseInt(blockEl.dataset.blockIdx)
+    if (isNaN(k)) return
+    const info = getBlockInfo(k)
+    if (!info) return
+    e.preventDefault()
+    window.electronAPI.showEditorContextMenu(info.lineStart + 1)
+})
 
 
 const converter = new showdown.Converter
@@ -3353,6 +3366,7 @@ async function initApp() {
     mainAudioDevice    = resolveDeviceId(savedSettings.mainAudioDevice)
     monitorAudioDevice = resolveDeviceId(savedSettings.monitorAudioDevice)
     monitorOffsetMs    = savedSettings.monitorOffsetMs ?? 0
+    editorApp          = savedSettings.editorApp || null
 
     let text = await window.electronAPI.getScriptMd()
 
@@ -3407,11 +3421,13 @@ async function initApp() {
             mainAudioDevice    = resolveDeviceId(newSettings.mainAudioDevice)
             monitorAudioDevice = resolveDeviceId(newSettings.monitorAudioDevice)
             monitorOffsetMs    = newSettings.monitorOffsetMs ?? 0
+            editorApp          = newSettings.editorApp || null
             applyAudioDevices()
         }).catch(() => {
             mainAudioDevice    = resolveDeviceId(newSettings.mainAudioDevice)
             monitorAudioDevice = resolveDeviceId(newSettings.monitorAudioDevice)
             monitorOffsetMs    = newSettings.monitorOffsetMs ?? 0
+            editorApp          = newSettings.editorApp || null
             applyAudioDevices()
         })
     })

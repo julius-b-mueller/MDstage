@@ -17,4 +17,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onScriptChanged: (callback) => {
         ipcRenderer.on('script-changed', () => callback())
     },
+    showEditorContextMenu: (line) => ipcRenderer.invoke('show-editor-context-menu', line),
 })

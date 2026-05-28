@@ -1,4 +1,5 @@
 const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron')
+const { exec } = require('child_process')
 app.setName('Main Desk')
 const path = require('path')
 const fs = require('fs')
@@ -41,6 +42,22 @@ const hostname = os.hostname().split('.')[0]
 const defaultSettings = {
     mainAudioDevice: null, monitorAudioDevice: null, monitorOffsetMs: 0,
     midiX32Device: null, midiTriggerDevice: null, midiTCDevice: null,
+    editorApp: null, editorCustomCmd: '',
+}
+
+function openLineInEditor(settings, line) {
+    const p = scriptMdPath.replace(/"/g, '\\"')
+    let cmd
+    if (settings.editorApp === 'vscode') {
+        cmd = `code --goto "${p}:${line}"`
+    } else if (settings.editorApp === 'zed') {
+        cmd = `zed "${p}:${line}"`
+    } else if (settings.editorApp === 'custom' && settings.editorCustomCmd) {
+        cmd = settings.editorCustomCmd
+            .replace('{file}', `"${p}"`)
+            .replace('{line}', String(line))
+    }
+    if (cmd) exec(cmd)
 }
 
 function readConfigBlock() {
@@ -119,7 +136,7 @@ function createSettingsWindow() {
     }
     settingsWindow = new BrowserWindow({
         width: 440,
-        height: 520,
+        height: 640,
         title: 'Einstellungen',
         resizable: false,
         minimizable: false,
@@ -318,6 +335,16 @@ app.whenReady().then(() => {
     })
 
     ipcMain.handle('new-file', () => createNewFile())
+
+    ipcMain.handle('show-editor-context-menu', (event, line) => {
+        const settings = loadSettings()
+        if (!settings.editorApp) return
+        const menu = Menu.buildFromTemplate([{
+            label: 'In Editor öffnen',
+            click: () => openLineInEditor(settings, line),
+        }])
+        menu.popup({ window: BrowserWindow.fromWebContents(event.sender) })
+    })
 
     Menu.setApplicationMenu(buildMenu())
     createMainWindow()
