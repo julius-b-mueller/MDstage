@@ -386,10 +386,15 @@ function updateEditorParens(div) {
     const afterName = []
     let seen = false
     for (const n of div.childNodes) { if (seen) afterName.push(n); if (n === nameSpan) seen = true }
-    // Serialize back to markdown so *(text)* patterns survive the rebuild
+    // Serialize back to markdown so *(text)* patterns survive the rebuild.
+    // Only re-wrap editor-stage-inline spans that still contain balanced (...) —
+    // a partially deleted span must not emit raw asterisks into the text.
     const dialogue = afterName.map(n => {
         if (n.nodeType === Node.TEXT_NODE) return n.textContent
-        if (n.classList?.contains('editor-stage-inline')) return '*' + n.textContent + '*'
+        if (n.classList?.contains('editor-stage-inline')) {
+            const t = n.textContent
+            return (t.startsWith('(') && t.endsWith(')')) ? '*' + t + '*' : t
+        }
         return n.textContent
     }).join('')
     afterName.forEach(n => n.remove())
@@ -646,6 +651,7 @@ function openNewBlock(afterBlockEl, forceAfterRole) {
 
     const wrapper = document.createElement('div')
     wrapper.className = 'new-block-wrapper'
+    wrapper.style.width = afterBlockEl.getBoundingClientRect().width + 'px'
 
     const controls = document.createElement('div')
     controls.className = 'editor-controls new-block-controls'
@@ -810,9 +816,38 @@ function onNewBlockBeforeInput(e) {
     }
 }
 
+// Re-color *(text)* inline stage directions live while typing in a confirmed-role new block
+function updateNewBlockParens(el) {
+    const roleSpan = el.querySelector('.role-confirmed')
+    if (!roleSpan) return
+    const roleColor = ROLE_COLORS[config.roles?.[inlineEditor?.confirmedRole]?.color] || ''
+
+    const caretOffset = getCaretOffset(el)
+    const afterRole = []
+    let seen = false
+    for (const n of el.childNodes) {
+        if (seen) afterRole.push(n)
+        if (n === roleSpan) seen = true
+    }
+    const dialogue = afterRole.map(n => {
+        if (n.classList?.contains('ac-ghost')) return ''
+        if (n.nodeType === Node.TEXT_NODE) return n.textContent
+        if (n.classList?.contains('editor-stage-inline')) {
+            const t = n.textContent
+            return (t.startsWith('(') && t.endsWith(')')) ? '*' + t + '*' : t
+        }
+        return n.textContent
+    }).join('')
+    afterRole.filter(n => !n.classList?.contains('ac-ghost')).forEach(n => n.remove())
+    appendDialogueParsed(el, dialogue, roleColor)
+    setCaretOffset(el, caretOffset)
+}
+
 function onNewBlockInput() {
     if (!inlineEditor?.confirmedRole) {
         updateInlineAc(getTyped(this).trimStart())
+    } else {
+        updateNewBlockParens(this)
     }
 }
 
