@@ -2329,7 +2329,7 @@ function buildTrigger(codeblockYaml, index) {
             _wsStop()
         }
 
-        triggerAudio.set(index, { ws, wsMonitor, mainAudioEl, monAudioEl, musicFile, overlay, getX, autoMarkerState })
+        triggerAudio.set(index, { ws, wsMonitor, mainAudioEl, monAudioEl, musicFile, overlay, getX, autoMarkerState, mp })
         fileToTriggers.set(musicFile, [...(fileToTriggers.get(musicFile) || []), index])
     }
 
@@ -3211,11 +3211,18 @@ function broadcastLiveState() {
     for (const [cueIdx, ta] of triggerAudio) {
         if (!ta.ws.isPlaying()) continue
         const ty = triggerYamls[cueIdx]
+        const { mp } = ta
+        const totalDuration = ta.ws.getDuration() ?? 0
+        const loopStart = mp?.start ?? 0
+        const loopEnd   = mp?.end   ?? totalDuration
+        const isLoop    = !!(ty?.loop_outro || mp?.loop)
         audioProgress.push({
             cueIdx,
             label: (typeof ty?.music === 'string' ? ty.music : ty?.music?.file) || ('Cue ' + cueIdx),
             currentTime: ta.mainAudioEl?.currentTime ?? 0,
-            duration: ta.ws.getDuration() ?? 0,
+            loopStart,
+            loopEnd,
+            isLoop,
         })
     }
 

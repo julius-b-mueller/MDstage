@@ -7,11 +7,7 @@
     <style>
         /* ── Layout ─────────────────────────────────────────────────────── */
         html, body { height: 100%; overflow: hidden; }
-        body {
-            display: flex;
-            flex-direction: column;
-            background-color: #282c34;
-        }
+        body { display: flex; flex-direction: column; background-color: #282c34; }
 
         /* ── Header ─────────────────────────────────────────────────────── */
         .live-header {
@@ -31,10 +27,7 @@
             font-weight: 300;
             background: transparent;
             box-shadow: none;
-            width: auto;
-            padding: 0;
-            margin: 0;
-            line-height: 1;
+            width: auto; padding: 0; margin: 0; line-height: 1;
         }
         .live-tc {
             font-size: 0.85rem;
@@ -46,11 +39,7 @@
         .live-tc.tc-active { color: #e5c07b; }
 
         /* ── Script area ─────────────────────────────────────────────────── */
-        .script-area {
-            flex: 1;
-            position: relative;
-            min-height: 0;
-        }
+        .script-area { flex: 1; position: relative; min-height: 0; }
         .script-scroll {
             height: 100%;
             overflow-y: auto;
@@ -69,45 +58,27 @@
             pointer-events: none;
             z-index: 5;
         }
-        .script-area::before {
-            top: 0;
-            background: linear-gradient(to bottom, #282c34 10%, transparent);
-        }
-        .script-area::after {
-            bottom: 0;
-            background: linear-gradient(to top, #282c34 10%, transparent);
-        }
+        .script-area::before { top: 0;    background: linear-gradient(to bottom, #282c34 10%, transparent); }
+        .script-area::after  { bottom: 0; background: linear-gradient(to top,   #282c34 10%, transparent); }
 
         /* ── Block wrappers ──────────────────────────────────────────────── */
-        /* Text blocks: same as main view but headings not sticky */
         .live-text h1, .live-text h2, .live-text h3 {
             position: static !important;
             box-shadow: none !important;
             margin-top: 0;
         }
         .live-text p { margin: 0.4rem 1rem; }
-
-        /* Dim past blocks */
         .live-block-past { opacity: 0.3; }
-        /* Current (last-fired) trigger: subtle yellow left border */
         .live-block-current .trigger { border-left-color: #e5c07b55; }
-        /* Next trigger: prominent */
         .live-block-next .trigger {
             border-left: 5px solid #61afef !important;
             background-color: #1d2736 !important;
             box-shadow: 0 0 18px #61afef22, black 0 0 10px;
         }
-        /* Next trigger: show action buttons area (we repurpose it to show label) */
-        .live-block-next .trigger .trigger-actions { display: none; }
-        .live-block-next .trigger .trigger-move-btns { display: none; }
-
-        /* Hide all action buttons and move buttons in live view */
-        .trigger .trigger-actions { display: none; }
+        .trigger .trigger-actions  { display: none; }
         .trigger .trigger-move-btns { display: none; }
         .trigger { cursor: default !important; }
         .trigger:active { box-shadow: black 0 0 10px !important; background-color: inherit !important; }
-
-        /* Next-trigger label (shown under the normal trigger-row) */
         .live-next-label {
             font-size: 0.75rem;
             color: #61afef;
@@ -115,36 +86,54 @@
             letter-spacing: 0.06em;
             text-transform: uppercase;
         }
+        #next-anchor { scroll-margin-top: 30vh; scroll-margin-bottom: 30vh; }
 
         /* ── Audio progress ──────────────────────────────────────────────── */
         .audio-panel {
             flex-shrink: 0;
             background: #21252b;
             border-top: 1px solid #383c44;
-            padding: 0.5rem 1rem;
+            padding: 0 1rem;
             display: flex;
             flex-direction: column;
-            gap: 0.4rem;
-            max-height: 8rem;
-            overflow-y: auto;
+            overflow: hidden;
         }
-        .audio-panel:empty { display: none; }
+        /* Each row animates in/out via max-height + opacity */
         .audio-row {
-            display: flex;
+            display: grid;
+            grid-template-columns: minmax(0, 11rem) 1fr auto auto;
             align-items: center;
             gap: 0.6rem;
             font-size: 0.82rem;
+            overflow: hidden;
+            max-height: 2.4rem;
+            opacity: 1;
+            padding: 0.35rem 0;
+            /* transition only affects enter/leave; rAF handles bar width */
+            transition: max-height 0.28s ease, opacity 0.28s ease, padding 0.28s ease;
+        }
+        .audio-row.entering, .audio-row.leaving {
+            max-height: 0;
+            opacity: 0;
+            padding-top: 0;
+            padding-bottom: 0;
         }
         .audio-label {
-            flex: 0 0 auto;
-            max-width: 12rem;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
             color: #abb2bf;
         }
+        .audio-loop-badge {
+            font-size: 0.72rem;
+            color: #c678dd;
+            border: 1px solid #c678dd55;
+            border-radius: 3px;
+            padding: 0 0.3rem;
+            margin-left: 0.3rem;
+            flex-shrink: 0;
+        }
         .audio-bar-wrap {
-            flex: 1;
             height: 6px;
             background: #383c44;
             border-radius: 3px;
@@ -154,18 +143,18 @@
             height: 100%;
             background: #98c379;
             border-radius: 3px;
-            transition: width 0.8s linear;
+            will-change: width;
         }
+        .audio-loop-fill { background: #c678dd; }
         .audio-time {
-            flex: 0 0 auto;
             font-variant-numeric: tabular-nums;
             color: #5c6370;
             font-size: 0.78rem;
-            min-width: 4rem;
+            white-space: nowrap;
             text-align: right;
         }
 
-        /* ── Bottom bar: Go / Back ───────────────────────────────────────── */
+        /* ── Bottom bar ──────────────────────────────────────────────────── */
         .bottom-bar {
             display: flex;
             gap: 1rem;
@@ -188,21 +177,15 @@
             letter-spacing: 0.02em;
         }
         .ctrl-btn:active { transform: scale(0.97); }
-        .btn-back {
-            background: #383c44;
-            color: #abb2bf;
-            max-width: 10rem;
-        }
+        .btn-back { background: #383c44; color: #abb2bf; max-width: 10rem; }
         .btn-back:hover { background: #4b5263; }
-        .btn-go {
-            background: #98c379;
-            color: #1e2127;
-        }
+        .btn-go   { background: #98c379; color: #1e2127; }
         .btn-go:hover { background: #a8d389; }
-        .btn-go:disabled { background: #3a4535; color: #5c6370; cursor: default; }
 
-        /* scroll anchor */
-        #next-anchor { scroll-margin-top: 30vh; scroll-margin-bottom: 30vh; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50%       { opacity: 0.35; }
+        }
     </style>
 </head>
 <body>
@@ -245,48 +228,33 @@
         setInterval(updateClock, 1000)
         updateClock()
 
-        // ── Format seconds ───────────────────────────────────────────────
+        // ── Helpers ──────────────────────────────────────────────────────
+        function esc(s) {
+            return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        }
         function fmt(s) {
             s = Math.max(0, s | 0)
-            return `${(s / 60 | 0)}:${(s % 60).toString().padStart(2, '0')}`
+            return `${s / 60 | 0}:${(s % 60).toString().padStart(2,'0')}`
         }
 
-        // ── Build trigger card HTML (matching main-view style) ───────────
+        // ── Trigger card HTML ────────────────────────────────────────────
         function buildTriggerHtml(b) {
-            // Mic info
             let micHtml = MIC_SVG
             if (b.muteall) {
                 micHtml += ' alle aus'
             } else if (b.micColors && b.micColors.length) {
                 micHtml += ' '
-                for (const { name, color } of b.micColors) {
-                    const cls = color ? ` class="color-${color}"` : ''
-                    micHtml += `<span${cls}>${esc(name)}</span> `
-                }
+                for (const { name, color } of b.micColors)
+                    micHtml += `<span${color ? ` class="color-${color}"` : ''}>${esc(name)}</span> `
             } else {
                 micHtml += ' -'
             }
 
-            // Music info
-            let musicHtml = TAPE_SVG
-            if (b.musicLabel) {
-                musicHtml += ' ' + esc(b.musicLabel)
-            } else {
-                musicHtml += ' -'
-            }
-
-            // Light badge
-            const lightHtml = b.light
+            const lightBadge = b.light
                 ? `<span style="font-size:0.72rem;color:#e5c07b;border:1px solid #e5c07b55;border-radius:3px;padding:0 0.3rem;margin-left:0.4rem">✦ Licht</span>`
                 : ''
 
-            // Note
-            const noteHtml = b.note
-                ? `<div class="trigger-note" style="font-size:0.85rem">${esc(b.note)}</div>`
-                : ''
-
-            // Playing indicator
-            const playingDot = b.isPlaying
+            const playDot = b.isPlaying
                 ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#98c379;box-shadow:0 0 6px #98c37988;margin-left:0.4rem;animation:pulse 1.2s ease-in-out infinite"></span>`
                 : ''
 
@@ -294,36 +262,175 @@
                 <div class="trigger-row">
                     <div class="trigger-info">
                         <div class="trigger-mic">${micHtml}</div>
-                        <div class="trigger-music">${musicHtml}${lightHtml}</div>
+                        <div class="trigger-music">${TAPE_SVG} ${b.musicLabel ? esc(b.musicLabel) : '-'}${lightBadge}</div>
                     </div>
-                    ${noteHtml}
-                    <div style="display:flex;align-items:center;padding-right:0.5rem">
-                        ${playingDot}
-                    </div>
+                    ${b.note ? `<div class="trigger-note" style="font-size:0.85rem">${esc(b.note)}</div>` : ''}
+                    <div style="display:flex;align-items:center;padding-right:0.5rem">${playDot}</div>
                 </div>
                 ${b.isNext ? '<div class="live-next-label">▶ Nächste Cue</div>' : ''}
             `
         }
 
-        function esc(s) {
-            return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-        }
-
-        // ── Render state ─────────────────────────────────────────────────
-        let lastNextCue = null
-        let userScrolled = false
-        let scrollResetTimer = null
+        // ── Script render ────────────────────────────────────────────────
+        let lastNextCue   = null
+        let userScrolled  = false
+        let scrollTimer   = null
 
         scrollEl.addEventListener('wheel', () => {
             userScrolled = true
-            clearTimeout(scrollResetTimer)
-            scrollResetTimer = setTimeout(() => { userScrolled = false }, 4000)
+            clearTimeout(scrollTimer)
+            scrollTimer = setTimeout(() => { userScrolled = false }, 4000)
         }, { passive: true })
 
-        function render(state) {
-            const { blocks, currentCue, nextCue, timecode, audioProgress } = state
+        function renderScript(blocks, nextCue) {
+            let nextBlockIdx = -1
+            for (let i = 0; i < blocks.length; i++) {
+                if (blocks[i].type === 'trigger' && blocks[i].isNext)    { nextBlockIdx = i; break }
+            }
+            if (nextBlockIdx < 0) {
+                for (let i = 0; i < blocks.length; i++) {
+                    if (blocks[i].type === 'trigger' && blocks[i].isCurrent) { nextBlockIdx = i; break }
+                }
+            }
 
-            // TC
+            const frag = document.createDocumentFragment()
+            for (let i = 0; i < blocks.length; i++) {
+                const b = blocks[i]
+                const wrap = document.createElement('div')
+                const isPast = nextBlockIdx >= 0 && i < nextBlockIdx
+
+                if (b.type === 'trigger') {
+                    if (b.isNext) {
+                        wrap.className = 'live-block-next'
+                        wrap.id = 'next-anchor'
+                    } else if (b.isCurrent) {
+                        wrap.className = isPast ? 'live-block-past live-block-current' : 'live-block-current'
+                    } else if (isPast) {
+                        wrap.className = 'live-block-past'
+                    }
+                    const card = document.createElement('div')
+                    card.className = 'trigger'
+                    card.innerHTML = buildTriggerHtml(b)
+                    wrap.appendChild(card)
+                } else {
+                    if (isPast) wrap.className = 'live-block-past'
+                    const inner = document.createElement('div')
+                    inner.className = 'live-text'
+                    inner.innerHTML = b.html
+                    wrap.appendChild(inner)
+                }
+                frag.appendChild(wrap)
+            }
+
+            blocksEl.innerHTML = ''
+            blocksEl.appendChild(frag)
+
+            if (!userScrolled || lastNextCue !== nextCue) {
+                const anchor = document.getElementById('next-anchor')
+                if (anchor) {
+                    const top = anchor.offsetTop - scrollEl.clientHeight * 0.35
+                    scrollEl.scrollTo({ top: Math.max(0, top), behavior: lastNextCue !== nextCue ? 'smooth' : 'instant' })
+                }
+                lastNextCue = nextCue
+            }
+        }
+
+        // ── Audio panel (rAF-based smooth update) ────────────────────────
+        // Map<cueIdx, { el, fillEl, timeEl, item }>
+        const audioRows = new Map()
+
+        function calcProgress(item) {
+            const now     = performance.now()
+            const elapsed = (now - item.receivedAt) / 1000
+            const ct      = item.currentTime + elapsed
+            const start   = item.loopStart
+            const end     = item.loopEnd
+            const range   = end - start
+
+            if (item.isLoop) {
+                // Position within current loop iteration (wraps)
+                const pos = range > 0 ? ((ct - start) % range + range) % range : 0
+                const pct = range > 0 ? Math.min(1, pos / range) : 0
+                const remaining = range > 0 ? range - pos : 0
+                return { pct, remaining }
+            } else {
+                const pct = range > 0 ? Math.min(1, (ct - start) / range) : 0
+                const remaining = range > 0 ? Math.max(0, end - ct) : 0
+                return { pct, remaining }
+            }
+        }
+
+        function rafUpdate() {
+            requestAnimationFrame(rafUpdate)
+            for (const { fillEl, timeEl, item } of audioRows.values()) {
+                const { pct, remaining } = calcProgress(item)
+                fillEl.style.width = (pct * 100).toFixed(2) + '%'
+                timeEl.textContent = '-' + fmt(remaining)
+            }
+        }
+        requestAnimationFrame(rafUpdate)
+
+        function syncAudio(items) {
+            const seen = new Set()
+            const now  = performance.now()
+
+            for (const item of items) {
+                seen.add(item.cueIdx)
+                item.receivedAt = now
+
+                if (audioRows.has(item.cueIdx)) {
+                    // Update item reference (new currentTime snapshot)
+                    audioRows.get(item.cueIdx).item = item
+                } else {
+                    // Create new row and animate in
+                    const row = document.createElement('div')
+                    row.className = 'audio-row entering'
+
+                    const label = document.createElement('div')
+                    label.className = 'audio-label'
+                    label.innerHTML = esc(item.label) + (item.isLoop
+                        ? '<span class="audio-loop-badge">⟳ Loop</span>'
+                        : '')
+
+                    const barWrap = document.createElement('div')
+                    barWrap.className = 'audio-bar-wrap'
+                    const fill = document.createElement('div')
+                    fill.className = 'audio-bar-fill' + (item.isLoop ? ' audio-loop-fill' : '')
+                    fill.style.width = '0%'
+                    barWrap.appendChild(fill)
+
+                    const timeEl = document.createElement('div')
+                    timeEl.className = 'audio-time'
+                    timeEl.textContent = ''
+
+                    row.append(label, barWrap, timeEl)
+                    audioPanEl.appendChild(row)
+
+                    // Trigger enter animation on next frame
+                    requestAnimationFrame(() => row.classList.remove('entering'))
+
+                    audioRows.set(item.cueIdx, { el: row, fillEl: fill, timeEl, item })
+                }
+            }
+
+            // Remove rows that are no longer playing
+            for (const [cueIdx, { el }] of audioRows) {
+                if (seen.has(cueIdx)) continue
+                el.classList.add('leaving')
+                el.addEventListener('transitionend', () => {
+                    el.remove()
+                    audioRows.delete(cueIdx)
+                }, { once: true })
+                // Fallback: delete after 400ms in case transitionend doesn't fire
+                setTimeout(() => { if (audioRows.has(cueIdx)) { el.remove(); audioRows.delete(cueIdx) } }, 400)
+            }
+        }
+
+        // ── Main render ──────────────────────────────────────────────────
+        function render(state) {
+            const { blocks, nextCue, timecode, audioProgress } = state
+
+            // TC display
             if (timecode) {
                 tcEl.textContent = timecode
                 tcEl.classList.add('tc-active')
@@ -332,104 +439,20 @@
                 tcEl.classList.remove('tc-active')
             }
 
-            // Determine position in list: blocks before the next trigger are "past"
-            // (blocks before the currently-marked cue are past)
-            let nextBlockIdx = -1
-            for (let i = 0; i < blocks.length; i++) {
-                if (blocks[i].type === 'trigger' && blocks[i].isNext) { nextBlockIdx = i; break }
-            }
-            // If no next cue, use current cue as reference
-            if (nextBlockIdx < 0) {
-                for (let i = 0; i < blocks.length; i++) {
-                    if (blocks[i].type === 'trigger' && blocks[i].isCurrent) { nextBlockIdx = i; break }
-                }
-            }
-
-            // Build DOM
-            const frag = document.createDocumentFragment()
-            for (let i = 0; i < blocks.length; i++) {
-                const b = blocks[i]
-                const wrapper = document.createElement('div')
-
-                const isPast = nextBlockIdx >= 0 && i < nextBlockIdx
-                if (b.type === 'trigger') {
-                    if (b.isNext) {
-                        wrapper.className = 'live-block-next'
-                        wrapper.id = 'next-anchor'
-                    } else if (b.isCurrent) {
-                        wrapper.className = isPast ? 'live-block-past live-block-current' : 'live-block-current'
-                    } else {
-                        if (isPast) wrapper.className = 'live-block-past'
-                    }
-
-                    const card = document.createElement('div')
-                    card.className = 'trigger'
-                    card.innerHTML = buildTriggerHtml(b)
-                    wrapper.appendChild(card)
-                } else {
-                    // text block: rendered HTML from main process
-                    if (isPast) wrapper.className = 'live-block-past'
-                    const inner = document.createElement('div')
-                    inner.className = 'live-text'
-                    inner.innerHTML = b.html
-                    wrapper.appendChild(inner)
-                }
-                frag.appendChild(wrapper)
-            }
-
-            blocksEl.innerHTML = ''
-            blocksEl.appendChild(frag)
-
-            // Scroll to next trigger (unless user is manually scrolling)
-            if (!userScrolled || lastNextCue !== nextCue) {
-                const anchor = document.getElementById('next-anchor')
-                if (anchor) {
-                    const scrollTop = anchor.offsetTop - scrollEl.clientHeight * 0.35
-                    scrollEl.scrollTo({ top: Math.max(0, scrollTop), behavior: lastNextCue !== nextCue ? 'smooth' : 'instant' })
-                }
-                lastNextCue = nextCue
-            }
-
-            // Audio progress
-            renderAudio(audioProgress || [])
-        }
-
-        function renderAudio(items) {
-            if (!items.length) { audioPanEl.innerHTML = ''; return }
-            audioPanEl.innerHTML = items.map(({ label, currentTime, duration }) => {
-                const pct = duration > 0 ? Math.min(100, currentTime / duration * 100) : 0
-                const remaining = fmt(duration - currentTime)
-                const total = fmt(duration)
-                return `<div class="audio-row">
-                    <span class="audio-label">${esc(label)}</span>
-                    <div class="audio-bar-wrap"><div class="audio-bar-fill" style="width:${pct.toFixed(1)}%"></div></div>
-                    <span class="audio-time">${remaining} / ${total}</span>
-                </div>`
-            }).join('')
+            renderScript(blocks, nextCue)
+            syncAudio(audioProgress || [])
         }
 
         // ── Controls ─────────────────────────────────────────────────────
-        btnGo.addEventListener('click', () => {
-            userScrolled = false
-            window.electronAPI.liveGo()
-        })
-        btnBack.addEventListener('click', () => {
-            userScrolled = false
-            window.electronAPI.liveBack()
-        })
+        btnGo.addEventListener('click',   () => { userScrolled = false; window.electronAPI.liveGo() })
+        btnBack.addEventListener('click', () => { userScrolled = false; window.electronAPI.liveBack() })
 
         document.addEventListener('keydown', (e) => {
-            if (e.key === ' ' || e.key === 'Enter')       { e.preventDefault(); userScrolled = false; window.electronAPI.liveGo() }
+            if (e.key === ' ' || e.key === 'Enter')            { e.preventDefault(); userScrolled = false; window.electronAPI.liveGo() }
             if (e.key === 'Backspace' || e.key === 'ArrowLeft') { e.preventDefault(); userScrolled = false; window.electronAPI.liveBack() }
         })
 
         window.electronAPI.onLiveState(render)
     </script>
-    <style>
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50%       { opacity: 0.35; }
-        }
-    </style>
 </body>
 </html>
