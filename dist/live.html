@@ -39,7 +39,7 @@
         .live-tc.tc-active { color: #e5c07b; }
 
         /* ── Script area ─────────────────────────────────────────────────── */
-        .script-area { flex: 1; position: relative; min-height: 0; }
+        .script-area { flex: 1; position: relative; min-height: 0; isolation: isolate; }
         .script-scroll {
             height: 100%;
             overflow-y: auto;
@@ -92,11 +92,17 @@
         .audio-panel {
             flex-shrink: 0;
             background: #21252b;
-            border-top: 1px solid #383c44;
+            border-top: 1px solid transparent;
             padding: 0 1rem;
             display: flex;
             flex-direction: column;
             overflow: hidden;
+            max-height: 0;
+            transition: border-color 0.28s, max-height 0.28s ease;
+        }
+        .audio-panel.has-audio {
+            border-top-color: #383c44;
+            max-height: 10rem;
         }
         /* Each row animates in/out via max-height + opacity */
         .audio-row {
@@ -203,8 +209,8 @@
     <div class="audio-panel" id="audio-panel"></div>
 
     <div class="bottom-bar">
-        <button class="ctrl-btn btn-back" id="btn-back">◀ Back</button>
-        <button class="ctrl-btn btn-go"   id="btn-go">Go ▶</button>
+        <button class="ctrl-btn btn-back" id="btn-back" tabindex="-1">◀ Back</button>
+        <button class="ctrl-btn btn-go"   id="btn-go"   tabindex="-1">Go ▶</button>
     </div>
 
     <script>
@@ -379,10 +385,8 @@
                 item.receivedAt = now
 
                 if (audioRows.has(item.cueIdx)) {
-                    // Update item reference (new currentTime snapshot)
                     audioRows.get(item.cueIdx).item = item
                 } else {
-                    // Create new row and animate in
                     const row = document.createElement('div')
                     row.className = 'audio-row entering'
 
@@ -401,14 +405,11 @@
 
                     const timeEl = document.createElement('div')
                     timeEl.className = 'audio-time'
-                    timeEl.textContent = ''
 
                     row.append(label, barWrap, timeEl)
                     audioPanEl.appendChild(row)
 
-                    // Trigger enter animation on next frame
                     requestAnimationFrame(() => row.classList.remove('entering'))
-
                     audioRows.set(item.cueIdx, { el: row, fillEl: fill, timeEl, item })
                 }
             }
@@ -416,14 +417,14 @@
             // Remove rows that are no longer playing
             for (const [cueIdx, { el }] of audioRows) {
                 if (seen.has(cueIdx)) continue
+                audioRows.delete(cueIdx)
                 el.classList.add('leaving')
-                el.addEventListener('transitionend', () => {
-                    el.remove()
-                    audioRows.delete(cueIdx)
-                }, { once: true })
-                // Fallback: delete after 400ms in case transitionend doesn't fire
-                setTimeout(() => { if (audioRows.has(cueIdx)) { el.remove(); audioRows.delete(cueIdx) } }, 400)
+                el.addEventListener('transitionend', () => el.remove(), { once: true })
+                setTimeout(() => el.remove(), 400)
             }
+
+            // Show/hide panel with animation
+            audioPanEl.classList.toggle('has-audio', audioRows.size > 0)
         }
 
         // ── Main render ──────────────────────────────────────────────────
@@ -447,10 +448,19 @@
         btnGo.addEventListener('click',   () => { userScrolled = false; window.electronAPI.liveGo() })
         btnBack.addEventListener('click', () => { userScrolled = false; window.electronAPI.liveBack() })
 
+        // Capture phase: fires before any element's own handler, preventing
+        // scroll on Space and double-fire when a button happens to be focused.
         document.addEventListener('keydown', (e) => {
-            if (e.key === ' ' || e.key === 'Enter')            { e.preventDefault(); userScrolled = false; window.electronAPI.liveGo() }
-            if (e.key === 'Backspace' || e.key === 'ArrowLeft') { e.preventDefault(); userScrolled = false; window.electronAPI.liveBack() }
-        })
+            if (e.key === ' ' || e.key === 'Enter') {
+                e.preventDefault()
+                userScrolled = false
+                window.electronAPI.liveGo()
+            } else if (e.key === 'Backspace' || e.key === 'ArrowLeft') {
+                e.preventDefault()
+                userScrolled = false
+                window.electronAPI.liveBack()
+            }
+        }, { capture: true })
 
         window.electronAPI.onLiveState(render)
     </script>
