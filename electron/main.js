@@ -1,8 +1,13 @@
 const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron')
+app.setName('Main Desk')
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
 const yaml = require('js-yaml')
+
+function escapeRegex(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
 
 let scriptMdPath = path.join(__dirname, '../dist/script.md')
 
@@ -83,11 +88,14 @@ function persistSettings(settings) {
 
 let mainWindow = null
 let settingsWindow = null
+let roleEditorWindow = null
 
 function createMainWindow() {
     mainWindow = new BrowserWindow({
         width: 1200,
         height: 900,
+        title: 'Main Desk',
+        icon: path.join(__dirname, '../dist/assets/icon.png'),
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
@@ -125,6 +133,39 @@ function createSettingsWindow() {
     settingsWindow.on('closed', () => { settingsWindow = null })
 }
 
+function createRoleEditorWindow() {
+    if (roleEditorWindow) { roleEditorWindow.focus(); return }
+    roleEditorWindow = new BrowserWindow({
+        width: 600,
+        height: 500,
+        title: 'Rolleneditor',
+        webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            preload: path.join(__dirname, 'preload.js'),
+        },
+    })
+    roleEditorWindow.loadFile(path.join(__dirname, '../dist/role-editor.html'))
+    roleEditorWindow.on('closed', () => { roleEditorWindow = null })
+}
+
+async function createNewFile() {
+    const result = await dialog.showSaveDialog(mainWindow, {
+        filters: [{ name: 'Markdown', extensions: ['md'] }],
+        defaultPath: 'skript.md',
+    })
+    if (!result.canceled && result.filePath) {
+        const template = '```yaml\nconfig:\n    roles: {}\n```\n'
+        fs.writeFileSync(result.filePath, template, 'utf8')
+        scriptMdPath = result.filePath
+        saveLastFilePath(scriptMdPath)
+        mainWindow.webContents.once('did-finish-load', () => {
+            setTimeout(createRoleEditorWindow, 400)
+        })
+        mainWindow.reload()
+    }
+}
+
 function buildMenu() {
     const template = [
         ...(process.platform === 'darwin' ? [{
@@ -132,6 +173,11 @@ function buildMenu() {
             submenu: [
                 { role: 'about' },
                 { type: 'separator' },
+                {
+                    label: 'Neue Datei…',
+                    accelerator: 'Cmd+N',
+                    click: createNewFile,
+                },
                 {
                     label: 'Datei öffnen…',
                     accelerator: 'Cmd+O',
@@ -143,6 +189,10 @@ function buildMenu() {
                     accelerator: 'Cmd+,',
                     click: createSettingsWindow,
                 },
+                {
+                    label: 'Rolleneditor…',
+                    click: createRoleEditorWindow,
+                },
                 { type: 'separator' },
                 { role: 'hide' },
                 { role: 'hideOthers' },
@@ -152,6 +202,11 @@ function buildMenu() {
         }] : [{
             label: 'Datei',
             submenu: [
+                {
+                    label: 'Neue Datei…',
+                    accelerator: 'Ctrl+N',
+                    click: createNewFile,
+                },
                 {
                     label: 'Öffnen…',
                     accelerator: 'Ctrl+O',
@@ -164,6 +219,9 @@ function buildMenu() {
                 label: 'MIDI-Geräte…',
                 accelerator: 'Ctrl+,',
                 click: createSettingsWindow,
+            }, {
+                label: 'Rolleneditor…',
+                click: createRoleEditorWindow,
             }],
         }]),
         {
@@ -194,6 +252,9 @@ function buildMenu() {
 }
 
 app.whenReady().then(() => {
+    if (process.platform === 'darwin') {
+        app.dock.setIcon(path.join(__dirname, '../dist/assets/icon.png'))
+    }
     scriptMdPath = getLastFilePath()
 
     ipcMain.handle('get-settings', () => loadSettings())
@@ -223,6 +284,40 @@ app.whenReady().then(() => {
             return []
         }
     })
+
+    ipcMain.handle('get-roles', () => {
+        try {
+            const { parsed } = readConfigBlock()
+            return parsed?.config?.roles || {}
+        } catch { return {} }
+    })
+
+    ipcMain.handle('save-roles', (_, { roles, renames }) => {
+        let text = fs.readFileSync(scriptMdPath, 'utf8')
+        for (const { from, to } of (renames || [])) {
+            if (!from || !to || from === to) continue
+            const re = new RegExp(`\\*\\*${escapeRegex(from)}\\*\\*`, 'g')
+            text = text.replace(re, `**${to}**`)
+        }
+        const m = text.match(/```yaml\n([\s\S]*?)\n```/)
+        if (m) {
+            try {
+                const parsed = yaml.load(m[1])
+                if (parsed?.config) {
+                    parsed.config.roles = roles
+                    const newYaml = yaml.dump(parsed, { indent: 4, lineWidth: -1, noRefs: true })
+                    const newBlock = '```yaml\n' + newYaml.trimEnd() + '\n```'
+                    text = text.replace(m[0], newBlock)
+                }
+            } catch (e) {
+                console.warn('save-roles YAML error:', e.message)
+            }
+        }
+        fs.writeFileSync(scriptMdPath, text, 'utf8')
+        BrowserWindow.getAllWindows().forEach(win => win.webContents.send('script-changed'))
+    })
+
+    ipcMain.handle('new-file', () => createNewFile())
 
     Menu.setApplicationMenu(buildMenu())
     createMainWindow()

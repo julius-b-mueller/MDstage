@@ -8,7 +8,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     writeScriptMd: (content) => ipcRenderer.invoke('write-script-md', content),
     listAudioFiles: () => ipcRenderer.invoke('list-audio-files'),
     getScriptPath: () => ipcRenderer.invoke('get-script-path'),
+    getRoles: () => ipcRenderer.invoke('get-roles'),
+    saveRoles: (data) => ipcRenderer.invoke('save-roles', data),
+    newFile: () => ipcRenderer.invoke('new-file'),
     onSettingsChanged: (callback) => {
         ipcRenderer.on('settings-changed', (_, settings) => callback(settings))
+    },
+    onScriptChanged: (callback) => {
+        ipcRenderer.on('script-changed', () => callback())
     },
 })

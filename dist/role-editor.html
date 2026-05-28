@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Rolleneditor</title>
+    <link rel="stylesheet" href="styles.css">
+    <meta charset="UTF-8">
+    <style>
+        body { padding: 1rem 1.5rem; padding-bottom: 5rem; }
+        .role-row {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.6rem;
+            padding: 0.5rem 0.6rem;
+            background: #2c313a;
+            border-radius: 5px;
+        }
+        .role-name {
+            flex: 1;
+            background: #383c44;
+            color: #abb2bf;
+            border: 1px solid #4b5263;
+            padding: 0.4rem 0.6rem;
+            border-radius: 4px;
+            font-size: 0.95rem;
+            font-family: inherit;
+            min-width: 0;
+        }
+        .role-name:focus { outline: none; border-color: #61afef; }
+        .color-dot {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            border: 2px solid rgba(255,255,255,0.15);
+        }
+        .role-color {
+            background: #383c44;
+            color: #abb2bf;
+            border: 1px solid #4b5263;
+            padding: 0.35rem 0.4rem;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            font-family: inherit;
+            cursor: pointer;
+            width: 130px;
+        }
+        .role-color:focus { outline: none; border-color: #61afef; }
+        .role-ch {
+            width: 64px;
+            background: #383c44;
+            color: #abb2bf;
+            border: 1px solid #4b5263;
+            padding: 0.4rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            font-family: inherit;
+            text-align: center;
+        }
+        .role-ch:focus { outline: none; border-color: #61afef; }
+        .ch-label {
+            font-size: 0.78rem;
+            color: #5c6370;
+            white-space: nowrap;
+        }
+        .remove-btn {
+            background: none;
+            border: none;
+            color: #5c6370;
+            cursor: pointer;
+            font-size: 1.1rem;
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+            line-height: 1;
+            flex-shrink: 0;
+        }
+        .remove-btn:hover { color: #e06c75; background: rgba(224,108,117,0.12); }
+        .add-btn {
+            background: #2c313a;
+            color: #98c379;
+            border: 1px dashed #4b5263;
+            padding: 0.5rem 1rem;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.95rem;
+            font-family: inherit;
+            width: 100%;
+            text-align: center;
+            margin-top: 0.3rem;
+        }
+        .add-btn:hover { background: #323840; border-color: #98c379; }
+        .actions {
+            position: fixed;
+            bottom: 0; left: 0; right: 0;
+            padding: 0.75rem 1.5rem;
+            background: #282c34;
+            border-top: 1px solid #383c44;
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.5rem;
+            z-index: 10;
+        }
+        .btn {
+            background: #4b5263;
+            color: #abb2bf;
+            border: none;
+            padding: 0.5rem 1.25rem;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.95rem;
+            font-family: inherit;
+        }
+        .btn:hover { background: #5c6370; }
+        .btn-primary { background: #61afef; color: #282c34; }
+        .btn-primary:hover { background: #71bfff; }
+        .section-title {
+            font-size: 0.75rem;
+            color: #5c6370;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin: 0 0 0.7rem;
+            padding-bottom: 0.3rem;
+            border-bottom: 1px solid #383c44;
+        }
+        .col-headers {
+            display: flex;
+            gap: 0.5rem;
+            padding: 0 0.6rem;
+            margin-bottom: 0.3rem;
+            font-size: 0.72rem;
+            color: #5c6370;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .col-name { flex: 1; }
+        .col-color { width: calc(18px + 130px + 0.5rem); }
+        .col-ch { width: 64px; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="section-title">Rollen</div>
+    <div class="col-headers">
+        <div class="col-name">Name</div>
+        <div class="col-color">Farbe</div>
+        <div class="col-ch">Kanal</div>
+    </div>
+    <div id="role-list"></div>
+    <button class="add-btn" id="add-btn">+ Rolle hinzufügen</button>
+    <div class="actions">
+        <button class="btn" id="cancel-btn">Abbrechen</button>
+        <button class="btn btn-primary" id="save-btn">Speichern</button>
+    </div>
+    <script>
+        const ROLE_COLORS = {
+            blue: '#61afef', red: '#e06c75', green: '#98c379', yellow: '#e5c07b',
+            purple: '#c678dd', cyan: '#56b6c2', darkblue: '#317fbf', darkred: '#b03c45',
+            darkgreen: '#68b349', darkyellow: '#b5904b', darkpurple: '#9648ad', darkcyan: '#268692',
+        }
+        const COLOR_LABELS = {
+            blue: 'Blau', red: 'Rot', green: 'Grün', yellow: 'Gelb',
+            purple: 'Lila', cyan: 'Türkis', darkblue: 'Dunkelblau', darkred: 'Dunkelrot',
+            darkgreen: 'Dunkelgrün', darkyellow: 'Dunkelgelb', darkpurple: 'Dunkellila', darkcyan: 'Dunkeltürkis',
+        }
+        const COLOR_CYCLE = ['blue', 'red', 'green', 'yellow', 'purple', 'cyan', 'darkblue', 'darkred', 'darkgreen', 'darkyellow', 'darkpurple', 'darkcyan']
+
+        // rows: [{ originalName, nameInput, colorSelect, colorDot, chInput }]
+        const rows = []
+
+        function nextAutoColor() {
+            const usedColors = rows.map(r => r.colorSelect.value)
+            return COLOR_CYCLE.find(c => !usedColors.includes(c)) ?? COLOR_CYCLE[rows.length % COLOR_CYCLE.length]
+        }
+
+        function buildColorSelect(selectedColor) {
+            const sel = document.createElement('select')
+            sel.className = 'role-color'
+            for (const key of COLOR_CYCLE) {
+                const opt = document.createElement('option')
+                opt.value = key
+                opt.textContent = COLOR_LABELS[key]
+                if (key === selectedColor) opt.selected = true
+                sel.appendChild(opt)
+            }
+            return sel
+        }
+
+        function addRow(name, color, ch, isNew) {
+            const row = document.createElement('div')
+            row.className = 'role-row'
+
+            const nameInput = document.createElement('input')
+            nameInput.type = 'text'
+            nameInput.className = 'role-name'
+            nameInput.value = name
+            nameInput.placeholder = 'Rollenname'
+
+            const colorDot = document.createElement('div')
+            colorDot.className = 'color-dot'
+            colorDot.style.background = ROLE_COLORS[color] || ROLE_COLORS.blue
+
+            const colorSel = buildColorSelect(color)
+            colorSel.addEventListener('change', () => {
+                colorDot.style.background = ROLE_COLORS[colorSel.value] || ''
+            })
+
+            const chInput = document.createElement('input')
+            chInput.type = 'number'
+            chInput.className = 'role-ch'
+            chInput.min = '1'
+            chInput.max = '32'
+            chInput.value = ch || ''
+            chInput.placeholder = '—'
+
+            const removeBtn = document.createElement('button')
+            removeBtn.className = 'remove-btn'
+            removeBtn.textContent = '×'
+            removeBtn.title = 'Rolle entfernen'
+            removeBtn.addEventListener('click', () => {
+                const idx = rows.findIndex(r => r.row === row)
+                if (idx !== -1) rows.splice(idx, 1)
+                row.remove()
+            })
+
+            row.append(nameInput, colorDot, colorSel, chInput, removeBtn)
+            document.getElementById('role-list').appendChild(row)
+
+            rows.push({ originalName: isNew ? null : name, nameInput, colorSelect: colorSel, colorDot, chInput, row })
+        }
+
+        document.getElementById('add-btn').addEventListener('click', () => {
+            const color = nextAutoColor()
+            addRow('', color, '', true)
+            rows[rows.length - 1].nameInput.focus()
+        })
+
+        document.getElementById('cancel-btn').addEventListener('click', () => window.close())
+
+        document.getElementById('save-btn').addEventListener('click', async () => {
+            const roles = {}
+            const renames = []
+            let valid = true
+
+            for (const r of rows) {
+                const name = r.nameInput.value.trim()
+                if (!name) { r.nameInput.style.borderColor = '#e06c75'; valid = false; continue }
+                r.nameInput.style.borderColor = ''
+                if (roles[name]) { r.nameInput.style.borderColor = '#e5c07b'; valid = false; continue }
+                roles[name] = {
+                    color: r.colorSelect.value,
+                    ch: parseInt(r.chInput.value) || null,
+                }
+                if (r.originalName && r.originalName !== name) {
+                    renames.push({ from: r.originalName, to: name })
+                }
+            }
+
+            if (!valid) return
+            await window.electronAPI.saveRoles({ roles, renames })
+            window.close()
+        })
+
+        async function init() {
+            const rolesData = await window.electronAPI.getRoles()
+            for (const [name, cfg] of Object.entries(rolesData)) {
+                addRow(name, cfg.color || 'blue', cfg.ch, false)
+            }
+        }
+        init()
+    </script>
+</body>
+</html>

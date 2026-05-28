@@ -421,6 +421,11 @@ function serializeEditorMarkdown(div) {
         return t
     }
     if (div.dataset.editorType === 'stage') return '*' + textOf(div).trim() + '*'
+    if (div.dataset.editorType === 'text') {
+        const raw = textOf(div).trim()
+        // Re-append space so "# " or "## " stays valid ATX-heading markdown after trim
+        return /^#{1,6}$/.test(raw) ? raw + ' ' : raw
+    }
     if (div.dataset.editorType === 'role') {
         let roleName = ''
         let dialogueParts = []
@@ -439,7 +444,7 @@ function serializeEditorMarkdown(div) {
         const dialogue = wrapSentences(dialogueParts.join('').trim())
         return dialogue ? '**' + roleName + '**\n' + dialogue : '**' + roleName + '**'
     }
-    return textOf(div).trim()
+    return textOf(div).trim()  // fallback (should not normally be reached)
 }
 
 // ── Existing block editor ──────────────────────────────────────────────────────
@@ -492,6 +497,14 @@ function openEditor(blockEl, clientX, clientY) {
     btnUp.addEventListener('mousedown',   (e) => { e.preventDefault(); moveBlock(-1) })
     btnDown.addEventListener('mousedown', (e) => { e.preventDefault(); moveBlock(1) })
     btnDel.addEventListener('mousedown',  (e) => { e.preventDefault(); deleteBlock() })
+
+    requestAnimationFrame(syncEditorHeight)
+}
+
+function syncEditorHeight() {
+    if (!inlineEditor?.blockEl) return
+    const wrapper = inlineEditor.el.closest('.editor-wrapper')
+    if (wrapper) inlineEditor.blockEl.style.minHeight = wrapper.offsetHeight + 'px'
 }
 
 function onEditorKey(e) {
@@ -542,6 +555,7 @@ function onEditorInput() {
     clearTimeout(this._st)
     this._st = setTimeout(saveCurrentEdit, 600)
     updateEditorParens(this)
+    syncEditorHeight()
 }
 
 function saveCurrentEdit() {
@@ -701,6 +715,58 @@ function openNewBlock(afterBlockEl, forceAfterRole) {
     })
 }
 
+function checkEmptyScript() {
+    if (inlineEditor) return
+    const hasTextBlocks = tokenizeScript(scriptText).some(b => b.type === 'text')
+    if (!hasTextBlocks) openEmptyScriptEditor()
+}
+
+function openEmptyScriptEditor() {
+    if (inlineEditor) return
+
+    const div = document.createElement('div')
+    div.className = 'inline-editor inline-editor-new'
+    div.contentEditable = 'true'
+    div.dataset.placeholder = 'Regieanweisung oder Rolle…'
+
+    const wrapper = document.createElement('div')
+    wrapper.className = 'new-block-wrapper'
+    const contentEl = document.getElementById('script-content')
+    if (contentEl) wrapper.style.width = contentEl.getBoundingClientRect().width + 'px'
+
+    const controls = document.createElement('div')
+    controls.className = 'editor-controls new-block-controls'
+    const btnDel = document.createElement('button')
+    btnDel.className = 'editor-btn editor-btn-delete'
+    btnDel.textContent = '✕'
+    btnDel.title = 'Abbrechen'
+    controls.append(btnDel)
+    wrapper.append(div, controls)
+
+    wrapper.style.marginTop = '4.5rem'
+    contentEl?.appendChild(wrapper)
+    requestAnimationFrame(() => div.focus())
+
+    const lineStart = scriptText.split('\n').length - 1
+    inlineEditor = { el: div, wrapper, blockEl: null, afterBlockEl: null, lineStart, isNew: true, isAfterRole: false, isPersistent: true }
+
+    div.addEventListener('keydown', onNewBlockKey)
+    div.addEventListener('beforeinput', onNewBlockBeforeInput)
+    div.addEventListener('input', onNewBlockInput)
+    div.addEventListener('blur', () => setTimeout(() => {
+        if (inlineEditor?.el !== div) return
+        if (inlineEditor.isPersistent && !getTyped(div).trim() && !inlineEditor.confirmedRole) return
+        commitNewBlock()
+    }, 180))
+
+    btnDel.addEventListener('mousedown', (e) => {
+        e.preventDefault()
+        if (getTyped(div).trim() || inlineEditor?.confirmedRole) {
+            clearGhost(); wrapper.remove(); inlineEditor = null
+        }
+    })
+}
+
 function getTyped(el) {
     return [...el.childNodes]
         .filter(n => !(n.nodeType === Node.ELEMENT_NODE && (n.classList.contains('ac-ghost') || n.classList.contains('role-confirmed'))))
@@ -748,6 +814,9 @@ function clearGhost() {
 function onNewBlockKey(e) {
     if (e.key === 'Escape') {
         e.preventDefault()
+        if (inlineEditor?.isPersistent && !getTyped(e.currentTarget).trim() && !inlineEditor?.confirmedRole) {
+            return
+        }
         if (inlineEditor?.confirmedRole) {
             if (inlineEditor?.el === e.currentTarget) commitNewBlock()
         } else {
@@ -760,10 +829,19 @@ function onNewBlockKey(e) {
     if (e.key === 'ArrowUp') {
         e.preventDefault()
         const { afterBlockEl, wrapper, el } = inlineEditor ?? {}
-        clearGhost()
-        ;(wrapper ?? el)?.remove()
-        inlineEditor = null
-        if (afterBlockEl && !isTriggerEl(afterBlockEl)) openEditor(afterBlockEl)
+        const afterIdx = afterBlockEl ? parseInt(afterBlockEl.dataset.blockIdx) : -1
+        const hasContent = !!(el && getTyped(el).trim()) || !!inlineEditor?.confirmedRole
+        if (hasContent) {
+            commitNewBlock(undefined, true)
+            // afterBlockEl index is unchanged (insertion was after it)
+            const found = afterIdx >= 0 ? document.querySelector(`[data-block-idx="${afterIdx}"]`) : null
+            if (found && !isTriggerEl(found)) openEditor(found)
+        } else {
+            clearGhost()
+            ;(wrapper ?? el)?.remove()
+            inlineEditor = null
+            if (afterBlockEl && !isTriggerEl(afterBlockEl)) openEditor(afterBlockEl)
+        }
         return
     }
     if (e.key === 'ArrowDown') {
@@ -772,10 +850,22 @@ function onNewBlockKey(e) {
         const container = wrapper ?? el
         let next = container?.nextElementSibling
         while (next && (isTriggerEl(next) || !next.dataset?.blockIdx)) next = next.nextElementSibling
-        clearGhost()
-        container?.remove()
-        inlineEditor = null
-        if (next && !isTriggerEl(next)) openEditor(next)
+        const nextIdx = next ? parseInt(next.dataset.blockIdx) : -1
+        const hasContent = !!(el && getTyped(el).trim()) || !!inlineEditor?.confirmedRole
+        if (hasContent) {
+            const textBlocksBefore = tokenizeScript(scriptText).filter(b => b.type === 'text').length
+            commitNewBlock(undefined, true)
+            // Blocks after the insertion point shift up by the number of newly inserted text blocks
+            const inserted = tokenizeScript(scriptText).filter(b => b.type === 'text').length - textBlocksBefore
+            const adjustedIdx = nextIdx >= 0 ? nextIdx + inserted : -1
+            const found = adjustedIdx >= 0 ? document.querySelector(`[data-block-idx="${adjustedIdx}"]`) : null
+            if (found && !isTriggerEl(found)) openEditor(found)
+        } else {
+            clearGhost()
+            container?.remove()
+            inlineEditor = null
+            if (next && !isTriggerEl(next)) openEditor(next)
+        }
         return
     }
     if (e.key === 'Tab') {
@@ -858,7 +948,7 @@ function onNewBlockInput() {
     }
 }
 
-function commitNewBlock(asRole) {
+function commitNewBlock(asRole, skipNavigate = false) {
     if (!inlineEditor) return
     const { el, wrapper, lineStart, isAfterRole, confirmedRole } = inlineEditor
 
@@ -887,7 +977,7 @@ function commitNewBlock(asRole) {
         clearGhost()
         ;(wrapper ?? el).remove()
         inlineEditor = null
-        if (!text) return
+        if (!text) { requestAnimationFrame(checkEmptyScript); return }
 
         const isRoleName = !asRole && !!config.roles?.[text]
         let mdLine
@@ -908,12 +998,19 @@ function commitNewBlock(asRole) {
         _target = lineStart + 1
     }
 
+    // Auto-prepend an empty heading when this is the very first text block and isn't a heading.
+    // The sticky h1 acts as a spacer below the fixed controls bar.
+    if (!tokenizeScript(scriptText).some(b => b.type === 'text') && !/^#(?!#)/.test(insertLines[1] || '')) {
+        insertLines = ['', '# ', ...insertLines]
+        _target += 2
+    }
+
     const lines = scriptText.split('\n')
     lines.splice(lineStart, 0, ...insertLines)
     scriptText = lines.join('\n')
     window.electronAPI.writeScriptMd(scriptText)
     rerender(scriptText)
-    requestAnimationFrame(() => openNextBlockAfterLine(_target, _afterRole))
+    if (!skipNavigate) requestAnimationFrame(() => openNextBlockAfterLine(_target, _afterRole))
 }
 
 function openNextBlockAfterLine(targetLine, forceAfterRole) {
@@ -1205,6 +1302,10 @@ function groupSiblingTriggers() {
 }
 
 function rerender(newText) {
+    if (inlineEditor) {
+        clearGhost()
+        inlineEditor = null
+    }
     const scrollY = window.scrollY
 
     // Teardown auto-trigger listeners before destroying WaveSurfer instances
@@ -1241,7 +1342,10 @@ function rerender(newText) {
     buildSidebar()
     clearSearchHighlights()
 
-    requestAnimationFrame(() => window.scrollTo({ top: scrollY, behavior: 'instant' }))
+    requestAnimationFrame(() => {
+        window.scrollTo({ top: scrollY, behavior: 'instant' })
+        checkEmptyScript()
+    })
 }
 
 function escapeHtml(s) {
@@ -3276,6 +3380,8 @@ async function initApp() {
     setupAutoTriggers()
     buildSidebar()
 
+    checkEmptyScript()
+
     mtc = new MTCTransmitter()
     mtc.setDisplay(document.querySelector('.tc-display'))
 
@@ -3283,6 +3389,12 @@ async function initApp() {
 
     await initMidi(savedSettings)
     mtc.setOutput(midiTC)
+
+    window.electronAPI.onScriptChanged(async () => {
+        const newText = await window.electronAPI.getScriptMd()
+        scriptText = newText
+        rerender(newText)
+    })
 
     window.electronAPI.onSettingsChanged((newSettings) => {
         // Sync scriptText so trigger-editing operations don't overwrite the newly

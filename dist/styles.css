@@ -20,6 +20,7 @@ h2 {
 h1 {
     margin-top: 0;
     box-shadow: black 0 0 10px;
+    min-height: 2rem;
 }
 
 em {
