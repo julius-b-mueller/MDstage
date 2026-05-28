@@ -366,7 +366,7 @@ function parseBlockToHTML(content, div) {
         if (roleColor) ns.style.color = roleColor
         div.appendChild(ns)
         if (dialogue) {
-            div.appendChild(document.createElement('br'))
+            // No <br> — role name and dialogue on one visual line (separator via CSS ::after)
             appendDialogueParsed(div, dialogue, roleColor)
         }
         return
@@ -381,20 +381,18 @@ function updateEditorParens(div) {
     const nameSpan = div.querySelector('.editor-role-name')
     if (!nameSpan) return
     const roleColor = ROLE_COLORS[config.roles?.[nameSpan.textContent]?.color] || ''
-    const brNode = [...div.childNodes].find(n => n.tagName === 'BR')
-    if (!brNode) return
 
     const caretOffset = getCaretOffset(div)
-    const afterBr = []
+    const afterName = []
     let seen = false
-    for (const n of div.childNodes) { if (seen) afterBr.push(n); if (n === brNode) seen = true }
+    for (const n of div.childNodes) { if (seen) afterName.push(n); if (n === nameSpan) seen = true }
     // Serialize back to markdown so *(text)* patterns survive the rebuild
-    const dialogue = afterBr.map(n => {
+    const dialogue = afterName.map(n => {
         if (n.nodeType === Node.TEXT_NODE) return n.textContent
         if (n.classList?.contains('editor-stage-inline')) return '*' + n.textContent + '*'
         return n.textContent
     }).join('')
-    afterBr.forEach(n => n.remove())
+    afterName.forEach(n => n.remove())
     appendDialogueParsed(div, dialogue, roleColor)
     setCaretOffset(div, caretOffset)
 }
@@ -412,15 +410,22 @@ function serializeEditorMarkdown(div) {
     }
     if (div.dataset.editorType === 'stage') return '*' + textOf(div).trim() + '*'
     if (div.dataset.editorType === 'role') {
-        let result = ''
+        let roleName = ''
+        let dialogueParts = []
+        let afterName = false
         for (const node of div.childNodes) {
-            if (node.nodeType === Node.TEXT_NODE) result += node.textContent
-            else if (node.tagName === 'BR') result += '\n'
-            else if (node.classList.contains('editor-role-name')) result += '**' + node.textContent + '**'
-            else if (node.classList.contains('editor-stage-inline')) result += '*' + node.textContent + '*'
-            else result += textOf(node)
+            if (node.classList?.contains('editor-role-name')) {
+                roleName = node.textContent
+                afterName = true
+            } else if (afterName) {
+                if (node.nodeType === Node.TEXT_NODE) dialogueParts.push(node.textContent)
+                else if (node.tagName === 'BR') dialogueParts.push('\n')
+                else if (node.classList?.contains('editor-stage-inline')) dialogueParts.push('*' + node.textContent + '*')
+                else dialogueParts.push(textOf(node))
+            }
         }
-        return result.trim()
+        const dialogue = dialogueParts.join('').trim()
+        return dialogue ? '**' + roleName + '**\n' + dialogue : '**' + roleName + '**'
     }
     return textOf(div).trim()
 }

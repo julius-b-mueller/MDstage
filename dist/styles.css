@@ -931,6 +931,9 @@ body.shift-held #script-content [data-block-idx]:not(.trigger):not(.trigger-grou
 .editor-role-name {
     font-weight: bold;
 }
+.editor-role-name::after {
+    content: ' ';
+}
 .editor-stage-inline, .editor-stage-text {
     color: #7c8898;
     font-style: italic;
