@@ -978,6 +978,9 @@ body.shift-held #script-content [data-block-idx]:not(.trigger):not(.trigger-grou
     display: flex;
     align-items: flex-start;
     margin: 0.3rem 0;
+    background: #252c23;
+    border: 1.5px solid #98c379;
+    border-radius: 4px;
 }
 .new-block-controls {
     border-left-color: rgba(152, 195, 121, 0.2);
@@ -985,18 +988,12 @@ body.shift-held #script-content [data-block-idx]:not(.trigger):not(.trigger-grou
 .inline-editor-new {
     flex: 1;
     min-width: 0;
-    position: static;
-    display: block;
-    width: auto;
-    margin: 0;
-    border: 1.5px solid #98c379;
-    border-radius: 4px;
-    background: #252c23;
+    background: transparent;
+    border: none;
     padding: 0.4rem 1rem;
-    min-height: 2.2rem;
+    min-height: 1.6em;
     white-space: pre-wrap;
     word-break: break-word;
-    box-shadow: none;
 }
 .inline-editor-new:empty::before {
     content: attr(data-placeholder);

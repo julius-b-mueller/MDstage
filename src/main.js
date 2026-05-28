@@ -313,9 +313,10 @@ function editorCursorOnLastLine(el) {
     return rects[rects.length - 1].bottom > el.getBoundingClientRect().bottom - 26
 }
 
-// Append parsed dialogue text (with inline stage direction coloring) to parent element
+// Append parsed dialogue text (with inline stage direction coloring) to parent element.
+// Recognizes both *(text)* (markdown) and plain (text) (user-typed, auto-converted on save).
 function appendDialogueParsed(parent, text, roleColor) {
-    const re = /\*\(([^)]+)\)\*/g
+    const re = /\*\(([^)]+)\)\*|\(([^)]+)\)/g
     let last = 0, m
     while ((m = re.exec(text)) !== null) {
         if (m.index > last) {
@@ -325,9 +326,10 @@ function appendDialogueParsed(parent, text, roleColor) {
             s.textContent = text.slice(last, m.index)
             parent.appendChild(s)
         }
+        const inner = m[1] ?? m[2]
         const s = document.createElement('span')
         s.className = 'editor-stage-inline'
-        s.textContent = '(' + m[1] + ')'
+        s.textContent = '(' + inner + ')'
         parent.appendChild(s)
         last = re.lastIndex
     }
