@@ -404,6 +404,11 @@ function updateEditorParens(div) {
     setCaretOffset(div, caretOffset)
 }
 
+// Split dialogue text at sentence boundaries so each sentence starts on its own line
+function wrapSentences(text) {
+    return text.replace(/([.!?])[ \t]+(?=[A-ZÄÖÜ"])/g, '$1\n')
+}
+
 // Convert styled contenteditable HTML back to markdown
 function serializeEditorMarkdown(div) {
     function textOf(node) {
@@ -431,7 +436,7 @@ function serializeEditorMarkdown(div) {
                 else dialogueParts.push(textOf(node))
             }
         }
-        const dialogue = dialogueParts.join('').trim()
+        const dialogue = wrapSentences(dialogueParts.join('').trim())
         return dialogue ? '**' + roleName + '**\n' + dialogue : '**' + roleName + '**'
     }
     return textOf(div).trim()
@@ -867,7 +872,7 @@ function commitNewBlock(asRole) {
         inlineEditor = null
         if (dialogue) {
             // Role and dialogue on consecutive lines (no blank line) → one block, styled together
-            insertLines = ['', `**${confirmedRole}**`, dialogue.replace(/\(([^)]+)\)/g, '*($1)*')]
+            insertLines = ['', `**${confirmedRole}**`, wrapSentences(dialogue.replace(/\(([^)]+)\)/g, '*($1)*'))]
             _target = lineStart + 1   // start of the combined role+dialogue block
             _afterRole = false
         } else {
@@ -886,7 +891,10 @@ function commitNewBlock(asRole) {
 
         const isRoleName = !asRole && !!config.roles?.[text]
         let mdLine
-        if (asRole || isRoleName) {
+        if (text.startsWith('#')) {
+            mdLine = text                // heading: preserve # / ## as-is
+            _afterRole = false
+        } else if (asRole || isRoleName) {
             mdLine = `**${text}**`
             _afterRole = true
         } else if (isAfterRole) {
