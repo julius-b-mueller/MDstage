@@ -3,14 +3,29 @@
 <html>
 
 <head>
-    <title>Essener Volksbühne</title>
+    <title>Main Desk</title>
     <link rel="stylesheet" href="styles.css">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta charset="UTF-8">
 </head>
 
 <body>
+    <div id="scene-sidebar">
+        <div class="scene-sidebar-header">Szenen</div>
+        <div id="scene-list"></div>
+    </div>
+
+    <div id="search-bar" class="hidden">
+        <input id="search-input" type="text" placeholder="Suchen…" autocomplete="off" spellcheck="false">
+        <span id="search-count"></span>
+        <button id="search-prev" title="Vorheriges (Shift+Enter)">↑</button>
+        <button id="search-next" title="Nächstes (Enter)">↓</button>
+        <button id="search-close" title="Schließen (Esc)">×</button>
+    </div>
+
     <div id="script-content"></div>
+    <div class="sidebar-toggle-button button" style="font-size:1.4rem" title="Szenenübersicht (Strg+B)">☰</div>
+
     <div class="buttons">
         <div class="clock">00:00:00</div>
         <div class="tc-display">--:--:--:--</div>

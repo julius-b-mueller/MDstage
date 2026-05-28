@@ -1,11 +1,13 @@
 {
   "name": "evb-ai",
+  "productName": "Main Desk",
   "version": "1.0.0",
   "main": "electron/main.js",
   "scripts": {
     "build": "webpack",
     "develop": "webpack --watch --progress",
-    "start": "electron ."
+    "start": "node scripts/patch-electron-macos.js && electron .",
+    "postinstall": "node scripts/patch-electron-macos.js"
   },
   "dependencies": {
     "js-yaml": "^4.1.0",
