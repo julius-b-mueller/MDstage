@@ -3145,40 +3145,87 @@ function triggerAction(cue) {
     broadcastLiveState()
 }
 
+function applyRoleColorsToHtml(html) {
+    const div = document.createElement('div')
+    div.innerHTML = html
+    for (const p of div.querySelectorAll('p')) {
+        if (p.firstChild?.tagName !== 'STRONG') continue
+        const role = config.roles?.[p.firstChild.textContent]
+        if (role) p.classList.add('color-' + role.color)
+    }
+    return div.innerHTML
+}
+
 function broadcastLiveState() {
     if (!window.electronAPI?.sendLiveState) return
-    const blocks = tokenizeScript(scriptText)
+
+    // Next cue to fire
+    let nextCue = null
+    for (let i = currentCue + 1; i < triggerYamls.length; i++) {
+        if (triggerYamls[i]) { nextCue = i; break }
+    }
+
+    const rawBlocks = tokenizeScript(scriptText)
     const liveBlocks = []
     let yamlCount = 0
-    for (const b of blocks) {
+    for (const b of rawBlocks) {
         if (b.type === 'yaml') {
             yamlCount++
             if (yamlCount === 1) continue  // config block
             const cueIdx = yamlCount - 1
             const ty = triggerYamls[cueIdx]
             if (!ty) continue
-            const label = ty.label ||
-                (typeof ty.music === 'string' ? ty.music :
-                    ty.music?.file ? ty.music.file : null) ||
-                (ty.mic ? (Array.isArray(ty.mic) ? ty.mic.join(', ') : ty.mic) : null) ||
-                ('Cue ' + cueIdx)
+
+            const micList = !ty.mic ? [] :
+                ty.mic === 'muteall' ? null :
+                (typeof ty.mic === 'string' ? [ty.mic] : ty.mic)
+            const micColors = micList ? micList.map(name => ({
+                name, color: config.roles?.[name]?.color || null
+            })) : null
+
+            const musicLabel = typeof ty.music === 'string' ? ty.music :
+                ty.music?.file ? ty.music.file : null
+
             liveBlocks.push({
                 type: 'trigger',
                 cueIdx,
                 isCurrent: cueIdx === currentCue,
+                isNext: cueIdx === nextCue,
                 isPlaying: triggerAudio.get(cueIdx)?.ws.isPlaying() ?? false,
-                label,
+                micColors,
+                muteall: ty.mic === 'muteall',
+                musicLabel,
+                note: ty.note || null,
                 light: !!ty.light,
             })
         } else {
-            liveBlocks.push({ type: 'text', content: b.content })
+            liveBlocks.push({
+                type: 'text',
+                html: applyRoleColorsToHtml(converter.makeHtml(b.content)),
+            })
         }
     }
+
+    // Audio progress for all playing cues
+    const audioProgress = []
+    for (const [cueIdx, ta] of triggerAudio) {
+        if (!ta.ws.isPlaying()) continue
+        const ty = triggerYamls[cueIdx]
+        audioProgress.push({
+            cueIdx,
+            label: (typeof ty?.music === 'string' ? ty.music : ty?.music?.file) || ('Cue ' + cueIdx),
+            currentTime: ta.mainAudioEl?.currentTime ?? 0,
+            duration: ta.ws.getDuration() ?? 0,
+        })
+    }
+
     const tcEl = document.querySelector('.tc-display')
     window.electronAPI.sendLiveState({
         blocks: liveBlocks,
         currentCue,
+        nextCue,
         timecode: tcEl ? tcEl.textContent.trim() : '',
+        audioProgress,
     })
 }
 

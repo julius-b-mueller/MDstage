@@ -3,339 +3,433 @@
 <head>
     <title>Live-Ansicht</title>
     <meta charset="UTF-8">
+    <link rel="stylesheet" href="styles.css">
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+        /* ── Layout ─────────────────────────────────────────────────────── */
+        html, body { height: 100%; overflow: hidden; }
         body {
-            background: #1a1d23;
-            color: #abb2bf;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             display: flex;
             flex-direction: column;
-            height: 100vh;
-            overflow: hidden;
+            background-color: #282c34;
         }
 
-        /* ── Header bar ── */
-        .header {
+        /* ── Header ─────────────────────────────────────────────────────── */
+        .live-header {
             display: flex;
             align-items: center;
-            gap: 1rem;
-            padding: 0.6rem 1rem;
+            gap: 1.5rem;
+            padding: 0.5rem 1.2rem;
             background: #21252b;
             border-bottom: 1px solid #383c44;
             flex-shrink: 0;
-        }
-        .clock-tc {
-            display: flex;
-            flex-direction: column;
-            line-height: 1.2;
-            margin-right: auto;
+            z-index: 20;
         }
         .live-clock {
-            font-size: 1.5rem;
+            font-size: 1.8rem;
             font-variant-numeric: tabular-nums;
             color: #abb2bf;
             font-weight: 300;
+            background: transparent;
+            box-shadow: none;
+            width: auto;
+            padding: 0;
+            margin: 0;
+            line-height: 1;
         }
         .live-tc {
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             font-variant-numeric: tabular-nums;
             color: #5c6370;
             font-family: 'SF Mono', 'Fira Code', monospace;
-            min-height: 1.1em;
+            min-width: 8rem;
         }
-        .live-tc.active { color: #e5c07b; }
+        .live-tc.tc-active { color: #e5c07b; }
 
-        /* ── Go / Back buttons ── */
-        .ctrl-btns {
-            display: flex;
-            gap: 0.75rem;
-        }
-        .ctrl-btn {
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 1rem;
-            font-family: inherit;
-            font-weight: 600;
-            padding: 0.55rem 1.6rem;
-            transition: background 0.1s, transform 0.05s;
-            user-select: none;
-        }
-        .ctrl-btn:active { transform: scale(0.96); }
-        .btn-back {
-            background: #383c44;
-            color: #abb2bf;
-        }
-        .btn-back:hover { background: #4b5263; }
-        .btn-go {
-            background: #98c379;
-            color: #1a1d23;
-            min-width: 7rem;
-        }
-        .btn-go:hover { background: #a8d389; }
-        .btn-go:disabled { background: #3a4535; color: #5c6370; cursor: default; }
-
-        /* ── Script display ── */
-        .script-wrap {
+        /* ── Script area ─────────────────────────────────────────────────── */
+        .script-area {
             flex: 1;
             position: relative;
-            overflow: hidden;
+            min-height: 0;
         }
         .script-scroll {
             height: 100%;
             overflow-y: auto;
-            padding: 3rem 2rem 3rem;
+            padding: 2rem 0 2rem;
             scroll-behavior: smooth;
         }
-        .script-scroll::-webkit-scrollbar { width: 6px; }
-        .script-scroll::-webkit-scrollbar-track { background: transparent; }
+        .script-scroll::-webkit-scrollbar { width: 5px; }
         .script-scroll::-webkit-scrollbar-thumb { background: #383c44; border-radius: 3px; }
 
-        /* Fade mask top + bottom */
-        .script-wrap::before,
-        .script-wrap::after {
+        /* Fade mask */
+        .script-area::before, .script-area::after {
             content: '';
             position: absolute;
             left: 0; right: 0;
-            height: 4rem;
-            z-index: 2;
+            height: 5rem;
             pointer-events: none;
+            z-index: 5;
         }
-        .script-wrap::before {
+        .script-area::before {
             top: 0;
-            background: linear-gradient(to bottom, #1a1d23, transparent);
+            background: linear-gradient(to bottom, #282c34 10%, transparent);
         }
-        .script-wrap::after {
+        .script-area::after {
             bottom: 0;
-            background: linear-gradient(to top, #1a1d23, transparent);
+            background: linear-gradient(to top, #282c34 10%, transparent);
         }
 
-        /* ── Block styles ── */
-        .live-block {
-            margin-bottom: 0.5rem;
-            transition: opacity 0.3s;
+        /* ── Block wrappers ──────────────────────────────────────────────── */
+        /* Text blocks: same as main view but headings not sticky */
+        .live-text h1, .live-text h2, .live-text h3 {
+            position: static !important;
+            box-shadow: none !important;
+            margin-top: 0;
         }
-        .live-block.past { opacity: 0.25; }
-        .live-block.future { opacity: 0.5; }
-        .live-block.current { opacity: 1; }
+        .live-text p { margin: 0.4rem 1rem; }
 
-        .block-text {
-            font-size: 0.95rem;
-            line-height: 1.6;
-            color: #abb2bf;
-            white-space: pre-wrap;
+        /* Dim past blocks */
+        .live-block-past { opacity: 0.3; }
+        /* Current (last-fired) trigger: subtle yellow left border */
+        .live-block-current .trigger { border-left-color: #e5c07b55; }
+        /* Next trigger: prominent */
+        .live-block-next .trigger {
+            border-left: 5px solid #61afef !important;
+            background-color: #1d2736 !important;
+            box-shadow: 0 0 18px #61afef22, black 0 0 10px;
         }
-        .block-text h1, .block-text h2, .block-text h3 {
-            margin-bottom: 0.2rem;
-        }
-        /* Render markdown-ish headings from raw markdown */
-        .live-h1 {
-            font-size: 1.3rem;
-            font-weight: 700;
-            color: #e6e6e6;
-            margin-bottom: 0.1rem;
-        }
-        .live-h2 {
-            font-size: 1.05rem;
-            font-weight: 600;
-            color: #ccc;
-            margin-bottom: 0.1rem;
-        }
-        .live-body {
-            font-size: 0.92rem;
-            color: #abb2bf;
-            line-height: 1.6;
+        /* Next trigger: show action buttons area (we repurpose it to show label) */
+        .live-block-next .trigger .trigger-actions { display: none; }
+        .live-block-next .trigger .trigger-move-btns { display: none; }
+
+        /* Hide all action buttons and move buttons in live view */
+        .trigger .trigger-actions { display: none; }
+        .trigger .trigger-move-btns { display: none; }
+        .trigger { cursor: default !important; }
+        .trigger:active { box-shadow: black 0 0 10px !important; background-color: inherit !important; }
+
+        /* Next-trigger label (shown under the normal trigger-row) */
+        .live-next-label {
+            font-size: 0.75rem;
+            color: #61afef;
+            padding: 0.15rem 0.5rem 0.4rem;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
         }
 
-        .block-trigger {
+        /* ── Audio progress ──────────────────────────────────────────────── */
+        .audio-panel {
+            flex-shrink: 0;
+            background: #21252b;
+            border-top: 1px solid #383c44;
+            padding: 0.5rem 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+            max-height: 8rem;
+            overflow-y: auto;
+        }
+        .audio-panel:empty { display: none; }
+        .audio-row {
             display: flex;
             align-items: center;
-            gap: 0.5rem;
-            padding: 0.35rem 0.75rem;
-            border-radius: 6px;
-            border-left: 3px solid #4b5263;
-            background: #21252b;
-            font-size: 0.85rem;
-            font-family: 'SF Mono', 'Fira Code', monospace;
-            color: #7c8898;
+            gap: 0.6rem;
+            font-size: 0.82rem;
         }
-        .block-trigger.is-current {
-            border-left-color: #61afef;
-            background: #1d2736;
-            color: #c8d0dc;
+        .audio-label {
+            flex: 0 0 auto;
+            max-width: 12rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            color: #abb2bf;
         }
-        .block-trigger.is-playing {
-            border-left-color: #98c379;
-            background: #1c2820;
-            color: #c8d0dc;
-        }
-        .block-trigger.is-current.is-playing {
-            border-left-color: #98c379;
-            background: #1c2820;
-        }
-        .cue-dot {
-            width: 7px; height: 7px;
-            border-radius: 50%;
-            background: #4b5263;
-            flex-shrink: 0;
-        }
-        .block-trigger.is-current .cue-dot { background: #61afef; }
-        .block-trigger.is-playing .cue-dot {
-            background: #98c379;
-            box-shadow: 0 0 6px #98c37966;
-            animation: pulse 1.2s ease-in-out infinite;
-        }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.4; }
-        }
-        .light-tag {
-            font-size: 0.7rem;
-            color: #e5c07b;
-            border: 1px solid #e5c07b55;
+        .audio-bar-wrap {
+            flex: 1;
+            height: 6px;
+            background: #383c44;
             border-radius: 3px;
-            padding: 0 0.3rem;
-            margin-left: auto;
+            overflow: hidden;
+        }
+        .audio-bar-fill {
+            height: 100%;
+            background: #98c379;
+            border-radius: 3px;
+            transition: width 0.8s linear;
+        }
+        .audio-time {
+            flex: 0 0 auto;
+            font-variant-numeric: tabular-nums;
+            color: #5c6370;
+            font-size: 0.78rem;
+            min-width: 4rem;
+            text-align: right;
         }
 
-        /* ── Current cue highlight anchor ── */
-        #current-anchor { scroll-margin-top: 45vh; }
+        /* ── Bottom bar: Go / Back ───────────────────────────────────────── */
+        .bottom-bar {
+            display: flex;
+            gap: 1rem;
+            padding: 0.75rem 1.2rem;
+            background: #21252b;
+            border-top: 1px solid #383c44;
+            flex-shrink: 0;
+        }
+        .ctrl-btn {
+            flex: 1;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1.1rem;
+            font-family: inherit;
+            font-weight: 600;
+            padding: 0.7rem 1rem;
+            transition: background 0.1s, transform 0.05s;
+            user-select: none;
+            letter-spacing: 0.02em;
+        }
+        .ctrl-btn:active { transform: scale(0.97); }
+        .btn-back {
+            background: #383c44;
+            color: #abb2bf;
+            max-width: 10rem;
+        }
+        .btn-back:hover { background: #4b5263; }
+        .btn-go {
+            background: #98c379;
+            color: #1e2127;
+        }
+        .btn-go:hover { background: #a8d389; }
+        .btn-go:disabled { background: #3a4535; color: #5c6370; cursor: default; }
+
+        /* scroll anchor */
+        #next-anchor { scroll-margin-top: 30vh; scroll-margin-bottom: 30vh; }
     </style>
 </head>
 <body>
-    <div class="header">
-        <div class="clock-tc">
-            <span class="live-clock" id="live-clock">00:00:00</span>
-            <span class="live-tc" id="live-tc"></span>
-        </div>
-        <div class="ctrl-btns">
-            <button class="ctrl-btn btn-back" id="btn-back">◀ Back</button>
-            <button class="ctrl-btn btn-go" id="btn-go">Go ▶</button>
-        </div>
+    <div class="live-header">
+        <span class="live-clock" id="live-clock">00:00:00</span>
+        <span class="live-tc" id="live-tc"></span>
     </div>
-    <div class="script-wrap">
+
+    <div class="script-area">
         <div class="script-scroll" id="script-scroll">
             <div id="script-blocks"></div>
         </div>
     </div>
+
+    <div class="audio-panel" id="audio-panel"></div>
+
+    <div class="bottom-bar">
+        <button class="ctrl-btn btn-back" id="btn-back">◀ Back</button>
+        <button class="ctrl-btn btn-go"   id="btn-go">Go ▶</button>
+    </div>
+
     <script>
-        const clockEl   = document.getElementById('live-clock')
-        const tcEl      = document.getElementById('live-tc')
-        const blocksEl  = document.getElementById('script-blocks')
-        const scrollEl  = document.getElementById('script-scroll')
-        const btnGo     = document.getElementById('btn-go')
-        const btnBack   = document.getElementById('btn-back')
+        const clockEl    = document.getElementById('live-clock')
+        const tcEl       = document.getElementById('live-tc')
+        const blocksEl   = document.getElementById('script-blocks')
+        const scrollEl   = document.getElementById('script-scroll')
+        const audioPanEl = document.getElementById('audio-panel')
+        const btnGo      = document.getElementById('btn-go')
+        const btnBack    = document.getElementById('btn-back')
 
-        let state = null
+        const MIC_SVG  = `<svg class="t-icon" viewBox="0 0 12 18" width="10" height="15" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"><rect x="3" y="0.5" width="6" height="9" rx="3"/><line x1="3.5" y1="3.5" x2="8.5" y2="3.5" stroke-width="0.55"/><line x1="3.5" y1="6" x2="8.5" y2="6" stroke-width="0.55"/><path d="M1 8 Q6 13.5 11 8"/><line x1="6" y1="11.5" x2="6" y2="15"/><line x1="3" y1="15" x2="9" y2="15"/></svg>`
+        const TAPE_SVG = `<svg class="t-icon" viewBox="0 0 22 12" width="22" height="12" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round"><circle cx="5" cy="6" r="4"/><circle cx="5" cy="6" r="1.3"/><line x1="5" y1="2" x2="5" y2="4.7"/><line x1="1.5" y1="8" x2="3.9" y2="6.7"/><line x1="8.5" y1="8" x2="6.1" y2="6.7"/><circle cx="17" cy="6" r="4"/><circle cx="17" cy="6" r="1.3"/><line x1="17" y1="2" x2="17" y2="4.7"/><line x1="13.5" y1="8" x2="15.9" y2="6.7"/><line x1="20.5" y1="8" x2="18.1" y2="6.7"/><line x1="9" y1="2" x2="13" y2="2"/><line x1="9" y1="10" x2="13" y2="10"/></svg>`
 
+        // ── Clock ────────────────────────────────────────────────────────
         function updateClock() {
             const d = new Date()
-            const pad = n => n.toString().padStart(2, '0')
-            clockEl.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+            const p = n => n.toString().padStart(2, '0')
+            clockEl.textContent = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
         }
         setInterval(updateClock, 1000)
         updateClock()
 
-        function renderText(raw) {
-            // Very light markdown: detect # headings, otherwise plain text
-            const lines = raw.split('\n')
-            const out = []
-            for (const line of lines) {
-                const h1 = line.match(/^# (.*)/)
-                const h2 = line.match(/^## (.*)/)
-                const h3 = line.match(/^### (.*)/)
-                if (h1) out.push(`<div class="live-h1">${escHtml(h1[1])}</div>`)
-                else if (h2) out.push(`<div class="live-h2">${escHtml(h2[1])}</div>`)
-                else if (h3) out.push(`<div class="live-h2">${escHtml(h3[1])}</div>`)
-                else if (line.trim()) out.push(`<div class="live-body">${escHtml(line)}</div>`)
+        // ── Format seconds ───────────────────────────────────────────────
+        function fmt(s) {
+            s = Math.max(0, s | 0)
+            return `${(s / 60 | 0)}:${(s % 60).toString().padStart(2, '0')}`
+        }
+
+        // ── Build trigger card HTML (matching main-view style) ───────────
+        function buildTriggerHtml(b) {
+            // Mic info
+            let micHtml = MIC_SVG
+            if (b.muteall) {
+                micHtml += ' alle aus'
+            } else if (b.micColors && b.micColors.length) {
+                micHtml += ' '
+                for (const { name, color } of b.micColors) {
+                    const cls = color ? ` class="color-${color}"` : ''
+                    micHtml += `<span${cls}>${esc(name)}</span> `
+                }
+            } else {
+                micHtml += ' -'
             }
-            return out.join('')
+
+            // Music info
+            let musicHtml = TAPE_SVG
+            if (b.musicLabel) {
+                musicHtml += ' ' + esc(b.musicLabel)
+            } else {
+                musicHtml += ' -'
+            }
+
+            // Light badge
+            const lightHtml = b.light
+                ? `<span style="font-size:0.72rem;color:#e5c07b;border:1px solid #e5c07b55;border-radius:3px;padding:0 0.3rem;margin-left:0.4rem">✦ Licht</span>`
+                : ''
+
+            // Note
+            const noteHtml = b.note
+                ? `<div class="trigger-note" style="font-size:0.85rem">${esc(b.note)}</div>`
+                : ''
+
+            // Playing indicator
+            const playingDot = b.isPlaying
+                ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#98c379;box-shadow:0 0 6px #98c37988;margin-left:0.4rem;animation:pulse 1.2s ease-in-out infinite"></span>`
+                : ''
+
+            return `
+                <div class="trigger-row">
+                    <div class="trigger-info">
+                        <div class="trigger-mic">${micHtml}</div>
+                        <div class="trigger-music">${musicHtml}${lightHtml}</div>
+                    </div>
+                    ${noteHtml}
+                    <div style="display:flex;align-items:center;padding-right:0.5rem">
+                        ${playingDot}
+                    </div>
+                </div>
+                ${b.isNext ? '<div class="live-next-label">▶ Nächste Cue</div>' : ''}
+            `
         }
 
-        function escHtml(s) {
-            return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        function esc(s) {
+            return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
         }
 
-        function render(newState) {
-            state = newState
-            const { blocks, currentCue, timecode } = state
+        // ── Render state ─────────────────────────────────────────────────
+        let lastNextCue = null
+        let userScrolled = false
+        let scrollResetTimer = null
 
-            // TC display
+        scrollEl.addEventListener('wheel', () => {
+            userScrolled = true
+            clearTimeout(scrollResetTimer)
+            scrollResetTimer = setTimeout(() => { userScrolled = false }, 4000)
+        }, { passive: true })
+
+        function render(state) {
+            const { blocks, currentCue, nextCue, timecode, audioProgress } = state
+
+            // TC
             if (timecode) {
                 tcEl.textContent = timecode
-                tcEl.classList.add('active')
+                tcEl.classList.add('tc-active')
             } else {
                 tcEl.textContent = ''
-                tcEl.classList.remove('active')
+                tcEl.classList.remove('tc-active')
             }
 
-            // Figure out "position" — index of the first current-cue block
-            let currentBlockPos = -1
+            // Determine position in list: blocks before the next trigger are "past"
+            // (blocks before the currently-marked cue are past)
+            let nextBlockIdx = -1
             for (let i = 0; i < blocks.length; i++) {
-                if (blocks[i].type === 'trigger' && blocks[i].isCurrent) {
-                    currentBlockPos = i
-                    break
+                if (blocks[i].type === 'trigger' && blocks[i].isNext) { nextBlockIdx = i; break }
+            }
+            // If no next cue, use current cue as reference
+            if (nextBlockIdx < 0) {
+                for (let i = 0; i < blocks.length; i++) {
+                    if (blocks[i].type === 'trigger' && blocks[i].isCurrent) { nextBlockIdx = i; break }
                 }
+            }
+
+            // Build DOM
+            const frag = document.createDocumentFragment()
+            for (let i = 0; i < blocks.length; i++) {
+                const b = blocks[i]
+                const wrapper = document.createElement('div')
+
+                const isPast = nextBlockIdx >= 0 && i < nextBlockIdx
+                if (b.type === 'trigger') {
+                    if (b.isNext) {
+                        wrapper.className = 'live-block-next'
+                        wrapper.id = 'next-anchor'
+                    } else if (b.isCurrent) {
+                        wrapper.className = isPast ? 'live-block-past live-block-current' : 'live-block-current'
+                    } else {
+                        if (isPast) wrapper.className = 'live-block-past'
+                    }
+
+                    const card = document.createElement('div')
+                    card.className = 'trigger'
+                    card.innerHTML = buildTriggerHtml(b)
+                    wrapper.appendChild(card)
+                } else {
+                    // text block: rendered HTML from main process
+                    if (isPast) wrapper.className = 'live-block-past'
+                    const inner = document.createElement('div')
+                    inner.className = 'live-text'
+                    inner.innerHTML = b.html
+                    wrapper.appendChild(inner)
+                }
+                frag.appendChild(wrapper)
             }
 
             blocksEl.innerHTML = ''
-            let anchorSet = false
-            for (let i = 0; i < blocks.length; i++) {
-                const b = blocks[i]
-                const div = document.createElement('div')
-                div.className = 'live-block'
+            blocksEl.appendChild(frag)
 
-                let posClass = 'future'
-                if (currentBlockPos < 0) {
-                    posClass = 'future'
-                } else if (i < currentBlockPos) {
-                    posClass = 'past'
-                } else if (b.type === 'trigger' && b.isCurrent) {
-                    posClass = 'current'
-                } else {
-                    posClass = 'future'
+            // Scroll to next trigger (unless user is manually scrolling)
+            if (!userScrolled || lastNextCue !== nextCue) {
+                const anchor = document.getElementById('next-anchor')
+                if (anchor) {
+                    const scrollTop = anchor.offsetTop - scrollEl.clientHeight * 0.35
+                    scrollEl.scrollTo({ top: Math.max(0, scrollTop), behavior: lastNextCue !== nextCue ? 'smooth' : 'instant' })
                 }
-                div.classList.add(posClass)
-
-                if (b.type === 'text') {
-                    div.innerHTML = `<div class="block-text">${renderText(b.content)}</div>`
-                } else {
-                    const cls = [
-                        'block-trigger',
-                        b.isCurrent ? 'is-current' : '',
-                        b.isPlaying ? 'is-playing' : '',
-                    ].filter(Boolean).join(' ')
-                    const lightTag = b.light ? '<span class="light-tag">Licht</span>' : ''
-                    div.innerHTML = `<div class="${cls}"><span class="cue-dot"></span><span>${escHtml(b.label)}</span>${lightTag}</div>`
-                }
-
-                if (b.type === 'trigger' && b.isCurrent && !anchorSet) {
-                    div.id = 'current-anchor'
-                    anchorSet = true
-                }
-
-                blocksEl.appendChild(div)
+                lastNextCue = nextCue
             }
 
-            // Scroll current cue into center
-            const anchor = document.getElementById('current-anchor')
-            if (anchor) {
-                const scrollTop = anchor.offsetTop - scrollEl.clientHeight / 2 + anchor.offsetHeight / 2
-                scrollEl.scrollTo({ top: Math.max(0, scrollTop), behavior: 'smooth' })
-            }
+            // Audio progress
+            renderAudio(audioProgress || [])
         }
 
-        btnGo.addEventListener('click', () => window.electronAPI.liveGo())
-        btnBack.addEventListener('click', () => window.electronAPI.liveBack())
+        function renderAudio(items) {
+            if (!items.length) { audioPanEl.innerHTML = ''; return }
+            audioPanEl.innerHTML = items.map(({ label, currentTime, duration }) => {
+                const pct = duration > 0 ? Math.min(100, currentTime / duration * 100) : 0
+                const remaining = fmt(duration - currentTime)
+                const total = fmt(duration)
+                return `<div class="audio-row">
+                    <span class="audio-label">${esc(label)}</span>
+                    <div class="audio-bar-wrap"><div class="audio-bar-fill" style="width:${pct.toFixed(1)}%"></div></div>
+                    <span class="audio-time">${remaining} / ${total}</span>
+                </div>`
+            }).join('')
+        }
+
+        // ── Controls ─────────────────────────────────────────────────────
+        btnGo.addEventListener('click', () => {
+            userScrolled = false
+            window.electronAPI.liveGo()
+        })
+        btnBack.addEventListener('click', () => {
+            userScrolled = false
+            window.electronAPI.liveBack()
+        })
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === ' ' || e.key === 'Enter')       { e.preventDefault(); userScrolled = false; window.electronAPI.liveGo() }
+            if (e.key === 'Backspace' || e.key === 'ArrowLeft') { e.preventDefault(); userScrolled = false; window.electronAPI.liveBack() }
+        })
 
         window.electronAPI.onLiveState(render)
-
-        // Keyboard shortcuts
-        document.addEventListener('keydown', (e) => {
-            if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); window.electronAPI.liveGo() }
-            if (e.key === 'Backspace' || e.key === 'ArrowLeft') { e.preventDefault(); window.electronAPI.liveBack() }
-        })
     </script>
+    <style>
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50%       { opacity: 0.35; }
+        }
+    </style>
 </body>
 </html>
