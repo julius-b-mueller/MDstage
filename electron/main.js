@@ -294,8 +294,9 @@ app.whenReady().then(() => {
     ipcMain.handle('get-script-path', () => scriptMdPath)
 
     ipcMain.handle('list-audio-files', () => {
-        const audioDir = path.join(__dirname, '../dist/audio')
+        const audioDir = path.join(path.dirname(scriptMdPath), 'audio')
         try {
+            if (!fs.existsSync(audioDir)) fs.mkdirSync(audioDir)
             return fs.readdirSync(audioDir).filter(f => /\.(mp3|wav)$/i.test(f)).sort()
         } catch {
             return []

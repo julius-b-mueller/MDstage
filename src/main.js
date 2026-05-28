@@ -28,6 +28,7 @@ let monitorAudioDevice = null
 let monitorOffsetMs = 0
 let audioOutputDevices = []
 let editorApp = null
+let audioBasePath = 'audio/'
 
 function resolveDeviceId(label) {
     if (!label) return null
@@ -1984,7 +1985,7 @@ function buildTrigger(codeblockYaml, index) {
             waveColor: '#4b5263', progressColor: '#61afef', cursorColor: '#e5c07b',
             height: 64, interact: false, normalize: true, minPxPerSec: state.zoom,
         })
-        ws.load("audio/" + musicFile)
+        ws.load(audioBasePath + musicFile)
         ws.setVolume(mp.volume)
 
         const totalWaveWidth = () => ws.getWrapper().clientWidth || ws.getDuration() * state.zoom
@@ -2219,7 +2220,7 @@ function buildTrigger(codeblockYaml, index) {
                 container: monContainer, media: monAudioEl,
                 height: 0, interact: false, normalize: true, minPxPerSec: 1,
             })
-            wsMonitor.load('audio/' + monitorFile)
+            wsMonitor.load(audioBasePath + monitorFile)
             wsMonitor.setVolume(mp.volume)
 
             // Timecode-follower sync loop (targetT = mainT - offsetMs/1000)
@@ -3379,6 +3380,8 @@ async function initApp() {
     // Show current file name in title bar
     const scriptPath = await window.electronAPI.getScriptPath()
     document.title = scriptPath.split(/[\\/]/).pop()
+    const scriptDir = scriptPath.substring(0, scriptPath.lastIndexOf('/'))
+    audioBasePath = encodeURI('file://' + scriptDir + '/audio/')
 
     validateYamlBlocks(text)
     scriptText = text
