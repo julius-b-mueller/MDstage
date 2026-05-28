@@ -63,6 +63,9 @@
         .btn-active:hover { background: #f5d08b; }
         .error { color: #e06c75; font-size: 0.9rem; margin-top: 1rem; }
         .device-warning { color: #e06c75; font-size: 0.8rem; margin: 0.3rem 0 0; }
+        .midi-learn-row { display: flex; gap: 0.5rem; align-items: center; }
+        .midi-learn-row span { flex: 1; background: #383c44; border: 1px solid #4b5263; padding: 0.5rem 0.75rem; border-radius: 5px; font-size: 0.92rem; color: #7c8898; }
+        .midi-learn-row span.assigned { color: #abb2bf; }
     </style>
 </head>
 <body>
@@ -107,6 +110,24 @@
             <option value="">— kein Gerät —</option>
         </select>
     </div>
+    <div class="section-title">Live-Tasten (MIDI-Eingang)</div>
+    <div class="field">
+        <label>Go</label>
+        <div class="midi-learn-row">
+            <span id="go-midi-label">— nicht belegt —</span>
+            <button class="btn" id="go-learn-btn">Lernen</button>
+            <button class="btn" id="go-clear-btn">✕</button>
+        </div>
+    </div>
+    <div class="field">
+        <label>Back</label>
+        <div class="midi-learn-row">
+            <span id="back-midi-label">— nicht belegt —</span>
+            <button class="btn" id="back-learn-btn">Lernen</button>
+            <button class="btn" id="back-clear-btn">✕</button>
+        </div>
+    </div>
+
     <div class="section-title">Text-Editor</div>
     <div class="field">
         <label>In Editor öffnen (Rechtsklick)</label>
@@ -272,6 +293,64 @@
                 document.body.insertAdjacentHTML('beforeend', '<p class="error">MIDI nicht verfügbar: ' + e.message + '</p>')
             }
 
+            // ── Live-Tasten MIDI Learn ────────────────────────────────
+            let midiGoNote   = settings.midiGoNote   || null
+            let midiBackNote = settings.midiBackNote || null
+            let learningFor  = null  // 'go' | 'back'
+
+            function midiNoteLabel(n) { return n ? `K${n.ch}  N${n.note}` : '— nicht belegt —' }
+            function applyMidiLabel(which, note) {
+                const el = document.getElementById(which + '-midi-label')
+                el.textContent = midiNoteLabel(note)
+                el.classList.toggle('assigned', !!note)
+            }
+            applyMidiLabel('go', midiGoNote)
+            applyMidiLabel('back', midiBackNote)
+
+            function stopLearn() {
+                learningFor = null
+                document.getElementById('go-learn-btn').classList.remove('btn-active')
+                document.getElementById('go-learn-btn').textContent = 'Lernen'
+                document.getElementById('back-learn-btn').classList.remove('btn-active')
+                document.getElementById('back-learn-btn').textContent = 'Lernen'
+            }
+
+            try {
+                const midiIn = await navigator.requestMIDIAccess({ sysex: false })
+                for (const input of midiIn.inputs.values()) {
+                    input.onmidimessage = (msg) => {
+                        const [status, note, velocity] = msg.data
+                        const type = status & 0xf0
+                        const ch   = (status & 0x0f) + 1
+                        if (type !== 0x90 || velocity === 0 || !learningFor) return
+                        const assignment = { ch, note }
+                        if (learningFor === 'go') {
+                            midiGoNote = assignment
+                            applyMidiLabel('go', assignment)
+                        } else {
+                            midiBackNote = assignment
+                            applyMidiLabel('back', assignment)
+                        }
+                        stopLearn()
+                    }
+                }
+            } catch {}
+
+            function toggleLearn(which) {
+                const was = learningFor
+                stopLearn()
+                if (was !== which) {
+                    learningFor = which
+                    const btn = document.getElementById(which + '-learn-btn')
+                    btn.classList.add('btn-active')
+                    btn.textContent = '⏹ Warte…'
+                }
+            }
+            document.getElementById('go-learn-btn').addEventListener('click', () => toggleLearn('go'))
+            document.getElementById('back-learn-btn').addEventListener('click', () => toggleLearn('back'))
+            document.getElementById('go-clear-btn').addEventListener('click', () => { midiGoNote = null; applyMidiLabel('go', null); stopLearn() })
+            document.getElementById('back-clear-btn').addEventListener('click', () => { midiBackNote = null; applyMidiLabel('back', null); stopLearn() })
+
             // ── Text-Editor ───────────────────────────────────────────
             const editorAppSel   = document.getElementById('editor-app')
             const customCmdField = document.getElementById('custom-cmd-field')
@@ -298,6 +377,8 @@
                     midiTCDevice:       tcSelect.value        || null,
                     editorApp:          editorAppSel.value    || null,
                     editorCustomCmd:    editorCustomEl.value.trim(),
+                    midiGoNote,
+                    midiBackNote,
                 })
                 window.close()
             })

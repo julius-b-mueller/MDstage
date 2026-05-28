@@ -56,6 +56,9 @@ const MIC_SVG = `<svg class="t-icon" viewBox="0 0 12 18" width="10" height="15" 
 const TAPE_SVG = `<svg class="t-icon" viewBox="0 0 22 12" width="22" height="12" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round"><circle cx="5" cy="6" r="4"/><circle cx="5" cy="6" r="1.3"/><line x1="5" y1="2" x2="5" y2="4.7"/><line x1="1.5" y1="8" x2="3.9" y2="6.7"/><line x1="8.5" y1="8" x2="6.1" y2="6.7"/><circle cx="17" cy="6" r="4"/><circle cx="17" cy="6" r="1.3"/><line x1="17" y1="2" x2="17" y2="4.7"/><line x1="13.5" y1="8" x2="15.9" y2="6.7"/><line x1="20.5" y1="8" x2="18.1" y2="6.7"/><line x1="9" y1="2" x2="13" y2="2"/><line x1="9" y1="10" x2="13" y2="10"/></svg>`
 
 let currentCue = 0
+let cueHistory = []
+let midiGoNote = null
+let midiBackNote = null
 let pickModeCallback = null
 let midiAccess = null
 let midiX32 = null
@@ -3099,6 +3102,77 @@ function triggerAction(cue) {
     if (startTc && mtc) {
         if (ta) mtc.start(startTc, ta.ws, cue)
     }
+
+    cueHistory.push(cue)
+    broadcastLiveState()
+}
+
+function broadcastLiveState() {
+    if (!window.electronAPI?.sendLiveState) return
+    const blocks = tokenizeScript(scriptText)
+    const liveBlocks = []
+    let yamlCount = 0
+    for (const b of blocks) {
+        if (b.type === 'yaml') {
+            yamlCount++
+            if (yamlCount === 1) continue  // config block
+            const cueIdx = yamlCount - 1
+            const ty = triggerYamls[cueIdx]
+            if (!ty) continue
+            const label = ty.label ||
+                (typeof ty.music === 'string' ? ty.music :
+                    ty.music?.file ? ty.music.file : null) ||
+                (ty.mic ? (Array.isArray(ty.mic) ? ty.mic.join(', ') : ty.mic) : null) ||
+                ('Cue ' + cueIdx)
+            liveBlocks.push({
+                type: 'trigger',
+                cueIdx,
+                isCurrent: cueIdx === currentCue,
+                isPlaying: triggerAudio.get(cueIdx)?.ws.isPlaying() ?? false,
+                label,
+                light: !!ty.light,
+            })
+        } else {
+            liveBlocks.push({ type: 'text', content: b.content })
+        }
+    }
+    const tcEl = document.querySelector('.tc-display')
+    window.electronAPI.sendLiveState({
+        blocks: liveBlocks,
+        currentCue,
+        timecode: tcEl ? tcEl.textContent.trim() : '',
+    })
+}
+
+function goAction() {
+    for (let i = currentCue + 1; i < triggerYamls.length; i++) {
+        if (!triggerYamls[i]) continue
+        currentCue = i
+        markTriggers(i)
+        triggerAction(i)
+        return
+    }
+}
+
+function backAction() {
+    if (cueHistory.length < 1) return
+    const last = cueHistory.pop()
+    const prev = cueHistory.length > 0 ? cueHistory[cueHistory.length - 1] : null
+
+    if (prev !== null) {
+        // Re-apply mic state for the cue before the accidental one
+        x32UnmuteChannels(triggerYamls[prev]?.mic)
+        // If the accidental cue was a light cue, re-send the previous cue's trigger note
+        if (triggerYamls[last]?.light) sendTriggerNote(prev)
+        currentCue = prev
+        markTriggers(prev)
+    } else {
+        // No previous cue: just mute all mics
+        x32UnmuteChannels('muteall')
+        currentCue = 0
+        markTriggers(0)
+    }
+    broadcastLiveState()
 }
 
 function sendTriggerNote(cue) {
@@ -3329,6 +3403,8 @@ function refreshMidiDevices(settings) {
     midiX32 = null
     midiTrigger = null
     midiTC = null
+    midiGoNote   = settings.midiGoNote   || null
+    midiBackNote = settings.midiBackNote || null
     if (!midiAccess) return
     for (const output of midiAccess.outputs.values()) {
         if (settings.midiX32Device && output.name === settings.midiX32Device) midiX32 = output
@@ -3338,10 +3414,25 @@ function refreshMidiDevices(settings) {
     if (mtc) mtc.setOutput(midiTC)
 }
 
+function setupMidiInputListeners() {
+    if (!midiAccess) return
+    for (const input of midiAccess.inputs.values()) {
+        input.onmidimessage = (msg) => {
+            const [status, note, velocity] = msg.data
+            const type = status & 0xf0
+            const ch   = (status & 0x0f) + 1
+            if (type !== 0x90 || velocity === 0) return
+            if (midiGoNote   && ch === midiGoNote.ch   && note === midiGoNote.note)   goAction()
+            if (midiBackNote && ch === midiBackNote.ch && note === midiBackNote.note)  backAction()
+        }
+    }
+}
+
 async function initMidi(settings) {
     midiAccess = await _midiAccessPromise
     if (!midiAccess) return
     refreshMidiDevices(settings)
+    setupMidiInputListeners()
 }
 
 function updateClock() {
@@ -3434,9 +3525,17 @@ async function initApp() {
             applyAudioDevices()
         })
     })
+
+    window.electronAPI.onLiveGo(() => goAction())
+    window.electronAPI.onLiveBack(() => backAction())
+
+    broadcastLiveState()
 }
 
 initApp().catch(e => console.error('initApp Fehler:', e))
 
 updateClock()
-setInterval(() => updateClock(), 1000)
+setInterval(() => {
+    updateClock()
+    broadcastLiveState()
+}, 1000)

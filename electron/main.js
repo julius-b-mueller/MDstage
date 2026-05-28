@@ -43,6 +43,7 @@ const defaultSettings = {
     mainAudioDevice: null, monitorAudioDevice: null, monitorOffsetMs: 0,
     midiX32Device: null, midiTriggerDevice: null, midiTCDevice: null,
     editorApp: null, editorCustomCmd: '',
+    midiGoNote: null, midiBackNote: null,
 }
 
 function openLineInEditor(settings, line) {
@@ -106,6 +107,7 @@ function persistSettings(settings) {
 let mainWindow = null
 let settingsWindow = null
 let roleEditorWindow = null
+let liveWindow = null
 
 function createMainWindow() {
     mainWindow = new BrowserWindow({
@@ -136,7 +138,7 @@ function createSettingsWindow() {
     }
     settingsWindow = new BrowserWindow({
         width: 440,
-        height: 640,
+        height: 780,
         title: 'Einstellungen',
         resizable: false,
         minimizable: false,
@@ -164,6 +166,22 @@ function createRoleEditorWindow() {
     })
     roleEditorWindow.loadFile(path.join(__dirname, '../dist/role-editor.html'))
     roleEditorWindow.on('closed', () => { roleEditorWindow = null })
+}
+
+function createLiveWindow() {
+    if (liveWindow) { liveWindow.focus(); return }
+    liveWindow = new BrowserWindow({
+        width: 900,
+        height: 700,
+        title: 'Live-Ansicht',
+        webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            preload: path.join(__dirname, 'preload.js'),
+        },
+    })
+    liveWindow.loadFile(path.join(__dirname, '../dist/live.html'))
+    liveWindow.on('closed', () => { liveWindow = null })
 }
 
 async function createNewFile() {
@@ -210,6 +228,11 @@ function buildMenu() {
                     label: 'Rolleneditor…',
                     click: createRoleEditorWindow,
                 },
+                {
+                    label: 'Live-Ansicht…',
+                    accelerator: 'Cmd+L',
+                    click: createLiveWindow,
+                },
                 { type: 'separator' },
                 { role: 'hide' },
                 { role: 'hideOthers' },
@@ -239,6 +262,10 @@ function buildMenu() {
             }, {
                 label: 'Rolleneditor…',
                 click: createRoleEditorWindow,
+            }, {
+                label: 'Live-Ansicht…',
+                accelerator: 'Ctrl+L',
+                click: createLiveWindow,
             }],
         }]),
         {
@@ -345,6 +372,18 @@ app.whenReady().then(() => {
             click: () => openLineInEditor(settings, line),
         }])
         menu.popup({ window: BrowserWindow.fromWebContents(event.sender) })
+    })
+
+    ipcMain.handle('send-live-state', (_, state) => {
+        if (liveWindow) liveWindow.webContents.send('live-state', state)
+    })
+
+    ipcMain.handle('live-go', () => {
+        if (mainWindow) mainWindow.webContents.send('live-go')
+    })
+
+    ipcMain.handle('live-back', () => {
+        if (mainWindow) mainWindow.webContents.send('live-back')
     })
 
     Menu.setApplicationMenu(buildMenu())

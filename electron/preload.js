@@ -18,4 +18,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.on('script-changed', () => callback())
     },
     showEditorContextMenu: (line) => ipcRenderer.invoke('show-editor-context-menu', line),
+    sendLiveState: (state) => ipcRenderer.invoke('send-live-state', state),
+    liveGo: () => ipcRenderer.invoke('live-go'),
+    liveBack: () => ipcRenderer.invoke('live-back'),
+    onLiveState: (callback) => {
+        ipcRenderer.on('live-state', (_, state) => callback(state))
+    },
+    onLiveGo: (callback) => {
+        ipcRenderer.on('live-go', () => callback())
+    },
+    onLiveBack: (callback) => {
+        ipcRenderer.on('live-back', () => callback())
+    },
 })
