@@ -231,14 +231,42 @@ function isTriggerEl(el) {
 
 // ── Existing block editor helpers ─────────────────────────────────────────────
 
-// Character offset of cursor in a contenteditable element
+// Character offset of cursor in a contenteditable element.
+// BR elements are counted as 1 char to match setCaretOffset.
 function getCaretOffset(root) {
     const sel = window.getSelection()
     if (!sel.rangeCount) return 0
-    const pre = sel.getRangeAt(0).cloneRange()
-    pre.selectNodeContents(root)
-    pre.setEnd(sel.getRangeAt(0).endContainer, sel.getRangeAt(0).endOffset)
-    return pre.toString().length
+    const range = sel.getRangeAt(0)
+    let chars = 0
+
+    function countAll(node) {
+        if (node.nodeType === Node.TEXT_NODE) { chars += node.length; return }
+        if (node.tagName === 'BR') { chars++; return }
+        for (const child of node.childNodes) countAll(child)
+    }
+
+    function walkTo(node) {
+        if (node.nodeType === Node.TEXT_NODE) {
+            if (node === range.startContainer) { chars += range.startOffset; return true }
+            chars += node.length
+            return false
+        }
+        if (node.tagName === 'BR') {
+            chars++
+            return false
+        }
+        if (node === range.startContainer) {
+            for (let i = 0; i < range.startOffset; i++) countAll(node.childNodes[i])
+            return true
+        }
+        for (const child of node.childNodes) {
+            if (walkTo(child)) return true
+        }
+        return false
+    }
+
+    walkTo(root)
+    return chars
 }
 
 function setCaretOffset(root, offset) {
@@ -360,7 +388,12 @@ function updateEditorParens(div) {
     const afterBr = []
     let seen = false
     for (const n of div.childNodes) { if (seen) afterBr.push(n); if (n === brNode) seen = true }
-    const dialogue = afterBr.map(n => n.nodeType === Node.TEXT_NODE ? n.textContent : n.textContent).join('')
+    // Serialize back to markdown so *(text)* patterns survive the rebuild
+    const dialogue = afterBr.map(n => {
+        if (n.nodeType === Node.TEXT_NODE) return n.textContent
+        if (n.classList?.contains('editor-stage-inline')) return '*' + n.textContent + '*'
+        return n.textContent
+    }).join('')
     afterBr.forEach(n => n.remove())
     appendDialogueParsed(div, dialogue, roleColor)
     setCaretOffset(div, caretOffset)
@@ -754,6 +787,7 @@ function acceptGhostInline() {
 
     inlineEditor.confirmedRole = match
     el.dataset.placeholder = 'Text…'
+    if (roleColor) el.style.color = roleColor
 
     el.focus()
     const range = document.createRange()
