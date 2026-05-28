@@ -1867,6 +1867,27 @@ function buildTrigger(codeblockYaml, index) {
         showTriggerDialog({ triggerIndex: index, existingYaml: codeblockYaml, parentTriggerNote })
     })
     triggerActions.appendChild(triggerEditBtn)
+
+    // ── Light toggle ────────────────────────────────────────────────────────
+    const lightBtn = document.createElement('button')
+    lightBtn.classList.add('trigger-action-btn')
+    if (codeblockYaml.light) lightBtn.classList.add('trigger-action-btn-active')
+    lightBtn.textContent = '✦ Licht'
+    lightBtn.title = codeblockYaml.light
+        ? 'Licht-Cue: Back stellt Licht wieder her – klicken zum Deaktivieren'
+        : 'Als Licht-Cue markieren (Back-Taste stellt Licht wieder her)'
+    lightBtn.addEventListener('mousedown', e => e.stopPropagation())
+    lightBtn.addEventListener('click', e => {
+        e.stopPropagation()
+        const newVal = !triggerYamls[index]?.light
+        setLightInScript(index, newVal)
+        lightBtn.classList.toggle('trigger-action-btn-active', newVal)
+        lightBtn.title = newVal
+            ? 'Licht-Cue: Back stellt Licht wieder her – klicken zum Deaktivieren'
+            : 'Als Licht-Cue markieren (Back-Taste stellt Licht wieder her)'
+    })
+    triggerActions.appendChild(lightBtn)
+
     triggerDiv.appendChild(triggerActions)
 
     triggers[index] = triggerDiv
@@ -3007,6 +3028,23 @@ function updateLoopGroupInScript(triggerIndex, key, value) {
         else delete triggerYamls[triggerIndex][key]
     }
     for (const [idx, btn] of loopBtns) updateLoopBtnAppearance(btn, idx)
+}
+
+function setLightInScript(triggerIndex, value) {
+    let blockIdx = 0
+    const updated = scriptText.replace(/```yaml\n([\s\S]*?)```/g, (match, content) => {
+        blockIdx++
+        if (blockIdx !== triggerIndex + 1) return match
+        let c = content.replace(/^light:[ \t]*[^\n]*\n?/m, '').replace(/\n{3,}/g, '\n\n')
+        if (value) c = c.trimEnd() + '\nlight: true\n'
+        return '```yaml\n' + c + '```'
+    })
+    scriptText = updated
+    window.electronAPI.writeScriptMd(updated)
+    if (triggerYamls[triggerIndex]) {
+        if (value) triggerYamls[triggerIndex].light = true
+        else delete triggerYamls[triggerIndex].light
+    }
 }
 
 function showLoopGroupDialog(index, anchorBtn) {
