@@ -39,7 +39,7 @@
         .live-tc.tc-active { color: #e5c07b; }
 
         /* ── Script area ─────────────────────────────────────────────────── */
-        .script-area { flex: 1; position: relative; min-height: 0; isolation: isolate; }
+        .script-area { flex: 1; min-height: 0; }
         .script-scroll {
             height: 100%;
             overflow-y: auto;
@@ -48,18 +48,6 @@
         }
         .script-scroll::-webkit-scrollbar { width: 5px; }
         .script-scroll::-webkit-scrollbar-thumb { background: #383c44; border-radius: 3px; }
-
-        /* Fade mask */
-        .script-area::before, .script-area::after {
-            content: '';
-            position: absolute;
-            left: 0; right: 0;
-            height: 5rem;
-            pointer-events: none;
-            z-index: 5;
-        }
-        .script-area::before { top: 0;    background: linear-gradient(to bottom, #282c34 10%, transparent); }
-        .script-area::after  { bottom: 0; background: linear-gradient(to top,   #282c34 10%, transparent); }
 
         /* ── Block wrappers ──────────────────────────────────────────────── */
         .live-text h1, .live-text h2, .live-text h3 {
