@@ -45,4 +45,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onLiveBack: (callback) => {
         ipcRenderer.on('live-back', () => callback())
     },
+    onLiveWindowState: (callback) => {
+        ipcRenderer.on('live-window-state', (_, isOpen) => callback(isOpen))
+    },
 })

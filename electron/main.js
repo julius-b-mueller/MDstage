@@ -181,7 +181,11 @@ function createLiveWindow() {
         },
     })
     liveWindow.loadFile(path.join(__dirname, '../dist/live.html'))
-    liveWindow.on('closed', () => { liveWindow = null })
+    liveWindow.on('closed', () => {
+        liveWindow = null
+        if (mainWindow) mainWindow.webContents.send('live-window-state', false)
+    })
+    if (mainWindow) mainWindow.webContents.send('live-window-state', true)
 }
 
 async function createNewFile() {

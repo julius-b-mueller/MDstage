@@ -9,7 +9,8 @@ let usedChs = []
 let triggers = []
 let triggerYamls = []
 let parseErrors = []  // {blockNum, line, message}
-const loopOutroPending = new Map()  // loopTriggerIdx → outroTriggerIdx
+const loopOutroPending = new Map()         // loopTriggerIdx → outroTriggerIdx
+const loopOutroInitialRemaining = new Map() // loopTriggerIdx → remaining at arm time
 const loopBtns = new Map()          // triggerIdx → button element
 
 // triggerIndex -> { ws, wsMonitor, mainAudioEl, monAudioEl, musicFile, overlay, getX, autoMarkerState }
@@ -58,6 +59,8 @@ const TAPE_SVG = `<svg class="t-icon" viewBox="0 0 22 12" width="22" height="12"
 
 let currentCue = 0
 let cueHistory = []
+let liveViewOpen = false
+let armedCue = null
 let midiGoNote = null
 let midiBackNote = null
 let pickModeCallback = null
@@ -1200,7 +1203,7 @@ class MTCTransmitter {
     }
 
     onLoopRestart(loopDurSec, newStartSec) {
-        this.loopOffsetFrames += Math.round(loopDurSec * 25)
+        // TC loops with the audio: jump back to startFrames each iteration
         this.iterStartSec = newStartSec
     }
 
@@ -1251,13 +1254,13 @@ class MTCTransmitter {
         if (this.displayEl) this.displayEl.textContent = this._framesToStr(frames)
     }
 
-    start(startTcStr, ws, triggerIndex) {
+    start(startTcStr, ws, triggerIndex, iterStartSec = 0) {
         this.stop()
         // Ensure display element is current after any DOM rebuild
         if (!this.displayEl) this.displayEl = document.querySelector('.tc-display')
         this.startFrames = this._parseTC(startTcStr)
         this.loopOffsetFrames = 0
-        this.iterStartSec = 0  // ws starts at 0 or mp.start — caller must set via onLoopRestart if needed
+        this.iterStartSec = iterStartSec
         this.wsRef = ws
         this.activeTcIndex = triggerIndex
         this.qfIndex = 0
@@ -1459,6 +1462,7 @@ function rerender(newText) {
     usedChs = []
     config = {}
     loopOutroPending.clear()
+    loopOutroInitialRemaining.clear()
     loopBtns.clear()
 
     validateYamlBlocks(newText)
@@ -2225,6 +2229,7 @@ function buildTrigger(codeblockYaml, index) {
                         // Outro pending → fire it at this loop boundary
                         const outroIdx = loopOutroPending.get(index)
                         loopOutroPending.delete(index)
+                        loopOutroInitialRemaining.delete(index)
                         setOutroPendingIndicator(outroIdx, false)
                         ws.stop()
                         ws.setVolume(currentVolume)
@@ -2499,6 +2504,12 @@ function buildTrigger(codeblockYaml, index) {
             const cb = pickModeCallback
             exitPickMode()
             cb(index)
+            return
+        }
+        if (liveViewOpen) {
+            // Arm the trigger as next cue instead of firing it immediately
+            setArmedCue(index)
+            broadcastLiveState()
             return
         }
         currentCue = index
@@ -3140,6 +3151,12 @@ function setOutroPendingIndicator(idx, on) {
     if (el) el.classList.toggle('trigger-outro-pending', on)
 }
 
+function setArmedCue(idx) {
+    if (armedCue !== null && triggers[armedCue]) triggers[armedCue].classList.remove('trigger-armed')
+    armedCue = idx
+    if (armedCue !== null && triggers[armedCue]) triggers[armedCue].classList.add('trigger-armed')
+}
+
 // Returns list of trigger indices whose loop_outro points to idx
 function loopSourcesOf(idx) {
     const sources = []
@@ -3317,11 +3334,21 @@ function triggerAction(cue) {
         if (loopOutroPending.get(i) === cue) {
             // Second click → cancel pending
             loopOutroPending.delete(i)
+            loopOutroInitialRemaining.delete(i)
             setOutroPendingIndicator(cue, false)
         } else {
+            // Record how much loop time remains right now (= full bar duration)
+            const lmp = loopTa.mp
+            const lStart = lmp?.start ?? 0
+            const lEnd   = lmp?.end ?? loopTa.ws.getDuration() ?? 0
+            const range  = lEnd - lStart
+            const ct     = loopTa.mainAudioEl?.currentTime ?? 0
+            const pos    = range > 0 ? ((ct - lStart) % range + range) % range : 0
+            loopOutroInitialRemaining.set(i, Math.max(0, range - pos))
             loopOutroPending.set(i, cue)
             setOutroPendingIndicator(cue, true)
         }
+        broadcastLiveState()
         return
     }
 
@@ -3339,7 +3366,7 @@ function triggerAction(cue) {
     sendTriggerNote(cue)
 
     if (startTc && mtc) {
-        if (ta) mtc.start(startTc, ta.ws, cue)
+        if (ta) mtc.start(startTc, ta.ws, cue, ta.mp?.start ?? 0)
     }
 
     // Auto-compute TC for chain targets (no explicit start_tc, but chained from active TC source)
@@ -3372,10 +3399,24 @@ function applyRoleColorsToHtml(html) {
 function broadcastLiveState() {
     if (!window.electronAPI?.sendLiveState) return
 
-    // Next cue to fire
-    let nextCue = null
-    for (let i = currentCue + 1; i < triggerYamls.length; i++) {
-        if (triggerYamls[i]) { nextCue = i; break }
+    // If currentCue is a pending outro, treat the loop as still current for live display
+    // so the live view only scrolls when the loop actually ends and the outro fires.
+    let liveCurrent = currentCue
+    let liveNextOverride = null
+    for (const [loopIdx, outroIdx] of loopOutroPending) {
+        if (outroIdx === currentCue) {
+            liveCurrent = loopIdx
+            liveNextOverride = outroIdx
+            break
+        }
+    }
+
+    // Next cue to fire: armed cue takes priority over normal next-cue calculation
+    let nextCue = liveNextOverride ?? armedCue
+    if (nextCue === null) {
+        for (let i = liveCurrent + 1; i < triggerYamls.length; i++) {
+            if (triggerYamls[i]) { nextCue = i; break }
+        }
     }
 
     const rawBlocks = tokenizeScript(scriptText)
@@ -3415,20 +3456,41 @@ function broadcastLiveState() {
                     const loopTa = triggerAudio.get(loopIdx)
                     if (loopTa) {
                         const lmp = loopTa.mp
-                        outroPending = {
-                            currentTime: loopTa.mainAudioEl?.currentTime ?? 0,
-                            loopStart: lmp?.start ?? 0,
-                            loopEnd: lmp?.end ?? loopTa.ws.getDuration() ?? 0,
-                        }
+                        const lStart = lmp?.start ?? 0
+                        const lEnd   = lmp?.end ?? loopTa.ws.getDuration() ?? 0
+                        const range  = lEnd - lStart
+                        const ct     = loopTa.mainAudioEl?.currentTime ?? 0
+                        const pos    = range > 0 ? ((ct - lStart) % range + range) % range : 0
+                        // remaining = time left in current iteration when bar was last sampled
+                        outroPending = { remaining: Math.max(0, range - pos), initialRemaining: loopOutroInitialRemaining.get(loopIdx) ?? range }
                     }
                     break
+                }
+            }
+
+            // Check if this cue will be auto-fired by a currently playing source
+            let autoCuePending = null
+            const aty = ty.auto_trigger
+            if (aty?.trigger_note) {
+                const srcIdx = findTriggerByNote(aty.trigger_note)
+                if (srcIdx !== null) {
+                    const srcRoot = groupRootOf(srcIdx)
+                    for (let j = srcRoot; j < triggerYamls.length; j++) {
+                        if (j !== srcRoot && !triggerYamls[j]?.sibling) break
+                        const srcTa = triggerAudio.get(j)
+                        if (srcTa?.ws.isPlaying()) {
+                            const ct = srcTa.mainAudioEl?.currentTime ?? 0
+                            if (ct < aty.at) autoCuePending = { currentTime: ct, at: aty.at }
+                            break
+                        }
+                    }
                 }
             }
 
             liveBlocks.push({
                 type: 'trigger',
                 cueIdx,
-                isCurrent: cueIdx === currentCue,
+                isCurrent: cueIdx === liveCurrent,
                 isNext: cueIdx === nextCue,
                 isSibling: !!ty.sibling,
                 isPlaying: triggerAudio.get(cueIdx)?.ws.isPlaying() ?? false,
@@ -3439,6 +3501,7 @@ function broadcastLiveState() {
                 note: ty.note || null,
                 triggerNoteLabel,
                 outroPending,
+                autoCuePending,
             })
         } else {
             liveBlocks.push({
@@ -3474,7 +3537,7 @@ function broadcastLiveState() {
         : null
     window.electronAPI.sendLiveState({
         blocks: liveBlocks,
-        currentCue,
+        currentCue: liveCurrent,
         nextCue,
         selectedVariant,
         timecodeFrames: tcFrames,
@@ -3483,6 +3546,15 @@ function broadcastLiveState() {
 }
 
 function goAction() {
+    if (armedCue !== null) {
+        const cue = armedCue
+        setArmedCue(null)
+        currentCue = cue
+        markTriggers(cue)
+        scrollToTrigger(cue)
+        triggerAction(cue)
+        return
+    }
     for (let i = currentCue + 1; i < triggerYamls.length; i++) {
         if (!triggerYamls[i]) continue
         // If a variant was chosen for this group, fire it instead of the first sibling
@@ -3505,6 +3577,7 @@ function goAction() {
 }
 
 function backAction() {
+    setArmedCue(null)
     if (cueHistory.length < 1) return
     const last = cueHistory.pop()
 
@@ -3515,6 +3588,7 @@ function backAction() {
     for (const [loopIdx, outroIdx] of loopOutroPending) {
         if (outroIdx === last) {
             loopOutroPending.delete(loopIdx)
+            loopOutroInitialRemaining.delete(loopIdx)
             setOutroPendingIndicator(last, false)
         }
     }
@@ -3997,6 +4071,12 @@ window.__liveGo = goAction
 window.__liveBack = backAction
 window.__selectVariant = (idx) => { selectedVariant = idx; broadcastLiveState() }
 window.__stopAudio = (cueIdx) => { const ta = triggerAudio.get(cueIdx); if (ta) fadeAdjustAudio(ta, 0.5) }
+
+window.electronAPI.onLiveWindowState((isOpen) => {
+    liveViewOpen = isOpen
+    if (!isOpen) setArmedCue(null)
+    broadcastLiveState()
+})
 
 initApp().catch(e => console.error('initApp Fehler:', e))
 

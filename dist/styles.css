@@ -77,6 +77,11 @@ p {
     border-left: 5px #e5c07b solid;
 }
 
+.trigger-armed {
+    border-left: 5px #98c379 solid;
+    box-shadow: black 0 0 10px, 0 0 0 1px #98c37955, 0 0 16px #98c37933;
+}
+
 .trigger-info {
     max-width: 60%;
 }

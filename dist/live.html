@@ -228,6 +228,7 @@
         .btn-back:hover { background: #4b5263; }
         .btn-go   { background: #98c379; color: #1e2127; }
         .btn-go:hover { background: #a8d389; }
+        .btn-go:disabled { background: #383c44; color: #5c6370; cursor: not-allowed; }
 
         @keyframes pulse {
             0%, 100% { opacity: 1; }
@@ -248,6 +249,19 @@
             border-radius: 2px;
             will-change: width;
             transition: background 0.3s;
+        }
+        .autocue-pending-bar-wrap {
+            height: 4px;
+            background: #2c313a;
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 0.6rem;
+        }
+        .autocue-pending-bar-fill {
+            height: 100%;
+            background: #98c379;
+            border-radius: 2px;
+            will-change: width;
         }
     </style>
 </head>
@@ -356,6 +370,9 @@
             const outroPendingBar = b.outroPending
                 ? `<div class="outro-pending-bar-wrap"><div class="outro-pending-bar-fill" style="width:0%"></div></div>`
                 : ''
+            const autoCuePendingBar = b.autoCuePending
+                ? `<div class="autocue-pending-bar-wrap"><div class="autocue-pending-bar-fill" style="width:${(b.autoCuePending.currentTime / b.autoCuePending.at * 100).toFixed(1)}%"></div></div>`
+                : ''
             return `
                 <div class="trigger-row">
                     <div class="trigger-info">
@@ -364,16 +381,16 @@
                     ${b.note ? `<div class="trigger-note">${esc(b.note)}</div>` : ''}
                     <div style="display:flex;align-items:center;gap:0.5rem;padding-right:0.5rem">${tnLabel}${playDot}</div>
                 </div>
-                ${outroPendingBar}
+                ${outroPendingBar}${autoCuePendingBar}
             `
         }
 
         // ── Script render ────────────────────────────────────────────────
-        let lastNextCue = null
-        let localSelectedVariant = null  // cueIdx or null
+        let lastCurrentCue = null
+        let localSelectedVariant = null
 
         function centerNextTrigger(animate = true) {
-            const anchor = document.getElementById('next-anchor')
+            const anchor = document.getElementById('scroll-anchor')
             if (!anchor) return
             const containerHeight = scrollEl.clientHeight
             const y = Math.round(containerHeight * 0.65 - anchor.offsetTop - anchor.offsetHeight / 2)
@@ -382,18 +399,19 @@
             if (!animate) requestAnimationFrame(() => { blocksEl.style.transition = '' })
         }
 
-        function renderScript(blocks, nextCue, selectedVariant) {
+        function renderScript(blocks, nextCue, currentCue, selectedVariant) {
             localSelectedVariant = selectedVariant ?? null
             const grouped = groupBlocks(blocks)
             const frag = document.createDocumentFragment()
 
             outroPendingBars.clear()
+            autoCuePendingBars.clear()
 
             for (const b of grouped) {
                 const wrap = document.createElement('div')
 
                 if (b.type === 'trigger-group') {
-                    if (b.isNext) { wrap.className = 'live-block-next'; wrap.id = 'next-anchor' }
+                    if (b.isNext) { wrap.className = 'live-block-next'; wrap.id = 'scroll-anchor' }
                     else if (b.isCurrent) { wrap.className = 'live-block-current' }
 
                     const hasSelection = localSelectedVariant !== null
@@ -411,19 +429,28 @@
                             const fill = card.querySelector('.outro-pending-bar-fill')
                             if (fill) outroPendingBars.set(v.cueIdx, { fillEl: fill, item: { ...v.outroPending, receivedAt: performance.now() } })
                         }
+                        if (v.autoCuePending) {
+                            const fill = card.querySelector('.autocue-pending-bar-fill')
+                            if (fill) autoCuePendingBars.set(v.cueIdx, { fillEl: fill, item: { ...v.autoCuePending, receivedAt: performance.now() } })
+                        }
                         groupRow.appendChild(card)
                     }
                     wrap.appendChild(groupRow)
 
                 } else if (b.type === 'trigger') {
-                    if (b.isNext) { wrap.className = 'live-block-next'; wrap.id = 'next-anchor' }
+                    if (b.isNext) { wrap.className = 'live-block-next'; wrap.id = 'scroll-anchor' }
                     else if (b.isCurrent) { wrap.className = 'live-block-current' }
+
                     const card = document.createElement('div')
                     card.className = 'trigger'
                     card.innerHTML = buildTriggerHtml(b)
                     if (b.outroPending) {
                         const fill = card.querySelector('.outro-pending-bar-fill')
                         if (fill) outroPendingBars.set(b.cueIdx, { fillEl: fill, item: { ...b.outroPending, receivedAt: performance.now() } })
+                    }
+                    if (b.autoCuePending) {
+                        const fill = card.querySelector('.autocue-pending-bar-fill')
+                        if (fill) autoCuePendingBars.set(b.cueIdx, { fillEl: fill, item: { ...b.autoCuePending, receivedAt: performance.now() } })
                     }
                     wrap.appendChild(card)
                 } else {
@@ -437,8 +464,11 @@
 
             blocksEl.innerHTML = ''
             blocksEl.appendChild(frag)
-            lastNextCue = nextCue
-            requestAnimationFrame(centerNextTrigger)
+            btnGo.disabled = outroPendingBars.size > 0 || autoCuePendingBars.size > 0
+            // Scroll only when the current cue actually fired — not on every periodic update
+            const cueChanged = currentCue !== lastCurrentCue
+            lastCurrentCue = currentCue
+            requestAnimationFrame(() => centerNextTrigger(cueChanged))
         }
 
         // Variant click — delegated on blocksEl
@@ -452,6 +482,7 @@
         // ── Audio panel (rAF-based smooth update) ────────────────────────
         const audioRows = new Map()
         const outroPendingBars = new Map()
+        const autoCuePendingBars = new Map()
 
         function calcProgress(item) {
             const now     = performance.now()
@@ -495,10 +526,16 @@
             }
             for (const { fillEl, item } of outroPendingBars.values()) {
                 const elapsed = (performance.now() - item.receivedAt) / 1000
-                const ct = item.currentTime + elapsed
-                const range = item.loopEnd - item.loopStart
-                const pos = range > 0 ? ((ct - item.loopStart) % range + range) % range : 0
-                const pct = range > 0 ? Math.min(100, pos / range * 100) : 0
+                const pct = item.initialRemaining > 0
+                    ? Math.min(100, (item.initialRemaining - item.remaining + elapsed) / item.initialRemaining * 100)
+                    : 100
+                fillEl.style.width = pct.toFixed(1) + '%'
+            }
+            for (const { fillEl, item } of autoCuePendingBars.values()) {
+                const elapsed = (performance.now() - item.receivedAt) / 1000
+                const pct = item.at > 0
+                    ? Math.min(100, (item.currentTime + elapsed) / item.at * 100)
+                    : 100
                 fillEl.style.width = pct.toFixed(1) + '%'
             }
         }
@@ -567,7 +604,7 @@
 
         // ── Main render ──────────────────────────────────────────────────
         function render(state) {
-            const { blocks, nextCue, selectedVariant, timecodeFrames, audioProgress } = state
+            const { blocks, nextCue, currentCue, selectedVariant, timecodeFrames, audioProgress } = state
 
             if (timecodeFrames !== null && timecodeFrames !== undefined) {
                 liveFrames = timecodeFrames; liveFramesAt = performance.now()
@@ -575,7 +612,7 @@
                 liveFrames = null; tcEl.textContent = '--:--:--:--'
             }
 
-            renderScript(blocks, nextCue, selectedVariant)
+            renderScript(blocks, nextCue, currentCue ?? 0, selectedVariant)
             syncAudio(audioProgress || [])
         }
 
