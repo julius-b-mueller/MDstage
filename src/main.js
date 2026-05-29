@@ -1135,6 +1135,8 @@ class MTCTransmitter {
         this.lastFrames = 0
         this.latchedFrames = 0
         this.startFrames = 0
+        this.loopOffsetFrames = 0
+        this.iterStartSec = 0
         this.wsRef = null
         this.activeTcIndex = null
         this.displayEl = null
@@ -1197,9 +1199,35 @@ class MTCTransmitter {
         this.output.send([0xF1, (i << 4) | nibble])
     }
 
+    onLoopRestart(loopDurSec, newStartSec) {
+        this.loopOffsetFrames += Math.round(loopDurSec * 25)
+        this.iterStartSec = newStartSec
+    }
+
+    getCurrentFrames() {
+        const wsTime = this.wsRef ? this.wsRef.getCurrentTime() : 0
+        return this.startFrames + this.loopOffsetFrames + Math.floor((wsTime - this.iterStartSec) * 25)
+    }
+
+    startFromFrames(frames, ws, triggerIndex, iterStartSec = 0) {
+        this.stop()
+        if (!this.displayEl) this.displayEl = document.querySelector('.tc-display')
+        this.startFrames = frames
+        this.loopOffsetFrames = 0
+        this.iterStartSec = iterStartSec
+        this.wsRef = ws
+        this.activeTcIndex = triggerIndex
+        this.qfIndex = 0
+        this.lastFrames = frames
+        this.latchedFrames = frames
+        try { this._sendFullFrame(frames) } catch (e) {}
+        if (this.displayEl) this.displayEl.textContent = this._framesToStr(frames)
+        this.intervalId = setInterval(() => this._tick(), 10)
+    }
+
     _tick() {
         const wsTime = this.wsRef ? this.wsRef.getCurrentTime() : 0
-        const frames = this.startFrames + Math.floor(wsTime * 25)
+        const frames = this.startFrames + this.loopOffsetFrames + Math.floor((wsTime - this.iterStartSec) * 25)
 
         // At the start of each 8-message cycle: latch the frame number so all
         // 8 QF messages encode the same TC value, and detect scrubs.
@@ -1228,6 +1256,8 @@ class MTCTransmitter {
         // Ensure display element is current after any DOM rebuild
         if (!this.displayEl) this.displayEl = document.querySelector('.tc-display')
         this.startFrames = this._parseTC(startTcStr)
+        this.loopOffsetFrames = 0
+        this.iterStartSec = 0  // ws starts at 0 or mp.start — caller must set via onLoopRestart if needed
         this.wsRef = ws
         this.activeTcIndex = triggerIndex
         this.qfIndex = 0
@@ -2021,6 +2051,14 @@ function buildTrigger(codeblockYaml, index) {
         triggerNoteDisplay.addEventListener('mouseleave', () => { triggerNoteDisplay.textContent = numStr })
     }
 
+    if (codeblockYaml.start_tc) {
+        const tcBadge = document.createElement('span')
+        tcBadge.className = 'trigger-tc-badge'
+        tcBadge.textContent = '⏱ ' + codeblockYaml.start_tc
+        tcBadge.title = 'Timecode-Offset'
+        rightWrapper.insertBefore(tcBadge, triggerNoteDisplay)
+    }
+
     // ── waveform (only when a music file is set) ─────────────────────────
     const musicFile = codeblockYaml.music
         ? (typeof codeblockYaml.music === "string" ? codeblockYaml.music : codeblockYaml.music.file)
@@ -2177,6 +2215,7 @@ function buildTrigger(codeblockYaml, index) {
 
         // ── Playback: fade + stop-at-end + loop ─────────────────────────
         let chainEndArmed = false
+        let preSeekArmed  = false
         ws.on("timeupdate", (ct) => {
             const effEnd = mp.end ?? ws.getDuration()
             if (ct >= effEnd) {
@@ -2193,10 +2232,17 @@ function buildTrigger(codeblockYaml, index) {
                         markTriggers(outroIdx)
                         triggerAction(outroIdx)
                     } else {
-                        ws.play(mp.start)   // next loop iteration
+                        // Gapless loop: seek directly on the media element (faster than ws.play)
+                        const loopDur = effEnd - mp.start
+                        mainAudioEl.currentTime = mp.start
+                        if (monAudioEl && monitorShouldPlay()) monAudioEl.currentTime = mp.start
+                        if (mtc && mtc.activeTcIndex === index) mtc.onLoopRestart(loopDur, mp.start)
                     }
                 } else if (loopEnabled) {
-                    ws.play(mp.start)
+                    const loopDur = effEnd - mp.start
+                    mainAudioEl.currentTime = mp.start
+                    if (monAudioEl && monitorShouldPlay()) monAudioEl.currentTime = mp.start
+                    if (mtc && mtc.activeTcIndex === index) mtc.onLoopRestart(loopDur, mp.start)
                 } else {
                     ws.stop()
                     if (mtc && mtc.activeTcIndex === index) mtc.stopAndClear()
@@ -2215,6 +2261,34 @@ function buildTrigger(codeblockYaml, index) {
                 }
                 ws.setVolume(currentVolume); return
             }
+            // Pre-seek next audio 150ms before chain_end fires (reduces gap)
+            if (!preSeekArmed) {
+                const chainEnd = triggerYamls[index]?.chain_end
+                if (chainEnd && effEnd - ct < 0.15) {
+                    preSeekArmed = true
+                    const nextIdx = findTriggerByNote(chainEnd)
+                    const nextTa  = nextIdx !== null ? triggerAudio.get(nextIdx) : null
+                    if (nextTa) {
+                        const ns = nextTa.mp.start ?? 0
+                        nextTa.mainAudioEl.currentTime = ns
+                        if (nextTa.monAudioEl) nextTa.monAudioEl.currentTime = ns
+                    }
+                }
+                // Also pre-seek outro
+                if (!chainEnd) {
+                    const loopOutro = triggerYamls[index]?.loop_outro
+                    if (loopOutro && loopOutroPending.has(index) && effEnd - ct < 0.15) {
+                        preSeekArmed = true
+                        const outroIdx = findTriggerByNote(loopOutro)
+                        const outroTa  = outroIdx !== null ? triggerAudio.get(outroIdx) : null
+                        if (outroTa) {
+                            const ns = outroTa.mp.start ?? 0
+                            outroTa.mainAudioEl.currentTime = ns
+                            if (outroTa.monAudioEl) outroTa.monAudioEl.currentTime = ns
+                        }
+                    }
+                }
+            }
             let f = 1
             const t = ct - mp.start
             if (mp.fadein  > 0 && t >= 0 && t < mp.fadein)            f = t / mp.fadein
@@ -2223,7 +2297,7 @@ function buildTrigger(codeblockYaml, index) {
         })
 
         ws.on("error",  (e) => console.error("WaveSurfer:", musicFile, e))
-        ws.on("play",   () => { pauseBtn.textContent = "⏸"; chainEndArmed = false })
+        ws.on("play",   () => { pauseBtn.textContent = "⏸"; chainEndArmed = false; preSeekArmed = false })
         ws.on("pause",  () => { pauseBtn.textContent = "⏵" })
         ws.on("finish", () => {
             pauseBtn.textContent = "⏵"
@@ -3133,6 +3207,23 @@ function updateLoopGroupInScript(triggerIndex, key, value) {
         if (value !== null) triggerYamls[triggerIndex][key] = value
         else delete triggerYamls[triggerIndex][key]
     }
+    // Remove start_tc from the target trigger (TC is now auto-computed from chain)
+    if (value !== null) {
+        const targetIdx = findTriggerByNote(value)
+        if (targetIdx !== null && triggerYamls[targetIdx]?.start_tc) {
+            // Remove start_tc from target in both YAML and script
+            let blockIdx2 = 0
+            const startTcRe = /^start_tc:[ \t]*[^\n]*\n?/m
+            scriptText = scriptText.replace(/```yaml\n([\s\S]*?)```/g, (match, content) => {
+                blockIdx2++
+                if (blockIdx2 !== targetIdx + 1) return match
+                const c = content.replace(startTcRe, '').replace(/\n{3,}/g, '\n\n')
+                return `\`\`\`yaml\n${c}\`\`\``
+            })
+            window.electronAPI.writeScriptMd(scriptText)
+            if (triggerYamls[targetIdx]) delete triggerYamls[targetIdx].start_tc
+        }
+    }
     for (const [idx, btn] of loopBtns) updateLoopBtnAppearance(btn, idx)
 }
 
@@ -3251,6 +3342,18 @@ function triggerAction(cue) {
         if (ta) mtc.start(startTc, ta.ws, cue)
     }
 
+    // Auto-compute TC for chain targets (no explicit start_tc, but chained from active TC source)
+    if (!startTc && mtc && mtc.activeTcIndex !== null && ta) {
+        const srcTy = triggerYamls[mtc.activeTcIndex]
+        const isChainEnd = srcTy?.chain_end && findTriggerByNote(srcTy.chain_end) === cue
+        const isOutro    = srcTy?.loop_outro && findTriggerByNote(srcTy.loop_outro) === cue
+        if (isChainEnd || isOutro) {
+            const frames    = mtc.getCurrentFrames()
+            const startSec  = ta.mp?.start ?? 0
+            mtc.startFromFrames(frames, ta.ws, cue, startSec)
+        }
+    }
+
     cueHistory.push(cue)
     broadcastLiveState()
 }
@@ -3305,6 +3408,23 @@ function broadcastLiveState() {
             const triggerNoteLabel = ty.trigger_note
                 ? `${ty.trigger_note.ch}.${ty.trigger_note.note}` : null
 
+            // Check if this trigger is a pending outro (armed and waiting for loop to finish)
+            let outroPending = null
+            for (const [loopIdx, outroIdx] of loopOutroPending) {
+                if (outroIdx === cueIdx) {
+                    const loopTa = triggerAudio.get(loopIdx)
+                    if (loopTa) {
+                        const lmp = loopTa.mp
+                        outroPending = {
+                            currentTime: loopTa.mainAudioEl?.currentTime ?? 0,
+                            loopStart: lmp?.start ?? 0,
+                            loopEnd: lmp?.end ?? loopTa.ws.getDuration() ?? 0,
+                        }
+                    }
+                    break
+                }
+            }
+
             liveBlocks.push({
                 type: 'trigger',
                 cueIdx,
@@ -3318,6 +3438,7 @@ function broadcastLiveState() {
                 lightScene: ty.light || null,
                 note: ty.note || null,
                 triggerNoteLabel,
+                outroPending,
             })
         } else {
             liveBlocks.push({
@@ -3349,7 +3470,7 @@ function broadcastLiveState() {
     }
 
     const tcFrames = (mtc && mtc.activeTcIndex !== null && mtc.wsRef)
-        ? mtc.startFrames + Math.floor(mtc.wsRef.getCurrentTime() * 25)
+        ? mtc.getCurrentFrames()
         : null
     window.electronAPI.sendLiveState({
         blocks: liveBlocks,

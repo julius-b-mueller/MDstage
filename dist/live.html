@@ -233,6 +233,22 @@
             0%, 100% { opacity: 1; }
             50%       { opacity: 0.35; }
         }
+
+        /* Pending outro indicator */
+        .outro-pending-bar-wrap {
+            height: 4px;
+            background: #2c313a;
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 0.6rem;
+        }
+        .outro-pending-bar-fill {
+            height: 100%;
+            background: #e5c07b;
+            border-radius: 2px;
+            will-change: width;
+            transition: background 0.3s;
+        }
     </style>
 </head>
 <body>
@@ -337,6 +353,9 @@
                 ? `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#98c379;box-shadow:0 0 8px #98c37988;animation:pulse 1.2s ease-in-out infinite"></span>` : ''
             const tnLabel = b.triggerNoteLabel
                 ? `<span style="font-size:0.9rem;color:#5c6370;font-variant-numeric:tabular-nums">${esc(b.triggerNoteLabel)}</span>` : ''
+            const outroPendingBar = b.outroPending
+                ? `<div class="outro-pending-bar-wrap"><div class="outro-pending-bar-fill" style="width:0%"></div></div>`
+                : ''
             return `
                 <div class="trigger-row">
                     <div class="trigger-info">
@@ -345,6 +364,7 @@
                     ${b.note ? `<div class="trigger-note">${esc(b.note)}</div>` : ''}
                     <div style="display:flex;align-items:center;gap:0.5rem;padding-right:0.5rem">${tnLabel}${playDot}</div>
                 </div>
+                ${outroPendingBar}
             `
         }
 
@@ -367,6 +387,8 @@
             const grouped = groupBlocks(blocks)
             const frag = document.createDocumentFragment()
 
+            outroPendingBars.clear()
+
             for (const b of grouped) {
                 const wrap = document.createElement('div')
 
@@ -385,6 +407,10 @@
                         if (v.cueIdx === localSelectedVariant) card.classList.add('variant-selected')
                         card.dataset.cueIdx = v.cueIdx
                         card.innerHTML = buildTriggerHtml(v)
+                        if (v.outroPending) {
+                            const fill = card.querySelector('.outro-pending-bar-fill')
+                            if (fill) outroPendingBars.set(v.cueIdx, { fillEl: fill, item: { ...v.outroPending, receivedAt: performance.now() } })
+                        }
                         groupRow.appendChild(card)
                     }
                     wrap.appendChild(groupRow)
@@ -395,6 +421,10 @@
                     const card = document.createElement('div')
                     card.className = 'trigger'
                     card.innerHTML = buildTriggerHtml(b)
+                    if (b.outroPending) {
+                        const fill = card.querySelector('.outro-pending-bar-fill')
+                        if (fill) outroPendingBars.set(b.cueIdx, { fillEl: fill, item: { ...b.outroPending, receivedAt: performance.now() } })
+                    }
                     wrap.appendChild(card)
                 } else {
                     const inner = document.createElement('div')
@@ -421,6 +451,7 @@
 
         // ── Audio panel (rAF-based smooth update) ────────────────────────
         const audioRows = new Map()
+        const outroPendingBars = new Map()
 
         function calcProgress(item) {
             const now     = performance.now()
@@ -461,6 +492,14 @@
                 const volPct = Math.min(100, (item.volume ?? 0.8) * 100)
                 volFill.style.width = volPct.toFixed(1) + '%'
                 volFill.classList.toggle('low', volPct < 30)
+            }
+            for (const { fillEl, item } of outroPendingBars.values()) {
+                const elapsed = (performance.now() - item.receivedAt) / 1000
+                const ct = item.currentTime + elapsed
+                const range = item.loopEnd - item.loopStart
+                const pos = range > 0 ? ((ct - item.loopStart) % range + range) % range : 0
+                const pct = range > 0 ? Math.min(100, pos / range * 100) : 0
+                fillEl.style.width = pct.toFixed(1) + '%'
             }
         }
         requestAnimationFrame(rafUpdate)
