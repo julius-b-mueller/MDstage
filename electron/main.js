@@ -288,6 +288,10 @@ function buildMenu() {
                     accelerator: process.platform === 'darwin' ? 'Cmd+Alt+I' : 'Ctrl+Shift+I',
                     click: () => { if (mainWindow) mainWindow.webContents.openDevTools() },
                 },
+                {
+                    label: 'DevTools (Live-Fenster)',
+                    click: () => { if (liveWindow) liveWindow.webContents.openDevTools() },
+                },
                 { role: 'reload' },
             ],
         },
@@ -377,13 +381,21 @@ app.whenReady().then(() => {
     ipcMain.handle('send-live-state', (_, state) => {
         if (liveWindow) liveWindow.webContents.send('live-state', state)
     })
-
-    ipcMain.handle('live-go', () => {
-        if (mainWindow) mainWindow.webContents.send('live-go')
+    ipcMain.on('send-live-volumes', (_, volumes) => {
+        if (liveWindow) liveWindow.webContents.send('live-volumes', volumes)
     })
 
-    ipcMain.handle('live-back', () => {
-        if (mainWindow) mainWindow.webContents.send('live-back')
+    ipcMain.on('live-go', () => {
+        if (mainWindow) mainWindow.webContents.executeJavaScript('window.__liveGo && window.__liveGo()').catch(() => {})
+    })
+    ipcMain.on('live-back', () => {
+        if (mainWindow) mainWindow.webContents.executeJavaScript('window.__liveBack && window.__liveBack()').catch(() => {})
+    })
+    ipcMain.on('live-select-variant', (_, idx) => {
+        if (mainWindow) mainWindow.webContents.executeJavaScript(`window.__selectVariant && window.__selectVariant(${parseInt(idx)})`).catch(() => {})
+    })
+    ipcMain.on('live-stop-audio', (_, cueIdx) => {
+        if (mainWindow) mainWindow.webContents.executeJavaScript(`window.__stopAudio && window.__stopAudio(${parseInt(cueIdx)})`).catch(() => {})
     })
 
     Menu.setApplicationMenu(buildMenu())

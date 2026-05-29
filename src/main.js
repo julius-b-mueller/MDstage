@@ -43,6 +43,7 @@ function monitorShouldPlay() {
 }
 
 let scriptText = ''
+let selectedVariant = null  // cueIdx chosen by user in live view before Go
 
 const ROLE_COLORS = {
     red: '#e06c75', green: '#98c379', yellow: '#e5c07b', blue: '#61afef',
@@ -1255,8 +1256,30 @@ function noteToName(note) {
     return names[note % 12] + (Math.floor(note / 12) - 1)
 }
 
+let _scrollRaf = null
+
 function scrollToTrigger(cue) {
-    triggers[cue].scrollIntoView({ behavior: "smooth", block: "center" })
+    const el = triggers[cue]
+    if (!el) return
+    const viewH  = window.innerHeight
+    const rect   = el.getBoundingClientRect()
+    const elMid  = window.scrollY + rect.top + rect.height / 2
+    const target = Math.max(0, elMid - viewH / 2)
+    const dist   = Math.abs(target - window.scrollY)
+    if (dist < 4) return
+
+    // Continuous ease-in-out: ~1200 px/s, clamped 500–900 ms
+    const duration = Math.max(500, Math.min(900, dist / 1.2))
+    if (_scrollRaf) cancelAnimationFrame(_scrollRaf)
+    const startY = window.scrollY
+    const startT = performance.now()
+    const step = (now) => {
+        const t = Math.min(1, (now - startT) / duration)
+        const e = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t
+        window.scrollTo(0, startY + (target - startY) * e)
+        _scrollRaf = t < 1 ? requestAnimationFrame(step) : null
+    }
+    _scrollRaf = requestAnimationFrame(step)
 }
 
 function groupRootOf(idx) {
@@ -1316,6 +1339,68 @@ function groupSiblingTriggers() {
             group.appendChild(el)
         }
     }
+
+    // Fix move buttons: only the last trigger in each group shows arrows,
+    // and those arrows move the entire group.
+    for (const group of document.querySelectorAll('.trigger-group')) {
+        const members = [...group.children]
+        const rootIdx = parseInt(members[0].dataset.triggerIndex)
+        const lastIdx = parseInt(members[members.length - 1].dataset.triggerIndex)
+
+        // Hide move buttons on all but the last member
+        for (let i = 0; i < members.length - 1; i++) {
+            const btns = members[i].querySelector('.trigger-move-btns')
+            if (btns) btns.style.display = 'none'
+        }
+
+        // Re-wire last member's move buttons to move the whole group.
+        // Clone each button to strip the existing single-trigger addEventListener handler,
+        // then attach a fresh group handler so only one move fires per click.
+        const lastMember = members[members.length - 1]
+        const upBtn   = lastMember.querySelector('.trigger-move-btn:first-child')
+        const downBtn = lastMember.querySelector('.trigger-move-btn:last-child')
+        if (upBtn) {
+            const fresh = upBtn.cloneNode(true)
+            upBtn.replaceWith(fresh)
+            fresh.addEventListener('mousedown', (e) => { e.stopPropagation(); moveTriggerGroupInScript(rootIdx, lastIdx, 'up') })
+        }
+        if (downBtn) {
+            const fresh = downBtn.cloneNode(true)
+            downBtn.replaceWith(fresh)
+            fresh.addEventListener('mousedown', (e) => { e.stopPropagation(); moveTriggerGroupInScript(rootIdx, lastIdx, 'down') })
+        }
+    }
+}
+
+function moveTriggerGroupInScript(rootIndex, lastIndex, direction) {
+    if (!scriptText) return
+    const blocks = tokenizeScript(scriptText)
+    const configIdx = blocks.findIndex(b => b.type === 'yaml')
+
+    let yamlCount = 0, rootPos = -1, lastPos = -1
+    for (let i = 0; i < blocks.length; i++) {
+        if (blocks[i].type !== 'yaml') continue
+        yamlCount++
+        if (yamlCount === rootIndex + 1) rootPos = i
+        if (yamlCount === lastIndex + 1)  lastPos = i
+    }
+    if (rootPos === -1 || lastPos === -1) return
+
+    const groupLen = lastPos - rootPos + 1
+    const group = blocks.splice(rootPos, groupLen)
+
+    if (direction === 'up') {
+        if (rootPos <= configIdx + 1) { blocks.splice(rootPos, 0, ...group); return }
+        blocks.splice(rootPos - 1, 0, ...group)
+    } else {
+        if (rootPos >= blocks.length) { blocks.splice(rootPos, 0, ...group); return }
+        blocks.splice(rootPos + 1, 0, ...group)
+    }
+
+    const updated = blocks.map(b => b.content).join('\n\n') + '\n'
+    scriptText = updated
+    window.electronAPI.writeScriptMd(updated)
+    rerender(updated)
 }
 
 function rerender(newText) {
@@ -1816,9 +1901,10 @@ function buildTrigger(codeblockYaml, index) {
     triggerMic.classList.add("trigger-mic")
     const triggerMusic = document.createElement("div")
     triggerMusic.classList.add("trigger-music")
+    const triggerLight = document.createElement("div")
+    triggerLight.classList.add("trigger-light")
 
-    triggerInfo.appendChild(triggerMic)
-    triggerInfo.appendChild(triggerMusic)
+    if (codeblockYaml.light) triggerInfo.appendChild(triggerLight)
     const triggerMoveDiv = document.createElement("div")
     triggerMoveDiv.classList.add("trigger-move-btns")
     const triggerUpBtn   = document.createElement("button")
@@ -1868,33 +1954,14 @@ function buildTrigger(codeblockYaml, index) {
     })
     triggerActions.appendChild(triggerEditBtn)
 
-    // ── Light toggle ────────────────────────────────────────────────────────
-    const lightBtn = document.createElement('button')
-    lightBtn.classList.add('trigger-action-btn')
-    if (codeblockYaml.light) lightBtn.classList.add('trigger-action-btn-active')
-    lightBtn.textContent = '✦ Licht'
-    lightBtn.title = codeblockYaml.light
-        ? 'Licht-Cue: Back stellt Licht wieder her – klicken zum Deaktivieren'
-        : 'Als Licht-Cue markieren (Back-Taste stellt Licht wieder her)'
-    lightBtn.addEventListener('mousedown', e => e.stopPropagation())
-    lightBtn.addEventListener('click', e => {
-        e.stopPropagation()
-        const newVal = !triggerYamls[index]?.light
-        setLightInScript(index, newVal)
-        lightBtn.classList.toggle('trigger-action-btn-active', newVal)
-        lightBtn.title = newVal
-            ? 'Licht-Cue: Back stellt Licht wieder her – klicken zum Deaktivieren'
-            : 'Als Licht-Cue markieren (Back-Taste stellt Licht wieder her)'
-    })
-    triggerActions.appendChild(lightBtn)
 
     triggerDiv.appendChild(triggerActions)
 
     triggers[index] = triggerDiv
 
-    // mic info
-    triggerMic.innerHTML = MIC_SVG
+    // mic info — only show row when mic is configured
     if (codeblockYaml.mic) {
+        triggerMic.innerHTML = MIC_SVG
         let roles = codeblockYaml.mic
         if (roles === "muteall") {
             triggerMic.appendChild(document.createTextNode(" alle aus"))
@@ -1908,13 +1975,12 @@ function buildTrigger(codeblockYaml, index) {
                 triggerMic.appendChild(roleSpan)
             }
         }
-    } else {
-        triggerMic.appendChild(document.createTextNode(" -"))
+        triggerInfo.insertBefore(triggerMic, triggerInfo.firstChild)
     }
 
-    // music info
-    triggerMusic.innerHTML = TAPE_SVG
+    // music info — only show row when music is configured
     if (codeblockYaml.music) {
+        triggerMusic.innerHTML = TAPE_SVG
         if (typeof codeblockYaml.music === "string") {
             triggerMusic.appendChild(document.createTextNode(" " + codeblockYaml.music))
         } else if (codeblockYaml.music.file) {
@@ -1932,8 +1998,14 @@ function buildTrigger(codeblockYaml, index) {
                 triggerMusic.appendChild(document.createTextNode(`⇢ ${adjRef} auf ${codeblockYaml.music.adjust.volume * 100}%`))
             }
         }
-    } else {
-        triggerMusic.appendChild(document.createTextNode(" -"))
+        // Insert after mic (if present), before light
+        const lightEl = triggerInfo.querySelector('.trigger-light')
+        triggerInfo.insertBefore(triggerMusic, lightEl ?? null)
+    }
+
+    // light scene
+    if (codeblockYaml.light) {
+        triggerLight.textContent = '✦ ' + codeblockYaml.light
     }
 
     // text note
@@ -1975,6 +2047,7 @@ function buildTrigger(codeblockYaml, index) {
             loop:    !!musicObj.loop,
         }
         let currentVolume = mp.volume
+        let loopEnabled = mp.loop
         let saveTimer = null
         const debouncedSave = () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => updateMusicPropsInScript(index, mp), 500) }
 
@@ -2122,7 +2195,7 @@ function buildTrigger(codeblockYaml, index) {
                     } else {
                         ws.play(mp.start)   // next loop iteration
                     }
-                } else if (mp.loop) {
+                } else if (loopEnabled) {
                     ws.play(mp.start)
                 } else {
                     ws.stop()
@@ -2329,7 +2402,13 @@ function buildTrigger(codeblockYaml, index) {
             _wsStop()
         }
 
-        triggerAudio.set(index, { ws, wsMonitor, mainAudioEl, monAudioEl, musicFile, overlay, getX, autoMarkerState, mp })
+        triggerAudio.set(index, {
+            ws, wsMonitor, mainAudioEl, monAudioEl, musicFile, overlay, getX, autoMarkerState, mp,
+            getCurrentVolume: () => currentVolume,
+            setCurrentVolume: (v) => { currentVolume = v },
+            disableLoop: () => { loopEnabled = false },
+            enableLoop:  () => { loopEnabled = mp.loop },
+        })
         fileToTriggers.set(musicFile, [...(fileToTriggers.get(musicFile) || []), index])
     }
 
@@ -2692,6 +2771,14 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     if ((isEdit || isCopy) && existingYaml?.note) noteInput.value = existingYaml.note
     box.appendChild(noteWrap)
 
+    // ── Lichtszene ───────────────────────────────────────────────────
+    const { wrap: lightWrap, input: lightInput } = mkDialogField('Lichtszene', 'text', '')
+    lightInput.placeholder = '— kein Licht-Cue —'
+    if ((isEdit || isCopy) && existingYaml?.light && typeof existingYaml.light === 'string') {
+        lightInput.value = existingYaml.light
+    }
+    box.appendChild(lightWrap)
+
     // ── Start-Timecode ───────────────────────────────────────────────
     const { wrap: tcWrap, input: tcInput } = mkDialogField('Start-Timecode (HH:MM:SS:FF)', 'text', '')
     tcInput.placeholder = '00:00:00:00'
@@ -2783,6 +2870,10 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         // note
         const noteVal = noteInput.value.trim()
         if (noteVal) newYaml.note = noteVal
+
+        // light scene
+        const lightVal = lightInput.value.trim()
+        if (lightVal) newYaml.light = lightVal
 
         // start_tc
         const tcVal = tcInput.value.trim()
@@ -2911,6 +3002,19 @@ function showAdjustDialog(triggerIndex, existingYaml, targetIdx) {
     actionWrap.append(fadeoutLbl, volLbl)
     box.appendChild(actionWrap)
 
+    // ── Fadezeit ─────────────────────────────────────────────────────
+    const fadeTimeWrap = document.createElement('div')
+    fadeTimeWrap.classList.add('dialog-field')
+    const fadeTimeLbl = document.createElement('label')
+    fadeTimeLbl.textContent = 'Fadezeit (Sekunden)'
+    const fadeTimeInput = document.createElement('input')
+    fadeTimeInput.type = 'number'; fadeTimeInput.min = '0'; fadeTimeInput.step = '0.5'
+    fadeTimeInput.value = existingAdj?.fadetime ?? 3
+    fadeTimeInput.style.cssText = 'width: 5rem; margin-left: 0.5rem'
+    fadeTimeInput.classList.add('dialog-volume-inline')
+    fadeTimeWrap.append(fadeTimeLbl, fadeTimeInput)
+    box.appendChild(fadeTimeWrap)
+
     // ── Buttons ─────────────────────────────────────────────────────
     const actions = document.createElement('div')
     actions.classList.add('dialog-actions')
@@ -2942,6 +3046,8 @@ function showAdjustDialog(triggerIndex, existingYaml, targetIdx) {
         const adjConfig = { trigger_note: targetYaml.trigger_note }
         if (fadeoutRb.checked) adjConfig.fadeout = true
         else adjConfig.volume = parseFloat(volInput.value) || 0.5
+        const ft = parseFloat(fadeTimeInput.value)
+        if (!isNaN(ft) && ft !== 3) adjConfig.fadetime = ft
         close()
         setAdjustOnTrigger(triggerIndex, triggerYamls[triggerIndex], adjConfig)
     })
@@ -3030,21 +3136,25 @@ function updateLoopGroupInScript(triggerIndex, key, value) {
     for (const [idx, btn] of loopBtns) updateLoopBtnAppearance(btn, idx)
 }
 
-function setLightInScript(triggerIndex, value) {
-    let blockIdx = 0
-    const updated = scriptText.replace(/```yaml\n([\s\S]*?)```/g, (match, content) => {
-        blockIdx++
-        if (blockIdx !== triggerIndex + 1) return match
-        let c = content.replace(/^light:[ \t]*[^\n]*\n?/m, '').replace(/\n{3,}/g, '\n\n')
-        if (value) c = c.trimEnd() + '\nlight: true\n'
-        return '```yaml\n' + c + '```'
-    })
-    scriptText = updated
-    window.electronAPI.writeScriptMd(updated)
-    if (triggerYamls[triggerIndex]) {
-        if (value) triggerYamls[triggerIndex].light = true
-        else delete triggerYamls[triggerIndex].light
+function fadeOutAndStop(cueIdx) {
+    const ta = triggerAudio.get(cueIdx)
+    if (!ta || !ta.ws.isPlaying()) return
+    const originalVol = ta.mp?.volume ?? 1
+    const start = performance.now()
+    const tick = () => {
+        const t = Math.min(1, (performance.now() - start) / 500)
+        const v = originalVol * (1 - t)
+        ta.ws.setVolume(v)
+        if (ta.wsMonitor) ta.wsMonitor.setVolume(v)
+        if (t < 1) {
+            requestAnimationFrame(tick)
+        } else {
+            ta.ws.stop()
+            ta.ws.setVolume(originalVol)
+            if (ta.wsMonitor) ta.wsMonitor.setVolume(originalVol)
+        }
     }
+    requestAnimationFrame(tick)
 }
 
 function showLoopGroupDialog(index, anchorBtn) {
@@ -3185,18 +3295,29 @@ function broadcastLiveState() {
 
             const musicLabel = typeof ty.music === 'string' ? ty.music :
                 ty.music?.file ? ty.music.file : null
+            let musicAdjust = null
+            if (ty.music?.adjust) {
+                const adjTn = ty.music.adjust.trigger_note
+                const adjRef = adjTn ? `${adjTn.ch}.${adjTn.note}` : '?'
+                if (ty.music.adjust.fadeout) musicAdjust = `⇢ ${adjRef} ausfaden`
+                else if (ty.music.adjust.volume !== undefined) musicAdjust = `⇢ ${adjRef} auf ${Math.round(ty.music.adjust.volume * 100)}%`
+            }
+            const triggerNoteLabel = ty.trigger_note
+                ? `${ty.trigger_note.ch}.${ty.trigger_note.note}` : null
 
             liveBlocks.push({
                 type: 'trigger',
                 cueIdx,
                 isCurrent: cueIdx === currentCue,
                 isNext: cueIdx === nextCue,
+                isSibling: !!ty.sibling,
                 isPlaying: triggerAudio.get(cueIdx)?.ws.isPlaying() ?? false,
                 micColors,
                 muteall: ty.mic === 'muteall',
-                musicLabel,
+                musicLabel, musicAdjust,
+                lightScene: ty.light || null,
                 note: ty.note || null,
-                light: !!ty.light,
+                triggerNoteLabel,
             })
         } else {
             liveBlocks.push({
@@ -3223,15 +3344,19 @@ function broadcastLiveState() {
             loopStart,
             loopEnd,
             isLoop,
+            volume: ta.getCurrentVolume?.() ?? (mp?.volume ?? 0.8),
         })
     }
 
-    const tcEl = document.querySelector('.tc-display')
+    const tcFrames = (mtc && mtc.activeTcIndex !== null && mtc.wsRef)
+        ? mtc.startFrames + Math.floor(mtc.wsRef.getCurrentTime() * 25)
+        : null
     window.electronAPI.sendLiveState({
         blocks: liveBlocks,
         currentCue,
         nextCue,
-        timecode: tcEl ? tcEl.textContent.trim() : '',
+        selectedVariant,
+        timecodeFrames: tcFrames,
         audioProgress,
     })
 }
@@ -3239,8 +3364,20 @@ function broadcastLiveState() {
 function goAction() {
     for (let i = currentCue + 1; i < triggerYamls.length; i++) {
         if (!triggerYamls[i]) continue
+        // If a variant was chosen for this group, fire it instead of the first sibling
+        if (selectedVariant !== null) {
+            let sv = selectedVariant
+            selectedVariant = null
+            let inGroup = false
+            for (let j = i; j < triggerYamls.length && (j === i || triggerYamls[j]?.sibling); j++) {
+                if (j === sv) { inGroup = true; break }
+            }
+            if (inGroup) { currentCue = sv; markTriggers(sv); scrollToTrigger(sv); triggerAction(sv); return }
+        }
+        selectedVariant = null
         currentCue = i
         markTriggers(i)
+        scrollToTrigger(i)
         triggerAction(i)
         return
     }
@@ -3249,17 +3386,53 @@ function goAction() {
 function backAction() {
     if (cueHistory.length < 1) return
     const last = cueHistory.pop()
+
+    // Fade out any audio playing on the accidentally triggered cue
+    fadeOutAndStop(last)
+
+    // Cancel any loop outro that was queued by the accidental trigger
+    for (const [loopIdx, outroIdx] of loopOutroPending) {
+        if (outroIdx === last) {
+            loopOutroPending.delete(loopIdx)
+            setOutroPendingIndicator(last, false)
+        }
+    }
+
     const prev = cueHistory.length > 0 ? cueHistory[cueHistory.length - 1] : null
 
     if (prev !== null) {
-        // Re-apply mic state for the cue before the accidental one
         x32UnmuteChannels(triggerYamls[prev]?.mic)
-        // If the accidental cue was a light cue, re-send the previous cue's trigger note
         if (triggerYamls[last]?.light) sendTriggerNote(prev)
+        // Restart prev's audio if it was a loop (simple mp.loop or managed loop_outro)
+        const prevTa = triggerAudio.get(prev)
+        const prevIsLoop = prevTa?.mp?.loop || !!triggerYamls[prev]?.loop_outro
+        if (prevTa && !prevTa.ws.isPlaying() && prevIsLoop) playMusic(prev)
+
+        // Undo any volume change or fadeout that last's music.adjust caused
+        const lastMusic = triggerYamls[last]?.music
+        if (typeof lastMusic === 'object' && lastMusic.adjust) {
+            const adjIdx = findTriggerByNote(lastMusic.adjust.trigger_note)
+            if (adjIdx !== null) {
+                const adjTa = triggerAudio.get(adjIdx)
+                if (adjTa) {
+                    const adjIsLoop = adjTa.mp?.loop || !!triggerYamls[adjIdx]?.loop_outro
+                    if (lastMusic.adjust.fadeout && adjIsLoop) {
+                        // cancelWsFade restores currentVolume to pre-fade value if cancelled mid-fade;
+                        // if already complete, fadeAdjustAudio already restored it on finish.
+                        cancelWsFade(adjTa.ws)
+                        adjTa.enableLoop()
+                        if (!adjTa.ws.isPlaying()) playMusic(adjIdx)
+                    } else if (lastMusic.adjust.volume !== undefined && adjTa.ws.isPlaying()) {
+                        // Volume change was undone: fade back to original volume
+                        cancelWsFade(adjTa.ws)
+                        fadeAdjustVolume(adjTa, adjTa.mp.volume, lastMusic.adjust.fadetime ?? 3)
+                    }
+                }
+            }
+        }
         currentCue = prev
         markTriggers(prev)
     } else {
-        // No previous cue: just mute all mics
         x32UnmuteChannels('muteall')
         currentCue = 0
         markTriggers(0)
@@ -3320,17 +3493,30 @@ async function playMusic(cue) {
         if (targetIdx !== null) {
             const adjustTa = triggerAudio.get(targetIdx)
             if (adjustTa && adjustTa.ws.isPlaying()) {
+                const ft = music.adjust.fadetime ?? 3
                 if (fadeout) {
-                    fadeWaveSurfer(adjustTa.ws, 0, 3, true)
+                    fadeAdjustAudio(adjustTa, ft)
                 } else if (targetVol !== undefined) {
-                    fadeWaveSurfer(adjustTa.ws, targetVol, 3, false)
+                    fadeAdjustVolume(adjustTa, targetVol, ft)
                 }
             }
         }
     }
 }
 
+const activeFades = new WeakMap()
+
+function cancelWsFade(ws) {
+    const entry = activeFades.get(ws)
+    if (entry == null) return
+    clearInterval(entry.id ?? entry)
+    // For fadeAdjustAudio: restore currentVolume to pre-fade value on cancel
+    if (entry.ta && entry.restoreVol !== undefined) entry.ta.setCurrentVolume(entry.restoreVol)
+    activeFades.delete(ws)
+}
+
 function fadeWaveSurfer(ws, targetVolume, fadeTime, stop) {
+    cancelWsFade(ws)
     const startVolume = ws.getVolume()
     if (startVolume === targetVolume) {
         if (stop) ws.stop()
@@ -3340,14 +3526,69 @@ function fadeWaveSurfer(ws, targetVolume, fadeTime, stop) {
     const stepInterval = (fadeTime * 1000) / steps
     const volumeStep = (targetVolume - startVolume) / steps
     let step = 0
-    const interval = setInterval(() => {
+    const id = setInterval(() => {
         step++
         ws.setVolume(Math.max(0, Math.min(1, startVolume + volumeStep * step)))
         if (step >= steps) {
-            clearInterval(interval)
+            clearInterval(id)
+            activeFades.delete(ws)
             if (stop) ws.stop()
         }
     }, stepInterval)
+    activeFades.set(ws, id)
+}
+
+function broadcastLiveVolumes() {
+    if (!window.electronAPI?.sendLiveVolumes) return
+    const volumes = {}
+    for (const [cueIdx, ta] of triggerAudio) {
+        if (ta.ws.isPlaying()) volumes[cueIdx] = ta.getCurrentVolume?.() ?? (ta.mp?.volume ?? 0.8)
+    }
+    window.electronAPI.sendLiveVolumes(volumes)
+}
+
+// Fade currentVolume to a target (keep playing). Works with timeupdate's volume management.
+function fadeAdjustVolume(ta, targetVol, fadeTime) {
+    cancelWsFade(ta.ws)
+    const startVol = ta.getCurrentVolume()
+    const steps = 50
+    const stepInterval = (fadeTime * 1000) / steps
+    let step = 0
+    const id = setInterval(() => {
+        step++
+        ta.setCurrentVolume(startVol + (targetVol - startVol) * (step / steps))
+        broadcastLiveVolumes()
+        if (step >= steps) {
+            clearInterval(id)
+            activeFades.delete(ta.ws)
+        }
+    }, stepInterval)
+    activeFades.set(ta.ws, id)
+}
+
+// Fade out a loop-capable trigger by reducing currentVolume (plays nicely with timeupdate).
+// Disables loop restarts during the fade so the audio doesn't restart mid-fade.
+function fadeAdjustAudio(ta, fadeTime) {
+    cancelWsFade(ta.ws)
+    ta.disableLoop()
+    const startVol = ta.getCurrentVolume()
+    const steps = 50
+    const stepInterval = (fadeTime * 1000) / steps
+    let step = 0
+    const id = setInterval(() => {
+        step++
+        ta.setCurrentVolume(Math.max(0, startVol * (1 - step / steps)))
+        broadcastLiveVolumes()
+        if (step >= steps) {
+            clearInterval(id)
+            activeFades.delete(ta.ws)
+            ta.ws.stop()
+            ta.enableLoop()
+            ta.setCurrentVolume(startVol)
+        }
+    }, stepInterval)
+    // Store ta + restoreVol so cancelWsFade can restore currentVolume if cancelled mid-fade
+    activeFades.set(ta.ws, { id, ta, restoreVol: startVol })
 }
 
 function stopall() {
@@ -3395,8 +3636,13 @@ function assignTriggerNotes(text) {
         const assignment = nextFreeNote()
         if (!assignment) return match
         changed = true
-        const trimmed = yamlContent.replace(/\s+$/, '')
-        return `\`\`\`yaml\n${trimmed}\ntrigger_note: {ch: ${assignment.ch}, note: ${assignment.note}}\n\`\`\``
+        // Re-dump so we never produce invalid YAML (e.g. {} + appended block lines)
+        let base
+        try { base = yaml.load(yamlContent) } catch { base = null }
+        const withNote = (base && typeof base === 'object')
+            ? { ...base, trigger_note: { ch: assignment.ch, note: assignment.note } }
+            : { trigger_note: { ch: assignment.ch, note: assignment.note } }
+        return `\`\`\`yaml\n${yaml.dump(withNote, { indent: 4, lineWidth: -1, noRefs: true }).trimEnd()}\n\`\`\``
     })
 
     return { text: result, changed }
@@ -3529,11 +3775,10 @@ async function initMidi(settings) {
 
 function updateClock() {
     const clock = document.querySelector(".clock")
-    const date = new Date()
-    const h = date.getHours() > 9 ? date.getHours().toString() : "0" + date.getHours().toString()
-    const m = date.getMinutes() > 9 ? date.getMinutes().toString() : "0" + date.getMinutes().toString()
-    const s = date.getSeconds() > 9 ? date.getSeconds().toString() : "0" + date.getSeconds().toString()
-    clock.innerText = `${h}:${m}:${s}`
+    if (!clock) return
+    const d = new Date()
+    const p = n => n.toString().padStart(2, '0')
+    clock.innerText = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
 async function initApp() {
@@ -3618,16 +3863,28 @@ async function initApp() {
         })
     })
 
-    window.electronAPI.onLiveGo(() => goAction())
-    window.electronAPI.onLiveBack(() => backAction())
-
     broadcastLiveState()
 }
 
+// Registered at module level (before async initApp) so the listener is always ready.
+window.addEventListener('__live-go__', () => {
+    console.log('[main-win] live-go received, triggerYamls.length:', triggerYamls.length, 'currentCue:', currentCue)
+    goAction()
+})
+window.addEventListener('__live-back__', () => backAction())
+window.__liveGo = goAction
+window.__liveBack = backAction
+window.__selectVariant = (idx) => { selectedVariant = idx; broadcastLiveState() }
+window.__stopAudio = (cueIdx) => { const ta = triggerAudio.get(cueIdx); if (ta) fadeAdjustAudio(ta, 0.5) }
+
 initApp().catch(e => console.error('initApp Fehler:', e))
 
-updateClock()
-setInterval(() => {
+// Align clock tick to the real second boundary so both views jump simultaneously.
+function scheduleClockTick() {
     updateClock()
-    broadcastLiveState()
-}, 1000)
+    setTimeout(scheduleClockTick, 1000 - (Date.now() % 1000))
+}
+updateClock()
+setTimeout(scheduleClockTick, 1000 - (Date.now() % 1000))
+
+setInterval(broadcastLiveState, 1000)

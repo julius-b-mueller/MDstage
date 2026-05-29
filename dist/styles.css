@@ -114,6 +114,11 @@ p {
     display: inline-block;
 }
 
+.trigger-light {
+    font-size: 0.82rem;
+    margin-top: 0.1rem;
+}
+
 .trigger-number {
     font-size: 3rem;
     font-weight: bold;
