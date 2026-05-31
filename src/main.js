@@ -1659,8 +1659,18 @@ function moveTriggerGroupInScript(rootIndex, lastIndex, direction) {
 }
 
 function updateStickyHeadings() {
-    document.querySelectorAll('#script-content h1, #script-content h2, #script-content h3')
-        .forEach(h => h.classList.toggle('sticky-stuck', h.getBoundingClientRect().top <= 1))
+    const headings = [...document.querySelectorAll('#script-content h1, #script-content h2, #script-content h3')]
+    // Bottom edge of the currently stuck heading (top ≈ 0), or 0 if none is stuck yet
+    let stuckBottom = 0
+    for (const h of headings) {
+        const rect = h.getBoundingClientRect()
+        if (rect.top <= 1) stuckBottom = rect.bottom
+    }
+    for (const h of headings) {
+        const rect = h.getBoundingClientRect()
+        // Stuck if already at the top, or if its bottom has entered the stuck-heading zone
+        h.classList.toggle('sticky-stuck', rect.top <= 1 || (stuckBottom > 0 && rect.bottom <= stuckBottom + 2))
+    }
 }
 function setupStickyHeadingObserver() { updateStickyHeadings() }
 
