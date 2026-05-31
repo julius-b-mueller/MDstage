@@ -4280,6 +4280,21 @@ function broadcastLiveState() {
                     }
                 }
             }
+            // Check if this cue is the chain_end target of a currently playing Start cue (S→L transition)
+            if (!autoCuePending) {
+                for (let i = 1; i < triggerYamls.length; i++) {
+                    const srcTy = triggerYamls[i]
+                    if (!srcTy?.chain_end) continue
+                    if (findTriggerByNote(srcTy.chain_end) !== cueIdx) continue
+                    const srcTa = triggerAudio.get(i)
+                    if (srcTa?.ws.isPlaying()) {
+                        const ct  = srcTa.mainAudioEl?.currentTime ?? 0
+                        const end = srcTa.mp?.end ?? srcTa.ws.getDuration() ?? 0
+                        autoCuePending = { currentTime: ct, at: end }
+                    }
+                    break
+                }
+            }
 
             liveBlocks.push({
                 type: 'trigger',
