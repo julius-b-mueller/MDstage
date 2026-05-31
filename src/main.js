@@ -458,6 +458,46 @@ function wrapSentences(text) {
     return text.replace(/([.!?])[ \t]+(?=[A-ZÄÖÜ"])/g, '$1\n')
 }
 
+// Custom confirm dialog — returns a Promise<boolean>.
+function showConfirmDialog({ title, body, confirmLabel = 'Ja', cancelLabel = 'Abbrechen' }) {
+    return new Promise(resolve => {
+        const overlay = document.createElement('div')
+        overlay.className = 'dialog-overlay'
+        overlay.style.zIndex = '9999'
+        overlay.addEventListener('mousedown', e => e.stopPropagation())
+
+        const box = document.createElement('div')
+        box.className = 'dialog-box'
+
+        const h3 = document.createElement('h3')
+        h3.textContent = title
+
+        const bodyEl = document.createElement('p')
+        bodyEl.style.cssText = 'color:#abb2bf;font-size:0.9rem;margin:0 0 1.5rem;line-height:1.6'
+        bodyEl.innerHTML = body
+
+        const actions = document.createElement('div')
+        actions.className = 'dialog-actions'
+
+        const close = (val) => { overlay.remove(); resolve(val) }
+        const cancelBtn  = document.createElement('button')
+        cancelBtn.className  = 'dialog-btn'
+        cancelBtn.textContent = cancelLabel
+        cancelBtn.addEventListener('click', () => close(false))
+
+        const confirmBtn = document.createElement('button')
+        confirmBtn.className  = 'dialog-btn dialog-btn-primary'
+        confirmBtn.textContent = confirmLabel
+        confirmBtn.addEventListener('click', () => close(true))
+
+        actions.append(cancelBtn, confirmBtn)
+        box.append(h3, bodyEl, actions)
+        overlay.append(box)
+        document.body.appendChild(overlay)
+        cancelBtn.focus()
+    })
+}
+
 // Sentence splitter for the formatter — also handles closing quotes/parens before the space.
 function wrapSentencesFormat(text) {
     return text.replace(/([.!?][“”"»)]*)\s+(?=[A-ZÄÖÜ„"(])/g, '$1\n')
@@ -2088,6 +2128,12 @@ function buildTrigger(codeblockYaml, index) {
     triggerRow.appendChild(triggerInfo)
     if (codeblockYaml.note) triggerRow.appendChild(triggerNote)
     triggerRow.appendChild(rightWrapper)
+    // Warning banner (initially hidden; updated by updateLoopBtnAppearance / updateLoopBtnWavWarning)
+    const wavWarnEl = document.createElement('div')
+    wavWarnEl.className = 'trigger-wav-warning'
+    wavWarnEl.textContent = '⚠ Kein nahtloser Übergang – MP3/AAC haben Encoder-Padding. WAV verwenden.'
+    wavWarnEl.style.display = 'none'
+    triggerDiv.insertBefore(wavWarnEl, triggerDiv.firstChild ?? null)
     triggerDiv.appendChild(triggerRow)
 
     // ── action buttons row ──────────────────────────────────────────────
@@ -2224,7 +2270,17 @@ function buildTrigger(codeblockYaml, index) {
         const stopBtn    = makeWaveBtn("⏹", "Stopp")
         const zoomInBtn  = makeWaveBtn("+", "Hineinzoomen")
         const loopBtn    = makeWaveBtn("⟳", "Loop")
+        const updateLoopBtnWavWarning = () => {
+            const ty_  = triggerYamls[index]
+            const nonWav   = musicFile && !/\.wav$/i.test(musicFile)
+            const isGapless = !!(ty_?.chain_end || ty_?.loop_outro || loopSourcesOf(index).length > 0 || mp.loop)
+            loopBtn.classList.toggle('waveform-btn-wav-warning', !!(mp.loop && nonWav))
+            loopBtn.title = 'Loop'
+            const warnEl = triggers[index]?.querySelector('.trigger-wav-warning')
+            if (warnEl) warnEl.style.display = (isGapless && nonWav) ? '' : 'none'
+        }
         if (mp.loop) loopBtn.classList.add("waveform-btn-active")
+        updateLoopBtnWavWarning()
 
         const volSlider = document.createElement("input")
         volSlider.type = "range"; volSlider.min = "0"; volSlider.max = "1"
@@ -2856,6 +2912,7 @@ function buildTrigger(codeblockYaml, index) {
         loopBtn.addEventListener("click", () => {
             mp.loop = !mp.loop
             loopBtn.classList.toggle("waveform-btn-active", mp.loop)
+            updateLoopBtnWavWarning()
             debouncedSave()
         })
         pauseBtn.addEventListener("click", () => ws.playPause())
@@ -3793,6 +3850,17 @@ function updateLoopBtnAppearance(btn, idx) {
         btn.classList.remove('trigger-action-btn-active')
         btn.title = 'Loop-Struktur einrichten (Start, Loop, Finish …)'
     }
+
+    // WAV warning: gapless playback only works with WAV files
+    const musicFile = triggerAudio.get(idx)?.musicFile
+    const mpLoop    = !!triggerAudio.get(idx)?.mp?.loop
+    const isGapless = hasCE || hasLO || isOutro || mpLoop
+    const nonWav    = !!(musicFile && !/\.wav$/i.test(musicFile))
+    btn.classList.toggle('trigger-action-btn-wav-warning', isGapless && nonWav)
+    if (isGapless && nonWav)
+        btn.title += '\n⚠ Kein nahtloser Übergang – MP3/AAC haben Encoder-Padding. WAV verwenden.'
+    const warnEl = triggers[idx]?.querySelector('.trigger-wav-warning')
+    if (warnEl) warnEl.style.display = (isGapless && nonWav) ? '' : 'none'
 }
 
 function updateLoopGroupInScript(triggerIndex, key, value) {
@@ -4601,11 +4669,15 @@ async function initApp() {
     if (needsFormatting(text)) {
         const scriptPath0 = await window.electronAPI.getScriptPath()
         const fileName = scriptPath0.split(/[\\/]/).pop()
-        const yes = window.confirm(
-            `„${fileName}" entspricht nicht dem Formatierungsstandard.\n\n` +
-            `Soll die Datei automatisch formatiert werden?\n` +
-            `(Eine Sicherungskopie wird als „${fileName.replace(/\.md$/, '~unformatted.md')}" gespeichert.)`
-        )
+        const backupName = fileName.replace(/\.md$/, '~unformatted.md')
+        const yes = await showConfirmDialog({
+            title: 'Skript formatieren?',
+            body:  `<strong>${fileName}</strong> entspricht nicht dem Formatierungsstandard.<br><br>` +
+                   `Fehlende Leerzeilen werden ergänzt, lange Zeilen aufgeteilt.<br>` +
+                   `Eine Sicherungskopie wird als <strong>${backupName}</strong> gespeichert.`,
+            confirmLabel: 'Formatieren',
+            cancelLabel:  'Überspringen',
+        })
         if (yes) {
             await window.electronAPI.backupScriptMd()
             const formatted = formatScriptText(text)
