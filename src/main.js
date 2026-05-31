@@ -334,6 +334,13 @@ function setCaretOffset(root, offset) {
             chars += node.length
         } else if (node.tagName === 'BR') {
             chars++
+            if (chars >= offset) {
+                const r = document.createRange()
+                r.setStartAfter(node)
+                r.collapse(true)
+                sel.removeAllRanges(); sel.addRange(r)
+                return true
+            }
         } else {
             for (const child of node.childNodes) if (find(child)) return true
         }
@@ -363,10 +370,52 @@ function editorCursorOnLastLine(el) {
     return rects[rects.length - 1].bottom > el.getBoundingClientRect().bottom - 26
 }
 
+// Insert a <br> at the current cursor in a contenteditable.
+// Adds a sentinel <br> when at end-of-content so the new line is immediately visible.
+function insertRoleLineBreak() {
+    const sel = window.getSelection()
+    if (!sel?.rangeCount) return
+    const range = sel.getRangeAt(0)
+    range.deleteContents()
+    const br = document.createElement('br')
+    range.insertNode(br)
+    // Contenteditable quirk: a trailing <br> is invisible without content after it.
+    // Add a sentinel <br> so the new line shows up; it gets stripped on save.
+    let hasContentAfter = false
+    let node = br.nextSibling
+    while (node) {
+        if (node.nodeType === Node.TEXT_NODE && node.textContent) { hasContentAfter = true; break }
+        if (node.tagName === 'BR') { hasContentAfter = true; break }
+        node = node.nextSibling
+    }
+    if (!hasContentAfter) {
+        const sentinel = document.createElement('br')
+        br.after(sentinel)
+    }
+    range.setStartAfter(br)
+    range.collapse(true)
+    sel.removeAllRanges()
+    sel.addRange(range)
+}
+
+// Serialize a DOM node in the role editor back to a markdown-like string,
+// preserving <br> elements as the literal string "<br>".
+function serializeRoleNode(n) {
+    if (n.nodeType === Node.TEXT_NODE) return n.textContent
+    if (n.tagName === 'BR') return '<br>'
+    if (n.classList?.contains('editor-stage-inline')) {
+        const t = n.textContent
+        return (t.startsWith('(') && t.endsWith(')')) ? '*' + t + '*' : t
+    }
+    let t = ''
+    for (const c of n.childNodes) t += serializeRoleNode(c)
+    return t
+}
+
 // Append parsed dialogue text (with inline stage direction coloring) to parent element.
 // Recognizes both *(text)* (markdown) and plain (text) (user-typed, auto-converted on save).
 function appendDialogueParsed(parent, text, roleColor) {
-    const re = /\*\(([^)]+)\)\*|\(([^)]+)\)/g
+    const re = /\*\(([^)]+)\)\*|\(([^)]+)\)|<br>/g
     let last = 0, m
     while ((m = re.exec(text)) !== null) {
         if (m.index > last) {
@@ -376,11 +425,15 @@ function appendDialogueParsed(parent, text, roleColor) {
             s.textContent = text.slice(last, m.index)
             parent.appendChild(s)
         }
-        const inner = m[1] ?? m[2]
-        const s = document.createElement('span')
-        s.className = 'editor-stage-inline'
-        s.textContent = '(' + inner + ')'
-        parent.appendChild(s)
+        if (m[0] === '<br>') {
+            parent.appendChild(document.createElement('br'))
+        } else {
+            const inner = m[1] ?? m[2]
+            const s = document.createElement('span')
+            s.className = 'editor-stage-inline'
+            s.textContent = '(' + inner + ')'
+            parent.appendChild(s)
+        }
         last = re.lastIndex
     }
     if (last < text.length) {
@@ -441,14 +494,7 @@ function updateEditorParens(div) {
     // Serialize back to markdown so *(text)* patterns survive the rebuild.
     // Only re-wrap editor-stage-inline spans that still contain balanced (...) —
     // a partially deleted span must not emit raw asterisks into the text.
-    const dialogue = afterName.map(n => {
-        if (n.nodeType === Node.TEXT_NODE) return n.textContent
-        if (n.classList?.contains('editor-stage-inline')) {
-            const t = n.textContent
-            return (t.startsWith('(') && t.endsWith(')')) ? '*' + t + '*' : t
-        }
-        return n.textContent
-    }).join('')
+    const dialogue = afterName.map(serializeRoleNode).join('')
     afterName.forEach(n => n.remove())
     appendDialogueParsed(div, dialogue, roleColor)
     setCaretOffset(div, caretOffset)
@@ -586,12 +632,12 @@ function needsFormatting(text) {
 
 // Convert styled contenteditable HTML back to markdown
 function serializeEditorMarkdown(div) {
-    function textOf(node) {
+    function textOf(node, brTag = false) {
         let t = ''
         for (const c of node.childNodes) {
             if (c.nodeType === Node.TEXT_NODE) t += c.textContent
-            else if (c.tagName === 'BR') t += '\n'
-            else t += textOf(c)
+            else if (c.tagName === 'BR') t += brTag ? '<br>' : '\n'
+            else t += textOf(c, brTag)
         }
         return t
     }
@@ -610,13 +656,10 @@ function serializeEditorMarkdown(div) {
                 roleName = node.textContent
                 afterName = true
             } else if (afterName) {
-                if (node.nodeType === Node.TEXT_NODE) dialogueParts.push(node.textContent)
-                else if (node.tagName === 'BR') dialogueParts.push('\n')
-                else if (node.classList?.contains('editor-stage-inline')) dialogueParts.push('*' + node.textContent + '*')
-                else dialogueParts.push(textOf(node))
+                dialogueParts.push(serializeRoleNode(node))
             }
         }
-        const dialogue = wrapSentences(dialogueParts.join('').trim())
+        const dialogue = wrapSentences(dialogueParts.join('').replace(/(<br>)+$/, '').trim())
         return dialogue ? '**' + roleName + '**\n' + dialogue : '**' + roleName + '**'
     }
     return textOf(div).trim()  // fallback (should not normally be reached)
@@ -684,6 +727,11 @@ function syncEditorHeight() {
 
 function onEditorKey(e) {
     if (e.key === 'Escape') { e.preventDefault(); closeEditor(true); return }
+    if (e.key === 'Enter' && e.shiftKey && inlineEditor?.el?.dataset.editorType === 'role') {
+        e.preventDefault()
+        insertRoleLineBreak()
+        return
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault()
         const afterIdx = inlineEditor?.blockEl?.dataset.blockIdx
@@ -956,7 +1004,7 @@ function getDialogue(el) {
     for (const node of el.childNodes) {
         if (node === roleSpan) { after = true; continue }
         if (after && !(node.nodeType === Node.ELEMENT_NODE && node.classList.contains('ac-ghost'))) {
-            text += node.textContent
+            text += node.tagName === 'BR' ? '<br>' : node.textContent
         }
     }
     return text.replace(/^\s+/, '')
@@ -1084,6 +1132,11 @@ function acceptGhostInline() {
 function onNewBlockBeforeInput(e) {
     if (e.inputType === 'insertParagraph' || e.inputType === 'insertLineBreak') {
         e.preventDefault()
+        // Shift+Enter (insertLineBreak) while typing dialogue → insert <br> instead of committing
+        if (e.inputType === 'insertLineBreak' && inlineEditor?.confirmedRole && inlineEditor?.el === this) {
+            insertRoleLineBreak()
+            return
+        }
         if (inlineEditor?.el === this) commitNewBlock()
     }
 }
@@ -1101,15 +1154,7 @@ function updateNewBlockParens(el) {
         if (seen) afterRole.push(n)
         if (n === roleSpan) seen = true
     }
-    const dialogue = afterRole.map(n => {
-        if (n.classList?.contains('ac-ghost')) return ''
-        if (n.nodeType === Node.TEXT_NODE) return n.textContent
-        if (n.classList?.contains('editor-stage-inline')) {
-            const t = n.textContent
-            return (t.startsWith('(') && t.endsWith(')')) ? '*' + t + '*' : t
-        }
-        return n.textContent
-    }).join('')
+    const dialogue = afterRole.map(n => n.classList?.contains('ac-ghost') ? '' : serializeRoleNode(n)).join('')
     afterRole.filter(n => !n.classList?.contains('ac-ghost')).forEach(n => n.remove())
     appendDialogueParsed(el, dialogue, roleColor)
     setCaretOffset(el, caretOffset)
@@ -1131,7 +1176,7 @@ function commitNewBlock(asRole, skipNavigate = false) {
 
     if (confirmedRole) {
         // Phase 2: role name was confirmed via Tab; extract any dialogue typed after the space
-        const dialogue = getDialogue(el).trim()
+        const dialogue = getDialogue(el).replace(/(<br>)+$/, '').trim()
         clearGhost()
         ;(wrapper ?? el).remove()
         inlineEditor = null
