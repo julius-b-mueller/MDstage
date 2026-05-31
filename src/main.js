@@ -1656,6 +1656,22 @@ function moveTriggerGroupInScript(rootIndex, lastIndex, direction) {
     rerender(updated)
 }
 
+let _stickyObserver = null
+function setupStickyHeadingObserver() {
+    if (_stickyObserver) _stickyObserver.disconnect()
+    _stickyObserver = new IntersectionObserver(entries => {
+        for (const entry of entries) {
+            // Mark as stuck when the element is at the top of the viewport but not naturally visible
+            entry.target.classList.toggle(
+                'sticky-stuck',
+                !entry.isIntersecting && entry.boundingClientRect.top < 10
+            )
+        }
+    }, { threshold: 1, rootMargin: '-1px 0px 0px 0px' })
+    document.querySelectorAll('#script-content h1, #script-content h2, #script-content h3')
+        .forEach(h => _stickyObserver.observe(h))
+}
+
 function rerender(newText) {
     if (inlineEditor) {
         clearGhost()
@@ -1699,6 +1715,7 @@ function rerender(newText) {
     setupAutoTriggers()
     buildSidebar()
     clearSearchHighlights()
+    setupStickyHeadingObserver()
 
     requestAnimationFrame(() => {
         window.scrollTo({ top: scrollY, behavior: 'instant' })
