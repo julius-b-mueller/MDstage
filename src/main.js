@@ -12,6 +12,9 @@ let parseErrors = []  // {blockNum, line, message}
 const loopOutroPending = new Map()         // loopTriggerIdx → outroTriggerIdx
 const loopOutroInitialRemaining = new Map() // loopTriggerIdx → remaining at arm time
 const loopBtns = new Map()          // triggerIdx → button element
+// loopTriggerIdx → { outroIdx, loopVirtualStartTime }
+// loopVirtualStartTime: AudioContext time at which the loop was at position mp.start
+const loopGroups = new Map()
 
 // triggerIndex -> { ws, wsMonitor, mainAudioEl, monAudioEl, musicFile, overlay, getX, autoMarkerState }
 const triggerAudio = new Map()
@@ -30,6 +33,43 @@ let monitorOffsetMs = 0
 let audioOutputDevices = []
 let editorApp = null
 let audioBasePath = 'audio/'
+let sharedAudioCtx = null
+
+function getAudioCtx() {
+    if (!sharedAudioCtx) sharedAudioCtx = new AudioContext()
+    if (sharedAudioCtx.state === 'suspended') sharedAudioCtx.resume().catch(() => {})
+    return sharedAudioCtx
+}
+
+async function preDecodeForGapless(targetIdx) {
+    const ta = triggerAudio.get(targetIdx)
+    if (!ta || ta.decodedBuffer || ta._decoding) return
+    ta._decoding = true
+    try {
+        const ctx = getAudioCtx()
+        const resp = await fetch(audioBasePath + ta.musicFile)
+        const ab = await resp.arrayBuffer()
+        ta.decodedBuffer = await ctx.decodeAudioData(ab)
+        tryBuildLoopGroups()
+    } catch (e) {
+        console.warn('[gapless] pre-decode failed:', e)
+    } finally {
+        ta._decoding = false
+    }
+}
+
+// Register all loop/outro pairs from YAML — no buffer building needed.
+function tryBuildLoopGroups() {
+    for (let i = 0; i < triggerYamls.length; i++) {
+        const ty = triggerYamls[i]
+        if (!ty?.loop_outro) continue
+        if (loopGroups.has(i)) continue
+        const outroIdx = findTriggerByNote(ty.loop_outro)
+        if (outroIdx === null) continue
+        loopGroups.set(i, { outroIdx, loopVirtualStartTime: null })
+        console.log('[loopGroup] registered', i, '→', outroIdx)
+    }
+}
 
 function resolveDeviceId(label) {
     if (!label) return null
@@ -1464,6 +1504,7 @@ function rerender(newText) {
     loopOutroPending.clear()
     loopOutroInitialRemaining.clear()
     loopBtns.clear()
+    loopGroups.clear()
 
     validateYamlBlocks(newText)
     document.getElementById('script-content').innerHTML = converter.makeHtml(newText)
@@ -2127,6 +2168,84 @@ function buildTrigger(codeblockYaml, index) {
         ws.load(audioBasePath + musicFile)
         ws.setVolume(mp.volume)
 
+        // Media element is captured by AudioContext (prevents default device output)
+        // but permanently silenced — all audio comes from AudioBufferSourceNode → playbackGain.
+        // WaveSurfer continues to use the media element for waveform cursor display only.
+        let mainAudioCtxGain = null
+        let playbackGain     = null
+        try {
+            const ctx = getAudioCtx()
+            if (mainAudioDevice && ctx.setSinkId) ctx.setSinkId(mainAudioDevice).catch(() => {})
+            const mediaSource = ctx.createMediaElementSource(mainAudioEl)
+            mainAudioCtxGain = ctx.createGain()
+            mainAudioCtxGain.gain.value = 0          // media element audio permanently silenced
+            mediaSource.connect(mainAudioCtxGain)
+            mainAudioCtxGain.connect(ctx.destination)
+            playbackGain = ctx.createGain()
+            playbackGain.gain.value = mp.volume
+            playbackGain.connect(ctx.destination)
+        } catch (e) { /* falls back to direct element output */ }
+
+        // ── AudioBufferSourceNode management (one active source per trigger) ──
+        let activeSource            = null   // currently playing AudioBufferSourceNode
+        let activeSourceStartedAt   = null   // AudioContext time when source was started
+        let activeSourceStartOffset = null   // buffer offset (seconds) where source began
+        let suppressSeekRestart  = false
+        let suppressPauseStop    = false  // prevents ws.on("pause") from killing a group source
+
+        function startSource(offset, when) {
+            const ta_ = triggerAudio.get(index)
+            if (!sharedAudioCtx || !playbackGain) {
+                if (mainAudioCtxGain) mainAudioCtxGain.gain.value = 1
+                return
+            }
+            if (mainAudioCtxGain) mainAudioCtxGain.gain.value = 0
+            stopSource()
+            if (!ta_?.decodedBuffer) { if (mainAudioCtxGain) mainAudioCtxGain.gain.value = 1; return }
+            const src = sharedAudioCtx.createBufferSource()
+            src.buffer = ta_.decodedBuffer
+            // Ensure group is registered (cheap, idempotent)
+            tryBuildLoopGroups()
+            const loopGroup   = loopGroups.get(index)
+            const isLoopTrigger = loopGroup || loopEnabled
+            if (isLoopTrigger) {
+                src.loop      = true
+                src.loopStart = mp.start ?? 0
+                src.loopEnd   = mp.end ?? ta_.decodedBuffer.duration
+            }
+            src.connect(playbackGain)
+            const safeOffset = Math.max(0, offset)
+            src.start(when, safeOffset)
+            activeSource = src
+            activeSourceStartedAt   = when
+            activeSourceStartOffset = safeOffset
+            if (loopGroup) {
+                loopGroup.loopVirtualStartTime = when - (safeOffset - (mp.start ?? 0))
+                // Don't set mainAudioEl.loop for group triggers — loop-back seeking would
+                // trigger ws.on("seeking") → startSource → second audio instance.
+                // Cursor is reset manually in fireLoopRestart instead.
+            }
+            if (loopEnabled) {
+                mainAudioEl.loop = true
+            }
+            src.addEventListener('ended', () => { if (activeSource === src) activeSource = null })
+        }
+
+        function stopSource(when) {
+            // If this trigger's audio is owned by a group source from another trigger,
+            // delegate to that trigger's forceStop callback instead.
+            const ta_ = triggerAudio.get(index)
+            if (!activeSource && ta_?.forceStop) {
+                ta_.forceStop(when); ta_.forceStop = null; ta_.playbackGainOverride = null; return
+            }
+            if (!activeSource) return
+            const src = activeSource
+            activeSource = null
+            activeSourceStartedAt   = null
+            activeSourceStartOffset = null
+            try { src.stop(when ?? sharedAudioCtx?.currentTime ?? 0) } catch (_) {}
+        }
+
         const totalWaveWidth = () => ws.getWrapper().clientWidth || ws.getDuration() * state.zoom
         const getX = (t) => {
             const dur = ws.getDuration()
@@ -2212,7 +2331,7 @@ function buildTrigger(codeblockYaml, index) {
         shiftDrag(startTopGrip, (t) => { mp.fadein  = Math.max(0, Math.min(t - mp.start, (mp.end ?? ws.getDuration()) - mp.start)) })
         shiftDrag(endTopGrip,   (t) => { const e = mp.end ?? ws.getDuration(); mp.fadeout = Math.max(0, Math.min(e - t, e - mp.start)) })
 
-        ws.on("ready",  () => { waveformContainer.appendChild(overlay); updateMarkers(); autoMarkerState.refresh?.() })
+        ws.on("ready",  () => { waveformContainer.appendChild(overlay); updateMarkers(); autoMarkerState.refresh?.(); preDecodeForGapless(index) })
         ws.on("scroll", () => { updateMarkers(); autoMarkerState.refresh?.() })
         ws.on("zoom",   () => { updateMarkers(); autoMarkerState.refresh?.() })
         ws.on("redraw", () => { updateMarkers(); autoMarkerState.refresh?.() })
@@ -2220,77 +2339,335 @@ function buildTrigger(codeblockYaml, index) {
         // ── Playback: fade + stop-at-end + loop ─────────────────────────
         let chainEndArmed = false
         let preSeekArmed  = false
+        let chainEndTimer = null
+        let loopJumpTimer = null
+
+        // Gapless transition: sample-accurate via AudioBufferSourceNode.
+        //
+        // The key insight: AudioBufferSourceNode.start(when) is sample-accurate.
+        // HTMLMediaElement.play() has ~baseLatency processing delay before audio
+        // appears in the AudioContext graph. So:
+        //   1. bufSource starts at transitionTime (exact)
+        //   2. HTMLMediaElement starts from ns via setTimeout(delay=timeUntilEnd)
+        //      → its audio appears at AudioContext time transitionTime + baseLatency
+        //   3. switchTime = transitionTime + baseLatency: instant cut bufSource→media
+        //      → both sources are at position ns + baseLatency at switchTime ✓
+        // No crossfade, no audible click.
+        let gaplessActive = false
+
+        function _nonAudioActions(nextIdx, nextTa) {
+            const ty = triggerYamls[nextIdx]
+            x32UnmuteChannels(ty?.mic)
+            sendTriggerNote(nextIdx)
+            const startTc = ty?.start_tc
+            if (startTc && mtc) {
+                mtc.start(startTc, nextTa.ws, nextIdx, nextTa.mp?.start ?? 0)
+            } else if (!startTc && mtc && mtc.activeTcIndex !== null) {
+                const srcTy = triggerYamls[index]
+                const isCE = srcTy?.chain_end  && findTriggerByNote(srcTy.chain_end)  === nextIdx
+                const isOT = srcTy?.loop_outro && findTriggerByNote(srcTy.loop_outro) === nextIdx
+                if ((isCE || isOT) && nextTa) {
+                    mtc.startFromFrames(mtc.getCurrentFrames(), nextTa.ws, nextIdx, nextTa.mp?.start ?? 0)
+                }
+            }
+            if (typeof ty?.music === 'object' && ty.music.adjust) {
+                const { trigger_note: adjTn, fadeout, volume: adjVol } = ty.music.adjust
+                const adjIdx = findTriggerByNote(adjTn)
+                if (adjIdx !== null) {
+                    const adjTa = triggerAudio.get(adjIdx)
+                    if (adjTa?.ws.isPlaying()) {
+                        const ft = ty.music.adjust.fadetime ?? 3
+                        if (fadeout) fadeAdjustAudio(adjTa, ft)
+                        else if (adjVol !== undefined) fadeAdjustVolume(adjTa, adjVol, ft)
+                    }
+                }
+            }
+            cueHistory.push(nextIdx)
+            broadcastLiveState()
+        }
+
+        function fireGaplessTransition(nextIdx) {
+            const nextTa = triggerAudio.get(nextIdx)
+            const ty = triggerYamls[nextIdx]
+            if (!nextTa || !ty?.music) { triggerAction(nextIdx); return }
+
+            const ns     = nextTa.mp?.start ?? 0
+            const vol    = typeof ty.music === 'object' && ty.music.volume != null ? ty.music.volume : 0.8
+            const fadein = typeof ty.music === 'object' && ty.music.fadein != null ? ty.music.fadein : 0
+            const effEnd = mp.end ?? ws.getDuration()
+            const timeUntilEnd = Math.max(0, effEnd - mainAudioEl.currentTime)
+
+            const ctx = sharedAudioCtx
+
+            const group = loopGroups.get(index)
+            const isGroupOutro = group && group.outroIdx === nextIdx
+            console.log('[gapless] transition', index, '→', nextIdx,
+                '| isGroupOutro=', isGroupOutro, '| activeSource=', !!activeSource,
+                '| loopVirtualStartTime=', group?.loopVirtualStartTime)
+
+            if (isGroupOutro && ctx && activeSource) {
+                // ── Sample-accurate Loop→Outro transition ──────────────────────────────
+                const ta_  = triggerAudio.get(index)
+                const sr   = ctx.sampleRate
+                const loopStartSec   = mp.start ?? 0
+                const loopEndSec     = mp.end ?? (ta_?.decodedBuffer?.duration ?? ws.getDuration())
+                const loopDurSamples = Math.round((loopEndSec - loopStartSec) * sr)
+                const loopVStart     = group.loopVirtualStartTime ?? ctx.currentTime
+                const elapsed        = Math.max(0, ctx.currentTime - loopVStart)
+                let n              = Math.max(1, Math.ceil(Math.round(elapsed * sr) / loopDurSamples))
+                let transitionTime = loopVStart + (n * loopDurSamples) / sr
+                // Guard: if n overshot due to floating-point (elapsed just past a boundary),
+                // step back so the transition fires now rather than a full loop later.
+                if (transitionTime - ctx.currentTime > (loopEndSec - loopStartSec) * 0.5) {
+                    n = Math.max(1, n - 1)
+                    transitionTime = loopVStart + (n * loopDurSamples) / sr
+                }
+                const msToTransition = Math.max(0, transitionTime - ctx.currentTime) * 1000
+
+                // ① Stop loop source at exact loop boundary
+                stopSource(transitionTime)
+
+                // ② Immediately stop cursor — prevents a late "finish" event (when mp.end <
+                // file duration) from firing after gaplessActive resets and restarting the source.
+                suppressPauseStop = true
+                mainAudioEl.loop = false
+                mainAudioEl.pause()
+                setTimeout(() => { suppressPauseStop = false }, 0)
+
+                // ③ Start outro audio source at the same instant — pure WebAudio, no media element
+                const nextPg = nextTa.getPlaybackGain?.()
+                if (nextPg) nextPg.gain.value = fadein > 0 ? 0 : vol
+                nextTa.startGaplessSource(ns, transitionTime)
+
+                // ④ Swap cursors: seek loop cursor to start, launch outro cursor
+                gaplessActive = true
+                setTimeout(() => {
+                    mainAudioEl.currentTime = mp.start
+                    if (mtc && mtc.activeTcIndex === index) mtc.stopAndClear()
+                    gaplessActive = false
+                    // Start outro cursor (activeSource guard in ws.on("play") prevents double source)
+                    nextTa.startCursor(ns, 0)
+                }, msToTransition + 10)
+
+                _nonAudioActions(nextIdx, nextTa)
+
+            } else if (ctx && nextTa.decodedBuffer && nextTa.startGaplessSource) {
+                // ── Pure AudioBufferSourceNode transition (e.g. Intro → Loop) ──────────
+                let transitionTime
+                if (activeSourceStartedAt !== null && activeSourceStartOffset !== null) {
+                    transitionTime = activeSourceStartedAt + (effEnd - activeSourceStartOffset)
+                } else {
+                    transitionTime = ctx.currentTime + timeUntilEnd
+                }
+                transitionTime = Math.max(ctx.currentTime, transitionTime)
+                const msToTransition = Math.max(0, transitionTime - ctx.currentTime) * 1000
+
+                // ① Stop current source at transitionTime
+                stopSource(transitionTime)
+                gaplessActive = true
+
+                // ② Start next audio source at transitionTime
+                const nextPg = nextTa.getPlaybackGain?.()
+                if (nextPg) nextPg.gain.value = fadein > 0 ? 0 : vol
+                nextTa.startGaplessSource(ns, transitionTime)
+
+                // ③ Swap cursors at transition
+                const hasExplicitMon = typeof ty.music === 'object' && ty.music.monitor != null
+                setTimeout(() => {
+                    gaplessActive = false
+                    suppressPauseStop = true
+                    mainAudioEl.pause()
+                    mainAudioEl.currentTime = mp.start
+                    if (mtc && mtc.activeTcIndex === index) mtc.stopAndClear()
+                    setTimeout(() => { suppressPauseStop = false }, 0)
+                    // Start next trigger's cursor
+                    nextTa.startCursor(ns, 0)
+                    if (monitorShouldPlay() && nextTa.monAudioEl && hasExplicitMon && monitorOffsetMs <= 0)
+                        nextTa.monAudioEl.play().catch(() => {})
+                }, msToTransition + 5)
+
+                _nonAudioActions(nextIdx, nextTa)
+
+            } else {
+                // ── Fallback: buffer not decoded — use media element directly ──
+                nextTa.ws.setVolume(fadein > 0 ? 0 : vol)
+                nextTa.mainAudioEl.play().catch(() => {})
+                if (monitorShouldPlay() && nextTa.monAudioEl) {
+                    const hasExplicit = typeof ty.music === 'object' && ty.music.monitor != null
+                    if (hasExplicit && monitorOffsetMs <= 0) nextTa.monAudioEl.play().catch(() => {})
+                }
+                mainAudioEl.pause()
+                mainAudioEl.currentTime = mp.start
+                ws.setVolume(currentVolume)
+                if (mtc && mtc.activeTcIndex === index) mtc.stopAndClear()
+                if (!nextTa.decodedBuffer) preDecodeForGapless(nextIdx)
+                _nonAudioActions(nextIdx, nextTa)
+            }
+        }
+
+        function fireChainEnd(nextIdx) {
+            if (!ws.isPlaying() || chainEndArmed) return
+            chainEndArmed = true
+            currentCue = nextIdx
+            markTriggers(nextIdx)
+            scrollToTrigger(nextIdx)
+            fireGaplessTransition(nextIdx)
+        }
+        function fireLoopOutro() {
+            if (!ws.isPlaying() || !loopOutroPending.has(index)) return
+            const outroIdx = loopOutroPending.get(index)
+            loopOutroPending.delete(index)
+            loopOutroInitialRemaining.delete(index)
+            setOutroPendingIndicator(outroIdx, false)
+            currentCue = outroIdx
+            markTriggers(outroIdx)
+            fireGaplessTransition(outroIdx)
+        }
+        function fireLoopRestart(effEnd) {
+            if (!ws.isPlaying()) return
+            const loopDur = effEnd - mp.start
+            if (mtc && mtc.activeTcIndex === index) mtc.onLoopRestart(loopDur, mp.start)
+            preSeekArmed = false
+
+            // Group triggers always return here — src.loop=true handles audio looping internally.
+            // This also covers the case where activeSource=null because stopSource was called
+            // for an outro transition: we must not restart the source in that case.
+            if (loopGroups.has(index)) return
+            if (activeSource && loopEnabled) return
+
+            const ctx = sharedAudioCtx
+            const ta  = triggerAudio.get(index)
+
+            if (ctx && ta?.decodedBuffer && activeSource && playbackGain) {
+                // ── AudioBufferSourceNode loop restart (non-loopEnabled, e.g. managed loop) ──
+                let transitionTime
+                if (activeSourceStartedAt !== null && activeSourceStartOffset !== null) {
+                    transitionTime = activeSourceStartedAt + (effEnd - activeSourceStartOffset)
+                } else {
+                    transitionTime = ctx.currentTime + Math.max(0, effEnd - mainAudioEl.currentTime)
+                }
+                transitionTime = Math.max(ctx.currentTime, transitionTime)
+                const msToTransition = Math.max(0, transitionTime - ctx.currentTime) * 1000
+
+                stopSource(transitionTime)
+                const src = ctx.createBufferSource()
+                src.buffer = ta.decodedBuffer
+                src.connect(playbackGain)
+                src.start(transitionTime, mp.start)
+                activeSource = src
+                activeSourceStartedAt   = transitionTime
+                activeSourceStartOffset = mp.start
+                src.addEventListener('ended', () => { if (activeSource === src) activeSource = null })
+
+                gaplessActive = true
+                setTimeout(() => {
+                    suppressSeekRestart = true
+                    mainAudioEl.currentTime = mp.start
+                    gaplessActive = false
+                    setTimeout(() => { suppressSeekRestart = false }, 50)
+                }, msToTransition)
+
+            } else {
+                mainAudioEl.currentTime = mp.start
+                if (monAudioEl && monitorShouldPlay()) monAudioEl.currentTime = mp.start
+            }
+        }
+
         ws.on("timeupdate", (ct) => {
             const effEnd = mp.end ?? ws.getDuration()
             if (ct >= effEnd) {
+                if (gaplessActive) { ws.setVolume(currentVolume); return }
                 const isManaged = !!triggerYamls[index]?.loop_outro
                 if (isManaged) {
                     if (loopOutroPending.has(index)) {
-                        // Outro pending → fire it at this loop boundary
-                        const outroIdx = loopOutroPending.get(index)
-                        loopOutroPending.delete(index)
-                        loopOutroInitialRemaining.delete(index)
-                        setOutroPendingIndicator(outroIdx, false)
-                        ws.stop()
-                        ws.setVolume(currentVolume)
-                        currentCue = outroIdx
-                        markTriggers(outroIdx)
-                        triggerAction(outroIdx)
+                        fireLoopOutro()   // fallback if timer missed
                     } else {
-                        // Gapless loop: seek directly on the media element (faster than ws.play)
-                        const loopDur = effEnd - mp.start
-                        mainAudioEl.currentTime = mp.start
-                        if (monAudioEl && monitorShouldPlay()) monAudioEl.currentTime = mp.start
-                        if (mtc && mtc.activeTcIndex === index) mtc.onLoopRestart(loopDur, mp.start)
+                        fireLoopRestart(effEnd)
                     }
                 } else if (loopEnabled) {
-                    const loopDur = effEnd - mp.start
-                    mainAudioEl.currentTime = mp.start
-                    if (monAudioEl && monitorShouldPlay()) monAudioEl.currentTime = mp.start
-                    if (mtc && mtc.activeTcIndex === index) mtc.onLoopRestart(loopDur, mp.start)
+                    fireLoopRestart(effEnd)
                 } else {
-                    ws.stop()
-                    if (mtc && mtc.activeTcIndex === index) mtc.stopAndClear()
-                    // chain_end: fire next trigger seamlessly on audio end
                     const chainEnd = triggerYamls[index]?.chain_end
                     if (chainEnd && !chainEndArmed) {
-                        chainEndArmed = true
                         const nextIdx = findTriggerByNote(chainEnd)
                         if (nextIdx !== null) {
-                            currentCue = nextIdx
-                            markTriggers(nextIdx)
-                            scrollToTrigger(nextIdx)
-                            triggerAction(nextIdx)
+                            fireChainEnd(nextIdx)
+                        } else {
+                            ws.stop()
+                            if (mtc && mtc.activeTcIndex === index) mtc.stopAndClear()
                         }
+                    } else if (!chainEnd) {
+                        ws.stop()
+                        if (mtc && mtc.activeTcIndex === index) mtc.stopAndClear()
                     }
                 }
                 ws.setVolume(currentVolume); return
             }
-            // Pre-seek next audio 150ms before chain_end fires (reduces gap)
+            // Pre-seek next audio and schedule gapless transition via setTimeout
+            // (fires at the precise end time instead of waiting for next timeupdate)
             if (!preSeekArmed) {
                 const chainEnd = triggerYamls[index]?.chain_end
-                if (chainEnd && effEnd - ct < 0.15) {
+                if (chainEnd && effEnd - ct < 0.35) {
                     preSeekArmed = true
                     const nextIdx = findTriggerByNote(chainEnd)
                     const nextTa  = nextIdx !== null ? triggerAudio.get(nextIdx) : null
                     if (nextTa) {
-                        const ns = nextTa.mp.start ?? 0
+                        const ns = nextTa.mp?.start ?? 0
                         nextTa.mainAudioEl.currentTime = ns
-                        if (nextTa.monAudioEl) nextTa.monAudioEl.currentTime = ns
+                        if (nextTa.monAudioEl) {
+                            const monDur = nextTa.wsMonitor?.getDuration() ?? 0
+                            nextTa.monAudioEl.currentTime = monDur > 0
+                                ? Math.min(Math.max(ns - monitorOffsetMs / 1000, 0), monDur)
+                                : ns
+                        }
+                        clearTimeout(chainEndTimer)
+                        chainEndTimer = setTimeout(() => {
+                            chainEndTimer = null
+                            fireChainEnd(nextIdx)
+                        }, Math.max(0, (effEnd - ct) * 1000 - 5))
                     }
                 }
-                // Also pre-seek outro
                 if (!chainEnd) {
                     const loopOutro = triggerYamls[index]?.loop_outro
-                    if (loopOutro && loopOutroPending.has(index) && effEnd - ct < 0.15) {
+                    const isManaged = !!loopOutro
+                    if (isManaged && effEnd - ct < 0.35) {
                         preSeekArmed = true
-                        const outroIdx = findTriggerByNote(loopOutro)
-                        const outroTa  = outroIdx !== null ? triggerAudio.get(outroIdx) : null
-                        if (outroTa) {
-                            const ns = outroTa.mp.start ?? 0
-                            outroTa.mainAudioEl.currentTime = ns
-                            if (outroTa.monAudioEl) outroTa.monAudioEl.currentTime = ns
+                        if (loopOutroPending.has(index)) {
+                            // Outro armed: pre-seek outro and schedule its start
+                            const outroIdx = findTriggerByNote(loopOutro)
+                            const outroTa  = outroIdx !== null ? triggerAudio.get(outroIdx) : null
+                            if (outroTa) {
+                                const ns = outroTa.mp?.start ?? 0
+                                outroTa.mainAudioEl.currentTime = ns
+                                if (outroTa.monAudioEl) {
+                                    const monDur = outroTa.wsMonitor?.getDuration() ?? 0
+                                    outroTa.monAudioEl.currentTime = monDur > 0
+                                        ? Math.min(Math.max(ns - monitorOffsetMs / 1000, 0), monDur)
+                                        : ns
+                                }
+                                clearTimeout(loopJumpTimer)
+                                loopJumpTimer = setTimeout(() => {
+                                    loopJumpTimer = null
+                                    fireLoopOutro()
+                                }, Math.max(0, (effEnd - ct) * 1000 - 5))
+                            }
+                        } else {
+                            // No outro: schedule gapless loop restart
+                            preDecodeForGapless(index)
+                            clearTimeout(loopJumpTimer)
+                            loopJumpTimer = setTimeout(() => {
+                                loopJumpTimer = null
+                                fireLoopRestart(effEnd)
+                            }, Math.max(0, (effEnd - ct) * 1000 - 5))
                         }
+                    } else if (loopEnabled && effEnd - ct < 0.35) {
+                        preSeekArmed = true
+                        preDecodeForGapless(index)
+                        clearTimeout(loopJumpTimer)
+                        loopJumpTimer = setTimeout(() => {
+                            loopJumpTimer = null
+                            fireLoopRestart(effEnd)
+                        }, Math.max(0, (effEnd - ct) * 1000 - 5))
                     }
                 }
             }
@@ -2302,12 +2679,85 @@ function buildTrigger(codeblockYaml, index) {
         })
 
         ws.on("error",  (e) => console.error("WaveSurfer:", musicFile, e))
-        ws.on("play",   () => { pauseBtn.textContent = "⏸"; chainEndArmed = false; preSeekArmed = false })
-        ws.on("pause",  () => { pauseBtn.textContent = "⏵" })
+        ws.on("play",   () => {
+            // If a gapless transition is in progress, a cursor restart (e.g. mainAudioEl.loop=true
+            // looping back after stopSource cleared activeSource) must not start a new source or
+            // clear timers — the transition's setTimeout owns state until gaplessActive=false.
+            if (gaplessActive) return
+            pauseBtn.textContent = "⏸"
+            chainEndArmed = false
+            preSeekArmed  = false
+            gaplessActive = false
+            clearTimeout(chainEndTimer);  chainEndTimer  = null
+            clearTimeout(loopJumpTimer);  loopJumpTimer  = null
+            const ta = triggerAudio.get(index)
+            if (ta?.gaplessSwitchActive) {
+                // Source already started by gapless transition — just clear the flag
+                ta.gaplessSwitchActive = false
+                return
+            }
+            // Don't start a new source if one is already running (e.g. media-element cursor restart)
+            if (activeSource) return
+            if (sharedAudioCtx) startSource(mainAudioEl.currentTime, sharedAudioCtx.currentTime)
+        })
+        ws.on("pause",  () => { pauseBtn.textContent = "⏵"; if (!suppressPauseStop) stopSource() })
         ws.on("finish", () => {
             pauseBtn.textContent = "⏵"
+            // Group triggers keep mainAudioEl.loop=false on purpose, so "finish" does fire.
+            // gaplessActive is set synchronously in fireGaplessTransition (before any events),
+            // so it reliably marks an outro/chain transition in progress.
+            // Don't loop the cursor then — the transition's setTimeout handles cursor handoff.
+            if (loopGroups.has(index)) {
+                if (gaplessActive) return
+                // If outro is armed, fire transition directly — calling ws.play() would trigger
+                // ws.on("play") which clears loopJumpTimer, causing a one-iteration delay.
+                if (loopOutroPending.has(index)) {
+                    const outroIdx = loopOutroPending.get(index)
+                    loopOutroPending.delete(index)
+                    loopOutroInitialRemaining.delete(index)
+                    setOutroPendingIndicator(outroIdx, false)
+                    clearTimeout(loopJumpTimer); loopJumpTimer = null
+                    currentCue = outroIdx
+                    markTriggers(outroIdx)
+                    fireGaplessTransition(outroIdx)
+                    return
+                }
+                suppressSeekRestart = true
+                mainAudioEl.currentTime = mp.start ?? 0
+                ws.play()  // restart cursor; ws.on("play") guard prevents double source
+                setTimeout(() => { suppressSeekRestart = false }, 50)
+                return
+            }
+            // Plain loopEnabled sources use mainAudioEl.loop=true so this shouldn't fire.
+            // Safeguard: reset cursor without calling play().
+            if (activeSource && loopEnabled) {
+                suppressSeekRestart = true
+                mainAudioEl.currentTime = mp.start ?? 0
+                mainAudioEl.loop = true
+                setTimeout(() => { suppressSeekRestart = false }, 50)
+                return
+            }
+            // Fire chain_end transition now if finish fired before chainEndTimer (race condition).
+            // Must happen before stopSource() so activeSourceStartedAt is still valid for timing.
+            const chainEnd = triggerYamls[index]?.chain_end
+            if (chainEnd && chainEndTimer !== null && !chainEndArmed) {
+                clearTimeout(chainEndTimer); chainEndTimer = null
+                chainEndArmed = true
+                const nextIdx = findTriggerByNote(chainEnd)
+                if (nextIdx !== null) {
+                    currentCue = nextIdx
+                    markTriggers(nextIdx)
+                    scrollToTrigger(nextIdx)
+                    fireGaplessTransition(nextIdx)
+                }
+            }
+            stopSource()
             ws.setVolume(currentVolume)
             if (!mp.loop && mtc && mtc.activeTcIndex === index) mtc.stopAndClear()
+        })
+        ws.on("seeking", (t) => {
+            if (suppressSeekRestart || mainAudioEl.paused) return
+            if (sharedAudioCtx) startSource(t, sharedAudioCtx.currentTime)
         })
 
         // ── Controls ────────────────────────────────────────────────────
@@ -2469,11 +2919,16 @@ function buildTrigger(codeblockYaml, index) {
         const _wsSetVol = ws.setVolume.bind(ws)
         ws.setVolume = (v) => {
             _wsSetVol(v)
+            const ta_ = triggerAudio.get(index)
+            const targetGain = ta_?.playbackGainOverride ?? playbackGain
+            if (targetGain) targetGain.gain.value = v
             if (wsMonitor) wsMonitor.setVolume(v)
             else if (monAudioEl) monAudioEl.volume = v
         }
         const _wsStop = ws.stop.bind(ws)
         ws.stop = () => {
+            stopSource()
+            mainAudioEl.loop = false   // reset so next normal play doesn't loop unexpectedly
             if (monSyncRaf) { cancelAnimationFrame(monSyncRaf); monSyncRaf = null }
             if (monAudioEl && !monAudioEl.paused) monAudioEl.pause()
             // Reset to the correct start position so next click needs no seek
@@ -2483,10 +2938,57 @@ function buildTrigger(codeblockYaml, index) {
 
         triggerAudio.set(index, {
             ws, wsMonitor, mainAudioEl, monAudioEl, musicFile, overlay, getX, autoMarkerState, mp,
+            mainAudioCtxGain,
+            decodedBuffer: null, _decoding: false,
+            gaplessSwitchActive: false,  // suppresses new source start in ws.on("play") during transition
             getCurrentVolume: () => currentVolume,
             setCurrentVolume: (v) => { currentVolume = v },
             disableLoop: () => { loopEnabled = false },
             enableLoop:  () => { loopEnabled = mp.loop },
+            // Called by another trigger's fireGaplessTransition to start this trigger's source
+            getPlaybackGain:    () => playbackGain,
+            // Starts the AudioBufferSourceNode only — no mainAudioEl interaction.
+            // The caller is responsible for all cursor/media element handling.
+            startGaplessSource: (offset, when) => {
+                if (!sharedAudioCtx || !playbackGain) return false
+                const ta_ = triggerAudio.get(index)
+                if (!ta_?.decodedBuffer) return false
+                if (mainAudioCtxGain) mainAudioCtxGain.gain.value = 0
+                tryBuildLoopGroups()
+                stopSource()
+                const src = sharedAudioCtx.createBufferSource()
+                src.buffer = ta_.decodedBuffer
+                const loopGroup     = loopGroups.get(index)
+                const isLoopTrigger = loopGroup || loopEnabled
+                const actualOffset  = Math.max(0, offset)
+                if (isLoopTrigger) {
+                    src.loop      = true
+                    src.loopStart = mp.start ?? 0
+                    src.loopEnd   = mp.end ?? ta_.decodedBuffer.duration
+                }
+                src.connect(playbackGain)
+                src.start(when, actualOffset)
+                activeSource = src
+                activeSourceStartedAt   = when
+                activeSourceStartOffset = actualOffset
+                if (loopGroup) {
+                    loopGroup.loopVirtualStartTime = when - (actualOffset - (mp.start ?? 0))
+                }
+                if (isLoopTrigger) mainAudioEl.loop = true
+                src.addEventListener('ended', () => { if (activeSource === src) activeSource = null })
+                return true
+            },
+            // Starts the cursor (mainAudioEl) at offset, after delayMs, without starting a new source.
+            startCursor: (offset, delayMs) => {
+                const actualOffset = Math.max(0, offset)
+                setTimeout(() => {
+                    suppressSeekRestart = true
+                    mainAudioEl.currentTime = actualOffset
+                    setTimeout(() => { suppressSeekRestart = false }, 50)
+                    // Play without triggering startSource — activeSource guard in ws.on("play") handles this.
+                    mainAudioEl.play().catch(() => {})
+                }, Math.max(0, delayMs))
+            },
         })
         fileToTriggers.set(musicFile, [...(fileToTriggers.get(musicFile) || []), index])
     }
@@ -3174,7 +3676,7 @@ function updateLoopBtnAppearance(btn, idx) {
     const isOutro = sources.length > 0
 
     if (shiftHeld && (hasCE || hasLO)) {
-        btn.textContent = '✕ Loop'
+        btn.textContent = '✕ S/L/F'
         btn.classList.remove('trigger-action-btn-active')
         btn.classList.add('trigger-action-btn-danger')
         btn.title = 'Loop-Verbindung löschen (Shift+Klick)'
@@ -3184,27 +3686,27 @@ function updateLoopBtnAppearance(btn, idx) {
     btn.classList.add('trigger-action-btn-active')
 
     if (hasCE && isOutro) {
-        // Zwischenteil: outro of one loop + transition into next loop
+        // Bridge: outro of one loop + transition into next loop
         const ce = `${ty.chain_end.ch}.${ty.chain_end.note}`
         const from = sources.map(i => { const tn = triggerYamls[i]?.trigger_note; return tn ? `${tn.ch}.${tn.note}` : '?' }).join(', ')
-        btn.textContent = `⟲ → ${ce}`
-        btn.title = `Zwischenteil: Ausgang von Schleife(n) ${from}, startet am Ende Trigger ${ce}`
+        btn.textContent = 'Bridge'
+        btn.title = `Bridge: Ausgang von Schleife(n) ${from}, startet am Ende Trigger ${ce}`
     } else if (hasCE) {
         const ce = `${ty.chain_end.ch}.${ty.chain_end.note}`
-        btn.textContent = `→ ${ce}`
-        btn.title = `Übergang: startet am Ende automatisch Trigger ${ce}`
+        btn.textContent = 'Start'
+        btn.title = `Start: startet am Ende automatisch Trigger ${ce}`
     } else if (hasLO) {
         const lo = `${ty.loop_outro.ch}.${ty.loop_outro.note}`
-        btn.textContent = `⟲ → ${lo}`
-        btn.title = `Schleife: loopt bis Trigger ${lo} am Schleifen-Ende angeklickt wurde`
+        btn.textContent = 'Loop'
+        btn.title = `Loop: loopt bis Trigger ${lo} am Schleifen-Ende angeklickt wurde`
     } else if (isOutro) {
         const from = sources.map(i => { const tn = triggerYamls[i]?.trigger_note; return tn ? `${tn.ch}.${tn.note}` : '?' }).join(', ')
-        btn.textContent = '⟲ Outro'
-        btn.title = `Outro: wird am Schleifen-Ende von Schleife(n) ${from} nahtlos gestartet`
+        btn.textContent = 'Finish'
+        btn.title = `Finish: wird am Schleifen-Ende von Schleife(n) ${from} nahtlos gestartet`
     } else {
-        btn.textContent = '⟲ Loop'
+        btn.textContent = 'S/L/F'
         btn.classList.remove('trigger-action-btn-active')
-        btn.title = 'Loop-Struktur einrichten (Übergang, Schleife …)'
+        btn.title = 'Loop-Struktur einrichten (Start, Loop, Finish …)'
     }
 }
 
@@ -3383,6 +3885,13 @@ function triggerAction(cue) {
 
     cueHistory.push(cue)
     broadcastLiveState()
+
+    // Pre-decode next audio in background for gapless playback
+    const gaplessNote = triggerYamls[cue]?.chain_end || triggerYamls[cue]?.loop_outro
+    if (gaplessNote) {
+        const gaplessIdx = findTriggerByNote(gaplessNote)
+        if (gaplessIdx !== null) preDecodeForGapless(gaplessIdx)
+    }
 }
 
 function applyRoleColorsToHtml(html) {
