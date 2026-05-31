@@ -1922,6 +1922,29 @@ function setupAutoTriggers() {
             positionMarkers()
         }
 
+        // Shift-drag to reposition auto-cue markers
+        for (const link of links) {
+            if (!link.markerEl) continue
+            link.markerEl.addEventListener('mousedown', (e) => {
+                if (!shiftHeld) return
+                e.stopPropagation(); e.preventDefault()
+                const move = (me) => {
+                    const t = ta.getTimeAtClientX?.(me.clientX)
+                    if (t == null) return
+                    link.at = Math.round(t * 1000) / 1000
+                    positionMarkers()
+                }
+                const up = () => {
+                    document.removeEventListener('mousemove', move)
+                    document.removeEventListener('mouseup', up)
+                    const aty = triggerYamls[link.targetIdx]?.auto_trigger
+                    if (aty) updateAutoTriggerInScript(link.targetIdx, { ...aty, at: link.at })
+                }
+                document.addEventListener('mousemove', move)
+                document.addEventListener('mouseup', up)
+            })
+        }
+
         // Firing + progress bar state
         const firedSet = new Set()
 
@@ -3140,6 +3163,12 @@ function buildTrigger(codeblockYaml, index) {
 
         triggerAudio.set(index, {
             ws, wsMonitor, mainAudioEl, monAudioEl, musicFile, overlay, getX, autoMarkerState, mp,
+            getTimeAtClientX: (clientX) => {
+                const rect = waveformContainer.getBoundingClientRect()
+                const tw = totalWaveWidth(), dur = ws.getDuration()
+                if (!tw || !dur) return null
+                return Math.max(0, Math.min(dur, (ws.getScroll() + clientX - rect.left) / tw * dur))
+            },
             mainAudioCtxGain,
             decodedBuffer: null, _decoding: false,
             gaplessSwitchActive: false,  // suppresses new source start in ws.on("play") during transition
