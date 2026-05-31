@@ -35,7 +35,7 @@ Das Skript ist eine einfache `.md`-Datei. Die App öffnet beim Start die zuletzt
 
 | Syntax | Bedeutung |
 |---|---|
-| `# Titel`, `## Szene`, `### Unterszene` | Gliederungsüberschriften, erscheinen in der Sidebar |
+| `# Szene`, `## Unterszene` | Gliederungsüberschriften, erscheinen in der Sidebar |
 | `*Regieanweisung*` | Kursive Bühnenanweisung (grau dargestellt) |
 | `**Rollenname**` | Name einer Rolle (farbig gem. Rolleneditor) |
 | `**Rollenname**\nText` | Rolle mit Dialog (wird direkt darunter angezeigt) |
