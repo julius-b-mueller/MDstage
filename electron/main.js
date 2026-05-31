@@ -175,6 +175,7 @@ function createLiveWindow() {
         width: 900,
         height: 700,
         title: 'Live-Ansicht',
+        acceptFirstMouse: true,
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
