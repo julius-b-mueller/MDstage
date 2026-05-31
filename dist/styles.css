@@ -342,7 +342,7 @@ p {
     color: #d19a66 !important;
 }
 .trigger-action-btn-wav-warning::after { content: ' ⚠'; font-size: 0.7em; }
-.waveform-btn.waveform-btn-wav-warning { background: #d19a6633; color: #d19a66; }
+.waveform-btn.waveform-btn-wav-warning { background: #d19a6633 !important; color: #d19a66 !important; }
 .trigger-wav-warning {
     font-size: 0.75rem;
     color: #d19a66;

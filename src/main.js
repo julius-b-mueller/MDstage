@@ -3852,12 +3852,14 @@ function updateLoopBtnAppearance(btn, idx) {
     }
 
     // WAV warning: gapless playback only works with WAV files
-    const musicFile = triggerAudio.get(idx)?.musicFile
-    const mpLoop    = !!triggerAudio.get(idx)?.mp?.loop
-    const isGapless = hasCE || hasLO || isOutro || mpLoop
-    const nonWav    = !!(musicFile && !/\.wav$/i.test(musicFile))
-    btn.classList.toggle('trigger-action-btn-wav-warning', isGapless && nonWav)
-    if (isGapless && nonWav)
+    const musicFile  = triggerAudio.get(idx)?.musicFile
+    const mpLoop     = !!triggerAudio.get(idx)?.mp?.loop
+    const isSLF      = hasCE || hasLO || isOutro   // part of a S/L/F group
+    const isGapless  = isSLF || mpLoop
+    const nonWav     = !!(musicFile && !/\.wav$/i.test(musicFile))
+    // S/L/F button warning only for actual S/L/F structure — plain mp.loop uses the ⟳ button
+    btn.classList.toggle('trigger-action-btn-wav-warning', isSLF && nonWav)
+    if (isSLF && nonWav)
         btn.title += '\n⚠ Kein nahtloser Übergang – MP3/AAC haben Encoder-Padding. WAV verwenden.'
     const warnEl = triggers[idx]?.querySelector('.trigger-wav-warning')
     if (warnEl) warnEl.style.display = (isGapless && nonWav) ? '' : 'none'
