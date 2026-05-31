@@ -18,6 +18,7 @@ const loopGroups = new Map()
 
 // triggerIndex -> { ws, wsMonitor, mainAudioEl, monAudioEl, musicFile, overlay, getX, autoMarkerState }
 const triggerAudio = new Map()
+const slfDerivedTcBadges = new Map()  // triggerIndex → span element for derived TC badges
 // musicFile -> triggerIndex[]  (for cross-trigger fade lookups)
 const fileToTriggers = new Map()
 // targetIdx → <button> element for auto-cue progress bar updates
@@ -1623,6 +1624,7 @@ function rerender(newText) {
     triggers = []
     triggerYamls = []
     triggerAudio.clear()
+    slfDerivedTcBadges.clear()
     fileToTriggers.clear()
     usedChs = []
     config = {}
@@ -2232,8 +2234,9 @@ function buildTrigger(codeblockYaml, index) {
         tcBadge.className = 'trigger-tc-badge'
         tcBadge.textContent = '⏱ ' + codeblockYaml.start_tc
         tcBadge.title = 'Timecode-Offset'
-        rightWrapper.insertBefore(tcBadge, triggerNoteDisplay)
+        triggerDiv.appendChild(tcBadge)
     }
+    // Derived TC badge for non-root SLF members: filled in after triggerYamls[index] is set below
 
     // ── waveform (only when a music file is set) ─────────────────────────
     const musicFile = codeblockYaml.music
@@ -2472,7 +2475,7 @@ function buildTrigger(codeblockYaml, index) {
         shiftDrag(startTopGrip, (t) => { mp.fadein  = Math.max(0, Math.min(t - mp.start, (mp.end ?? ws.getDuration()) - mp.start)) })
         shiftDrag(endTopGrip,   (t) => { const e = mp.end ?? ws.getDuration(); mp.fadeout = Math.max(0, Math.min(e - t, e - mp.start)) })
 
-        ws.on("ready",  () => { waveformContainer.appendChild(overlay); updateMarkers(); autoMarkerState.refresh?.(); preDecodeForGapless(index) })
+        ws.on("ready",  () => { waveformContainer.appendChild(overlay); updateMarkers(); autoMarkerState.refresh?.(); preDecodeForGapless(index); updateDerivedTcBadges() })
         ws.on("scroll", () => { updateMarkers(); autoMarkerState.refresh?.() })
         ws.on("zoom",   () => { updateMarkers(); autoMarkerState.refresh?.() })
         ws.on("redraw", () => { updateMarkers(); autoMarkerState.refresh?.() })
@@ -3140,6 +3143,30 @@ function buildTrigger(codeblockYaml, index) {
 
     triggerYamls[index] = codeblockYaml
 
+    // Now that triggerYamls[index] is set, findTriggerByNote can resolve this trigger →
+    // check if it's a non-root SLF member and add a derived TC badge if so
+    if (!codeblockYaml.start_tc) {
+        const isFinish = loopSourcesOf(index).length > 0
+        let isChainTarget = false
+        for (let i = 1; i < triggerYamls.length; i++) {
+            if (i === index) continue
+            if (triggerYamls[i]?.chain_end && findTriggerByNote(triggerYamls[i].chain_end) === index) {
+                isChainTarget = true; break
+            }
+        }
+        if (isFinish || isChainTarget) {
+            const rootTc = triggerYamls[slfChainRootOf(index)]?.start_tc
+            if (rootTc) {
+                const tcBadge = document.createElement('span')
+                tcBadge.className = 'trigger-tc-badge trigger-tc-badge--derived'
+                tcBadge.textContent = `⏱ ↳ ${rootTc}`
+                tcBadge.title = 'Timecode abgeleitet vom Start-Cue (Audiodauer lädt…)'
+                slfDerivedTcBadges.set(index, tcBadge)
+                triggerDiv.appendChild(tcBadge)
+            }
+        }
+    }
+
     triggerDiv.addEventListener("mousedown", (e) => {
         if (pickModeCallback) {
             e.stopPropagation()
@@ -3366,11 +3393,90 @@ function deleteTriggerInScript(triggerIndex) {
     rerender(updated)
 }
 
+// Updates all derived TC badges once audio durations become available
+function updateDerivedTcBadges() {
+    for (const [idx, badge] of slfDerivedTcBadges) {
+        const tc = derivedTcFor(idx)
+        if (tc) {
+            badge.textContent = `⏱ ↳ ${tc}`
+            badge.title = 'Timecode abgeleitet vom Start-Cue der S/L/F-Gruppe'
+        }
+    }
+}
+
+// Returns the SLF chain root index for a given trigger (traverses backwards through chain_end and loop_outro links)
+function slfChainRootOf(idx) {
+    for (let i = 1; i < triggerYamls.length; i++) {
+        if (triggerYamls[i]?.chain_end && findTriggerByNote(triggerYamls[i].chain_end) === idx)
+            return slfChainRootOf(i)
+        if (triggerYamls[i]?.loop_outro && findTriggerByNote(triggerYamls[i].loop_outro) === idx)
+            return slfChainRootOf(i)
+    }
+    return idx
+}
+
+// Computes derived TC string (HH:MM:SS:FF) for a non-root SLF cue.
+// Returns a TC string or null if root has no TC or audio durations are unknown.
+function derivedTcFor(idx) {
+    const rootIdx = slfChainRootOf(idx)
+    if (rootIdx === idx) return null  // already the root
+    const rootTc = triggerYamls[rootIdx]?.start_tc
+    if (!rootTc) return null
+
+    const [h, m, s, f] = rootTc.split(':').map(Number)
+    let frames = ((h * 3600 + m * 60 + s) * 25) + f
+
+    let current = rootIdx
+    while (current !== idx) {
+        const ty = triggerYamls[current]
+        let next = null
+        if (ty?.chain_end) next = findTriggerByNote(ty.chain_end)
+        else if (ty?.loop_outro) next = findTriggerByNote(ty.loop_outro)
+        if (next === null || next === current || next === undefined) break
+
+        const ta = triggerAudio.get(current)
+        const audioEl = ta?.mainAudioEl
+        const mp = ta?.mp
+        if (audioEl && isFinite(audioEl.duration) && audioEl.duration > 0) {
+            const start = mp?.start ?? 0
+            const end   = mp?.end   ?? audioEl.duration
+            frames += Math.round((end - start) * 25)
+        } else {
+            return null  // duration unknown
+        }
+        current = next
+    }
+
+    const fps = 25
+    const ff  = frames % fps
+    const secs = Math.floor(frames / fps)
+    const ss  = secs % 60
+    const mins = Math.floor(secs / 60)
+    const mm  = mins % 60
+    const hh  = Math.floor(mins / 60) % 24
+    const p   = n => String(n).padStart(2, '0')
+    return `${p(hh)}:${p(mm)}:${p(ss)}:${p(ff)}`
+}
+
 // insertAfterBlockIdx: for new triggers (add mode)
 // triggerIndex + existingYaml: for editing an existing trigger (edit mode)
 async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = null, existingYaml = null, isCopy = false, parentTriggerNote = null } = {}) {
     const isEdit = triggerIndex !== null
     const audioFiles = await window.electronAPI.listAudioFiles()
+
+    // Detect if this is a non-root member of an SLF chain (Finish/outro or chain target → no manual TC)
+    let isNonRootSlfMember = false
+    if (isEdit && triggerIndex !== null) {
+        const isFinish = loopSourcesOf(triggerIndex).length > 0
+        let isChainTarget = false
+        for (let i = 1; i < triggerYamls.length; i++) {
+            if (i === triggerIndex) continue
+            if (triggerYamls[i]?.chain_end && findTriggerByNote(triggerYamls[i].chain_end) === triggerIndex) {
+                isChainTarget = true; break
+            }
+        }
+        isNonRootSlfMember = isFinish || isChainTarget
+    }
 
     const overlay = document.createElement('div')
     overlay.classList.add('dialog-overlay')
@@ -3512,10 +3618,31 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     box.appendChild(lightWrap)
 
     // ── Start-Timecode ───────────────────────────────────────────────
-    const { wrap: tcWrap, input: tcInput } = mkDialogField('Start-Timecode (HH:MM:SS:FF)', 'text', '')
-    tcInput.placeholder = '00:00:00:00'
-    if ((isEdit || isCopy) && existingYaml?.start_tc) tcInput.value = existingYaml.start_tc
-    box.appendChild(tcWrap)
+    let tcInput = null
+    if (isNonRootSlfMember) {
+        const tcWrap = document.createElement('div')
+        tcWrap.classList.add('dialog-field')
+        const tcLabel = document.createElement('label')
+        tcLabel.textContent = 'Start-Timecode (abgeleitet)'
+        const tcDisplay = document.createElement('div')
+        tcDisplay.classList.add('dialog-tc-derived')
+        const derived = derivedTcFor(triggerIndex)
+        if (derived) {
+            tcDisplay.textContent = '↳ ' + derived
+            tcDisplay.title = 'Timecode wird vom Start-Cue der S/L/F-Gruppe abgeleitet'
+        } else {
+            tcDisplay.textContent = '—'
+            tcDisplay.title = 'Timecode wird abgeleitet (Start-Timecode oder Audiodauer unbekannt)'
+        }
+        tcWrap.append(tcLabel, tcDisplay)
+        box.appendChild(tcWrap)
+    } else {
+        const { wrap, input } = mkDialogField('Start-Timecode (HH:MM:SS:FF)', 'text', '')
+        tcInput = input
+        tcInput.placeholder = '00:00:00:00'
+        if ((isEdit || isCopy) && existingYaml?.start_tc) tcInput.value = existingYaml.start_tc
+        box.appendChild(wrap)
+    }
 
     // ── Gleiche trigger_note ─────────────────────────────────────────
     let sameTnCheckbox = null
@@ -3607,8 +3734,8 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         const lightVal = lightInput.value.trim()
         if (lightVal) newYaml.light = lightVal
 
-        // start_tc
-        const tcVal = tcInput.value.trim()
+        // start_tc (only for root SLF cues; non-root members use derived TC)
+        const tcVal = tcInput?.value.trim() ?? ''
         if (tcVal) newYaml.start_tc = tcVal
 
         // trigger_note: preserve when editing non-sibling; handle checkbox for siblings/copies
