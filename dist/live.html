@@ -97,6 +97,11 @@
         .trigger .trigger-mic,
         .trigger .trigger-music,
         .trigger .trigger-light { font-size: 1.05rem; margin-top: 0.3rem; }
+        .trigger-slf { font-size: 0.85rem; font-weight: bold; margin-top: 0.3rem; }
+        .trigger-slf--start  { color: #98c379; }
+        .trigger-slf--loop   { color: #61afef; }
+        .trigger-slf--finish { color: #e5c07b; }
+        .trigger-slf--bridge { color: #c678dd; }
         .trigger .trigger-note {
             font-size: 1.3rem;
             max-width: 45%;
@@ -363,6 +368,8 @@
             }
             const lightRow = b.lightScene
                 ? `<div class="trigger-light">✦ ${esc(b.lightScene)}</div>` : ''
+            const slfRow = b.slfLabel
+                ? `<div class="trigger-slf trigger-slf--${b.slfLabel.role.toLowerCase()}">${esc(b.slfLabel.role)} <span style="opacity:0.65;font-weight:normal">${esc(b.slfLabel.detail)}</span></div>` : ''
             const playDot = b.isPlaying
                 ? `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#98c379;box-shadow:0 0 8px #98c37988;animation:pulse 1.2s ease-in-out infinite"></span>` : ''
             const tnLabel = b.triggerNoteLabel
@@ -376,7 +383,7 @@
             return `
                 <div class="trigger-row">
                     <div class="trigger-info">
-                        ${micRow}${musicRow}${lightRow}
+                        ${micRow}${musicRow}${lightRow}${slfRow}
                     </div>
                     ${b.note ? `<div class="trigger-note">${esc(b.note)}</div>` : ''}
                     <div style="display:flex;align-items:center;gap:0.5rem;padding-right:0.5rem">${tnLabel}${playDot}</div>

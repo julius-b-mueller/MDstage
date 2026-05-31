@@ -49,4 +49,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onLiveWindowState: (callback) => {
         ipcRenderer.on('live-window-state', (_, isOpen) => callback(isOpen))
     },
+    exportPdf: (data) => ipcRenderer.invoke('export-pdf', data),
+    exportDocx: (data) => ipcRenderer.invoke('export-docx', data),
 })

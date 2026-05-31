@@ -5,6 +5,10 @@ const path = require('path')
 const fs = require('fs')
 const os = require('os')
 const yaml = require('js-yaml')
+const {
+    Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
+    PageBreak, TableOfContents, BorderStyle, TabStopType, convertMillimetersToTwip,
+} = require('docx')
 
 function escapeRegex(s) {
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -240,6 +244,12 @@ function buildMenu() {
                     click: createLiveWindow,
                 },
                 { type: 'separator' },
+                {
+                    label: 'Exportieren…',
+                    accelerator: 'Cmd+E',
+                    click: () => { if (mainWindow) mainWindow.webContents.executeJavaScript('window.__runExport && window.__runExport()').catch(() => {}) },
+                },
+                { type: 'separator' },
                 { role: 'hide' },
                 { role: 'hideOthers' },
                 { type: 'separator' },
@@ -259,6 +269,13 @@ function buildMenu() {
                     click: openFile,
                 },
             ],
+        }, {
+            label: 'Exportieren',
+            submenu: [{
+                label: 'Exportieren…',
+                accelerator: 'Ctrl+E',
+                click: () => { if (mainWindow) mainWindow.webContents.executeJavaScript('window.__runExport && window.__runExport()').catch(() => {}) },
+            }],
         }, {
             label: 'Einstellungen',
             submenu: [{
@@ -303,6 +320,216 @@ function buildMenu() {
         },
     ]
     return Menu.buildFromTemplate(template)
+}
+
+// ── Export helpers ────────────────────────────────────────────────────────────
+
+async function exportToPdf(win, html, title) {
+    const result = await dialog.showSaveDialog(win, {
+        title: 'PDF speichern',
+        defaultPath: title.replace(/[/\\:*?"<>|]/g, '_') + '.pdf',
+        filters: [{ name: 'PDF', extensions: ['pdf'] }],
+    })
+    if (result.canceled || !result.filePath) return
+
+    const tempPath = path.join(app.getPath('temp'), 'evb-export-' + Date.now() + '.html')
+    fs.writeFileSync(tempPath, html, 'utf8')
+
+    const pdfWin = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: false, contextIsolation: true } })
+    await pdfWin.loadFile(tempPath)
+    const pdfBuffer = await pdfWin.webContents.printToPDF({
+        pageSize: 'A4',
+        printBackground: true,
+        preferCSSPageSize: true,
+        margins: { top: 0, bottom: 0, left: 0, right: 0 },
+    })
+    pdfWin.destroy()
+    fs.unlinkSync(tempPath)
+    fs.writeFileSync(result.filePath, pdfBuffer)
+}
+
+function hexColor(hex) {
+    return (hex || '').replace('#', '') || '000000'
+}
+
+function buildDocx(data) {
+    const { title, date, items, roleColors } = data
+    const children = []
+
+    // Title page
+    children.push(
+        new Paragraph({
+            children: [new TextRun({ text: title, bold: true, size: 52, font: 'Times New Roman' })],
+            alignment: AlignmentType.CENTER,
+            spacing: { before: convertMillimetersToTwip(60), after: convertMillimetersToTwip(8) },
+        }),
+        new Paragraph({
+            children: [new TextRun({ text: `Regiebuch — ${date}`, size: 24, color: '444444', font: 'Times New Roman' })],
+            alignment: AlignmentType.CENTER,
+            spacing: { after: convertMillimetersToTwip(4) },
+        }),
+        new Paragraph({ children: [new PageBreak()] }),
+    )
+
+    // Table of contents
+    children.push(
+        new TableOfContents('Inhaltsverzeichnis', {
+            hyperlink: true,
+            headingStyleRange: '2-3',
+        }),
+        new Paragraph({ children: [new PageBreak()] }),
+    )
+
+    // Content
+
+    for (const item of items) {
+        if (item.type === 'heading') {
+            const level = item.level === 1 ? HeadingLevel.HEADING_1 : item.level === 2 ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_3
+            children.push(new Paragraph({ text: item.text, heading: level }))
+        } else if (item.type === 'stage') {
+            children.push(new Paragraph({
+                children: [new TextRun({ text: item.text, italics: true, color: '666666', font: 'Times New Roman', size: 20 })],
+                indent: { left: convertMillimetersToTwip(10) },
+                spacing: { before: 60, after: 60 },
+            }))
+        } else if (item.type === 'role') {
+            const runs = []
+            item.names.forEach((name, i) => {
+                if (i > 0) runs.push(new TextRun({ text: '  ', font: 'Times New Roman', size: 22 }))
+                runs.push(new TextRun({ text: name, bold: true, color: hexColor(roleColors[name]), font: 'Times New Roman', size: 22 }))
+            })
+            if (item.dialogue) {
+                runs.push(new TextRun({ text: '    ', font: 'Times New Roman', size: 22 }))
+                // Split by line breaks to handle song lyrics etc.
+                const lines = item.dialogue.split('\n')
+                lines.forEach((line, i) => {
+                    if (i > 0) runs.push(new TextRun({ text: '', break: 1 }))
+                    // Render inline stage directions *(text)* as italic
+                    const parts = line.split(/(\*\([^)]*\)\*)/g)
+                    for (const part of parts) {
+                        const sm = part.match(/^\*\(([^)]*)\)\*$/)
+                        if (sm) {
+                            runs.push(new TextRun({ text: `(${sm[1]})`, italics: true, color: '666666', font: 'Times New Roman', size: 22 }))
+                        } else if (part) {
+                            runs.push(new TextRun({ text: part, font: 'Times New Roman', size: 22 }))
+                        }
+                    }
+                })
+            }
+            children.push(new Paragraph({ children: runs, spacing: { before: 40, after: 40 } }))
+        } else if (item.type === 'cue') {
+            // Collect info rows first so we know total count for border logic
+            const cueInfoRows = []
+            if (item.mic) {
+                const micStr = (item.micRoles || [item.mic]).join(', ')
+                cueInfoRows.push({ label: 'Mic', value: micStr })
+            }
+            if (item.music) {
+                const m = item.music
+                let ms = m.file || ''
+                const det = []
+                if (m.volume  !== undefined) det.push(`Vol ${Math.round(m.volume * 100)}%`)
+                if (m.start   !== undefined) det.push(`Start ${m.start}s`)
+                if (m.end     !== undefined) det.push(`Ende ${m.end}s`)
+                if (m.fadein)               det.push(`Fade-in ${m.fadein}s`)
+                if (m.fadeout)              det.push(`Fade-out ${m.fadeout}s`)
+                if (m.loop)                 det.push('Loop')
+                if (det.length) ms += ` (${det.join(', ')})`
+                if (m.adjust) {
+                    const ref = m.adjust.trigger ? `Cue ${m.adjust.trigger}` : '?'
+                    if (m.adjust.fadeout)                   ms += ` → ${ref} ausfaden`
+                    else if (m.adjust.volume !== undefined) ms += ` → ${ref} auf ${Math.round(m.adjust.volume * 100)}%`
+                }
+                cueInfoRows.push({ label: '♬', value: ms })
+            }
+            if (item.light)      cueInfoRows.push({ label: 'Licht',  value: item.light })
+            if (item.qlcplus)    cueInfoRows.push({ label: 'QLC+',   value: item.qlcplus })
+            if (item.projection) cueInfoRows.push({ label: 'Proj.',  value: item.projection })
+            if (item.note)       cueInfoRows.push({ label: 'Notiz',  value: item.note })
+            if (item.start_tc)   cueInfoRows.push({ label: 'TC',     value: item.start_tc })
+            if (item.auto_trigger) {
+                const at = item.auto_trigger
+                const ref = at.trigger ? `Cue ${at.trigger}` : '?'
+                cueInfoRows.push({ label: 'Auto', value: `bei ${at.at}s in ${ref}` })
+            }
+
+            const bSide  = { style: BorderStyle.SINGLE, size: 4, color: '888888' }
+            const bNone  = { style: BorderStyle.NONE,   size: 0, color: 'ffffff' }
+            const indent = { left: convertMillimetersToTwip(3) }
+
+            const leftParts = []
+            if (item.sibling)  leftParts.push('[Variante]')
+            if (item.slf)      leftParts.push(`${item.slf.role} ${item.slf.detail}`)
+            const hdrLeft  = leftParts.join('  ')
+            const hdrRight = item.trigger || ''
+            children.push(new Paragraph({
+                children: [
+                    new TextRun({ text: hdrLeft || ' ' }),
+                    new TextRun({ text: '\t' }),
+                    new TextRun({ text: hdrRight, color: '666666' }),
+                ],
+                tabStops: [{ type: TabStopType.RIGHT, position: convertMillimetersToTwip(154) }],
+                border: {
+                    top: bSide, left: bSide, right: bSide,
+                    bottom: cueInfoRows.length === 0 ? bSide : bNone,
+                },
+                indent,
+                spacing: { before: 100, after: 0 },
+            }))
+            cueInfoRows.forEach((row, i) => {
+                const isLast = i === cueInfoRows.length - 1
+                children.push(new Paragraph({
+                    children: [
+                        new TextRun({ text: `${row.label}: `, bold: true, color: '666666' }),
+                        new TextRun({ text: row.value }),
+                    ],
+                    border: {
+                        top: bNone, left: bSide, right: bSide,
+                        bottom: isLast ? bSide : bNone,
+                    },
+                    indent,
+                    spacing: { before: 0, after: isLast ? 100 : 0 },
+                }))
+            })
+        } else if (item.type === 'text') {
+            children.push(new Paragraph({
+                children: [new TextRun({ text: item.text, font: 'Times New Roman', size: 22 })],
+                spacing: { before: 60, after: 60 },
+            }))
+        }
+    }
+
+    return new Document({
+        creator: 'Main Desk',
+        title: title,
+        features: { updateFields: true },
+        sections: [{
+            properties: {
+                page: {
+                    size: { width: convertMillimetersToTwip(210), height: convertMillimetersToTwip(297) },
+                    margin: {
+                        top: convertMillimetersToTwip(25),
+                        bottom: convertMillimetersToTwip(25),
+                        left: convertMillimetersToTwip(25),
+                        right: convertMillimetersToTwip(25),
+                    },
+                },
+            },
+            children,
+        }],
+    })
+}
+
+async function exportToDocx(win, data) {
+    const result = await dialog.showSaveDialog(win, {
+        title: 'DOCX speichern',
+        defaultPath: data.title.replace(/[/\\:*?"<>|]/g, '_') + '.docx',
+        filters: [{ name: 'Word-Dokument', extensions: ['docx'] }],
+    })
+    if (result.canceled || !result.filePath) return
+    const doc = buildDocx(data)
+    const buffer = await Packer.toBuffer(doc)
+    fs.writeFileSync(result.filePath, buffer)
 }
 
 app.whenReady().then(() => {
@@ -379,6 +606,9 @@ app.whenReady().then(() => {
     })
 
     ipcMain.handle('new-file', () => createNewFile())
+
+    ipcMain.handle('export-pdf', (event, { html, title }) => exportToPdf(BrowserWindow.fromWebContents(event.sender), html, title))
+    ipcMain.handle('export-docx', (event, data) => exportToDocx(BrowserWindow.fromWebContents(event.sender), data))
 
     ipcMain.handle('show-editor-context-menu', (event, line) => {
         const settings = loadSettings()

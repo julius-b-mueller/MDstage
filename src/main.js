@@ -4395,6 +4395,24 @@ function broadcastLiveState() {
                 }
             }
 
+            const hasCE   = !!ty.chain_end
+            const hasLO   = !!ty.loop_outro
+            const slfSrcs = loopSourcesOf(cueIdx)
+            const isOutro = slfSrcs.length > 0
+            let slfLabel  = null
+            if (hasCE && isOutro) {
+                const ce   = `${ty.chain_end.ch}.${ty.chain_end.note}`
+                const from = slfSrcs.map(i => { const tn = triggerYamls[i]?.trigger_note; return tn ? `${tn.ch}.${tn.note}` : '?' }).join(', ')
+                slfLabel = { role: 'Bridge', detail: `← ${from} → ${ce}` }
+            } else if (hasCE) {
+                slfLabel = { role: 'Start',  detail: `→ ${ty.chain_end.ch}.${ty.chain_end.note}` }
+            } else if (hasLO) {
+                slfLabel = { role: 'Loop',   detail: `↩ ${ty.loop_outro.ch}.${ty.loop_outro.note}` }
+            } else if (isOutro) {
+                const from = slfSrcs.map(i => { const tn = triggerYamls[i]?.trigger_note; return tn ? `${tn.ch}.${tn.note}` : '?' }).join(', ')
+                slfLabel = { role: 'Finish', detail: `← ${from}` }
+            }
+
             liveBlocks.push({
                 type: 'trigger',
                 cueIdx,
@@ -4410,6 +4428,7 @@ function broadcastLiveState() {
                 triggerNoteLabel,
                 outroPending,
                 autoCuePending,
+                slfLabel,
             })
         } else {
             liveBlocks.push({
@@ -5000,6 +5019,333 @@ async function initApp() {
     }
 }
 
+// ── Export ───────────────────────────────────────────────────────────────────
+
+function _slfRolesForExport(allYamls) {
+    const noteKey = tn => tn ? `${tn.ch}.${tn.note}` : null
+    const noteToIdx = new Map()
+    allYamls.forEach((y, i) => { if (y.trigger_note) noteToIdx.set(noteKey(y.trigger_note), i) })
+
+    // collect which cues are loop_outro targets
+    const outroSources = new Map()  // finishIdx → [loopIdx, ...]
+    for (let i = 0; i < allYamls.length; i++) {
+        const lo = allYamls[i].loop_outro
+        if (!lo) continue
+        const loIdx = noteToIdx.get(noteKey(lo))
+        if (loIdx === undefined) continue
+        if (!outroSources.has(loIdx)) outroSources.set(loIdx, [])
+        outroSources.get(loIdx).push(i)
+    }
+
+    return allYamls.map((y, i) => {
+        const hasCE   = !!y.chain_end
+        const hasLO   = !!y.loop_outro
+        const sources = outroSources.get(i) || []
+        const isOutro = sources.length > 0
+        if (!hasCE && !hasLO && !isOutro) return null
+        const fromStr = sources.map(j => {
+            const tn = allYamls[j]?.trigger_note; return tn ? noteKey(tn) : '?'
+        }).join(', ')
+        if (hasCE && isOutro) return { role: 'Bridge', detail: `← ${fromStr} → ${noteKey(y.chain_end)}` }
+        if (hasCE)            return { role: 'Start',  detail: `→ ${noteKey(y.chain_end)}` }
+        if (hasLO)            return { role: 'Loop',   detail: `↩ ${noteKey(y.loop_outro)}` }
+        return                       { role: 'Finish', detail: `← ${fromStr}` }
+    })
+}
+
+function buildExportData(withCues, withColors) {
+    const titleMatch = scriptText.match(/^# (.+)/m)
+    const title = titleMatch ? titleMatch[1].trim() : 'Skript'
+    const date = new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })
+
+    const roleColors = {}
+    if (withColors) {
+        for (const [name, role] of Object.entries(config.roles || {})) {
+            roleColors[name] = ROLE_COLORS[role.color] || '#888888'
+        }
+    }
+
+    // Two-pass: first collect all cue YAMLs to compute SLF roles
+    const allCueYamls = []
+    for (const block of tokenizeScript(scriptText)) {
+        if (block.type !== 'yaml') continue
+        let p; try { p = yaml.load(block.content.slice(7, -3).trim()) } catch { continue }
+        if (p?.config !== undefined) continue
+        allCueYamls.push(p)
+    }
+    const slfMap = _slfRolesForExport(allCueYamls)
+
+    const items = []
+    let cueNumber = 0
+    for (const block of tokenizeScript(scriptText)) {
+        if (block.type === 'yaml') {
+            let parsed
+            try { parsed = yaml.load(block.content.slice(7, -3).trim()) } catch { continue }
+            if (parsed?.config !== undefined) continue
+            cueNumber++
+            if (!withCues) continue
+            const cue = { type: 'cue', number: cueNumber }
+            const slf = slfMap[cueNumber - 1]
+            if (slf) cue.slf = slf
+            if (parsed.sibling)    cue.sibling = true
+            if (parsed.trigger_note) {
+                const tn = parsed.trigger_note
+                cue.trigger = `${tn.ch}.${tn.note}`
+            }
+            if (parsed.note)    cue.note = String(parsed.note)
+            if (parsed.mic) {
+                const roles = Array.isArray(parsed.mic) ? parsed.mic : [parsed.mic]
+                cue.micRoles = roles  // keep array for coloring
+                cue.mic = roles.join(', ')
+            }
+            if (parsed.music) {
+                const m = typeof parsed.music === 'string' ? { file: parsed.music } : (parsed.music || {})
+                cue.music = {}
+                if (m.file)                      cue.music.file    = m.file
+                if (m.volume   !== undefined)    cue.music.volume  = m.volume
+                if (m.start    !== undefined)    cue.music.start   = m.start
+                if (m.end      !== undefined)    cue.music.end     = m.end
+                if (m.fadein)                    cue.music.fadein  = m.fadein
+                if (m.fadeout)                   cue.music.fadeout = m.fadeout
+                if (m.loop)                      cue.music.loop    = true
+                if (m.adjust) {
+                    const adjTn = m.adjust.trigger_note
+                    cue.music.adjust = {
+                        trigger:  adjTn ? `${adjTn.ch}.${adjTn.note}` : null,
+                        fadeout:  !!m.adjust.fadeout,
+                        volume:   m.adjust.volume,
+                    }
+                }
+            }
+            if (parsed.light)      cue.light      = String(parsed.light)
+            if (parsed.qlcplus)    cue.qlcplus    = String(parsed.qlcplus)
+            if (parsed.projection) cue.projection = String(parsed.projection)
+            if (parsed.start_tc)   cue.start_tc   = String(parsed.start_tc)
+            if (parsed.auto_trigger) {
+                const at = parsed.auto_trigger
+                const atTn = at.trigger_note
+                cue.auto_trigger = {
+                    trigger: atTn ? `${atTn.ch}.${atTn.note}` : null,
+                    at:      at.at,
+                }
+            }
+            items.push(cue)
+        } else {
+            const c = block.content
+            const hm = c.match(/^(#{1,3}) (.+)$/)
+            if (hm) { items.push({ type: 'heading', level: hm[1].length, text: hm[2].trim() }); continue }
+            if (/^\*[^*]/.test(c) && /\*\^?$/.test(c)) {
+                items.push({ type: 'stage', text: c.replace(/^\*/, '').replace(/\*\^?$/, '').trim() })
+                continue
+            }
+            const rm = c.match(/^(\*\*[^*]+\*\*(?:\s+\*\*[^*]+\*\*)*)(?:\n([\s\S]*))?$/)
+            if (rm) {
+                const names = [...rm[1].matchAll(/\*\*([^*]+)\*\*/g)].map(m => m[1].trim())
+                const dialogue = (rm[2] || '').replace(/<br>/gi, '\n').trim()
+                items.push({ type: 'role', names, dialogue })
+                continue
+            }
+            items.push({ type: 'text', text: c })
+        }
+    }
+    return { title, date, items, roleColors }
+}
+
+function _esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+function _dlgHtml(text) {
+    return _esc(text).replace(/\n/g, '<br>').replace(/\*\(([^)]*)\)\*/g, '<em class="si">($1)</em>')
+}
+
+function generateExportHtml(data) {
+    const { title, date, items, roleColors } = data
+
+    // Assign stable IDs to every H2/H3 heading so TOC links can target them
+    const headingIds = new Map()
+    let hIdx = 0
+    for (const item of items) {
+        if (item.type === 'heading' && item.level >= 2) headingIds.set(item, `s${hIdx++}`)
+    }
+
+    const tocEntries = items.filter(it => it.type === 'heading' && it.level >= 2)
+    const tocHtml = tocEntries.length ? `<div class="toc-page">
+<div class="toc-title">Inhaltsverzeichnis</div>
+<div class="toc-list">${tocEntries.map(e => {
+    const id = headingIds.get(e)
+    return `<div class="toc-entry${e.level === 3 ? ' toc-sub' : ''}"><a class="toc-link" href="#${id}">${_esc(e.text)}</a></div>`
+}).join('\n')}</div></div>` : ''
+
+    const contentLines = []
+    for (const item of items) {
+        if (item.type === 'heading') {
+            const tag = `h${item.level}`
+            const id = headingIds.get(item)
+            contentLines.push(`<${tag}${id ? ` id="${id}"` : ''}>${_esc(item.text)}</${tag}>`)
+        } else if (item.type === 'stage') {
+            contentLines.push(`<p class="stage">${_esc(item.text)}</p>`)
+        } else if (item.type === 'role') {
+            const nameHtml = item.names.map(n => {
+                const col = roleColors[n]
+                return `<span class="rn"${col ? ` style="color:${col}"` : ''}>${_esc(n)}</span>`
+            }).join(' ')
+            const dlgPart = item.dialogue ? `<span class="dlg">${_dlgHtml(item.dialogue)}</span>` : ''
+            contentLines.push(`<p class="role"><span class="rnames">${nameHtml}</span>${dlgPart}</p>`)
+        } else if (item.type === 'cue') {
+            const rows = []
+            if (item.mic) {
+                const micHtml = (item.micRoles || [item.mic]).map(n => _esc(n)).join(', ')
+                rows.push(`<tr><td class="cfl">Mic</td><td class="cfv">${micHtml}</td></tr>`)
+            }
+            if (item.music) {
+                const m = item.music
+                let ms = m.file ? _esc(m.file) : ''
+                const det = []
+                if (m.volume  !== undefined) det.push(`Vol ${Math.round(m.volume * 100)}%`)
+                if (m.start   !== undefined) det.push(`Start ${m.start}s`)
+                if (m.end     !== undefined) det.push(`Ende ${m.end}s`)
+                if (m.fadein)               det.push(`Fade-in ${m.fadein}s`)
+                if (m.fadeout)              det.push(`Fade-out ${m.fadeout}s`)
+                if (m.loop)                 det.push('Loop')
+                if (det.length) ms += ` <span class="cfd">(${det.join(', ')})</span>`
+                if (m.adjust) {
+                    const ref = m.adjust.trigger ? `Cue ${_esc(m.adjust.trigger)}` : '?'
+                    if (m.adjust.fadeout)                   ms += ` → ${ref} ausfaden`
+                    else if (m.adjust.volume !== undefined) ms += ` → ${ref} auf ${Math.round(m.adjust.volume * 100)}%`
+                }
+                rows.push(`<tr><td class="cfl">♬</td><td class="cfv">${ms}</td></tr>`)
+            }
+            if (item.light)      rows.push(`<tr><td class="cfl">Licht</td><td class="cfv">${_esc(item.light)}</td></tr>`)
+            if (item.qlcplus)    rows.push(`<tr><td class="cfl">QLC+</td><td class="cfv">${_esc(item.qlcplus)}</td></tr>`)
+            if (item.projection) rows.push(`<tr><td class="cfl">Proj.</td><td class="cfv">${_esc(item.projection)}</td></tr>`)
+            if (item.note)       rows.push(`<tr><td class="cfl">Notiz</td><td class="cfv">${_esc(item.note)}</td></tr>`)
+            if (item.start_tc)   rows.push(`<tr><td class="cfl">TC</td><td class="cfv">${_esc(item.start_tc)}</td></tr>`)
+            if (item.auto_trigger) {
+                const at = item.auto_trigger
+                const ref = at.trigger ? `Cue ${_esc(at.trigger)}` : '?'
+                rows.push(`<tr><td class="cfl">Auto</td><td class="cfv">bei ${at.at}s in ${ref}</td></tr>`)
+            }
+            const variant = item.sibling ? '<span class="cue-variant">Variante</span> ' : ''
+            const trigStr = item.trigger ? `<span class="cue-trig">${_esc(item.trigger)}</span>` : ''
+            const slfStr  = item.slf ? `<span class="cue-slf">${_esc(item.slf.role)} ${_esc(item.slf.detail)}</span>` : ''
+            const hdr = `<div class="cue-head"><span>${variant}${slfStr}</span>${trigStr}</div>`
+            contentLines.push(`<div class="cue">${hdr}${rows.length ? `<table class="cue-tbl">${rows.join('')}</table>` : ''}</div>`)
+        } else if (item.type === 'text') {
+            contentLines.push(`<p class="narr">${_esc(item.text).replace(/\n/g, '<br>')}</p>`)
+        }
+    }
+
+    const css = `
+*{box-sizing:border-box;margin:0;padding:0}
+@page{margin:2.5cm;size:A4}
+body{font-family:'Times New Roman',Times,serif;font-size:11pt;line-height:1.55;color:#000;background:#fff}
+.title-page{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:90vh;text-align:center;page-break-after:always}
+.title-page h1{font-size:2.4rem;margin-bottom:.6rem;border:none;page-break-after:auto;font-weight:bold}
+.title-meta{font-size:1rem;color:#444;margin-top:.4rem}
+.toc-page{page-break-after:always;padding-top:1rem}
+.toc-title{font-size:1.3rem;font-weight:bold;border-bottom:2px solid #333;padding-bottom:.4rem;margin-bottom:1rem}
+.toc-entry{padding:.2rem 0;font-size:1rem}
+.toc-sub{padding-left:1.5rem;font-size:.9rem;color:#333}
+.toc-link{color:inherit;text-decoration:none}
+h1{font-size:1.6rem;font-weight:bold;margin-top:2rem;margin-bottom:.6rem;border-bottom:2px solid #333;page-break-after:avoid}
+h2{font-size:1.3rem;font-weight:bold;margin-top:1.8rem;margin-bottom:.5rem;border-bottom:1px solid #aaa;page-break-after:avoid}
+h3{font-size:1.1rem;font-weight:bold;font-style:italic;margin-top:1.2rem;margin-bottom:.3rem;page-break-after:avoid}
+.stage{font-style:italic;color:#555;margin:.35rem 0;padding-left:1rem;font-size:.95rem}
+.role{margin:.25rem 0 .15rem}
+.rnames{font-weight:bold;margin-right:.4rem}
+.rn{display:inline}
+.dlg{display:inline}
+.dlg .si{font-style:italic;color:#555}
+.cue{font-size:.82rem;border:0.5pt solid #888;padding:.25rem .4rem;margin:.35rem 0;page-break-inside:avoid}
+.cue-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:.1rem}
+.cue-trig{color:#777;font-size:.85em}
+.cue-variant{font-style:italic;font-size:.85em;margin-right:.3rem}
+.cue-slf{font-size:.82em;color:#555;margin-right:.2rem}
+.cue-tbl{border-collapse:collapse;width:100%}
+.cfl{white-space:nowrap;padding-right:.5rem;color:#555;vertical-align:top}
+.cfv{vertical-align:top}
+.cfd{color:#555}
+.narr{margin:.3rem 0;color:#222}`
+
+    return `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><style>${css}</style></head><body>
+<div class="title-page"><h1>${_esc(title)}</h1><div class="title-meta">Regiebuch &mdash; ${_esc(date)}</div></div>
+${tocHtml}
+${contentLines.join('\n')}
+</body></html>`
+}
+
+function showExportDialog() {
+    return new Promise(resolve => {
+        const overlay = document.createElement('div')
+        overlay.className = 'dialog-overlay'
+        overlay.style.zIndex = '9999'
+        overlay.addEventListener('mousedown', e => e.stopPropagation())
+
+        const box = document.createElement('div')
+        box.className = 'dialog-box'
+
+        const h3 = document.createElement('h3')
+        h3.textContent = 'Skript exportieren'
+
+        const chkStyle = 'display:flex;align-items:center;gap:.6rem;color:#abb2bf;font-size:.9rem;margin-bottom:.8rem;cursor:pointer'
+
+        const labelCues = document.createElement('label')
+        labelCues.style.cssText = chkStyle
+        const chkCues = document.createElement('input')
+        chkCues.type = 'checkbox'
+        chkCues.checked = false
+        chkCues.style.cssText = 'width:15px;height:15px;cursor:pointer'
+        labelCues.append(chkCues, 'Cues einschließen')
+
+        const labelColors = document.createElement('label')
+        labelColors.style.cssText = chkStyle + ';margin-bottom:1.5rem'
+        const chkColors = document.createElement('input')
+        chkColors.type = 'checkbox'
+        chkColors.checked = true
+        chkColors.style.cssText = 'width:15px;height:15px;cursor:pointer'
+        labelColors.append(chkColors, 'Rollenfarben verwenden')
+
+        const actions = document.createElement('div')
+        actions.className = 'dialog-actions'
+
+        const close = val => { overlay.remove(); resolve(val) }
+
+        const cancelBtn = document.createElement('button')
+        cancelBtn.className = 'dialog-btn'
+        cancelBtn.textContent = 'Abbrechen'
+        cancelBtn.addEventListener('click', () => close(null))
+
+        const pdfBtn = document.createElement('button')
+        pdfBtn.className = 'dialog-btn dialog-btn-primary'
+        pdfBtn.textContent = 'Als PDF'
+        pdfBtn.addEventListener('click', () => close({ format: 'pdf', withCues: chkCues.checked, withColors: chkColors.checked }))
+
+        const docxBtn = document.createElement('button')
+        docxBtn.className = 'dialog-btn dialog-btn-primary'
+        docxBtn.textContent = 'Als DOCX'
+        docxBtn.addEventListener('click', () => close({ format: 'docx', withCues: chkCues.checked, withColors: chkColors.checked }))
+
+        actions.append(cancelBtn, pdfBtn, docxBtn)
+        box.append(h3, labelCues, labelColors, actions)
+        overlay.append(box)
+        document.body.appendChild(overlay)
+        cancelBtn.focus()
+    })
+}
+
+async function runExport() {
+    const choice = await showExportDialog()
+    if (!choice) return
+    const data = buildExportData(choice.withCues, choice.withColors)
+    if (choice.format === 'pdf') {
+        await window.electronAPI.exportPdf({ html: generateExportHtml(data), title: data.title })
+    } else {
+        await window.electronAPI.exportDocx(data)
+    }
+}
+
 // Registered at module level (before async initApp) so the listener is always ready.
 window.addEventListener('__live-go__', () => {
     console.log('[main-win] live-go received, triggerYamls.length:', triggerYamls.length, 'currentCue:', currentCue)
@@ -5010,6 +5356,7 @@ window.__liveGo = goAction
 window.__liveBack = backAction
 window.__selectVariant = (idx) => { selectedVariant = idx; broadcastLiveState() }
 window.__stopAudio = (cueIdx) => { const ta = triggerAudio.get(cueIdx); if (ta) fadeAdjustAudio(ta, 0.5) }
+window.__runExport = runExport
 
 window.electronAPI.onLiveWindowState((isOpen) => {
     liveViewOpen = isOpen
