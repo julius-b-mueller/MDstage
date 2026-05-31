@@ -2667,7 +2667,10 @@ function buildTrigger(codeblockYaml, index) {
         function fireLoopRestart(effEnd) {
             if (!ws.isPlaying()) return
             const loopDur = effEnd - mp.start
-            if (mtc && mtc.activeTcIndex === index) mtc.onLoopRestart(loopDur, mp.start)
+            if (mtc && mtc.activeTcIndex === index) {
+                mtc.onLoopRestart(loopDur, mp.start)
+                broadcastLiveState()  // immediately sync live TC after loop-back
+            }
             preSeekArmed = false
 
             // Group triggers always return here — src.loop=true handles audio looping internally.
@@ -4442,6 +4445,7 @@ function fadeAdjustAudio(ta, fadeTime) {
             clearInterval(id)
             activeFades.delete(ta.ws)
             ta.ws.stop()
+            if (mtc && mtc.wsRef === ta.ws) mtc.stopAndClear()
             ta.enableLoop()
             ta.setCurrentVolume(startVol)
         }
