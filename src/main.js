@@ -122,14 +122,14 @@ function buildSidebar() {
     const list = document.getElementById('scene-list')
     if (!list) return
     list.innerHTML = ''
-    const headings = [...document.querySelectorAll('#script-content h2, #script-content h3')]
+    const headings = [...document.querySelectorAll('#script-content h1, #script-content h2, #script-content h3')]
     // Temporarily un-sticky all headings so getBoundingClientRect reflects natural positions
     headings.forEach(h => { h.style.position = 'static' })
     const tops = headings.map(h => h.getBoundingClientRect().top + window.scrollY)
     headings.forEach(h => { h.style.position = '' })
     headings.forEach((h, idx) => {
         const btn = document.createElement('button')
-        const isSub = h.tagName === 'H3'
+        const isSub = h.tagName === 'H2' || h.tagName === 'H3'
         btn.className = 'scene-link' + (isSub ? ' scene-link-sub' : '')
         btn.textContent = h.textContent
         const top = tops[idx]
@@ -146,7 +146,7 @@ function toggleSidebar() {
 
 // Highlight active scene in sidebar based on scroll position
 function updateSidebarActive() {
-    const headings = [...document.querySelectorAll('#script-content h2, #script-content h3')]
+    const headings = [...document.querySelectorAll('#script-content h1, #script-content h2, #script-content h3')]
     const links = [...document.querySelectorAll('#scene-list .scene-link')]
     if (!headings.length) return
     const scrollY = window.scrollY + 80
@@ -4487,7 +4487,10 @@ function initButtons() {
     document.querySelector(".em-music").addEventListener("mousedown", stopall)
     document.querySelector(".em-mic").addEventListener("mousedown", () => x32UnmuteChannels("muteall"))
     document.querySelector(".current-trigger-button").addEventListener("mousedown", () => scrollToTrigger(currentCue))
-    document.querySelector(".reload-button").addEventListener("mousedown", () => location.reload())
+    document.querySelector(".reload-button").addEventListener("mousedown", () => {
+        sessionStorage.setItem('reloadScrollY', String(window.scrollY))
+        location.reload()
+    })
     document.querySelector(".sidebar-toggle-button").addEventListener("mousedown", toggleSidebar)
     document.getElementById('script-content').addEventListener('click', onScriptClick)
     document.addEventListener('mousedown', (e) => {
@@ -4670,6 +4673,12 @@ async function initApp() {
     })
 
     broadcastLiveState()
+
+    const savedScrollY = sessionStorage.getItem('reloadScrollY')
+    if (savedScrollY !== null) {
+        sessionStorage.removeItem('reloadScrollY')
+        requestAnimationFrame(() => window.scrollTo({ top: parseInt(savedScrollY), behavior: 'instant' }))
+    }
 }
 
 // Registered at module level (before async initApp) so the listener is always ready.
