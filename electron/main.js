@@ -14,14 +14,14 @@ function escapeRegex(s) {
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-let scriptMdPath = path.join(__dirname, '../dist/script.md')
+let scriptMdPath = null
 
 function getLastFilePath() {
     try {
         const data = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'last-file.json'), 'utf8'))
         if (data.path && fs.existsSync(data.path)) return data.path
     } catch {}
-    return path.join(__dirname, '../dist/script.md')
+    return null
 }
 
 function saveLastFilePath(p) {
@@ -546,11 +546,24 @@ async function exportToDocx(win, data) {
     fs.writeFileSync(result.filePath, buffer)
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
     if (process.platform === 'darwin') {
         app.dock.setIcon(path.join(__dirname, '../dist/assets/icon.png'))
     }
     scriptMdPath = getLastFilePath()
+    if (!scriptMdPath) {
+        const result = await dialog.showOpenDialog({
+            title: 'Skript öffnen',
+            filters: [{ name: 'Markdown', extensions: ['md'] }],
+            properties: ['openFile'],
+        })
+        if (result.canceled || !result.filePaths.length) {
+            app.quit()
+            return
+        }
+        scriptMdPath = result.filePaths[0]
+        saveLastFilePath(scriptMdPath)
+    }
 
     ipcMain.handle('get-settings', () => loadSettings())
 

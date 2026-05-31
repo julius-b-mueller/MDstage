@@ -4,22 +4,47 @@
   "version": "1.0.0",
   "main": "electron/main.js",
   "scripts": {
-    "build": "webpack",
+    "build": "webpack && electron-builder --publish never",
+    "build:renderer": "webpack",
     "develop": "webpack --watch --progress",
     "start": "node scripts/patch-electron-macos.js && electron .",
     "postinstall": "node scripts/patch-electron-macos.js"
   },
   "dependencies": {
     "docx": "^9.7.1",
-    "dompurify": "^3.4.7",
-    "js-yaml": "^4.1.0",
-    "showdown": "^2.1.0",
-    "wavesurfer.js": "^7.12.7",
-    "webmidi": "^3.0.21"
+    "js-yaml": "^4.1.0"
   },
   "devDependencies": {
+    "dompurify": "^3.4.7",
     "electron": "^36.0.0",
+    "electron-builder": "^26.8.1",
+    "showdown": "^2.1.0",
+    "wavesurfer.js": "^7.12.7",
     "webpack": "^5.88.2",
-    "webpack-cli": "^5.1.4"
+    "webpack-cli": "^5.1.4",
+    "webmidi": "^3.0.21"
+  },
+  "build": {
+    "appId": "de.maindesk.app",
+    "productName": "Main Desk",
+    "icon": "dist/assets/icon.png",
+    "asar": true,
+    "npmRebuild": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json",
+      "!**/*.map"
+    ],
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.utilities"
+    },
+    "win": {
+      "target": "nsis"
+    }
   }
 }
