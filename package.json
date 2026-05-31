@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "docx": "^9.7.1",
+    "dompurify": "^3.4.7",
     "js-yaml": "^4.1.0",
     "showdown": "^2.1.0",
     "wavesurfer.js": "^7.12.7",

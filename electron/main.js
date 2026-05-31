@@ -7,7 +7,7 @@ const os = require('os')
 const yaml = require('js-yaml')
 const {
     Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
-    PageBreak, TableOfContents, BorderStyle, TabStopType, convertMillimetersToTwip,
+    PageBreak, BorderStyle, TabStopType, convertMillimetersToTwip,
 } = require('docx')
 
 function escapeRegex(s) {
@@ -342,6 +342,9 @@ async function exportToPdf(win, html, title) {
         printBackground: true,
         preferCSSPageSize: true,
         margins: { top: 0, bottom: 0, left: 0, right: 0 },
+        displayHeaderFooter: true,
+        headerTemplate: '<span></span>',
+        footerTemplate: '<div style="font-size:11px;font-family:serif;width:100%;box-sizing:border-box;padding-right:2.5cm;padding-bottom:2.5cm;text-align:right;color:#555"><span class="pageNumber"></span></div>',
     })
     pdfWin.destroy()
     fs.unlinkSync(tempPath)
@@ -371,12 +374,23 @@ function buildDocx(data) {
         new Paragraph({ children: [new PageBreak()] }),
     )
 
-    // Table of contents
+    // Table of contents — manual list (avoids TOC field numbering artifacts)
     children.push(
-        new TableOfContents('Inhaltsverzeichnis', {
-            hyperlink: true,
-            headingStyleRange: '2-3',
+        new Paragraph({
+            children: [new TextRun({ text: 'Inhaltsverzeichnis', bold: true, size: 28, font: 'Times New Roman' })],
+            spacing: { before: 0, after: convertMillimetersToTwip(6) },
         }),
+        ...items
+            .filter(it => it.type === 'heading' && it.level >= 1)
+            .map(it => new Paragraph({
+                children: [new TextRun({
+                    text: (it.level === 2 ? '    ' : it.level >= 3 ? '        ' : '') + it.text,
+                    font: 'Times New Roman',
+                    bold: it.level === 1,
+                    size: it.level === 1 ? 24 : it.level === 2 ? 22 : 20,
+                })],
+                spacing: { before: it.level === 1 ? 80 : 40, after: 40 },
+            })),
         new Paragraph({ children: [new PageBreak()] }),
     )
 

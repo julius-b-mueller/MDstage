@@ -3,6 +3,7 @@
 const showdown = require('showdown')
 const yaml = require('js-yaml')
 const WaveSurfer = require('wavesurfer.js')
+const createDOMPurify = require('dompurify')
 
 let config = {}
 let usedChs = []
@@ -506,7 +507,7 @@ function wrapSentences(text) {
 }
 
 // Custom confirm dialog — returns a Promise<boolean>.
-function showConfirmDialog({ title, body, confirmLabel = 'Ja', cancelLabel = 'Abbrechen' }) {
+function showConfirmDialog({ title, body, confirmLabel = 'Ja', cancelLabel = 'Abbrechen', img = null }) {
     return new Promise(resolve => {
         const overlay = document.createElement('div')
         overlay.className = 'dialog-overlay'
@@ -538,7 +539,11 @@ function showConfirmDialog({ title, body, confirmLabel = 'Ja', cancelLabel = 'Ab
         confirmBtn.addEventListener('click', () => close(true))
 
         actions.append(cancelBtn, confirmBtn)
-        box.append(h3, bodyEl, actions)
+        const imgEl = img ? Object.assign(document.createElement('img'), {
+            src: img,
+            style: 'width:75%;border-radius:4px;margin:0 auto 0.8rem;display:block',
+        }) : null
+        box.append(...(imgEl ? [imgEl] : []), h3, bodyEl, actions)
         overlay.append(box)
         document.body.appendChild(overlay)
         cancelBtn.focus()
@@ -1364,6 +1369,19 @@ document.addEventListener('contextmenu', (e) => {
 
 const converter = new showdown.Converter
 
+// DOMPurify is initialised here (module level, runs in Electron renderer where window exists).
+// Allowlist covers everything showdown legitimately produces from this app's Markdown format.
+// script/onerror/javascript: and all other XSS vectors are stripped.
+const DOMPurify = createDOMPurify(window)
+const _purifyConfig = {
+    ALLOWED_TAGS: ['h1','h2','h3','h4','h5','h6','p','br','strong','em','b','i','ul','ol','li','blockquote','code','pre','hr'],
+    ALLOWED_ATTR: ['class'],
+    ALLOW_DATA_ATTR: false,
+}
+function makeHtmlSafe(mdText) {
+    return DOMPurify.sanitize(converter.makeHtml(mdText), _purifyConfig)
+}
+
 class MTCTransmitter {
     constructor() {
         this.output = null
@@ -1703,7 +1721,7 @@ function rerender(newText) {
     loopGroups.clear()
 
     validateYamlBlocks(newText)
-    document.getElementById('script-content').innerHTML = converter.makeHtml(newText)
+    document.getElementById('script-content').innerHTML = makeHtmlSafe(newText)
     convertCodeblocks()
     colorText()
     showParseErrors()
@@ -4433,7 +4451,7 @@ function broadcastLiveState() {
         } else {
             liveBlocks.push({
                 type: 'text',
-                html: applyRoleColorsToHtml(converter.makeHtml(b.content)),
+                html: applyRoleColorsToHtml(makeHtmlSafe(b.content)),
             })
         }
     }
@@ -4938,11 +4956,12 @@ async function initApp() {
         const backupName = fileName.replace(/\.md$/, '~unformatted.md')
         const yes = await showConfirmDialog({
             title: 'Skript formatieren?',
-            body:  `<strong>${fileName}</strong> entspricht nicht dem Formatierungsstandard.<br><br>` +
+            body:  `<strong>${escapeHtml(fileName)}</strong> entspricht nicht dem Formatierungsstandard.<br><br>` +
                    `Fehlende Leerzeilen werden ergänzt, lange Zeilen aufgeteilt.<br>` +
-                   `Eine Sicherungskopie wird als <strong>${backupName}</strong> gespeichert.`,
+                   `Eine Sicherungskopie wird als <strong>${escapeHtml(backupName)}</strong> gespeichert.`,
             confirmLabel: 'Formatieren',
             cancelLabel:  'Überspringen',
+            img: 'assets/formatter.png',
         })
         if (yes) {
             await window.electronAPI.backupScriptMd()
@@ -4960,7 +4979,7 @@ async function initApp() {
 
     validateYamlBlocks(text)
     scriptText = text
-    document.getElementById('script-content').innerHTML = converter.makeHtml(text)
+    document.getElementById('script-content').innerHTML = makeHtmlSafe(text)
     convertCodeblocks()
     colorText()
     showParseErrors()
@@ -5162,19 +5181,20 @@ function _dlgHtml(text) {
 function generateExportHtml(data) {
     const { title, date, items, roleColors } = data
 
-    // Assign stable IDs to every H2/H3 heading so TOC links can target them
+    // Assign stable IDs to all headings so TOC links can target them
     const headingIds = new Map()
     let hIdx = 0
     for (const item of items) {
-        if (item.type === 'heading' && item.level >= 2) headingIds.set(item, `s${hIdx++}`)
+        if (item.type === 'heading') headingIds.set(item, `s${hIdx++}`)
     }
 
-    const tocEntries = items.filter(it => it.type === 'heading' && it.level >= 2)
+    const tocEntries = items.filter(it => it.type === 'heading' && it.level >= 1)
     const tocHtml = tocEntries.length ? `<div class="toc-page">
 <div class="toc-title">Inhaltsverzeichnis</div>
 <div class="toc-list">${tocEntries.map(e => {
     const id = headingIds.get(e)
-    return `<div class="toc-entry${e.level === 3 ? ' toc-sub' : ''}"><a class="toc-link" href="#${id}">${_esc(e.text)}</a></div>`
+    const cls = e.level === 2 ? ' toc-sub' : e.level >= 3 ? ' toc-sub2' : ''
+    return `<div class="toc-entry${cls}"><a class="toc-link" href="#${id}">${_esc(e.text)}</a></div>`
 }).join('\n')}</div></div>` : ''
 
     const contentLines = []
@@ -5245,8 +5265,9 @@ body{font-family:'Times New Roman',Times,serif;font-size:11pt;line-height:1.55;c
 .title-meta{font-size:1rem;color:#444;margin-top:.4rem}
 .toc-page{page-break-after:always;padding-top:1rem}
 .toc-title{font-size:1.3rem;font-weight:bold;border-bottom:2px solid #333;padding-bottom:.4rem;margin-bottom:1rem}
-.toc-entry{padding:.2rem 0;font-size:1rem}
-.toc-sub{padding-left:1.5rem;font-size:.9rem;color:#333}
+.toc-entry{padding:.2rem 0;font-size:1rem;font-weight:bold}
+.toc-sub{padding-left:1.2rem;font-size:.95rem;font-weight:normal;color:#222}
+.toc-sub2{padding-left:2.4rem;font-size:.88rem;font-weight:normal;color:#444}
 .toc-link{color:inherit;text-decoration:none}
 h1{font-size:1.6rem;font-weight:bold;margin-top:2rem;margin-bottom:.6rem;border-bottom:2px solid #333;page-break-after:avoid}
 h2{font-size:1.3rem;font-weight:bold;margin-top:1.8rem;margin-bottom:.5rem;border-bottom:1px solid #aaa;page-break-after:avoid}
