@@ -328,6 +328,12 @@ app.whenReady().then(() => {
 
     ipcMain.handle('get-script-path', () => scriptMdPath)
 
+    ipcMain.handle('backup-script-md', () => {
+        const backupPath = scriptMdPath.replace(/\.md$/, '~unformatted.md')
+        fs.copyFileSync(scriptMdPath, backupPath)
+        return path.basename(backupPath)
+    })
+
     ipcMain.handle('list-audio-files', () => {
         const audioDir = path.join(path.dirname(scriptMdPath), 'audio')
         try {
@@ -401,6 +407,17 @@ app.whenReady().then(() => {
     ipcMain.on('live-stop-audio', (_, cueIdx) => {
         if (mainWindow) mainWindow.webContents.executeJavaScript(`window.__stopAudio && window.__stopAudio(${parseInt(cueIdx)})`).catch(() => {})
     })
+
+    if (process.argv.includes('--test-gapless')) {
+        const testWin = new BrowserWindow({
+            width: 720, height: 540,
+            title: 'Gapless Audio Test',
+            webPreferences: { nodeIntegration: true, contextIsolation: false },
+        })
+        testWin.loadFile(path.join(__dirname, '../test-gapless/index.html'))
+        testWin.webContents.openDevTools({ mode: 'bottom' })
+        return
+    }
 
     Menu.setApplicationMenu(buildMenu())
     createMainWindow()

@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     writeScriptMd: (content) => ipcRenderer.invoke('write-script-md', content),
     listAudioFiles: () => ipcRenderer.invoke('list-audio-files'),
     getScriptPath: () => ipcRenderer.invoke('get-script-path'),
+    backupScriptMd: () => ipcRenderer.invoke('backup-script-md'),
     getRoles: () => ipcRenderer.invoke('get-roles'),
     saveRoles: (data) => ipcRenderer.invoke('save-roles', data),
     newFile: () => ipcRenderer.invoke('new-file'),

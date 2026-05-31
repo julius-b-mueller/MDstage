@@ -458,6 +458,91 @@ function wrapSentences(text) {
     return text.replace(/([.!?])[ \t]+(?=[A-ZÄÖÜ"])/g, '$1\n')
 }
 
+// Sentence splitter for the formatter — also handles closing quotes/parens before the space.
+function wrapSentencesFormat(text) {
+    return text.replace(/([.!?][“”"»)]*)\s+(?=[A-ZÄÖÜ„"(])/g, '$1\n')
+}
+
+// Format a script text to canonical style:
+//   • blank line after every heading
+//   • blank line before/after every standalone stage direction (*...*)
+//   • blank line before every role name (**Name**)
+//   • sentence wrapping on dialogue lines
+//   • collapse multiple blank lines to one
+// yaml code fences are passed through unchanged.
+function formatScriptText(text) {
+    const lines = text.replace(/\r\n/g, '\n').split('\n')
+    const out = []
+    let inYaml = false
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]
+        const trimmed = line.trim()
+
+        // Track yaml fences — pass through unchanged
+        if (!inYaml && trimmed === '```yaml') { inYaml = true;  out.push(line); continue }
+        if ( inYaml && trimmed === '```')      { inYaml = false; out.push(line); continue }
+        if (inYaml) { out.push(line); continue }
+
+        const isBlank   = trimmed === ''
+        const isHeading = /^#{1,6} /.test(trimmed)
+        // Stage direction: line wrapped in *…* (optionally ending with ^)
+        const isStage   = /^\*[^*]/.test(trimmed) && /\*\^?$/.test(trimmed)
+        // Role name: **Name** alone on the line
+        const isRole    = /^\*\*[^*]/.test(trimmed) && /\*\*$/.test(trimmed)
+
+        const prevBlankNow = () => out.length === 0 || out[out.length - 1].trim() === ''
+        const nextIsBlank  = () => i + 1 >= lines.length || lines[i + 1].trim() === ''
+
+        if (isHeading) {
+            out.push(line)
+            if (!nextIsBlank()) out.push('')
+            continue
+        }
+
+        if (isStage) {
+            if (!prevBlankNow()) out.push('')
+            out.push(line)
+            if (!nextIsBlank()) out.push('')
+            continue
+        }
+
+        if (isRole) {
+            if (!prevBlankNow()) out.push('')
+            out.push(line)
+            continue
+        }
+
+        if (!isBlank) {
+            // Dialogue / narrative text — wrap at sentence boundaries
+            const wrapped = wrapSentencesFormat(trimmed)
+            for (const sl of wrapped.split('\n')) out.push(sl)
+            continue
+        }
+
+        out.push(line)
+    }
+
+    // Collapse consecutive blank lines to one
+    const result = []
+    let prevWasBlank = false
+    for (const line of out) {
+        const blank = line.trim() === ''
+        if (blank && prevWasBlank) continue
+        result.push(line)
+        prevWasBlank = blank
+    }
+
+    // Strip leading/trailing blank lines, ensure single trailing newline
+    while (result.length > 0 && result[0].trim() === '')             result.shift()
+    while (result.length > 0 && result[result.length - 1].trim() === '') result.pop()
+    return result.join('\n') + '\n'
+}
+
+function needsFormatting(text) {
+    return formatScriptText(text) !== text
+}
+
 // Convert styled contenteditable HTML back to markdown
 function serializeEditorMarkdown(div) {
     function textOf(node) {
@@ -4507,6 +4592,23 @@ async function initApp() {
     if (changed) {
         await window.electronAPI.writeScriptMd(modifiedText)
         text = modifiedText
+    }
+
+    // Ask to format if the script doesn't match canonical style
+    if (needsFormatting(text)) {
+        const scriptPath0 = await window.electronAPI.getScriptPath()
+        const fileName = scriptPath0.split(/[\\/]/).pop()
+        const yes = window.confirm(
+            `„${fileName}" entspricht nicht dem Formatierungsstandard.\n\n` +
+            `Soll die Datei automatisch formatiert werden?\n` +
+            `(Eine Sicherungskopie wird als „${fileName.replace(/\.md$/, '~unformatted.md')}" gespeichert.)`
+        )
+        if (yes) {
+            await window.electronAPI.backupScriptMd()
+            const formatted = formatScriptText(text)
+            await window.electronAPI.writeScriptMd(formatted)
+            text = formatted
+        }
     }
 
     // Show current file name in title bar
