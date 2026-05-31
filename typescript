@@ -1,120 +1,0 @@
-Script started on 2023-10-20 13:28:38+02:00 [TERM="xterm-256color" TTY="/dev/pts/4" COLUMNS="80" LINES="24"]
-[?2004h]0;fohoperator@foh: ~/evb[01;32mfohoperator@foh[00m:[01;34m~/evb[00m$ cd scripts/
-[?2004l[?2004h]0;fohoperator@foh: ~/evb/scripts[01;32mfohoperator@foh[00m:[01;34m~/evb/scripts[00m$ bac[Ksh sta[K[K[K./autostart.sh 
-[?2004lstarting qlcplus
-starting caddy server
-Warning: Ignoring XDG_SESSION_TYPE=wayland on Gnome. Use QT_QPA_PLATFORM=wayland to run on Wayland anyway.
-2023/10/20 11:29:03.800	[34mINFO[0m	admin	admin endpoint started	{"address": "localhost:2019", "enforce_origin": false, "origins": ["//localhost:2019", "//[::1]:2019", "//127.0.0.1:2019"]}
-2023/10/20 11:29:03.801	[34mINFO[0m	serving initial configuration
-Successfully started Caddy (pid=74557) - Caddy is running in the background
-starting evb backend
-starting simple-keystone backend
-starting browser
-[?2004h]0;fohoperator@foh: ~/evb/scripts[01;32mfohoperator@foh[00m:[01;34m~/evb/scripts[00m$ 
-Q Light Controller Plus version 4.12.4
-This program is licensed under the terms of the Apache 2.0 license.
-Copyright (c) Heikki Junnila (hjunnila@users.sf.net)
-Copyright (c) Massimo Callegari (massimocallegari@yahoo.it)
-
-node:fs:453
-    return binding.readFileUtf8(path, stringToFlags(options.flag));
-                   ^
-
-Error: ENOENT: no such file or directory, open '../config.json'
-[90m    at Object.readFileSync (node:fs:453:20)[39m
-    at Object.<anonymous> [90m(/home/fohoperator/simple-keystone/backend/[39mbackend.js:9:30[90m)[39m
-[90m    at Module._compile (node:internal/modules/cjs/loader:1369:14)[39m
-[90m    at Module._extensions..js (node:internal/modules/cjs/loader:1427:10)[39m
-[90m    at Module.load (node:internal/modules/cjs/loader:1201:32)[39m
-[90m    at Module._load (node:internal/modules/cjs/loader:1017:12)[39m
-[90m    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:122:12)[39m
-[90m    at node:internal/main/run_main_module:28:49[39m {
-  errno: [33m-2[39m,
-  code: [32m'ENOENT'[39m,
-  syscall: [32m'open'[39m,
-  path: [32m'../config.json'[39m
-}
-
-Node.js v21.0.0
-Opening in existing browser session.
-^C[?2004l[?2004h[?2004l
-[?2004h]0;fohoperator@foh: ~/evb/scripts[01;32mfohoperator@foh[00m:[01;34m~/evb/scripts[00m$ bash ./autostart.sh 
-[?2004lstarting qlcplus
-starting caddy server
-Warning: Ignoring XDG_SESSION_TYPE=wayland on Gnome. Use QT_QPA_PLATFORM=wayland to run on Wayland anyway.
-2023/10/20 11:30:17.621	[34mINFO[0m	admin	admin endpoint started	{"address": "localhost:2019", "enforce_origin": false, "origins": ["//localhost:2019", "//[::1]:2019", "//127.0.0.1:2019"]}
-2023/10/20 11:30:17.621	[34mINFO[0m	serving initial configuration
-Successfully started Caddy (pid=75617) - Caddy is running in the background
-starting evb backend
-starting simple-keystone backend
-starting browser
-[?2004h]0;fohoperator@foh: ~/evb/scripts[01;32mfohoperator@foh[00m:[01;34m~/evb/scripts[00m$ 
-Q Light Controller Plus version 4.12.4
-This program is licensed under the terms of the Apache 2.0 license.
-Copyright (c) Heikki Junnila (hjunnila@users.sf.net)
-Copyright (c) Massimo Callegari (massimocallegari@yahoo.it)
-
-node:events:493
-      throw er; // Unhandled 'error' event
-      ^
-
-Error: listen EADDRINUSE: address already in use :::8091
-[90m    at Server.setupListenHandle [as _listen2] (node:net:1872:16)[39m
-[90m    at listenInCluster (node:net:1920:12)[39m
-[90m    at Server.listen (node:net:2008:7)[39m
-    at new WebSocketServer [90m(/home/fohoperator/evb/backend/[39mnode_modules/[4mws[24m/lib/websocket-server.js:97:20[90m)[39m
-    at Object.<anonymous> [90m(/home/fohoperator/evb/backend/[39mapp.js:4:13[90m)[39m
-[90m    at Module._compile (node:internal/modules/cjs/loader:1369:14)[39m
-[90m    at Module._extensions..js (node:internal/modules/cjs/loader:1427:10)[39m
-[90m    at Module.load (node:internal/modules/cjs/loader:1201:32)[39m
-[90m    at Module._load (node:internal/modules/cjs/loader:1017:12)[39m
-[90m    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:122:12)[39m
-Emitted 'error' event on WebSocketServer instance at:
-[90m    at Server.emit (node:events:515:28)[39m
-[90m    at emitErrorNT (node:net:1899:8)[39m
-[90m    at process.processTicksAndRejections (node:internal/process/task_queues:82:21)[39m {
-  code: [32m'EADDRINUSE'[39m,
-  errno: [33m-98[39m,
-  syscall: [32m'listen'[39m,
-  address: [32m'::'[39m,
-  port: [33m8091[39m
-}
-
-Node.js v21.0.0
-node:fs:453
-    return binding.readFileUtf8(path, stringToFlags(options.flag));
-                   ^
-
-Error: ENOENT: no such file or directory, open '../config.json'
-[90m    at Object.readFileSync (node:fs:453:20)[39m
-    at Object.<anonymous> [90m(/home/fohoperator/simple-keystone/backend/[39mbackend.js:9:30[90m)[39m
-[90m    at Module._compile (node:internal/modules/cjs/loader:1369:14)[39m
-[90m    at Module._extensions..js (node:internal/modules/cjs/loader:1427:10)[39m
-[90m    at Module.load (node:internal/modules/cjs/loader:1201:32)[39m
-[90m    at Module._load (node:internal/modules/cjs/loader:1017:12)[39m
-[90m    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:122:12)[39m
-[90m    at node:internal/main/run_main_module:28:49[39m {
-  errno: [33m-2[39m,
-  code: [32m'ENOENT'[39m,
-  syscall: [32m'open'[39m,
-  path: [32m'../config.json'[39m
-}
-
-Node.js v21.0.0
-Opening in existing browser session.
-^C[?2004l[?2004h[?2004l
-[?2004h]0;fohoperator@foh: ~/evb/scripts[01;32mfohoperator@foh[00m:[01;34m~/evb/scripts[00m$ killall node
-[?2004l[?2004h]0;fohoperator@foh: ~/evb/scripts[01;32mfohoperator@foh[00m:[01;34m~/evb/scripts[00m$ Terminated
-[?2004l[?2004h]0;fohoperator@foh: ~/evb/scripts[01;32mfohoperator@foh[00m:[01;34m~/evb/scripts[00m$ [?2004l[?2004h]0;fohoperator@foh: ~/evb/scripts[01;32mfohoperator@foh[00m:[01;34m~/evb/scripts[00m$ [?2004l[?2004h]0;fohoperator@foh: ~/evb/scripts[01;32mfohoperator@foh[00m:[01;34m~/evb/scripts[00m$ [?2004lfkljdf: command not found
-[?2004h]0;fohoperator@foh: ~/evb/scripts[01;32mfohoperator@foh[00m:[01;34m~/evb/scripts[00m$ [?2004l[?2004h]0;fohoperator@foh: ~/evb/scripts[01;32mfohoperator@foh[00m:[01;34m~/evb/scripts[00m$ [?2004ldkljkf: command not found
-[?2004h]0;fohoperator@foh: ~/evb/scripts[01;32mfohoperator@foh[00m:[01;34m~/evb/scripts[00m$ [?2004lCommand 'foo' not found, did you mean:
-  command 'roo' from snap roo (2.0.3)
-  command 'foot' from deb foot (1.11.0-2)
-  command 'fio' from deb fio (3.28-1)
-  command 'fox' from deb objcryst-fox (1.9.6.0-2.2)
-  command 'goo' from deb goo (0.155+ds-4)
-  command 'fop' from deb fop (1:2.6-2)
-See 'snap info <snapname>' for additional versions.
-[?2004h]0;fohoperator@foh: ~/evb/scripts[01;32mfohoperator@foh[00m:[01;34m~/evb/scripts[00m$ [?2004lexit
-
-Script done on 2023-10-20 13:31:11+02:00 [COMMAND_EXIT_CODE="127"]
