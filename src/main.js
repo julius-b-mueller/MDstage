@@ -2975,7 +2975,17 @@ function buildTrigger(codeblockYaml, index) {
             if (activeSource) return
             if (sharedAudioCtx) startSource(mainAudioEl.currentTime, sharedAudioCtx.currentTime)
         })
-        ws.on("pause",  () => { pauseBtn.textContent = "⏵"; if (!suppressPauseStop) stopSource() })
+        ws.on("pause",  () => {
+            pauseBtn.textContent = "⏵"
+            if (!suppressPauseStop) {
+                // For group triggers: the cursor media element plays to file end (past mp.end)
+                // and the browser fires a natural "pause" when it reaches "ended" state.
+                // Don't kill the AudioBufferSourceNode loop source for that — it has already
+                // looped back correctly at mp.end and must keep running.
+                if (loopGroups.has(index) && mainAudioEl.ended) return
+                stopSource()
+            }
+        })
         ws.on("finish", () => {
             pauseBtn.textContent = "⏵"
             // Group triggers keep mainAudioEl.loop=false on purpose, so "finish" does fire.
@@ -2997,10 +3007,11 @@ function buildTrigger(codeblockYaml, index) {
                     fireGaplessTransition(outroIdx)
                     return
                 }
+                suppressPauseStop = true   // prevent pause (fired after ended in some browsers) from killing the loop source
                 suppressSeekRestart = true
                 mainAudioEl.currentTime = mp.start ?? 0
                 ws.play()  // restart cursor; ws.on("play") guard prevents double source
-                setTimeout(() => { suppressSeekRestart = false }, 50)
+                setTimeout(() => { suppressSeekRestart = false; suppressPauseStop = false }, 50)
                 return
             }
             // Plain loopEnabled sources use mainAudioEl.loop=true so this shouldn't fire.
@@ -3032,6 +3043,11 @@ function buildTrigger(codeblockYaml, index) {
         })
         ws.on("seeking", (t) => {
             if (suppressSeekRestart || mainAudioEl.paused) return
+            // loopEnabled: AudioBufferSourceNode loops internally via loopStart/loopEnd.
+            // The HTMLMediaElement loops at file-end and fires seeking, but restarting
+            // the source here would stop the running node and replay a brief section.
+            // Only restart on explicit user scrub (scrubbingSet tracks drag state).
+            if (loopEnabled && activeSource && !scrubbingSet.has(index)) return
             if (sharedAudioCtx) startSource(t, sharedAudioCtx.currentTime)
         })
 
