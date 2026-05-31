@@ -1335,6 +1335,16 @@ document.addEventListener('keyup', (e) => {
 window.addEventListener('blur', () => { shiftHeld = false; document.body.classList.remove('shift-held') })
 window.addEventListener('scroll', updateSidebarActive, { passive: true })
 
+const _headerShield = document.getElementById('header-shield')
+function updateHeaderShield() {
+    const btns = document.querySelector('.buttons')
+    if (!btns || !_headerShield) return
+    _headerShield.style.height = btns.getBoundingClientRect().bottom + 'px'
+}
+new ResizeObserver(updateHeaderShield).observe(document.querySelector('.buttons') ?? document.body)
+window.addEventListener('resize', updateHeaderShield)
+updateHeaderShield()
+
 document.addEventListener('contextmenu', (e) => {
     if (!editorApp) return
     const blockEl = e.target.closest('[data-block-idx]')
