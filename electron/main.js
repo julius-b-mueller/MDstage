@@ -115,6 +115,7 @@ function createMainWindow() {
         height: 900,
         title: 'Main Desk',
         icon: path.join(__dirname, '../dist/assets/icon.png'),
+        acceptFirstMouse: true,
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,

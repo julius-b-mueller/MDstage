@@ -1278,6 +1278,15 @@ function onScriptClick(e) {
 
 let shiftHeld = false
 document.addEventListener('keydown', (e) => {
+    // Space → Go, Backspace → Back when live window is open and no editor/input is active
+    if (liveViewOpen && !inlineEditor && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const ae = document.activeElement
+        const isInput = ae?.tagName === 'INPUT' || ae?.tagName === 'TEXTAREA' || ae?.isContentEditable
+        if (!isInput) {
+            if (e.key === ' ') { e.preventDefault(); goAction(); return }
+            if (e.key === 'Backspace') { e.preventDefault(); backAction(); return }
+        }
+    }
     if (e.key === 'Shift') {
         shiftHeld = true
         document.body.classList.add('shift-held')
