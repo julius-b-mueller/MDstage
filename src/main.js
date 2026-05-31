@@ -1337,9 +1337,12 @@ window.addEventListener('scroll', updateSidebarActive, { passive: true })
 
 const _headerShield = document.getElementById('header-shield')
 function updateHeaderShield() {
+    if (!_headerShield) return
     const btns = document.querySelector('.buttons')
-    if (!btns || !_headerShield) return
-    _headerShield.style.height = btns.getBoundingClientRect().bottom + 'px'
+    const btnsBottom = btns ? btns.getBoundingClientRect().bottom : 0
+    const heading = document.querySelector('#script-content h1, #script-content h2, #script-content h3')
+    const stickyTop = heading ? parseFloat(getComputedStyle(heading).top) || 0 : 0
+    _headerShield.style.height = Math.max(btnsBottom, stickyTop) + 'px'
 }
 new ResizeObserver(updateHeaderShield).observe(document.querySelector('.buttons') ?? document.body)
 window.addEventListener('resize', updateHeaderShield)
@@ -1714,6 +1717,7 @@ function rerender(newText) {
     requestAnimationFrame(() => {
         window.scrollTo({ top: scrollY, behavior: 'instant' })
         checkEmptyScript()
+        updateHeaderShield()
     })
 }
 
