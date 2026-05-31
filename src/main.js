@@ -1338,10 +1338,11 @@ window.addEventListener('scroll', updateSidebarActive, { passive: true })
 const _headerShield = document.getElementById('header-shield')
 function updateHeaderShield() {
     if (!_headerShield) return
-    const btns = document.querySelector('.buttons')
-    const btnsBottom = btns ? btns.getBoundingClientRect().bottom : 0
     const heading = document.querySelector('#script-content h1, #script-content h2, #script-content h3')
     const stickyTop = heading ? parseFloat(getComputedStyle(heading).top) || 0 : 0
+    if (stickyTop <= 0) { _headerShield.style.height = '0'; return }
+    const btns = document.querySelector('.buttons')
+    const btnsBottom = btns ? btns.getBoundingClientRect().bottom : 0
     _headerShield.style.height = Math.max(btnsBottom, stickyTop) + 'px'
 }
 new ResizeObserver(updateHeaderShield).observe(document.querySelector('.buttons') ?? document.body)
