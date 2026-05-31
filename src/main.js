@@ -1333,9 +1333,7 @@ document.addEventListener('keyup', (e) => {
     }
 }, { capture: true })
 window.addEventListener('blur', () => { shiftHeld = false; document.body.classList.remove('shift-held') })
-window.addEventListener('scroll', updateSidebarActive,   { passive: true })
-window.addEventListener('scroll', updateStickyHeadings,  { passive: true })
-window.addEventListener('resize', updateStickyHeadings)
+window.addEventListener('scroll', updateSidebarActive, { passive: true })
 
 document.addEventListener('contextmenu', (e) => {
     if (!editorApp) return
@@ -1658,21 +1656,6 @@ function moveTriggerGroupInScript(rootIndex, lastIndex, direction) {
     rerender(updated)
 }
 
-function updateStickyHeadings() {
-    const headings = [...document.querySelectorAll('#script-content h1, #script-content h2, #script-content h3')]
-    // Bottom edge of the currently stuck heading (top ≈ 0), or 0 if none is stuck yet
-    let stuckBottom = 0
-    for (const h of headings) {
-        const rect = h.getBoundingClientRect()
-        if (rect.top <= 1) stuckBottom = rect.bottom
-    }
-    for (const h of headings) {
-        const rect = h.getBoundingClientRect()
-        // Stuck if already at the top, or if its bottom has entered the stuck-heading zone
-        h.classList.toggle('sticky-stuck', rect.top <= 1 || (stuckBottom > 0 && rect.bottom <= stuckBottom + 2))
-    }
-}
-function setupStickyHeadingObserver() { updateStickyHeadings() }
 
 function rerender(newText) {
     if (inlineEditor) {
@@ -1717,7 +1700,6 @@ function rerender(newText) {
     setupAutoTriggers()
     buildSidebar()
     clearSearchHighlights()
-    setupStickyHeadingObserver()
 
     requestAnimationFrame(() => {
         window.scrollTo({ top: scrollY, behavior: 'instant' })
