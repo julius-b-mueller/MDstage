@@ -30,7 +30,7 @@ em {
 @media only screen and (max-width: 768px) {
 
     h1, h2, h3 {
-        top: 4rem;
+        top: var(--btns-bottom, 4rem);
     }
 }
 
@@ -156,6 +156,9 @@ p {
 
 .buttons {
     display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    max-width: calc(100vw - 1rem);
     position: fixed;
     top: 0.5rem;
     right: 0.5rem;

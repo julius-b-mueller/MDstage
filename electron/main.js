@@ -634,6 +634,24 @@ app.whenReady().then(async () => {
 
     ipcMain.handle('new-file', () => createNewFile())
 
+    ipcMain.handle('get-em-light-note', () => {
+        try {
+            const { parsed } = readConfigBlock()
+            return parsed?.config?.emLightNote ?? null
+        } catch { return null }
+    })
+
+    ipcMain.handle('save-em-light-note', (_, note) => {
+        const { text, parsed, block } = readConfigBlock()
+        if (!parsed?.config) return
+        if (note) parsed.config.emLightNote = note
+        else delete parsed.config.emLightNote
+        const newYaml = yaml.dump(parsed, { indent: 4, lineWidth: -1, noRefs: true })
+        const newBlock = '```yaml\n' + newYaml.trimEnd() + '\n```'
+        fs.writeFileSync(scriptMdPath, text.replace(block, newBlock), 'utf8')
+        BrowserWindow.getAllWindows().forEach(win => win.webContents.send('script-changed'))
+    })
+
     ipcMain.handle('export-pdf', (event, { html, title }) => exportToPdf(BrowserWindow.fromWebContents(event.sender), html, title))
     ipcMain.handle('export-docx', (event, data) => exportToDocx(BrowserWindow.fromWebContents(event.sender), data))
 

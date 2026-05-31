@@ -9,7 +9,8 @@ let config = {}
 let usedChs = []
 let triggers = []
 let triggerYamls = []
-let parseErrors = []  // {blockNum, line, message}
+let parseErrors = []   // {blockNum, line, message}
+let audioWarnings = [] // {file, cueNum}
 const loopOutroPending = new Map()         // loopTriggerIdx → outroTriggerIdx
 const loopOutroInitialRemaining = new Map() // loopTriggerIdx → remaining at arm time
 const loopBtns = new Map()          // triggerIdx → button element
@@ -1343,11 +1344,12 @@ window.addEventListener('scroll', updateSidebarActive, { passive: true })
 const _headerShield = document.getElementById('header-shield')
 function updateHeaderShield() {
     if (!_headerShield) return
+    const btns = document.querySelector('.buttons')
+    const btnsBottom = btns ? btns.getBoundingClientRect().bottom : 0
+    document.documentElement.style.setProperty('--btns-bottom', btnsBottom + 'px')
     const heading = document.querySelector('#script-content h1, #script-content h2, #script-content h3')
     const stickyTop = heading ? parseFloat(getComputedStyle(heading).top) || 0 : 0
     if (stickyTop <= 0) { _headerShield.style.height = '0'; return }
-    const btns = document.querySelector('.buttons')
-    const btnsBottom = btns ? btns.getBoundingClientRect().bottom : 0
     _headerShield.style.height = Math.max(btnsBottom, stickyTop) + 'px'
 }
 new ResizeObserver(updateHeaderShield).observe(document.querySelector('.buttons') ?? document.body)
@@ -1746,6 +1748,7 @@ function escapeHtml(s) {
 
 function validateYamlBlocks(text) {
     parseErrors = []
+    audioWarnings = []
     let blockNum = 0
     for (const m of text.matchAll(/```yaml\n([\s\S]*?)\n```/g)) {
         blockNum++
@@ -1759,18 +1762,27 @@ function validateYamlBlocks(text) {
 function showParseErrors() {
     const existing = document.getElementById('parse-error-banner')
     if (existing) existing.remove()
-    if (!parseErrors.length) return
+    if (!parseErrors.length && !audioWarnings.length) return
     const banner = document.createElement('div')
     banner.id = 'parse-error-banner'
     banner.className = 'parse-error-banner'
-    const items = parseErrors.map(({ blockNum, line, message }) => {
-        const loc = blockNum != null
-            ? `Block ${blockNum}${line != null ? `, Zeile ${line}` : ''}`
-            : ''
-        return `<li>${loc ? loc + ': ' : ''}${escapeHtml(message)}</li>`
-    }).join('')
-    banner.innerHTML = `<button class="parse-error-close" onclick="this.parentElement.remove()">×</button>
-<strong>${parseErrors.length} YAML-Fehler</strong><ul>${items}</ul>`
+    let html = `<button class="parse-error-close" onclick="this.parentElement.remove()">×</button>`
+    if (parseErrors.length) {
+        const items = parseErrors.map(({ blockNum, line, message }) => {
+            const loc = blockNum != null
+                ? `Block ${blockNum}${line != null ? `, Zeile ${line}` : ''}`
+                : ''
+            return `<li>${loc ? loc + ': ' : ''}${escapeHtml(message)}</li>`
+        }).join('')
+        html += `<strong>${parseErrors.length} YAML-Fehler</strong><ul>${items}</ul>`
+    }
+    if (audioWarnings.length) {
+        const items = audioWarnings.map(({ file }) =>
+            `<li>${escapeHtml(file)}</li>`
+        ).join('')
+        html += `<strong>${audioWarnings.length} Audiodatei${audioWarnings.length > 1 ? 'en' : ''} nicht gefunden</strong><ul>${items}</ul>`
+    }
+    banner.innerHTML = html
     document.body.prepend(banner)
 }
 
@@ -2936,7 +2948,12 @@ function buildTrigger(codeblockYaml, index) {
             ws.setVolume(Math.max(0, currentVolume * f))
         })
 
-        ws.on("error",  (e) => console.error("WaveSurfer:", musicFile, e))
+        ws.on("error",  () => {
+            if (!audioWarnings.some(w => w.file === musicFile)) {
+                audioWarnings.push({ file: musicFile, cueNum: index })
+                showParseErrors()
+            }
+        })
         ws.on("play",   () => {
             // If a gapless transition is in progress, a cursor restart (e.g. mainAudioEl.loop=true
             // looping back after stopSource cleared activeSource) must not start a new source or
@@ -4733,8 +4750,8 @@ function fadeAdjustAudio(ta, fadeTime) {
 }
 
 function stopall() {
-    for (const { ws } of triggerAudio.values()) {
-        fadeWaveSurfer(ws, 0, 3, true)
+    for (const ta of triggerAudio.values()) {
+        if (ta.ws.isPlaying()) fadeAdjustAudio(ta, 0.5)
     }
     if (mtc) mtc.stopAndClear()
 }
@@ -4836,6 +4853,12 @@ function colorText() {
 }
 
 function initButtons() {
+    document.querySelector(".em-light").addEventListener("mousedown", () => {
+        const eln = config.emLightNote
+        if (!eln || !midiTrigger) return
+        midiTrigger.send([0x90 | (eln.ch - 1), eln.note, 100])
+        setTimeout(() => midiTrigger.send([0x80 | (eln.ch - 1), eln.note, 0]), 100)
+    })
     document.querySelector(".em-music").addEventListener("mousedown", stopall)
     document.querySelector(".em-mic").addEventListener("mousedown", () => x32UnmuteChannels("muteall"))
     document.querySelector(".current-trigger-button").addEventListener("mousedown", () => scrollToTrigger(currentCue))

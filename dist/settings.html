@@ -128,6 +128,26 @@
         </div>
     </div>
 
+    <div class="section-title">Notfall-Licht</div>
+    <div class="field">
+        <label>Trigger-Note (gilt für alle PCs)</label>
+        <div style="display:flex;gap:0.5rem;align-items:center">
+            <div style="flex:1">
+                <label style="font-size:0.78rem;margin-bottom:0.2rem">Kanal (1–16)</label>
+                <input type="number" id="em-light-ch" min="1" max="16" value="1">
+            </div>
+            <div style="flex:1">
+                <label style="font-size:0.78rem;margin-bottom:0.2rem">Note (0–127)</label>
+                <input type="number" id="em-light-note" min="0" max="127" value="0">
+            </div>
+            <div style="padding-bottom:0">
+                <label style="font-size:0.78rem;margin-bottom:0.2rem;visibility:hidden">x</label>
+                <button class="btn" id="em-light-clear">✕</button>
+            </div>
+        </div>
+        <p class="hint">Wird über den Trigger-MIDI-Ausgang gesendet. Leer lassen = Button deaktiviert.</p>
+    </div>
+
     <div class="section-title">Text-Editor</div>
     <div class="field">
         <label>In Editor öffnen (Rechtsklick)</label>
@@ -209,10 +229,12 @@
 
         // ── Init ─────────────────────────────────────────────────────────
         async function init() {
-            const [settings, hn] = await Promise.all([
+            const [settings, hn, emLightNote0] = await Promise.all([
                 window.electronAPI.getSettings(),
                 window.electronAPI.getHostname(),
+                window.electronAPI.getEmLightNote(),
             ])
+            let emLightNote = emLightNote0 || null
             document.getElementById('hostname-label').textContent = 'Dieser PC: ' + hn
 
             const mainAudioSel    = document.getElementById('main-audio-device')
@@ -351,6 +373,19 @@
             document.getElementById('go-clear-btn').addEventListener('click', () => { midiGoNote = null; applyMidiLabel('go', null); stopLearn() })
             document.getElementById('back-clear-btn').addEventListener('click', () => { midiBackNote = null; applyMidiLabel('back', null); stopLearn() })
 
+            // ── Notfall-Licht ────────────────────────────────────────
+            const emLightChEl   = document.getElementById('em-light-ch')
+            const emLightNoteEl = document.getElementById('em-light-note')
+            const emLightClear  = document.getElementById('em-light-clear')
+
+            function applyEmLight(n) {
+                emLightNote = n
+                if (n) { emLightChEl.value = n.ch; emLightNoteEl.value = n.note }
+                else   { emLightChEl.value = ''; emLightNoteEl.value = '' }
+            }
+            applyEmLight(emLightNote)
+            emLightClear.addEventListener('click', () => applyEmLight(null))
+
             // ── Text-Editor ───────────────────────────────────────────
             const editorAppSel   = document.getElementById('editor-app')
             const customCmdField = document.getElementById('custom-cmd-field')
@@ -368,6 +403,12 @@
 
             document.getElementById('save').addEventListener('click', async () => {
                 stopMetro()
+                const chVal   = parseInt(emLightChEl.value)
+                const noteVal = parseInt(emLightNoteEl.value)
+                const newEmLight = (!isNaN(chVal) && !isNaN(noteVal) && emLightChEl.value !== '' && emLightNoteEl.value !== '')
+                    ? { ch: Math.max(1, Math.min(16, chVal)), note: Math.max(0, Math.min(127, noteVal)) }
+                    : null
+                await window.electronAPI.saveEmLightNote(newEmLight)
                 await window.electronAPI.saveSettings({
                     mainAudioDevice:    mainAudioSel.value    || null,
                     monitorAudioDevice: monitorAudioSel.value || null,
