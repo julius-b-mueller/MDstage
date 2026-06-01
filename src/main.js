@@ -2703,6 +2703,8 @@ function buildTrigger(codeblockYaml, index) {
 
                 // ③ Start outro audio source at the same instant — pure WebAudio, no media element
                 const nextPg = nextTa.getPlaybackGain?.()
+                cancelWsFade(nextTa.ws)
+                nextTa.setCurrentVolume(fadein > 0 ? 0 : vol)
                 if (nextPg) nextPg.gain.value = fadein > 0 ? 0 : vol
                 nextTa.startGaplessSource(ns, transitionTime)
 
@@ -2735,6 +2737,8 @@ function buildTrigger(codeblockYaml, index) {
 
                 // ② Start next audio source at transitionTime
                 const nextPg = nextTa.getPlaybackGain?.()
+                cancelWsFade(nextTa.ws)
+                nextTa.setCurrentVolume(fadein > 0 ? 0 : vol)
                 if (nextPg) nextPg.gain.value = fadein > 0 ? 0 : vol
                 nextTa.startGaplessSource(ns, transitionTime)
 
@@ -2757,6 +2761,8 @@ function buildTrigger(codeblockYaml, index) {
 
             } else {
                 // ── Fallback: buffer not decoded — use media element directly ──
+                cancelWsFade(nextTa.ws)
+                nextTa.setCurrentVolume(fadein > 0 ? 0 : vol)
                 nextTa.ws.setVolume(fadein > 0 ? 0 : vol)
                 nextTa.mainAudioEl.play().catch(() => {})
                 if (monitorShouldPlay() && nextTa.monAudioEl) {

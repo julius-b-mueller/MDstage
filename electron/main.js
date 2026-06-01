@@ -133,6 +133,9 @@ function createMainWindow() {
     mainWindow.webContents.session.setPermissionCheckHandler(() => true)
 
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
+    mainWindow.webContents.on('did-finish-load', () => {
+        if (liveWindow) mainWindow.webContents.send('live-window-state', true)
+    })
     mainWindow.on('closed', () => { mainWindow = null })
 }
 
