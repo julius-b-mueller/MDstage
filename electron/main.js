@@ -136,6 +136,12 @@ function createMainWindow() {
     mainWindow.webContents.on('did-finish-load', () => {
         if (liveWindow) mainWindow.webContents.send('live-window-state', true)
     })
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+        if (input.type === 'keyDown' && input.key === 'l' && input.meta && !input.shift && !input.control) {
+            createLiveWindow()
+            event.preventDefault()
+        }
+    })
     mainWindow.on('closed', () => { mainWindow = null })
 }
 
@@ -190,6 +196,12 @@ function createLiveWindow() {
         },
     })
     liveWindow.loadFile(path.join(__dirname, '../dist/live.html'))
+    liveWindow.webContents.on('before-input-event', (event, input) => {
+        if (input.type === 'keyDown' && input.key === 'l' && input.meta && !input.shift && !input.control) {
+            liveWindow.focus()
+            event.preventDefault()
+        }
+    })
     liveWindow.on('closed', () => {
         liveWindow = null
         if (mainWindow) mainWindow.webContents.send('live-window-state', false)

@@ -4909,6 +4909,7 @@ function initButtons() {
     })
     document.querySelector(".em-music").addEventListener("mousedown", stopall)
     document.querySelector(".em-mic").addEventListener("mousedown", () => x32UnmuteChannels("muteall"))
+    document.querySelector(".live-window-button").addEventListener("mousedown", () => window.electronAPI.openLiveWindow())
     document.querySelector(".current-trigger-button").addEventListener("mousedown", () => scrollToTrigger(currentCue))
     document.querySelector(".reload-button").addEventListener("mousedown", () => {
         sessionStorage.setItem('reloadScrollY', String(window.scrollY))
