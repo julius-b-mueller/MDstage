@@ -3066,6 +3066,9 @@ function buildTrigger(codeblockYaml, index) {
         })
         loopBtn.addEventListener("click", () => {
             mp.loop = !mp.loop
+            loopEnabled = mp.loop
+            mainAudioEl.loop = mp.loop
+            if (activeSource) activeSource.loop = mp.loop
             loopBtn.classList.toggle("waveform-btn-active", mp.loop)
             updateLoopBtnWavWarning()
             debouncedSave()
@@ -3118,6 +3121,9 @@ function buildTrigger(codeblockYaml, index) {
                             }
                         }
                     }
+                } else if (liveViewOpen) {
+                    setArmedCue(index)
+                    broadcastLiveState()
                 } else {
                     currentCue = index; markTriggers(index); triggerAction(index)
                 }
