@@ -1301,6 +1301,12 @@ document.addEventListener('keydown', (e) => {
         })
         return
     }
+    // Cmd+L → open live view (fallback in case menu accelerator is swallowed by Chromium)
+    if ((e.ctrlKey || e.metaKey) && e.key === 'l') {
+        e.preventDefault()
+        window.electronAPI.openLiveWindow()
+        return
+    }
     // Ctrl+F → open search
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
         e.preventDefault()
@@ -2679,12 +2685,20 @@ function buildTrigger(codeblockYaml, index) {
                 const loopStartSec   = mp.start ?? 0
                 const loopEndSec     = mp.end ?? (ta_?.decodedBuffer?.duration ?? ws.getDuration())
                 const loopDurSamples = Math.round((loopEndSec - loopStartSec) * sr)
-                const loopVStart     = group.loopVirtualStartTime ?? ctx.currentTime
-                const elapsed        = Math.max(0, ctx.currentTime - loopVStart)
+                // Snap loopVirtualStartTime to the most recent audio loop boundary.
+                // Without this, accumulated cursor-reset timing imprecision causes elapsed
+                // to overshoot into the next iteration, making the guard snap transitionTime
+                // into the past and forcing an immediate (non-gapless) stop/start.
+                const rawVStart = group.loopVirtualStartTime ?? ctx.currentTime
+                const rawElapsedSamples = Math.round(Math.max(0, ctx.currentTime - rawVStart) * sr)
+                const completedSamples  = Math.floor(rawElapsedSamples / loopDurSamples) * loopDurSamples
+                if (completedSamples > 0) group.loopVirtualStartTime = rawVStart + completedSamples / sr
+                const loopVStart = group.loopVirtualStartTime ?? ctx.currentTime
+                const elapsed    = Math.max(0, ctx.currentTime - loopVStart)
                 let n              = Math.max(1, Math.ceil(Math.round(elapsed * sr) / loopDurSamples))
                 let transitionTime = loopVStart + (n * loopDurSamples) / sr
                 // Guard: if n overshot due to floating-point (elapsed just past a boundary),
-                // step back so the transition fires now rather than a full loop later.
+                // step back — safe after snapping since elapsed < loopDur, so n-1 = 0 → clamped to 1.
                 if (transitionTime - ctx.currentTime > (loopEndSec - loopStartSec) * 0.5) {
                     n = Math.max(1, n - 1)
                     transitionTime = loopVStart + (n * loopDurSamples) / sr
@@ -2810,6 +2824,7 @@ function buildTrigger(codeblockYaml, index) {
                 // ws.on("finish"), because mainAudioEl plays past mp.end to the file end which
                 // creates an audible tail before the cursor jumps back.
                 if (!activeSource) return  // outro transition killed source — don't touch cursor
+                clearTimeout(loopJumpTimer); loopJumpTimer = null  // cancel any stale timer
                 suppressSeekRestart = true
                 mainAudioEl.currentTime = mp.start
                 if (monAudioEl && monitorShouldPlay()) monAudioEl.currentTime = mp.start

@@ -675,6 +675,7 @@ app.whenReady().then(async () => {
         if (liveWindow) liveWindow.webContents.send('live-volumes', volumes)
     })
 
+    ipcMain.on('open-live-window', createLiveWindow)
     ipcMain.on('live-go', () => {
         if (mainWindow) mainWindow.webContents.executeJavaScript('window.__liveGo && window.__liveGo()').catch(() => {})
     })
