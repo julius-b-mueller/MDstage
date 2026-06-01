@@ -2799,10 +2799,17 @@ function buildTrigger(codeblockYaml, index) {
             }
             preSeekArmed = false
 
-            // Group triggers always return here — src.loop=true handles audio looping internally.
-            // This also covers the case where activeSource=null because stopSource was called
-            // for an outro transition: we must not restart the source in that case.
-            if (loopGroups.has(index)) return
+            if (loopGroups.has(index)) {
+                // src.loop=true handles audio gaplessly; cursor must be reset here, not in
+                // ws.on("finish"), because mainAudioEl plays past mp.end to the file end which
+                // creates an audible tail before the cursor jumps back.
+                if (!activeSource) return  // outro transition killed source — don't touch cursor
+                suppressSeekRestart = true
+                mainAudioEl.currentTime = mp.start
+                if (monAudioEl && monitorShouldPlay()) monAudioEl.currentTime = mp.start
+                setTimeout(() => { suppressSeekRestart = false }, 50)
+                return
+            }
             if (activeSource && loopEnabled) return
 
             const ctx = sharedAudioCtx
@@ -3043,11 +3050,9 @@ function buildTrigger(codeblockYaml, index) {
         })
         ws.on("seeking", (t) => {
             if (suppressSeekRestart || mainAudioEl.paused) return
-            // loopEnabled: AudioBufferSourceNode loops internally via loopStart/loopEnd.
-            // The HTMLMediaElement loops at file-end and fires seeking, but restarting
-            // the source here would stop the running node and replay a brief section.
+            // AudioBufferSourceNode loops internally; cursor seek must not restart the source.
             // Only restart on explicit user scrub (scrubbingSet tracks drag state).
-            if (loopEnabled && activeSource && !scrubbingSet.has(index)) return
+            if ((loopEnabled || loopGroups.has(index)) && activeSource && !scrubbingSet.has(index)) return
             if (sharedAudioCtx) startSource(t, sharedAudioCtx.currentTime)
         })
 
