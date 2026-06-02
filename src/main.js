@@ -2781,11 +2781,25 @@ function buildTrigger(codeblockYaml, index) {
                 const elapsed    = Math.max(0, ctx.currentTime - loopVStart)
                 let n              = Math.max(1, Math.ceil(Math.round(elapsed * sr) / loopDurSamples))
                 let transitionTime = loopVStart + (n * loopDurSamples) / sr
-                // Guard: if n overshot due to floating-point (elapsed just past a boundary),
-                // step back — safe after snapping since elapsed < loopDur, so n-1 = 0 → clamped to 1.
+                // Guard: if transitionTime is more than half a loop away, three cases:
+                // (a) mainAudioEl.ended && elapsed≈0 — ws.on("finish") fired right at the loop
+                //     boundary (fileDuration≈mp.end); transition immediately at ctx.currentTime.
+                // (b) mainAudioEl.ended && elapsed>0 — cursor reached file end mid-loop
+                //     (fileDuration>mp.end); keep transitionTime at the correct upcoming boundary
+                //     so the audio cuts at the loop boundary, not mid-cycle.
+                // (c) not ended — floating-point overshoot; step back to correct upcoming boundary.
                 if (transitionTime - ctx.currentTime > (loopEndSec - loopStartSec) * 0.5) {
-                    n = Math.max(1, n - 1)
-                    transitionTime = loopVStart + (n * loopDurSamples) / sr
+                    if (mainAudioEl.ended && elapsed < 0.05) {
+                        // Boundary just crossed — transition immediately
+                        transitionTime = ctx.currentTime
+                    } else if (!mainAudioEl.ended) {
+                        // Timer fired slightly after the loop boundary — transition immediately.
+                        // After the snap, n is always 1 (elapsed < loopDur), so n-1=0 and
+                        // Math.max(1,0)=1 would be a no-op, leaving transitionTime a full loop
+                        // in the future and causing an unwanted extra iteration.
+                        transitionTime = ctx.currentTime
+                    }
+                    // else: cursor ended mid-loop — transitionTime already at the upcoming boundary
                 }
                 const msToTransition = Math.max(0, transitionTime - ctx.currentTime) * 1000
 
@@ -2814,8 +2828,8 @@ function buildTrigger(codeblockYaml, index) {
                     gaplessActive = false
                     // Start outro cursor (activeSource guard in ws.on("play") prevents double source)
                     nextTa.startCursor(ns, 0)
-                    // Explicit Path-B monitor start (no separate monitor file)
-                    if (monitorShouldPlay() && nextTa.monAudioEl && !nextTa.wsMonitor) {
+                    // Fallback Path-B monitor start (only when buffer not decoded)
+                    if (monitorShouldPlay() && nextTa.monAudioEl && !nextTa.wsMonitor && !nextTa.decodedBuffer) {
                         nextTa.monAudioEl.currentTime = ns
                         nextTa.monAudioEl.play().catch(() => {})
                     }
@@ -2857,10 +2871,10 @@ function buildTrigger(codeblockYaml, index) {
                     // Start next trigger's cursor
                     nextTa.startCursor(ns, 0)
                     if (monitorShouldPlay() && nextTa.monAudioEl) {
-                        if (hasExplicitMon && monitorOffsetMs <= 0)
+                        if (hasExplicitMon && monitorOffsetMs <= 0 && !nextTa.monDecodedBuffer)
                             nextTa.monAudioEl.play().catch(() => {})
-                        else if (!hasExplicitMon) {
-                            // Path B: same-file mirror — start explicitly
+                        else if (!hasExplicitMon && !nextTa.decodedBuffer) {
+                            // Fallback Path-B: start element only when buffer not decoded
                             nextTa.monAudioEl.currentTime = ns
                             nextTa.monAudioEl.play().catch(() => {})
                         }
@@ -2914,6 +2928,8 @@ function buildTrigger(codeblockYaml, index) {
         }
         function fireLoopRestart(effEnd) {
             if (!ws.isPlaying()) return
+            // Outro may have been armed after the loop-restart timer was scheduled — fire it now.
+            if (loopOutroPending.has(index)) { fireLoopOutro(); return }
             const loopDur = effEnd - mp.start
             if (mtc && mtc.activeTcIndex === index) {
                 mtc.onLoopRestart(loopDur, mp.start)
@@ -3443,6 +3459,44 @@ function buildTrigger(codeblockYaml, index) {
                 }
                 if (isLoopTrigger) mainAudioEl.loop = true
                 src.addEventListener('ended', () => { if (activeSource === src) activeSource = null })
+
+                // Mirror in monitorAudioCtx at the same scheduled wall-clock time
+                if (monitorShouldPlay()) {
+                    const monCtx = getMonitorAudioCtx()
+                    if (monCtx) {
+                        if (activeMonitorSource) {
+                            try { activeMonitorSource.stop() } catch (_) {}
+                            activeMonitorSource = null
+                        }
+                        const monBuf = monitorFile !== null ? ta_?.monDecodedBuffer : ta_?.decodedBuffer
+                        if (monBuf) {
+                            if (!monitorGain || monitorGain.context !== monCtx) {
+                                monitorGain = monCtx.createGain()
+                                monitorGain.gain.value = currentVolume
+                                monitorGain.connect(monCtx.destination)
+                            }
+                            const monSrc = monCtx.createBufferSource()
+                            monSrc.buffer = monBuf
+                            const offsetSec = monitorFile !== null ? monitorOffsetMs / 1000 : 0
+                            if (isLoopTrigger) {
+                                monSrc.loop      = true
+                                monSrc.loopStart = Math.max(0, (mp.start ?? 0) - offsetSec)
+                                monSrc.loopEnd   = mp.end != null
+                                    ? Math.max(0, mp.end - offsetSec)
+                                    : monBuf.duration
+                            }
+                            monSrc.connect(monitorGain)
+                            const dt      = monCtx.currentTime - sharedAudioCtx.currentTime
+                            const monWhen = Math.max(monCtx.currentTime, when + dt)
+                            monSrc.start(monWhen, Math.max(0, actualOffset - offsetSec))
+                            activeMonitorSource = monSrc
+                            monSrc.addEventListener('ended', () => {
+                                if (activeMonitorSource === monSrc) activeMonitorSource = null
+                            })
+                        }
+                    }
+                }
+
                 return true
             },
             // Starts the cursor (mainAudioEl) at offset, after delayMs, without starting a new source.
@@ -4820,13 +4874,13 @@ async function playMusic(cue) {
                 seekReady(ta.monAudioEl, monTargetT),
             ])
             ta.mainAudioEl.play().catch(() => {})
-            if (monitorOffsetMs <= 0) ta.monAudioEl.play().catch(() => {})
+            if (monitorOffsetMs <= 0 && !ta.monDecodedBuffer) ta.monAudioEl.play().catch(() => {})
             // positive offset: syncMonitor starts monitor once delay has elapsed
         } else {
             // Same-file monitor (Path B) or no monitor: play main via WaveSurfer.
             // Also start the monitor explicitly so it plays even if the ws 'play'
             // event is not reliably delivered (e.g. AudioBufferSourceNode path).
-            if (monitorShouldPlay() && ta.monAudioEl && !ta.wsMonitor) {
+            if (monitorShouldPlay() && ta.monAudioEl && !ta.wsMonitor && !ta.decodedBuffer) {
                 ta.monAudioEl.currentTime = start
                 ta.monAudioEl.play().catch(() => {})
             }
