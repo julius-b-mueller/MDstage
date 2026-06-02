@@ -44,11 +44,31 @@ async function openFile() {
 const hostname = os.hostname().split('.')[0]
 
 const defaultSettings = {
-    mainAudioDevice: null, monitorAudioDevice: null, monitorOffsetMs: 0,
+    mainAudioDevice: null, mainChannelL: 0, mainChannelR: 1, monitorChannelL: 2, monitorChannelR: 3,
     midiX32Device: null, midiTriggerDevice: null, midiTCDevice: null,
     editorApp: null, editorCustomCmd: '',
     midiGoNote: null, midiBackNote: null,
 }
+
+// Keys that are personal/per-user and must not be stored in the shared markdown file
+const EDITOR_PREF_KEYS = ['editorApp', 'editorCustomCmd']
+
+function editorPrefsPath() {
+    return path.join(app.getPath('userData'), 'editor-prefs.json')
+}
+
+function loadEditorPrefs() {
+    try { return JSON.parse(fs.readFileSync(editorPrefsPath(), 'utf8')) } catch { return {} }
+}
+
+function saveEditorPrefs(settings) {
+    const prefs = {}
+    for (const k of EDITOR_PREF_KEYS) if (k in settings) prefs[k] = settings[k]
+    fs.writeFileSync(editorPrefsPath(), JSON.stringify(prefs, null, 2), 'utf8')
+}
+
+// When launched from Applications/Spotlight the shell PATH is minimal — augment with common install locations
+const AUGMENTED_PATH = ['/usr/local/bin', '/opt/homebrew/bin', '/opt/homebrew/sbin', process.env.PATH || ''].join(':')
 
 function openLineInEditor(settings, line) {
     const p = scriptMdPath.replace(/"/g, '\\"')
@@ -62,7 +82,7 @@ function openLineInEditor(settings, line) {
             .replace('{file}', `"${p}"`)
             .replace('{line}', String(line))
     }
-    if (cmd) exec(cmd)
+    if (cmd) exec(cmd, { env: { ...process.env, PATH: AUGMENTED_PATH } })
 }
 
 function readConfigBlock() {
@@ -73,34 +93,37 @@ function readConfigBlock() {
 }
 
 function loadSettings() {
+    let base = { ...defaultSettings }
     try {
         const { parsed } = readConfigBlock()
-        const s = parsed?.config?.settings
-        if (s != null) {
-            // New format: keyed by hostname
-            if (s[hostname] != null) return { ...defaultSettings, ...s[hostname] }
-            // Legacy flat format (single-PC, no hostname key) — still readable
-            if ('mainAudioDevice' in s) return { ...defaultSettings, ...s }
+        const mdSettings = parsed?.config?.settings?.[hostname]
+        if (mdSettings != null) {
+            // Strip editor keys — never trust them from a shared file
+            const safe = { ...mdSettings }
+            for (const k of EDITOR_PREF_KEYS) delete safe[k]
+            base = { ...base, ...safe }
         }
     } catch (e) {
         console.warn('settings read error:', e.message)
     }
-    // Legacy fallback: settings.json
-    try {
-        const legacyPath = path.join(app.getPath('userData'), 'settings.json')
-        return { ...defaultSettings, ...JSON.parse(fs.readFileSync(legacyPath, 'utf8')) }
-    } catch {}
-    return { ...defaultSettings }
+    return { ...base, ...loadEditorPrefs() }
 }
 
 function persistSettings(settings) {
+    // Always persist editor prefs to userData, independent of the markdown file
+    saveEditorPrefs(settings)
+
     const { text, parsed, block } = readConfigBlock()
     if (!parsed?.config) return
+
+    // Strip editor keys before writing to the shared markdown file
+    const mdSettings = { ...settings }
+    for (const k of EDITOR_PREF_KEYS) delete mdSettings[k]
 
     let existing = parsed.config.settings ?? {}
     // Migrate from legacy flat format to hostname-keyed on first save
     if ('mainAudioDevice' in existing) existing = {}
-    existing[hostname] = settings
+    existing[hostname] = mdSettings
     parsed.config.settings = existing
 
     const newYaml = yaml.dump(parsed, { indent: 4, lineWidth: -1, noRefs: true })

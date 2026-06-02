@@ -18,7 +18,7 @@ const loopBtns = new Map()          // triggerIdx → button element
 // loopVirtualStartTime: AudioContext time at which the loop was at position mp.start
 const loopGroups = new Map()
 
-// triggerIndex -> { ws, wsMonitor, mainAudioEl, monAudioEl, musicFile, overlay, getX, autoMarkerState }
+// triggerIndex -> { ws, mainAudioEl, monitorFile, musicFile, overlay, getX, autoMarkerState }
 const triggerAudio = new Map()
 const slfDerivedTcBadges = new Map()  // triggerIndex → span element for derived TC badges
 // musicFile -> triggerIndex[]  (for cross-trigger fade lookups)
@@ -30,44 +30,61 @@ const autoTriggerSetup = new Map()
 // sourceIdx currently being scrubbed (drag on waveform while playing)
 const scrubbingSet = new Set()
 
-let mainAudioDevice = null
-let monitorAudioDevice = null
-let monitorOffsetMs = 0
+let mainAudioDevice    = null
+let mainChannelL    = 0   // 0-indexed device output channels (Main L, Main R, Mon L, Mon R)
+let mainChannelR    = 1
+let monitorChannelL = 2
+let monitorChannelR = 3
 let audioOutputDevices = []
 let editorApp = null
 let audioBasePath = 'audio/'
-let sharedAudioCtx  = null
-let monitorAudioCtx = null
+let sharedAudioCtx = null
 
 function getAudioCtx() {
     if (!sharedAudioCtx) sharedAudioCtx = new AudioContext()
     if (sharedAudioCtx.state === 'suspended') sharedAudioCtx.resume().catch(() => {})
+    const dest   = sharedAudioCtx.destination
+    const needed = Math.max(mainChannelL, mainChannelR, monitorChannelL, monitorChannelR) + 1
+    if (needed > 2 && dest.maxChannelCount >= needed && dest.channelCount < needed) {
+        dest.channelCountMode = 'explicit'
+        dest.channelCount = needed
+    }
     return sharedAudioCtx
 }
 
-function getMonitorAudioCtx() {
-    if (!monitorAudioDevice) return null
-    if (!monitorAudioCtx || monitorAudioCtx.state === 'closed') {
-        try { monitorAudioCtx = new AudioContext({ sinkId: monitorAudioDevice }) }
-        catch (e) { console.warn('[monitor ctx]', e); return null }
-    }
-    if (monitorAudioCtx.state === 'suspended') monitorAudioCtx.resume().catch(() => {})
-    return monitorAudioCtx
-}
+// Builds a multichannel AudioBuffer routing main L/R and monitor L/R to the configured
+// device output channels. If no monitor file is given, main audio is duplicated to monitor
+// channels (unless monitor channels equal main channels — then fast path).
+// Shorter buffer is zero-padded with silence automatically (copyToChannel).
+function mergeToMultichannel(mainBuf, monBuf) {
+    const monitorDiffers = monitorChannelL !== mainChannelL || monitorChannelR !== mainChannelR
+    const monSrc  = monBuf ?? mainBuf   // duplicate main when no separate monitor file
+    const totalCh = monitorDiffers
+        ? Math.max(mainChannelL, mainChannelR, monitorChannelL, monitorChannelR) + 1
+        : Math.max(mainChannelL, mainChannelR) + 1
 
-async function preDecodeMonitorFile(targetIdx, monFile) {
-    const ta = triggerAudio.get(targetIdx)
-    if (!ta || ta.monDecodedBuffer || ta._monDecoding) return
-    ta._monDecoding = true
-    try {
-        const ctx = getAudioCtx()
-        const ab  = await (await fetch(audioBasePath + monFile)).arrayBuffer()
-        ta.monDecodedBuffer = await ctx.decodeAudioData(ab)
-    } catch (e) {
-        console.warn('[monitor] decode failed for', monFile, e)
-    } finally {
-        ta._monDecoding = false
+    // Fast path: main on ch1-2, no separate monitor routing
+    if (totalCh <= 2 && mainChannelL === 0 && mainChannelR === 1 && !monitorDiffers) return mainBuf
+
+    const dest = sharedAudioCtx?.destination
+    if (!dest || dest.maxChannelCount < totalCh) {
+        console.info(`[multichannel] Gerät unterstützt < ${totalCh} Kanäle – Standard-Routing`)
+        return mainBuf
     }
+    dest.channelCountMode = 'explicit'
+    dest.channelCount = totalCh
+
+    const maxLen = Math.max(mainBuf.length, monBuf ? monBuf.length : 0)
+    const merged = sharedAudioCtx.createBuffer(totalCh, maxLen, mainBuf.sampleRate)
+    merged.copyToChannel(mainBuf.getChannelData(0), mainChannelL)
+    if (mainBuf.numberOfChannels > 1) merged.copyToChannel(mainBuf.getChannelData(1), mainChannelR)
+    if (monitorDiffers) {
+        merged.copyToChannel(monSrc.getChannelData(0), monitorChannelL)
+        if (monSrc.numberOfChannels > 1) merged.copyToChannel(monSrc.getChannelData(1), monitorChannelR)
+        if (monBuf && Math.abs(mainBuf.duration - monBuf.duration) > 0.1)
+            console.warn(`[multichannel] Längenunterschied: Haupt ${mainBuf.duration.toFixed(2)}s, Monitor ${monBuf.duration.toFixed(2)}s – Monitor mit Stille aufgefüllt`)
+    }
+    return merged
 }
 
 async function preDecodeForGapless(targetIdx) {
@@ -76,9 +93,18 @@ async function preDecodeForGapless(targetIdx) {
     ta._decoding = true
     try {
         const ctx = getAudioCtx()
-        const resp = await fetch(audioBasePath + ta.musicFile)
-        const ab = await resp.arrayBuffer()
-        ta.decodedBuffer = await ctx.decodeAudioData(ab)
+        const mainAb = await (await fetch(audioBasePath + ta.musicFile)).arrayBuffer()
+        const mainBuf = await ctx.decodeAudioData(mainAb)
+        let monBuf = null
+        if (ta.monitorFile) {
+            try {
+                const monAb = await (await fetch(audioBasePath + ta.monitorFile)).arrayBuffer()
+                monBuf = await ctx.decodeAudioData(monAb)
+            } catch (e) {
+                console.warn('[multichannel] Monitor-Decode fehlgeschlagen:', e)
+            }
+        }
+        ta.decodedBuffer = mergeToMultichannel(mainBuf, monBuf)
         tryBuildLoopGroups()
     } catch (e) {
         console.warn('[gapless] pre-decode failed:', e)
@@ -106,11 +132,6 @@ function resolveDeviceId(label) {
     return found ? found.deviceId : null
 }
 
-function monitorShouldPlay() {
-    if (!monitorAudioDevice) return false
-    if (monitorAudioDevice === mainAudioDevice) return false
-    return true
-}
 
 let scriptText = ''
 let selectedVariant = null  // cueIdx chosen by user in live view before Go
@@ -1626,27 +1647,12 @@ function markTriggers(cue) {
 }
 
 function applyAudioDevices() {
-    for (const { mainAudioEl, monAudioEl, wsMonitor } of triggerAudio.values()) {
-        if (mainAudioEl?.setSinkId)
-            mainAudioEl.setSinkId(mainAudioDevice || '').catch(() => {})
-        if (monAudioEl) {
-            if (monitorShouldPlay()) {
-                monAudioEl.setSinkId(monitorAudioDevice).catch(() => {})
-            } else {
-                if (wsMonitor?.isPlaying()) wsMonitor.stop()
-                else if (!monAudioEl.paused) monAudioEl.pause()
-            }
-        }
+    if (sharedAudioCtx?.setSinkId) sharedAudioCtx.setSinkId(mainAudioDevice || '').catch(() => {})
+    for (const { mainAudioEl } of triggerAudio.values()) {
+        if (mainAudioEl?.setSinkId) mainAudioEl.setSinkId(mainAudioDevice || '').catch(() => {})
     }
-    // Update monitorAudioCtx device or stop all monitor BufferSources
-    if (monitorShouldPlay()) {
-        if (monitorAudioCtx && monitorAudioCtx.state !== 'closed')
-            monitorAudioCtx.setSinkId(monitorAudioDevice).catch(() => {})
-    } else {
-        for (const ta of triggerAudio.values()) ta.stopMonitorSrc?.()
-        if (monitorAudioCtx && monitorAudioCtx.state !== 'closed')
-            monitorAudioCtx.suspend().catch(() => {})
-    }
+    // After sink switch, re-enable 4-ch if the new device supports it
+    if (sharedAudioCtx) getAudioCtx()
 }
 
 function groupSiblingTriggers() {
@@ -1746,9 +1752,8 @@ function rerender(newText) {
     autoTriggerSetup.clear()
     autoTriggerBtns.clear()
 
-    for (const { ws, wsMonitor } of triggerAudio.values()) {
+    for (const { ws } of triggerAudio.values()) {
         try { ws.destroy() } catch (e) {}
-        if (wsMonitor) { try { wsMonitor.destroy() } catch (e) {} }
     }
 
     triggers = []
@@ -2537,58 +2542,10 @@ function buildTrigger(codeblockYaml, index) {
                 mainAudioEl.loop = true
             }
             src.addEventListener('ended', () => { if (activeSource === src) activeSource = null })
-
-            // Start a mirrored source in monitorAudioCtx — same buffer, same loop params,
-            // scheduled at the equivalent wall-clock time via clock-offset measurement.
-            if (monitorShouldPlay()) {
-                const monCtx = getMonitorAudioCtx()
-                if (monCtx) {
-                    if (activeMonitorSource) {
-                        try { activeMonitorSource.stop() } catch (_) {}
-                        activeMonitorSource = null
-                    }
-                    const ta_ = triggerAudio.get(index)
-                    const monBuf = monitorFile !== null ? ta_?.monDecodedBuffer : ta_?.decodedBuffer
-                    if (monBuf) {
-                        if (!monitorGain || monitorGain.context !== monCtx) {
-                            monitorGain = monCtx.createGain()
-                            monitorGain.gain.value = currentVolume
-                            monitorGain.connect(monCtx.destination)
-                        }
-                        const monSrc = monCtx.createBufferSource()
-                        monSrc.buffer = monBuf
-                        const offsetSec = monitorFile !== null ? monitorOffsetMs / 1000 : 0
-                        if (isLoopTrigger) {
-                            monSrc.loop      = true
-                            monSrc.loopStart = Math.max(0, (mp.start ?? 0) - offsetSec)
-                            monSrc.loopEnd   = mp.end != null
-                                ? Math.max(0, mp.end - offsetSec)
-                                : monBuf.duration
-                        }
-                        monSrc.connect(monitorGain)
-                        const dt      = monCtx.currentTime - sharedAudioCtx.currentTime
-                        const monWhen = Math.max(monCtx.currentTime, when + dt)
-                        monSrc.start(monWhen, Math.max(0, safeOffset - offsetSec))
-                        activeMonitorSource = monSrc
-                        monSrc.addEventListener('ended', () => {
-                            if (activeMonitorSource === monSrc) activeMonitorSource = null
-                        })
-                    }
-                }
-            }
+            // Monitor channels (2-3) are part of the merged 4-ch buffer — no separate source needed.
         }
 
         function stopSource(when) {
-            // Stop monitor source at the same scheduled time (clock-offset corrected)
-            if (activeMonitorSource && monitorAudioCtx) {
-                const monSrc = activeMonitorSource
-                activeMonitorSource = null
-                const monStop = when != null
-                    ? Math.max(monitorAudioCtx.currentTime,
-                               when + (monitorAudioCtx.currentTime - sharedAudioCtx.currentTime))
-                    : monitorAudioCtx.currentTime
-                try { monSrc.stop(monStop) } catch (_) {}
-            }
             // If this trigger's audio is owned by a group source from another trigger,
             // delegate to that trigger's forceStop callback instead.
             const ta_ = triggerAudio.get(index)
@@ -2806,12 +2763,15 @@ function buildTrigger(codeblockYaml, index) {
                 // ① Stop loop source at exact loop boundary
                 stopSource(transitionTime)
 
-                // ② Immediately stop cursor — prevents a late "finish" event (when mp.end <
-                // file duration) from firing after gaplessActive resets and restarting the source.
-                suppressPauseStop = true
-                mainAudioEl.loop = false
-                mainAudioEl.pause()
-                setTimeout(() => { suppressPauseStop = false }, 0)
+                // ② Stop cursor shortly before the audio boundary — avoids a visible cursor
+                // freeze when the timer fires well before the boundary (increased lead time).
+                // gaplessActive (set below) protects against spurious "finish" events meanwhile.
+                setTimeout(() => {
+                    suppressPauseStop = true
+                    mainAudioEl.loop = false
+                    mainAudioEl.pause()
+                    setTimeout(() => { suppressPauseStop = false }, 0)
+                }, Math.max(0, msToTransition - 15))
 
                 // ③ Start outro audio source at the same instant — pure WebAudio, no media element
                 const nextPg = nextTa.getPlaybackGain?.()
@@ -2826,13 +2786,7 @@ function buildTrigger(codeblockYaml, index) {
                     mainAudioEl.currentTime = mp.start
                     if (mtc && mtc.activeTcIndex === index) mtc.stopAndClear()
                     gaplessActive = false
-                    // Start outro cursor (activeSource guard in ws.on("play") prevents double source)
                     nextTa.startCursor(ns, 0)
-                    // Fallback Path-B monitor start (only when buffer not decoded)
-                    if (monitorShouldPlay() && nextTa.monAudioEl && !nextTa.wsMonitor && !nextTa.decodedBuffer) {
-                        nextTa.monAudioEl.currentTime = ns
-                        nextTa.monAudioEl.play().catch(() => {})
-                    }
                 }, msToTransition + 10)
 
                 _nonAudioActions(nextIdx, nextTa)
@@ -2860,7 +2814,6 @@ function buildTrigger(codeblockYaml, index) {
                 nextTa.startGaplessSource(ns, transitionTime)
 
                 // ③ Swap cursors at transition
-                const hasExplicitMon = typeof ty.music === 'object' && ty.music.monitor != null
                 setTimeout(() => {
                     gaplessActive = false
                     suppressPauseStop = true
@@ -2868,17 +2821,7 @@ function buildTrigger(codeblockYaml, index) {
                     mainAudioEl.currentTime = mp.start
                     if (mtc && mtc.activeTcIndex === index) mtc.stopAndClear()
                     setTimeout(() => { suppressPauseStop = false }, 0)
-                    // Start next trigger's cursor
                     nextTa.startCursor(ns, 0)
-                    if (monitorShouldPlay() && nextTa.monAudioEl) {
-                        if (hasExplicitMon && monitorOffsetMs <= 0 && !nextTa.monDecodedBuffer)
-                            nextTa.monAudioEl.play().catch(() => {})
-                        else if (!hasExplicitMon && !nextTa.decodedBuffer) {
-                            // Fallback Path-B: start element only when buffer not decoded
-                            nextTa.monAudioEl.currentTime = ns
-                            nextTa.monAudioEl.play().catch(() => {})
-                        }
-                    }
                 }, msToTransition + 5)
 
                 _nonAudioActions(nextIdx, nextTa)
@@ -2889,16 +2832,6 @@ function buildTrigger(codeblockYaml, index) {
                 nextTa.setCurrentVolume(fadein > 0 ? 0 : vol)
                 nextTa.ws.setVolume(fadein > 0 ? 0 : vol)
                 nextTa.mainAudioEl.play().catch(() => {})
-                if (monitorShouldPlay() && nextTa.monAudioEl) {
-                    const hasExplicit = typeof ty.music === 'object' && ty.music.monitor != null
-                    if (hasExplicit && monitorOffsetMs <= 0)
-                        nextTa.monAudioEl.play().catch(() => {})
-                    else if (!hasExplicit) {
-                        // Path B: same-file mirror — start explicitly
-                        nextTa.monAudioEl.currentTime = ns
-                        nextTa.monAudioEl.play().catch(() => {})
-                    }
-                }
                 mainAudioEl.pause()
                 mainAudioEl.currentTime = mp.start
                 ws.setVolume(currentVolume)
@@ -2945,14 +2878,6 @@ function buildTrigger(codeblockYaml, index) {
                 clearTimeout(loopJumpTimer); loopJumpTimer = null  // cancel any stale timer
                 suppressSeekRestart = true
                 mainAudioEl.currentTime = mp.start
-                // Path B with native loop: monAudioEl restarts itself — no seek needed.
-                if (monAudioEl && monitorShouldPlay() && !activeMonitorSource) {
-                    // Use offset-corrected position for explicit monitor file (Path A)
-                    monAudioEl.currentTime = monitorFile !== null
-                        ? Math.max(0, (mp.start ?? 0) - monitorOffsetMs / 1000)
-                        : (mp.start ?? 0)
-                    if (monAudioEl.paused) monAudioEl.play().catch(() => {})
-                }
                 setTimeout(() => { suppressSeekRestart = false }, 50)
                 return
             }
@@ -2987,23 +2912,11 @@ function buildTrigger(codeblockYaml, index) {
                     suppressSeekRestart = true
                     mainAudioEl.currentTime = mp.start
                     gaplessActive = false
-                    if (monAudioEl && monitorShouldPlay() && !activeMonitorSource) {
-                        monAudioEl.currentTime = monitorFile !== null
-                            ? Math.max(0, (mp.start ?? 0) - monitorOffsetMs / 1000)
-                            : (mp.start ?? 0)
-                        if (monAudioEl.paused) monAudioEl.play().catch(() => {})
-                    }
                     setTimeout(() => { suppressSeekRestart = false }, 50)
                 }, msToTransition)
 
             } else {
                 mainAudioEl.currentTime = mp.start
-                if (monAudioEl && monitorShouldPlay() && !activeMonitorSource) {
-                    monAudioEl.currentTime = monitorFile !== null
-                        ? Math.max(0, (mp.start ?? 0) - monitorOffsetMs / 1000)
-                        : (mp.start ?? 0)
-                    if (monAudioEl.paused) monAudioEl.play().catch(() => {})
-                }
             }
         }
 
@@ -3048,12 +2961,6 @@ function buildTrigger(codeblockYaml, index) {
                     if (nextTa) {
                         const ns = nextTa.mp?.start ?? 0
                         nextTa.mainAudioEl.currentTime = ns
-                        if (nextTa.monAudioEl) {
-                            const monDur = nextTa.wsMonitor?.getDuration() ?? 0
-                            nextTa.monAudioEl.currentTime = monDur > 0
-                                ? Math.min(Math.max(ns - monitorOffsetMs / 1000, 0), monDur)
-                                : ns
-                        }
                         clearTimeout(chainEndTimer)
                         chainEndTimer = setTimeout(() => {
                             chainEndTimer = null
@@ -3073,17 +2980,11 @@ function buildTrigger(codeblockYaml, index) {
                             if (outroTa) {
                                 const ns = outroTa.mp?.start ?? 0
                                 outroTa.mainAudioEl.currentTime = ns
-                                if (outroTa.monAudioEl) {
-                                    const monDur = outroTa.wsMonitor?.getDuration() ?? 0
-                                    outroTa.monAudioEl.currentTime = monDur > 0
-                                        ? Math.min(Math.max(ns - monitorOffsetMs / 1000, 0), monDur)
-                                        : ns
-                                }
                                 clearTimeout(loopJumpTimer)
                                 loopJumpTimer = setTimeout(() => {
                                     loopJumpTimer = null
                                     fireLoopOutro()
-                                }, Math.max(0, (effEnd - ct) * 1000 - 5))
+                                }, Math.max(0, (effEnd - ct) * 1000 - 50))
                             }
                         } else {
                             // No outro: schedule gapless loop restart
@@ -3289,99 +3190,7 @@ function buildTrigger(codeblockYaml, index) {
             document.addEventListener("mouseup", onUp)
         })
 
-        // ── Monitor mix ─────────────────────────────────────────────────
         const monitorFile = typeof codeblockYaml.music === 'object' ? codeblockYaml.music.monitor ?? null : null
-
-        let monAudioEl = null, wsMonitor = null
-        let monSyncRaf = null
-        let activeMonitorSource = null
-        let monitorGain         = null
-
-        if (monitorFile !== null && monitorShouldPlay()) {
-            // ── Path A: explicit monitor file — WaveSurfer + sync loop ────
-            monAudioEl = new Audio()
-            monAudioEl.setSinkId(monitorAudioDevice).catch(() => {})
-            const monContainer = document.createElement('div')
-            monContainer.style.cssText = 'position:absolute;height:0;overflow:hidden;opacity:0;pointer-events:none'
-            triggerDiv.appendChild(monContainer)
-            wsMonitor = WaveSurfer.create({
-                container: monContainer, media: monAudioEl,
-                height: 0, interact: false, normalize: true, minPxPerSec: 1,
-            })
-            wsMonitor.load(audioBasePath + monitorFile)
-            wsMonitor.setVolume(mp.volume)
-
-            // Timecode-follower sync loop — fallback for when monDecodedBuffer not yet ready.
-            // Once a BufferSourceNode is active in monitorAudioCtx, the RAF exits immediately.
-            const syncMonitor = () => {
-                if (!ws.isPlaying() || !monitorShouldPlay() || activeMonitorSource) { monSyncRaf = null; return }
-                const dur = wsMonitor.getDuration()
-                if (dur > 0 && !monAudioEl.seeking) {
-                    const mainT = mainAudioEl.currentTime
-                    const targetT = Math.min(Math.max(mainT - monitorOffsetMs / 1000, 0), dur)
-                    if (monAudioEl.paused) {
-                        // Restart if within active playback region, or if monitor ended
-                        // naturally (e.g. loop iteration) and main is near its start again.
-                        const canRestart = mainT * 1000 >= monitorOffsetMs &&
-                            (targetT < dur - 0.1 || (monAudioEl.ended && mainT <= (mp.start ?? 0) + 0.5))
-                        if (canRestart) {
-                            const restartT = Math.min(Math.max(mainT - monitorOffsetMs / 1000, 0), dur)
-                            if (Math.abs(monAudioEl.currentTime - restartT) >= 0.05)
-                                monAudioEl.currentTime = restartT
-                            monAudioEl.play().catch(() => {})
-                        }
-                    } else if (Math.abs(monAudioEl.currentTime - targetT) > 0.1) {
-                        monAudioEl.currentTime = targetT
-                    }
-                }
-                monSyncRaf = requestAnimationFrame(syncMonitor)
-            }
-            ws.on('play', () => {
-                if (!monitorShouldPlay()) return
-                if (activeMonitorSource) return  // BufferSource in monitorAudioCtx handles it
-                if (monSyncRaf) cancelAnimationFrame(monSyncRaf)
-                syncMonitor()
-            })
-            ws.on('pause', () => {
-                if (monSyncRaf) { cancelAnimationFrame(monSyncRaf); monSyncRaf = null }
-                if (!monAudioEl.paused) monAudioEl.pause()
-                const dur = wsMonitor.getDuration()
-                if (dur > 0) monAudioEl.currentTime = Math.min(
-                    Math.max(mainAudioEl.currentTime - monitorOffsetMs / 1000, 0), dur)
-            })
-            ws.on('seeking', (t) => {
-                if (!monitorShouldPlay()) return
-                const dur = wsMonitor.getDuration()
-                if (dur > 0) monAudioEl.currentTime = Math.min(Math.max(t - monitorOffsetMs / 1000, 0), dur)
-            })
-
-        } else if (monitorFile === null && monitorShouldPlay()) {
-            // ── Path B: same-file fallback element ────────────────────────────
-            // startSource starts a mirrored AudioBufferSourceNode in monitorAudioCtx
-            // (same decoded buffer, same clock → zero drift).  This plain element
-            // only takes over when decodedBuffer is not yet available.
-            monAudioEl = new Audio()
-            monAudioEl.src = audioBasePath + musicFile
-            monAudioEl.preload = 'auto'
-            monAudioEl.volume = mp.volume
-            monAudioEl.setSinkId(monitorAudioDevice).catch(() => {})
-            const monStart = mp.start ?? 0
-            if (monStart > 0) {
-                monAudioEl.addEventListener('canplay', () => {
-                    if (monAudioEl.paused) monAudioEl.currentTime = monStart
-                }, { once: true })
-            }
-            ws.on('play', () => {
-                if (!monitorShouldPlay() || activeMonitorSource) return
-                if (monAudioEl.paused) monAudioEl.play().catch(() => {})
-            })
-            ws.on('pause', () => {
-                if (!monAudioEl.paused) monAudioEl.pause()
-            })
-            ws.on('seeking', (t) => {
-                if (monitorShouldPlay() && !activeMonitorSource) monAudioEl.currentTime = t
-            })
-        }
 
         // ── Common patches ────────────────────────────────────────────────
         const _wsSetVol = ws.setVolume.bind(ws)
@@ -3390,24 +3199,16 @@ function buildTrigger(codeblockYaml, index) {
             const ta_ = triggerAudio.get(index)
             const targetGain = ta_?.playbackGainOverride ?? playbackGain
             if (targetGain) targetGain.gain.value = v
-            if (monitorGain) monitorGain.gain.value = v
-            if (wsMonitor) wsMonitor.setVolume(v)
-            else if (monAudioEl) monAudioEl.volume = v
         }
         const _wsStop = ws.stop.bind(ws)
         ws.stop = () => {
-            stopSource()  // also stops activeMonitorSource via stopSource()
+            stopSource()
             mainAudioEl.loop = false
-            if (monSyncRaf) { cancelAnimationFrame(monSyncRaf); monSyncRaf = null }
-            if (monAudioEl) {
-                if (!monAudioEl.paused) monAudioEl.pause()
-                monAudioEl.currentTime = monitorFile === null ? (mp.start ?? 0) : 0
-            }
             _wsStop()
         }
 
         triggerAudio.set(index, {
-            ws, wsMonitor, mainAudioEl, monAudioEl, musicFile, overlay, getX, autoMarkerState, mp,
+            ws, mainAudioEl, monitorFile, musicFile, overlay, getX, autoMarkerState, mp,
             getTimeAtClientX: (clientX) => {
                 const rect = waveformContainer.getBoundingClientRect()
                 const tw = totalWaveWidth(), dur = ws.getDuration()
@@ -3416,13 +3217,6 @@ function buildTrigger(codeblockYaml, index) {
             },
             mainAudioCtxGain,
             decodedBuffer: null, _decoding: false,
-            monDecodedBuffer: null, _monDecoding: false,
-            stopMonitorSrc: () => {
-                if (activeMonitorSource) {
-                    try { activeMonitorSource.stop() } catch (_) {}
-                    activeMonitorSource = null
-                }
-            },
             gaplessSwitchActive: false,  // suppresses new source start in ws.on("play") during transition
             getCurrentVolume: () => currentVolume,
             setCurrentVolume: (v) => { currentVolume = v },
@@ -3460,43 +3254,6 @@ function buildTrigger(codeblockYaml, index) {
                 if (isLoopTrigger) mainAudioEl.loop = true
                 src.addEventListener('ended', () => { if (activeSource === src) activeSource = null })
 
-                // Mirror in monitorAudioCtx at the same scheduled wall-clock time
-                if (monitorShouldPlay()) {
-                    const monCtx = getMonitorAudioCtx()
-                    if (monCtx) {
-                        if (activeMonitorSource) {
-                            try { activeMonitorSource.stop() } catch (_) {}
-                            activeMonitorSource = null
-                        }
-                        const monBuf = monitorFile !== null ? ta_?.monDecodedBuffer : ta_?.decodedBuffer
-                        if (monBuf) {
-                            if (!monitorGain || monitorGain.context !== monCtx) {
-                                monitorGain = monCtx.createGain()
-                                monitorGain.gain.value = currentVolume
-                                monitorGain.connect(monCtx.destination)
-                            }
-                            const monSrc = monCtx.createBufferSource()
-                            monSrc.buffer = monBuf
-                            const offsetSec = monitorFile !== null ? monitorOffsetMs / 1000 : 0
-                            if (isLoopTrigger) {
-                                monSrc.loop      = true
-                                monSrc.loopStart = Math.max(0, (mp.start ?? 0) - offsetSec)
-                                monSrc.loopEnd   = mp.end != null
-                                    ? Math.max(0, mp.end - offsetSec)
-                                    : monBuf.duration
-                            }
-                            monSrc.connect(monitorGain)
-                            const dt      = monCtx.currentTime - sharedAudioCtx.currentTime
-                            const monWhen = Math.max(monCtx.currentTime, when + dt)
-                            monSrc.start(monWhen, Math.max(0, actualOffset - offsetSec))
-                            activeMonitorSource = monSrc
-                            monSrc.addEventListener('ended', () => {
-                                if (activeMonitorSource === monSrc) activeMonitorSource = null
-                            })
-                        }
-                    }
-                }
-
                 return true
             },
             // Starts the cursor (mainAudioEl) at offset, after delayMs, without starting a new source.
@@ -3512,7 +3269,6 @@ function buildTrigger(codeblockYaml, index) {
             },
         })
         fileToTriggers.set(musicFile, [...(fileToTriggers.get(musicFile) || []), index])
-        if (monitorFile !== null && monitorShouldPlay()) preDecodeMonitorFile(index, monitorFile)
     }
 
     triggerYamls[index] = codeblockYaml
@@ -4414,13 +4170,11 @@ function fadeOutAndStop(cueIdx) {
         const t = Math.min(1, (performance.now() - start) / 500)
         const v = originalVol * (1 - t)
         ta.ws.setVolume(v)
-        if (ta.wsMonitor) ta.wsMonitor.setVolume(v)
         if (t < 1) {
             requestAnimationFrame(tick)
         } else {
             ta.ws.stop()
             ta.ws.setVolume(originalVol)
-            if (ta.wsMonitor) ta.wsMonitor.setVolume(originalVol)
         }
     }
     requestAnimationFrame(tick)
@@ -4855,37 +4609,7 @@ async function playMusic(cue) {
         const fadein = typeof music === 'object' && music.fadein != null ? music.fadein : 0
 
         ta.ws.setVolume(fadein > 0 ? 0 : volume)
-
-        const hasExplicitMonitor = typeof music === 'object' && music.monitor != null
-        const useMonitor = monitorShouldPlay() && ta.wsMonitor && ta.wsMonitor.getDuration() > 0
-        if (useMonitor && hasExplicitMonitor) {
-            // Explicit monitor file (e.g. a song with a separate mix):
-            // seek both elements in parallel, then fire play() simultaneously.
-            const monDur = ta.wsMonitor.getDuration()
-            const monTargetT = Math.min(Math.max(start - monitorOffsetMs / 1000, 0), monDur)
-            const seekReady = (el, t) => new Promise(resolve => {
-                el.currentTime = t
-                if (!el.seeking) { resolve(); return }
-                const guard = setTimeout(resolve, 2000)
-                el.addEventListener('seeked', () => { clearTimeout(guard); resolve() }, { once: true })
-            })
-            await Promise.all([
-                seekReady(ta.mainAudioEl, start),
-                seekReady(ta.monAudioEl, monTargetT),
-            ])
-            ta.mainAudioEl.play().catch(() => {})
-            if (monitorOffsetMs <= 0 && !ta.monDecodedBuffer) ta.monAudioEl.play().catch(() => {})
-            // positive offset: syncMonitor starts monitor once delay has elapsed
-        } else {
-            // Same-file monitor (Path B) or no monitor: play main via WaveSurfer.
-            // Also start the monitor explicitly so it plays even if the ws 'play'
-            // event is not reliably delivered (e.g. AudioBufferSourceNode path).
-            if (monitorShouldPlay() && ta.monAudioEl && !ta.wsMonitor && !ta.decodedBuffer) {
-                ta.monAudioEl.currentTime = start
-                ta.monAudioEl.play().catch(() => {})
-            }
-            ta.ws.play(start)
-        }
+        ta.ws.play(start)
     }
 
     if (typeof music === 'object' && music.adjust) {
@@ -5204,10 +4928,12 @@ async function initApp() {
             .filter(d => d.kind === 'audiooutput')
     } catch {}
 
-    mainAudioDevice    = resolveDeviceId(savedSettings.mainAudioDevice)
-    monitorAudioDevice = resolveDeviceId(savedSettings.monitorAudioDevice)
-    monitorOffsetMs    = savedSettings.monitorOffsetMs ?? 0
-    editorApp          = savedSettings.editorApp || null
+    mainAudioDevice = resolveDeviceId(savedSettings.mainAudioDevice)
+    mainChannelL    = savedSettings.mainChannelL    ?? 0
+    mainChannelR    = savedSettings.mainChannelR    ?? 1
+    monitorChannelL = savedSettings.monitorChannelL ?? 2
+    monitorChannelR = savedSettings.monitorChannelR ?? 3
+    editorApp       = savedSettings.editorApp || null
 
     let text = await window.electronAPI.getScriptMd()
 
@@ -5281,20 +5007,25 @@ async function initApp() {
         window.electronAPI.getScriptMd().then(text => { scriptText = text })
         refreshMidiDevices(newSettings)
         // Re-enumerate to pick up newly connected devices, then resolve labels.
+        const applyNew = () => {
+            const newML  = newSettings.mainChannelL    ?? 0
+            const newMR  = newSettings.mainChannelR    ?? 1
+            const newMoL = newSettings.monitorChannelL ?? 2
+            const newMoR = newSettings.monitorChannelR ?? 3
+            const changed = newML !== mainChannelL || newMR !== mainChannelR ||
+                            newMoL !== monitorChannelL || newMoR !== monitorChannelR
+            mainAudioDevice = resolveDeviceId(newSettings.mainAudioDevice)
+            mainChannelL    = newML;  mainChannelR    = newMR
+            monitorChannelL = newMoL; monitorChannelR = newMoR
+            editorApp       = newSettings.editorApp || null
+            if (changed)
+                for (const ta of triggerAudio.values()) { ta.decodedBuffer = null; ta._decoding = false }
+            applyAudioDevices()
+        }
         navigator.mediaDevices.enumerateDevices().then(devs => {
             audioOutputDevices = devs.filter(d => d.kind === 'audiooutput')
-            mainAudioDevice    = resolveDeviceId(newSettings.mainAudioDevice)
-            monitorAudioDevice = resolveDeviceId(newSettings.monitorAudioDevice)
-            monitorOffsetMs    = newSettings.monitorOffsetMs ?? 0
-            editorApp          = newSettings.editorApp || null
-            applyAudioDevices()
-        }).catch(() => {
-            mainAudioDevice    = resolveDeviceId(newSettings.mainAudioDevice)
-            monitorAudioDevice = resolveDeviceId(newSettings.monitorAudioDevice)
-            monitorOffsetMs    = newSettings.monitorOffsetMs ?? 0
-            editorApp          = newSettings.editorApp || null
-            applyAudioDevices()
-        })
+            applyNew()
+        }).catch(applyNew)
     })
 
     broadcastLiveState()
