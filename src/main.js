@@ -154,6 +154,8 @@ let liveViewOpen = false
 let armedCue = null
 let midiGoNote = null
 let midiBackNote = null
+let midiBackLongPressTimer = null
+let midiBackLongPressed    = false
 let pickModeCallback = null
 let midiAccess = null
 let midiX32 = null
@@ -5052,16 +5054,46 @@ function refreshMidiDevices(settings) {
     if (mtc) mtc.setOutput(midiTC)
 }
 
+function stopAllAudio() {
+    for (const [cueIdx] of triggerAudio) fadeOutAndStop(cueIdx)
+    if (mtc) mtc.stopAndClear()
+    for (const [loopIdx, outroIdx] of loopOutroPending) {
+        loopOutroInitialRemaining.delete(loopIdx)
+        setOutroPendingIndicator(outroIdx, false)
+    }
+    loopOutroPending.clear()
+    setArmedCue(null)
+    broadcastLiveState()
+}
+
+const MIDI_BACK_LONG_PRESS_MS = 600
+
 function setupMidiInputListeners() {
     if (!midiAccess) return
     for (const input of midiAccess.inputs.values()) {
         input.onmidimessage = (msg) => {
             const [status, note, velocity] = msg.data
-            const type = status & 0xf0
-            const ch   = (status & 0x0f) + 1
-            if (type !== 0x90 || velocity === 0) return
-            if (midiGoNote   && ch === midiGoNote.ch   && note === midiGoNote.note)   goAction()
-            if (midiBackNote && ch === midiBackNote.ch && note === midiBackNote.note)  backAction()
+            const type     = status & 0xf0
+            const ch       = (status & 0x0f) + 1
+            const isNoteOn  = type === 0x90 && velocity > 0
+            const isNoteOff = type === 0x80 || (type === 0x90 && velocity === 0)
+
+            if (midiGoNote && ch === midiGoNote.ch && note === midiGoNote.note && isNoteOn)
+                goAction()
+
+            if (midiBackNote && ch === midiBackNote.ch && note === midiBackNote.note) {
+                if (isNoteOn) {
+                    midiBackLongPressed = false
+                    midiBackLongPressTimer = setTimeout(() => {
+                        midiBackLongPressed = true
+                        stopAllAudio()
+                    }, MIDI_BACK_LONG_PRESS_MS)
+                } else if (isNoteOff) {
+                    clearTimeout(midiBackLongPressTimer)
+                    midiBackLongPressTimer = null
+                    if (!midiBackLongPressed) backAction()
+                }
+            }
         }
     }
 }
