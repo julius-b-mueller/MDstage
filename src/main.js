@@ -4560,6 +4560,21 @@ function goAction() {
 }
 
 function backAction() {
+    // If a Finish or Bridge is armed (waiting for loop end), only cancel the arming —
+    // leave the loop running and do not navigate back.
+    if (loopOutroPending.size > 0) {
+        let outroToRearm = null
+        for (const [loopIdx, outroIdx] of loopOutroPending) {
+            loopOutroInitialRemaining.delete(loopIdx)
+            setOutroPendingIndicator(outroIdx, false)
+            outroToRearm = outroIdx
+        }
+        loopOutroPending.clear()
+        setArmedCue(outroToRearm)
+        broadcastLiveState()
+        return
+    }
+
     setArmedCue(null)
     if (cueHistory.length < 1) return
     const last = cueHistory.pop()
