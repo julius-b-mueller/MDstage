@@ -313,7 +313,7 @@
                     tr.appendChild(labelTd)
                     for (const col of COLS) {
                         const disabled = col.isMon && !monitorEnabled
-                        const isSelected = routing[col.key] === ch
+                        const isSelected = !disabled && routing[col.key] === ch
                         const td = document.createElement('td')
                         td.className = 'route-cell' + (isSelected ? ' ' + col.sel : '') + (disabled ? ' disabled' : '')
                         td.dataset.col = col.key

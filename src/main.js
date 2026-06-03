@@ -2395,7 +2395,7 @@ function buildTrigger(codeblockYaml, index) {
         oscBadge.classList.add('trigger-osc')
         let oscText = '⌁ ' + codeblockYaml.osc
         if (codeblockYaml.osc_arg !== undefined && codeblockYaml.osc_arg !== '') {
-            oscText += ` [${codeblockYaml.osc_arg_type || 'string'}: ${codeblockYaml.osc_arg}]`
+            oscText += ' ' + codeblockYaml.osc_arg
         }
         oscBadge.textContent = oscText
         triggerInfo.appendChild(oscBadge)

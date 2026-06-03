@@ -370,7 +370,7 @@
             const lightRow = b.lightScene
                 ? `<div class="trigger-light">✦ ${esc(b.lightScene)}</div>` : ''
             const oscRow = b.oscPath
-                ? `<div class="trigger-osc">⌁ ${esc(b.oscPath)}${b.oscArg !== null ? ` <span style="opacity:0.6">[${esc(b.oscArgType || 'string')}: ${esc(b.oscArg)}]</span>` : ''}</div>` : ''
+                ? `<div class="trigger-osc">⌁ ${esc(b.oscPath)}${b.oscArg !== null ? ' ' + esc(b.oscArg) : ''}</div>` : ''
             const slfRow = b.slfLabel
                 ? `<div class="trigger-slf trigger-slf--${b.slfLabel.role.toLowerCase()}">${esc(b.slfLabel.role)} <span style="opacity:0.65;font-weight:normal">${esc(b.slfLabel.detail)}</span></div>` : ''
             const playDot = b.isPlaying
