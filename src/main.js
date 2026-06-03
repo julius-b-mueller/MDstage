@@ -2723,40 +2723,24 @@ function buildTrigger(codeblockYaml, index) {
                 // ── Sample-accurate Loop→Outro transition ──────────────────────────────
                 const ta_  = triggerAudio.get(index)
                 const sr   = ctx.sampleRate
-                const loopStartSec   = mp.start ?? 0
-                const loopEndSec     = mp.end ?? (ta_?.decodedBuffer?.duration ?? ws.getDuration())
-                const loopDurSamples = Math.round((loopEndSec - loopStartSec) * sr)
-                // Snap loopVirtualStartTime to the most recent audio loop boundary.
-                // Without this, accumulated cursor-reset timing imprecision causes elapsed
-                // to overshoot into the next iteration, making the guard snap transitionTime
-                // into the past and forcing an immediate (non-gapless) stop/start.
-                const rawVStart = group.loopVirtualStartTime ?? ctx.currentTime
-                const rawElapsedSamples = Math.round(Math.max(0, ctx.currentTime - rawVStart) * sr)
-                const completedSamples  = Math.floor(rawElapsedSamples / loopDurSamples) * loopDurSamples
-                if (completedSamples > 0) group.loopVirtualStartTime = rawVStart + completedSamples / sr
-                const loopVStart = group.loopVirtualStartTime ?? ctx.currentTime
-                const elapsed    = Math.max(0, ctx.currentTime - loopVStart)
-                let n              = Math.max(1, Math.ceil(Math.round(elapsed * sr) / loopDurSamples))
-                let transitionTime = loopVStart + (n * loopDurSamples) / sr
-                // Guard: if transitionTime is more than half a loop away, three cases:
-                // (a) mainAudioEl.ended && elapsed≈0 — ws.on("finish") fired right at the loop
-                //     boundary (fileDuration≈mp.end); transition immediately at ctx.currentTime.
-                // (b) mainAudioEl.ended && elapsed>0 — cursor reached file end mid-loop
-                //     (fileDuration>mp.end); keep transitionTime at the correct upcoming boundary
-                //     so the audio cuts at the loop boundary, not mid-cycle.
-                // (c) not ended — floating-point overshoot; step back to correct upcoming boundary.
+                const loopStartSec     = mp.start ?? 0
+                const loopEndSec       = mp.end ?? (ta_?.decodedBuffer?.duration ?? ws.getDuration())
+                // Use Math.round(x*sr) for each endpoint separately — matches how browsers
+                // quantise loopStart/loopEnd to sample frames internally.
+                const loopEndSamples   = Math.round(loopEndSec * sr)
+                const loopStartSamples = Math.round(loopStartSec * sr)
+                const loopDurSamples   = loopEndSamples - loopStartSamples
+                // Compute next loop boundary directly from source start parameters.
+                // firstBoundaryTime = AudioContext time when source first reaches loopEnd.
+                const startOffSamples   = Math.round(activeSourceStartOffset * sr)
+                const firstBoundaryTime = activeSourceStartedAt + (loopEndSamples - startOffSamples) / sr
+                // n = additional loop periods needed to reach a boundary ≥ now
+                const n = Math.max(0, Math.ceil((ctx.currentTime - firstBoundaryTime) * sr / loopDurSamples))
+                let transitionTime = firstBoundaryTime + n * loopDurSamples / sr
+                // Guard: boundary missed (timer arrived late, ws.on("finish") fallback).
+                // Starting immediately is always better than waiting a full extra loop.
                 if (transitionTime - ctx.currentTime > (loopEndSec - loopStartSec) * 0.5) {
-                    if (mainAudioEl.ended && elapsed < 0.05) {
-                        // Boundary just crossed — transition immediately
-                        transitionTime = ctx.currentTime
-                    } else if (!mainAudioEl.ended) {
-                        // Timer fired slightly after the loop boundary — transition immediately.
-                        // After the snap, n is always 1 (elapsed < loopDur), so n-1=0 and
-                        // Math.max(1,0)=1 would be a no-op, leaving transitionTime a full loop
-                        // in the future and causing an unwanted extra iteration.
-                        transitionTime = ctx.currentTime
-                    }
-                    // else: cursor ended mid-loop — transitionTime already at the upcoming boundary
+                    transitionTime = ctx.currentTime
                 }
                 const msToTransition = Math.max(0, transitionTime - ctx.currentTime) * 1000
 
@@ -2965,7 +2949,7 @@ function buildTrigger(codeblockYaml, index) {
                         chainEndTimer = setTimeout(() => {
                             chainEndTimer = null
                             fireChainEnd(nextIdx)
-                        }, Math.max(0, (effEnd - ct) * 1000 - 5))
+                        }, Math.max(0, (effEnd - ct) * 1000 - 50))
                     }
                 }
                 if (!chainEnd) {
@@ -3039,6 +3023,24 @@ function buildTrigger(codeblockYaml, index) {
             // Don't start a new source if one is already running (e.g. media-element cursor restart)
             if (activeSource) return
             if (sharedAudioCtx) startSource(mainAudioEl.currentTime, sharedAudioCtx.currentTime)
+            // Schedule chain_end timer immediately from AudioContext time — bypasses timeupdate
+            // frequency dependency and ensures ≥50ms of WebAudio scheduling headroom.
+            const chainEndNote = triggerYamls[index]?.chain_end
+            if (chainEndNote && activeSourceStartedAt !== null && activeSourceStartOffset !== null && !chainEndArmed) {
+                const effEnd_ = mp.end ?? ws.getDuration()
+                const tTime   = activeSourceStartedAt + (effEnd_ - activeSourceStartOffset)
+                const msTT    = Math.max(0, (tTime - sharedAudioCtx.currentTime) * 1000)
+                if (msTT > 50) {
+                    const nextIdx_ = findTriggerByNote(chainEndNote)
+                    if (nextIdx_ !== null) {
+                        clearTimeout(chainEndTimer)
+                        chainEndTimer = setTimeout(() => {
+                            chainEndTimer = null
+                            fireChainEnd(nextIdx_)
+                        }, msTT - 50)
+                    }
+                }
+            }
         })
         ws.on("pause",  () => {
             pauseBtn.textContent = "⏵"
@@ -3255,6 +3257,30 @@ function buildTrigger(codeblockYaml, index) {
                 src.addEventListener('ended', () => { if (activeSource === src) activeSource = null })
 
                 return true
+            },
+            // Schedules loopJumpTimer to fire 50ms before the next loop boundary.
+            // Called when outro is armed so the timer is set immediately rather than waiting
+            // for a timeupdate event to enter the 350ms pre-seek window.
+            armOutroTimer: () => {
+                const ctx = sharedAudioCtx
+                if (!ctx || !loopGroups.has(index) || !activeSource || activeSourceStartedAt === null) return
+                const sr = ctx.sampleRate
+                const loopStartSec     = mp.start ?? 0
+                const loopEndSec       = mp.end ?? (triggerAudio.get(index)?.decodedBuffer?.duration ?? ws.getDuration())
+                const loopEndSamples   = Math.round(loopEndSec * sr)
+                const loopStartSamples = Math.round(loopStartSec * sr)
+                const loopDurSamples   = loopEndSamples - loopStartSamples
+                if (loopDurSamples <= 0) return
+                const startOffSamples   = Math.round(activeSourceStartOffset * sr)
+                const firstBoundaryTime = activeSourceStartedAt + (loopEndSamples - startOffSamples) / sr
+                const n = Math.max(0, Math.ceil((ctx.currentTime - firstBoundaryTime) * sr / loopDurSamples))
+                const transitionTime    = firstBoundaryTime + n * loopDurSamples / sr
+                const msToTransition    = Math.max(0, (transitionTime - ctx.currentTime) * 1000)
+                clearTimeout(loopJumpTimer)
+                loopJumpTimer = setTimeout(() => {
+                    loopJumpTimer = null
+                    if (loopOutroPending.has(index)) fireLoopOutro()
+                }, Math.max(0, msToTransition - 50))
             },
             // Starts the cursor (mainAudioEl) at offset, after delayMs, without starting a new source.
             startCursor: (offset, delayMs) => {
@@ -4262,6 +4288,7 @@ function triggerAction(cue) {
             loopOutroInitialRemaining.set(i, Math.max(0, range - pos))
             loopOutroPending.set(i, cue)
             setOutroPendingIndicator(cue, true)
+            loopTa.armOutroTimer?.()
         }
         broadcastLiveState()
         return
