@@ -158,6 +158,12 @@
 
     <div class="section-title">Live-Tasten (MIDI-Eingang)</div>
     <div class="field">
+        <label>Eingangs-Gerät (Go / Back)</label>
+        <select id="live-input-device">
+            <option value="">— alle Geräte —</option>
+        </select>
+    </div>
+    <div class="field">
         <label>Go</label>
         <div class="midi-learn-row">
             <span id="go-midi-label">— nicht belegt —</span>
@@ -400,15 +406,17 @@
             await refreshRoutingTable()
 
             // ── MIDI ──────────────────────────────────────────────────
-            const x32Select     = document.getElementById('x32-device')
-            const triggerSelect = document.getElementById('trigger-device')
-            const tcSelect      = document.getElementById('tc-device')
+            const x32Select       = document.getElementById('x32-device')
+            const triggerSelect   = document.getElementById('trigger-device')
+            const tcSelect        = document.getElementById('tc-device')
+            const liveInputSelect = document.getElementById('live-input-device')
 
             try {
                 const midiAccess = await navigator.requestMIDIAccess({ sysex: true })
-                const midiNames = new Set()
+                const midiOutNames = new Set()
+                const midiInNames  = new Set()
                 for (const output of midiAccess.outputs.values()) {
-                    midiNames.add(output.name)
+                    midiOutNames.add(output.name)
                     const o1 = new Option(output.name, output.name)
                     const o2 = new Option(output.name, output.name)
                     const o3 = new Option(output.name, output.name)
@@ -419,15 +427,24 @@
                     triggerSelect.appendChild(o2)
                     tcSelect.appendChild(o3)
                 }
-                if (settings.midiX32Device && !midiNames.has(settings.midiX32Device))
+                for (const input of midiAccess.inputs.values()) {
+                    midiInNames.add(input.name)
+                    const o = new Option(input.name, input.name)
+                    if (settings.midiLiveDevice === input.name) o.selected = true
+                    liveInputSelect.appendChild(o)
+                }
+                if (settings.midiX32Device && !midiOutNames.has(settings.midiX32Device))
                     x32Select.insertAdjacentHTML('afterend',
                         '<p class="device-warning">Gerät „' + settings.midiX32Device + '" nicht gefunden – MIDI-Ausgabe deaktiviert</p>')
-                if (settings.midiTriggerDevice && !midiNames.has(settings.midiTriggerDevice))
+                if (settings.midiTriggerDevice && !midiOutNames.has(settings.midiTriggerDevice))
                     triggerSelect.insertAdjacentHTML('afterend',
                         '<p class="device-warning">Gerät „' + settings.midiTriggerDevice + '" nicht gefunden – MIDI-Ausgabe deaktiviert</p>')
-                if (settings.midiTCDevice && !midiNames.has(settings.midiTCDevice))
+                if (settings.midiTCDevice && !midiOutNames.has(settings.midiTCDevice))
                     tcSelect.insertAdjacentHTML('afterend',
                         '<p class="device-warning">Gerät „' + settings.midiTCDevice + '" nicht gefunden – MIDI-Ausgabe deaktiviert</p>')
+                if (settings.midiLiveDevice && !midiInNames.has(settings.midiLiveDevice))
+                    liveInputSelect.insertAdjacentHTML('afterend',
+                        '<p class="device-warning">Gerät „' + settings.midiLiveDevice + '" nicht gefunden – Eingang deaktiviert</p>')
             } catch (e) {
                 document.body.insertAdjacentHTML('beforeend', '<p class="error">MIDI nicht verfügbar: ' + e.message + '</p>')
             }
@@ -552,6 +569,7 @@
                     editorCustomCmd:  editorCustomEl.value.trim(),
                     midiGoNote,
                     midiBackNote,
+                    midiLiveDevice: liveInputSelect.value || null,
                     oscEnabled: oscEnabledEl.checked,
                     oscHost:    oscHostEl.value.trim() || '127.0.0.1',
                     oscPort:    isNaN(oscPortVal) ? 8000 : Math.max(1, Math.min(65535, oscPortVal)),

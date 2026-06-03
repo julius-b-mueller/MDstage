@@ -48,7 +48,7 @@ const defaultSettings = {
     mainAudioDevice: null, mainChannelL: 0, mainChannelR: 1, monitorChannelL: 2, monitorChannelR: 3,
     midiX32Device: null, midiTriggerDevice: null, midiTCDevice: null,
     editorApp: null, editorCustomCmd: '',
-    midiGoNote: null, midiBackNote: null,
+    midiGoNote: null, midiBackNote: null, midiLiveDevice: null,
     oscEnabled: false, oscHost: '127.0.0.1', oscPort: 8000,
     monitorEnabled: false,
 }

@@ -161,6 +161,7 @@ let midiAccess = null
 let midiX32 = null
 let midiTrigger = null
 let midiTC = null
+let midiLiveDevice = null
 let mtc = null
 let oscEnabled = false
 let oscHost = '127.0.0.1'
@@ -5043,8 +5044,9 @@ function refreshMidiDevices(settings) {
     midiX32 = null
     midiTrigger = null
     midiTC = null
-    midiGoNote   = settings.midiGoNote   || null
-    midiBackNote = settings.midiBackNote || null
+    midiGoNote    = settings.midiGoNote    || null
+    midiBackNote  = settings.midiBackNote  || null
+    midiLiveDevice = settings.midiLiveDevice || null
     if (!midiAccess) return
     for (const output of midiAccess.outputs.values()) {
         if (settings.midiX32Device && output.name === settings.midiX32Device) midiX32 = output
@@ -5071,6 +5073,10 @@ const MIDI_BACK_LONG_PRESS_MS = 600
 function setupMidiInputListeners() {
     if (!midiAccess) return
     for (const input of midiAccess.inputs.values()) {
+        if (midiLiveDevice && input.name !== midiLiveDevice) {
+            input.onmidimessage = null
+            continue
+        }
         input.onmidimessage = (msg) => {
             const [status, note, velocity] = msg.data
             const type     = status & 0xf0
@@ -5206,6 +5212,7 @@ async function initApp() {
         // saved settings section in the config YAML block.
         window.electronAPI.getScriptMd().then(text => { scriptText = text })
         refreshMidiDevices(newSettings)
+        setupMidiInputListeners()
         // Re-enumerate to pick up newly connected devices, then resolve labels.
         const applyNew = () => {
             const newML  = newSettings.mainChannelL    ?? 0
