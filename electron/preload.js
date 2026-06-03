@@ -54,4 +54,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
     exportDocx: (data) => ipcRenderer.invoke('export-docx', data),
     getEmLightNote: () => ipcRenderer.invoke('get-em-light-note'),
     saveEmLightNote: (note) => ipcRenderer.invoke('save-em-light-note', note),
+    sendOsc: (data) => ipcRenderer.send('send-osc', data),
 })

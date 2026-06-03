@@ -5,6 +5,7 @@ const path = require('path')
 const fs = require('fs')
 const os = require('os')
 const yaml = require('js-yaml')
+const dgram = require('dgram')
 const {
     Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
     PageBreak, BorderStyle, TabStopType, convertMillimetersToTwip,
@@ -48,6 +49,29 @@ const defaultSettings = {
     midiX32Device: null, midiTriggerDevice: null, midiTCDevice: null,
     editorApp: null, editorCustomCmd: '',
     midiGoNote: null, midiBackNote: null,
+    oscEnabled: false, oscHost: '127.0.0.1', oscPort: 8000,
+    monitorEnabled: false,
+}
+
+function encodeOscMessage(address, args = []) {
+    function padTo4(buf) {
+        const pad = (4 - (buf.length % 4)) % 4
+        return pad ? Buffer.concat([buf, Buffer.alloc(pad)]) : buf
+    }
+    function encodeString(s) { return padTo4(Buffer.from(s + '\0', 'ascii')) }
+    function encodeInt(n)    { const b = Buffer.alloc(4); b.writeInt32BE(n, 0); return b }
+    function encodeFloat(f)  { const b = Buffer.alloc(4); b.writeFloatBE(f, 0); return b }
+
+    let typeTags = ','
+    for (const a of args) typeTags += (typeof a === 'string' ? 's' : Number.isInteger(a) ? 'i' : 'f')
+
+    const parts = [encodeString(address), encodeString(typeTags)]
+    for (const a of args) {
+        if (typeof a === 'string')   parts.push(encodeString(a))
+        else if (Number.isInteger(a)) parts.push(encodeInt(a))
+        else                          parts.push(encodeFloat(a))
+    }
+    return Buffer.concat(parts)
 }
 
 // Keys that are personal/per-user and must not be stored in the shared markdown file
@@ -602,6 +626,16 @@ app.whenReady().then(async () => {
         scriptMdPath = result.filePaths[0]
         saveLastFilePath(scriptMdPath)
     }
+
+    ipcMain.on('send-osc', (_, { path: oscPath, args = [], host = '127.0.0.1', port = 8000 }) => {
+        try {
+            const msg = encodeOscMessage(oscPath, args)
+            const sock = dgram.createSocket('udp4')
+            sock.send(msg, port, host, () => sock.close())
+        } catch (e) {
+            console.error('OSC send error:', e.message)
+        }
+    })
 
     ipcMain.handle('get-settings', () => loadSettings())
 

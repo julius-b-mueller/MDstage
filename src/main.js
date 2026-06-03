@@ -35,6 +35,7 @@ let mainChannelL    = 0   // 0-indexed device output channels (Main L, Main R, M
 let mainChannelR    = 1
 let monitorChannelL = 2
 let monitorChannelR = 3
+let monitorEnabled  = false
 let audioOutputDevices = []
 let editorApp = null
 let audioBasePath = 'audio/'
@@ -159,6 +160,9 @@ let midiX32 = null
 let midiTrigger = null
 let midiTC = null
 let mtc = null
+let oscEnabled = false
+let oscHost = '127.0.0.1'
+let oscPort = 8000
 
 // Kick off MIDI access request immediately at module load, before any async init.
 // Electron 36 / Chromium requires this to be initiated early to avoid the
@@ -2385,6 +2389,18 @@ function buildTrigger(codeblockYaml, index) {
         triggerLight.textContent = '✦ ' + codeblockYaml.light
     }
 
+    // OSC path badge
+    if (codeblockYaml.osc) {
+        const oscBadge = document.createElement('div')
+        oscBadge.classList.add('trigger-osc')
+        let oscText = '⌁ ' + codeblockYaml.osc
+        if (codeblockYaml.osc_arg !== undefined && codeblockYaml.osc_arg !== '') {
+            oscText += ` [${codeblockYaml.osc_arg_type || 'string'}: ${codeblockYaml.osc_arg}]`
+        }
+        oscBadge.textContent = oscText
+        triggerInfo.appendChild(oscBadge)
+    }
+
     // text note
     if (codeblockYaml.note) triggerNote.innerText = codeblockYaml.note
 
@@ -3773,6 +3789,75 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     }
     box.appendChild(lightWrap)
 
+    // ── OSC-Pfad ─────────────────────────────────────────────────────
+    const { wrap: oscWrap, input: oscInput } = mkDialogField('OSC-Pfad (custom)', 'text', '')
+    oscInput.placeholder = '— Standard: /maindesk/triggernote/ch/note —'
+    if ((isEdit || isCopy) && existingYaml?.osc) oscInput.value = existingYaml.osc
+    box.appendChild(oscWrap)
+
+    // ── OSC-Argument ──────────────────────────────────────────────────
+    const oscArgWrap = document.createElement('div')
+    oscArgWrap.classList.add('dialog-field')
+    oscArgWrap.style.display = existingYaml?.osc ? '' : 'none'
+    const oscArgLabel = document.createElement('label')
+    oscArgLabel.textContent = 'OSC-Argument'
+    const oscArgRow = document.createElement('div')
+    oscArgRow.style.cssText = 'display:flex;gap:0.5rem'
+
+    const oscArgTypeSelect = document.createElement('select')
+    oscArgTypeSelect.classList.add('dialog-select')
+    oscArgTypeSelect.style.cssText = 'width:auto;flex-shrink:0'
+    for (const t of ['int', 'float', 'string']) {
+        const o = document.createElement('option')
+        o.value = t; o.textContent = t
+        oscArgTypeSelect.appendChild(o)
+    }
+
+    const oscArgInput = document.createElement('input')
+    oscArgInput.type = 'text'
+    oscArgInput.style.flex = '1'
+    oscArgInput.placeholder = '— kein Argument —'
+
+    function applyOscArgType() {
+        const type = oscArgTypeSelect.value
+        if (type === 'int') {
+            oscArgInput.placeholder = 'z.B. 1'
+            // Strip anything that's not a digit or leading minus
+            oscArgInput.value = oscArgInput.value.replace(/[^0-9\-]/g, '').replace(/^(-?)(.*)$/, (_, s, rest) => s + rest.replace(/-/g, ''))
+        } else if (type === 'float') {
+            oscArgInput.placeholder = 'z.B. 1.0'
+            oscArgInput.value = oscArgInput.value.replace(/[^0-9.\-]/g, '').replace(/^(-?)(.*)$/, (_, s, rest) => s + rest.replace(/-/g, '')).replace(/(\..*)\./g, '$1')
+        } else {
+            oscArgInput.placeholder = 'z.B. go'
+        }
+    }
+    oscArgTypeSelect.addEventListener('change', applyOscArgType)
+
+    oscArgInput.addEventListener('beforeinput', (e) => {
+        if (!e.data) return
+        const type = oscArgTypeSelect.value
+        if (type === 'string') return
+        const cur = oscArgInput.value
+        const sel = oscArgInput.selectionStart
+        const preview = cur.slice(0, sel) + e.data + cur.slice(oscArgInput.selectionEnd)
+        if (type === 'int'   && !/^-?\d*$/.test(preview)) e.preventDefault()
+        if (type === 'float' && !/^-?\d*\.?\d*$/.test(preview)) e.preventDefault()
+    })
+
+    oscArgRow.append(oscArgTypeSelect, oscArgInput)
+    oscArgWrap.append(oscArgLabel, oscArgRow)
+    box.appendChild(oscArgWrap)
+
+    oscInput.addEventListener('input', () => {
+        oscArgWrap.style.display = oscInput.value.trim() ? '' : 'none'
+    })
+
+    if ((isEdit || isCopy) && existingYaml?.osc_arg !== undefined && existingYaml.osc_arg !== '') {
+        oscArgInput.value = String(existingYaml.osc_arg)
+        if (existingYaml.osc_arg_type) oscArgTypeSelect.value = existingYaml.osc_arg_type
+        applyOscArgType()
+    }
+
     // ── Start-Timecode ───────────────────────────────────────────────
     let tcInput = null
     if (isNonRootSlfMember) {
@@ -3889,6 +3974,17 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         // light scene
         const lightVal = lightInput.value.trim()
         if (lightVal) newYaml.light = lightVal
+
+        // OSC path + optional argument
+        const oscVal = oscInput.value.trim()
+        if (oscVal) {
+            newYaml.osc = oscVal
+            const argVal = oscArgInput.value.trim()
+            if (argVal) {
+                newYaml.osc_arg      = argVal
+                newYaml.osc_arg_type = oscArgTypeSelect.value
+            }
+        }
 
         // start_tc (only for root SLF cues; non-root members use derived TC)
         const tcVal = tcInput?.value.trim() ?? ''
@@ -4306,6 +4402,7 @@ function triggerAction(cue) {
 
     playMusic(cue)
     sendTriggerNote(cue)
+    sendOscMessage(cue)
 
     if (startTc && mtc) {
         if (ta) mtc.start(startTc, ta.ws, cue, ta.mp?.start ?? 0)
@@ -4480,6 +4577,9 @@ function broadcastLiveState() {
                 muteall: ty.mic === 'muteall',
                 musicLabel, musicAdjust,
                 lightScene: ty.light || null,
+                oscPath: ty.osc || null,
+                oscArg: (ty.osc && ty.osc_arg !== undefined && ty.osc_arg !== '') ? String(ty.osc_arg) : null,
+                oscArgType: ty.osc_arg_type || null,
                 note: ty.note || null,
                 triggerNoteLabel,
                 outroPending,
@@ -4638,6 +4738,28 @@ function sendTriggerNote(cue) {
     if (!tn || !midiTrigger) return
     midiTrigger.send([0x90 | (tn.ch - 1), tn.note, 100])
     setTimeout(() => midiTrigger.send([0x80 | (tn.ch - 1), tn.note, 0]), 100)
+}
+
+function sendOscMessage(cue) {
+    if (!oscEnabled || !window.electronAPI?.sendOsc) return
+    const ty = triggerYamls[cue]
+    if (!ty) return
+    let oscPath, args = []
+    if (ty.osc) {
+        oscPath = ty.osc
+        if (ty.osc_arg !== undefined && ty.osc_arg !== '') {
+            const type = ty.osc_arg_type || 'string'
+            if (type === 'int')         args.push(parseInt(ty.osc_arg)   || 0)
+            else if (type === 'float')  args.push(parseFloat(ty.osc_arg) || 0.0)
+            else                        args.push(String(ty.osc_arg))
+        }
+    } else if (ty.trigger_note) {
+        const { ch, note } = ty.trigger_note
+        oscPath = `/maindesk/triggernote/${ch}/${note}`
+    } else {
+        return
+    }
+    window.electronAPI.sendOsc({ path: oscPath, args, host: oscHost, port: oscPort })
 }
 
 async function playMusic(cue) {
@@ -4973,9 +5095,13 @@ async function initApp() {
     mainAudioDevice = resolveDeviceId(savedSettings.mainAudioDevice)
     mainChannelL    = savedSettings.mainChannelL    ?? 0
     mainChannelR    = savedSettings.mainChannelR    ?? 1
-    monitorChannelL = savedSettings.monitorChannelL ?? 2
-    monitorChannelR = savedSettings.monitorChannelR ?? 3
+    monitorEnabled  = savedSettings.monitorEnabled  ?? false
+    monitorChannelL = monitorEnabled ? (savedSettings.monitorChannelL ?? mainChannelL) : mainChannelL
+    monitorChannelR = monitorEnabled ? (savedSettings.monitorChannelR ?? mainChannelR) : mainChannelR
     editorApp       = savedSettings.editorApp || null
+    oscEnabled      = savedSettings.oscEnabled ?? false
+    oscHost         = savedSettings.oscHost    || '127.0.0.1'
+    oscPort         = savedSettings.oscPort    ?? 8000
 
     let text = await window.electronAPI.getScriptMd()
 
@@ -5052,14 +5178,19 @@ async function initApp() {
         const applyNew = () => {
             const newML  = newSettings.mainChannelL    ?? 0
             const newMR  = newSettings.mainChannelR    ?? 1
-            const newMoL = newSettings.monitorChannelL ?? 2
-            const newMoR = newSettings.monitorChannelR ?? 3
+            const monEn  = newSettings.monitorEnabled  ?? false
+            const newMoL = monEn ? (newSettings.monitorChannelL ?? newML) : newML
+            const newMoR = monEn ? (newSettings.monitorChannelR ?? newMR) : newMR
             const changed = newML !== mainChannelL || newMR !== mainChannelR ||
                             newMoL !== monitorChannelL || newMoR !== monitorChannelR
             mainAudioDevice = resolveDeviceId(newSettings.mainAudioDevice)
             mainChannelL    = newML;  mainChannelR    = newMR
+            monitorEnabled  = monEn
             monitorChannelL = newMoL; monitorChannelR = newMoR
             editorApp       = newSettings.editorApp || null
+            oscEnabled      = newSettings.oscEnabled ?? false
+            oscHost         = newSettings.oscHost    || '127.0.0.1'
+            oscPort         = newSettings.oscPort    ?? 8000
             if (changed)
                 for (const ta of triggerAudio.values()) { ta.decodedBuffer = null; ta._decoding = false }
             applyAudioDevices()

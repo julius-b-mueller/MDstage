@@ -120,6 +120,14 @@ p {
     margin-top: 0.1rem;
 }
 
+.trigger-osc {
+    font-size: 0.78rem;
+    margin-top: 0.1rem;
+    color: #61afef;
+    font-family: monospace;
+    opacity: 0.8;
+}
+
 .trigger-number {
     font-size: 3rem;
     font-weight: bold;

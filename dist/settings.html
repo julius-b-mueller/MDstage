@@ -76,6 +76,7 @@
         .routing-table td.route-cell:hover { background: #2c313a; }
         .routing-table td.route-cell.sel-main { background: #1e3a52; border-color: #61afef; box-shadow: inset 0 0 0 1px #61afef; }
         .routing-table td.route-cell.sel-mon  { background: #1e3a2a; border-color: #98c379; box-shadow: inset 0 0 0 1px #98c379; }
+        .routing-table td.route-cell.disabled  { opacity: 0.25; cursor: not-allowed; background: #1a1d23; }
         .routing-table tr { border-bottom: 1px solid #3e4451; }
         .routing-table td.col-test { padding: 0.1rem 0.3rem 0.1rem 0.5rem; border-left: 1px solid #3e4451; text-align: center; }
         .test-btn { background: #383c44; border: 1px solid #4b5263; color: #7c8898; padding: 0.1rem 0.45rem; border-radius: 3px; cursor: pointer; font-size: 0.8rem; font-family: inherit; }
@@ -98,14 +99,19 @@
         <p class="hint">Für Monitor-Mix: Aggregate Device in macOS Audio-MIDI-Setup anlegen (Haupt + Monitor als ein Gerät), dann die Kanalpaare unten wählen.</p>
     </div>
     <div class="field">
+        <label style="display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf;margin-bottom:0.5rem">
+            <input type="checkbox" id="monitor-enable" style="width:auto">
+            Monitor-Mix aktiviert
+        </label>
+        <p class="hint" id="monitor-hint" style="margin:0 0 0.6rem"></p>
         <table class="routing-table" id="routing-table">
             <thead>
                 <tr>
                     <th></th>
                     <th class="col-main">Main L</th>
                     <th class="col-main">Main R</th>
-                    <th class="col-mon">Mon L</th>
-                    <th class="col-mon">Mon R</th>
+                    <th class="col-mon" id="mon-th-l">Mon L</th>
+                    <th class="col-mon" id="mon-th-r">Mon R</th>
                     <th class="col-test"></th>
                 </tr>
             </thead>
@@ -132,6 +138,24 @@
             <option value="">— kein Gerät —</option>
         </select>
     </div>
+    <div class="section-title">OSC</div>
+    <div class="field">
+        <label style="display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf">
+            <input type="checkbox" id="osc-enabled" style="width:auto">
+            OSC aktiviert
+        </label>
+    </div>
+    <div id="osc-fields">
+        <div class="field">
+            <label>Ziel-Adresse</label>
+            <input type="text" id="osc-host" placeholder="127.0.0.1">
+        </div>
+        <div class="field">
+            <label>Port</label>
+            <input type="number" id="osc-port" min="1" max="65535" placeholder="8000">
+        </div>
+    </div>
+
     <div class="section-title">Live-Tasten (MIDI-Eingang)</div>
     <div class="field">
         <label>Go</label>
@@ -206,19 +230,24 @@
             const mainAudioSel = document.getElementById('main-audio-device')
 
             // ── Channel routing matrix ───────────────────────────────────
-            const routingBody = document.getElementById('routing-body')
+            const routingBody    = document.getElementById('routing-body')
+            const monitorCheckbox = document.getElementById('monitor-enable')
+            const monitorHint    = document.getElementById('monitor-hint')
+            const monThL         = document.getElementById('mon-th-l')
+            const monThR         = document.getElementById('mon-th-r')
             const COLS = [
-                { key: 'mainL', sel: 'sel-main' },
-                { key: 'mainR', sel: 'sel-main' },
-                { key: 'monL',  sel: 'sel-mon'  },
-                { key: 'monR',  sel: 'sel-mon'  },
+                { key: 'mainL', sel: 'sel-main', isMon: false },
+                { key: 'mainR', sel: 'sel-main', isMon: false },
+                { key: 'monL',  sel: 'sel-mon',  isMon: true  },
+                { key: 'monR',  sel: 'sel-mon',  isMon: true  },
             ]
             const routing = {
                 mainL: settings.mainChannelL    ?? 0,
                 mainR: settings.mainChannelR    ?? 1,
-                monL:  settings.monitorChannelL ?? 2,
-                monR:  settings.monitorChannelR ?? 3,
+                monL:  settings.monitorChannelL ?? -1,
+                monR:  settings.monitorChannelR ?? -1,
             }
+            let monitorEnabled = settings.monitorEnabled ?? false
 
             let currentNumCh = 2
 
@@ -255,7 +284,27 @@
 
             function buildRoutingTable(numCh) {
                 currentNumCh = numCh
-                for (const col of COLS) if (routing[col.key] >= numCh) routing[col.key] = numCh - 1
+                const monPossible = numCh >= 4
+
+                // Clamp out-of-range assignments to -1 (unassigned)
+                for (const col of COLS) if (routing[col.key] >= numCh) routing[col.key] = -1
+
+                // Monitor checkbox state
+                if (!monPossible) {
+                    monitorEnabled = false
+                    monitorCheckbox.checked = false
+                    monitorCheckbox.disabled = true
+                } else {
+                    monitorCheckbox.disabled = false
+                    monitorCheckbox.checked = monitorEnabled
+                }
+                monThL.style.opacity = monitorEnabled ? '' : '0.35'
+                monThR.style.opacity = monitorEnabled ? '' : '0.35'
+                monitorHint.textContent = !monPossible
+                    ? 'Monitor benötigt mind. 4 Kanäle — Aggregate Device in Audio-MIDI-Setup anlegen.'
+                    : !monitorEnabled ? 'Monitor deaktiviert.'
+                    : ''
+
                 routingBody.innerHTML = ''
                 for (let ch = 0; ch < numCh; ch++) {
                     const tr = document.createElement('tr')
@@ -263,15 +312,27 @@
                     labelTd.textContent = `Kanal ${ch + 1}`
                     tr.appendChild(labelTd)
                     for (const col of COLS) {
+                        const disabled = col.isMon && !monitorEnabled
+                        const isSelected = routing[col.key] === ch
                         const td = document.createElement('td')
-                        td.className = 'route-cell' + (routing[col.key] === ch ? ' ' + col.sel : '')
+                        td.className = 'route-cell' + (isSelected ? ' ' + col.sel : '') + (disabled ? ' disabled' : '')
                         td.dataset.col = col.key
-                        td.addEventListener('click', () => {
-                            const prev = routingBody.querySelector(`.route-cell.${col.sel}[data-col="${col.key}"]`)
-                            if (prev) prev.classList.remove(col.sel)
-                            td.classList.add(col.sel)
-                            routing[col.key] = ch
-                        })
+                        if (!disabled) {
+                            td.addEventListener('click', () => {
+                                if (routing[col.key] === ch) {
+                                    routing[col.key] = -1
+                                } else {
+                                    // Exclusive: each channel can only hold one role
+                                    for (const c of COLS) {
+                                        if (!c.isMon || monitorEnabled) {
+                                            if (routing[c.key] === ch) routing[c.key] = -1
+                                        }
+                                    }
+                                    routing[col.key] = ch
+                                }
+                                buildRoutingTable(numCh)
+                            })
+                        }
                         tr.appendChild(td)
                     }
                     const testTd = document.createElement('td')
@@ -286,6 +347,11 @@
                     routingBody.appendChild(tr)
                 }
             }
+
+            monitorCheckbox.addEventListener('change', () => {
+                monitorEnabled = monitorCheckbox.checked
+                buildRoutingTable(currentNumCh)
+            })
 
             async function refreshRoutingTable() {
                 const label = mainAudioSel.value
@@ -305,10 +371,11 @@
             mainAudioSel.addEventListener('change', refreshRoutingTable)
 
             const getRouting = () => ({
-                mainChannelL:    routing.mainL,
-                mainChannelR:    routing.mainR,
-                monitorChannelL: routing.monL,
-                monitorChannelR: routing.monR,
+                mainChannelL:    routing.mainL >= 0 ? routing.mainL : 0,
+                mainChannelR:    routing.mainR >= 0 ? routing.mainR : 1,
+                monitorChannelL: routing.monL >= 0 ? routing.monL : null,
+                monitorChannelR: routing.monR >= 0 ? routing.monR : null,
+                monitorEnabled,
             })
 
             try {
@@ -436,6 +503,22 @@
             applyEmLight(emLightNote)
             emLightClear.addEventListener('click', () => applyEmLight(null))
 
+            // ── OSC ───────────────────────────────────────────────────
+            const oscEnabledEl = document.getElementById('osc-enabled')
+            const oscHostEl    = document.getElementById('osc-host')
+            const oscPortEl    = document.getElementById('osc-port')
+            const oscFieldsEl  = document.getElementById('osc-fields')
+
+            oscEnabledEl.checked = settings.oscEnabled ?? true
+            oscHostEl.value      = settings.oscHost    || '127.0.0.1'
+            oscPortEl.value      = settings.oscPort    ?? 8000
+            oscFieldsEl.style.opacity      = oscEnabledEl.checked ? '' : '0.45'
+            oscFieldsEl.style.pointerEvents = oscEnabledEl.checked ? '' : 'none'
+            oscEnabledEl.addEventListener('change', () => {
+                oscFieldsEl.style.opacity       = oscEnabledEl.checked ? '' : '0.45'
+                oscFieldsEl.style.pointerEvents  = oscEnabledEl.checked ? '' : 'none'
+            })
+
             // ── Text-Editor ───────────────────────────────────────────
             const editorAppSel   = document.getElementById('editor-app')
             const customCmdField = document.getElementById('custom-cmd-field')
@@ -458,6 +541,7 @@
                     ? { ch: Math.max(1, Math.min(16, chVal)), note: Math.max(0, Math.min(127, noteVal)) }
                     : null
                 await window.electronAPI.saveEmLightNote(newEmLight)
+                const oscPortVal = parseInt(oscPortEl.value)
                 await window.electronAPI.saveSettings({
                     mainAudioDevice: mainAudioSel.value || null,
                     ...getRouting(),
@@ -468,6 +552,9 @@
                     editorCustomCmd:  editorCustomEl.value.trim(),
                     midiGoNote,
                     midiBackNote,
+                    oscEnabled: oscEnabledEl.checked,
+                    oscHost:    oscHostEl.value.trim() || '127.0.0.1',
+                    oscPort:    isNaN(oscPortVal) ? 8000 : Math.max(1, Math.min(65535, oscPortVal)),
                 })
                 window.close()
             })
