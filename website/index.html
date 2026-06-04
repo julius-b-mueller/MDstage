@@ -264,10 +264,6 @@ footer a:hover{text-decoration:underline}
         <p data-de="Jeden Trigger über die Benutzeroberfläche anlegen und bearbeiten: Audiodatei wählen, Mikrofone zuweisen, Lichtszene eintragen. Kein Texteditor nötig." data-en="Create and edit every trigger via the UI: choose audio file, assign microphones, enter light scene. No text editor required.">
           Jeden Trigger über die Benutzeroberfläche anlegen und bearbeiten: Audiodatei wählen, Mikrofone zuweisen, Lichtszene eintragen. Kein Texteditor nötig.
         </p>
-        <div class="feat-tags">
-          <span class="tag g" data-de="Musik · Mikrofone · Licht" data-en="Music · Microphones · Lighting">Musik · Mikrofone · Licht</span>
-          <span class="tag b" data-de="MIDI · OSC · Timecode" data-en="MIDI · OSC · Timecode">MIDI · OSC · Timecode</span>
-        </div>
       </div>
     </div>
 
@@ -309,11 +305,6 @@ footer a:hover{text-decoration:underline}
         <p data-de="Go und Back funktionieren auch per Tastatur, MIDI-Controller oder Bluetooth-Pedal. Wer möchte, kann Varianten auswählen, bevor er Go drückt." data-en="Go and Back also work via keyboard, MIDI controller or Bluetooth pedal. Variants can be selected before pressing Go.">
           Go und Back funktionieren auch per Tastatur, MIDI-Controller oder Bluetooth-Pedal. Wer möchte, kann Varianten auswählen, bevor er Go drückt.
         </p>
-        <div class="feat-tags">
-          <span class="tag y" data-de="Aktueller Cue" data-en="Current cue">Aktueller Cue</span>
-          <span class="tag g" data-de="Nächster Cue" data-en="Next cue">Nächster Cue</span>
-          <span class="tag b" data-de="Go · Back" data-en="Go · Back">Go · Back</span>
-        </div>
       </div>
     </div>
 
@@ -349,7 +340,7 @@ footer a:hover{text-decoration:underline}
           <rect x="178" y="60" width="26" height="20" rx="3" fill="#282c34" stroke="#383c44"/>
           <text x="191" y="74" text-anchor="middle" font-size="9" fill="#5c6370">⇥⇤</text>
           <!-- Bottom label -->
-          <text x="140" y="178" text-anchor="middle" font-size="9" fill="#5c6370">Samplegenauer, nahtloser Übergang</text>
+          <text x="140" y="178" text-anchor="middle" font-size="9" fill="#5c6370">Intro · Endlosschleife · Ausgang auf Go</text>
           <!-- Defs -->
           <defs>
             <marker id="arr" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
@@ -362,18 +353,144 @@ footer a:hover{text-decoration:underline}
         </svg>
       </div>
       <div class="feat-text">
-        <h3 data-de="Nahtlose Audio-Übergänge" data-en="Gapless Audio Transitions">Nahtlose Audio-Übergänge</h3>
-        <p data-de="Das S/L/F-System (Start / Loop / Finish) ermöglicht samplegenaue Übergänge ohne Stille oder Klick. Ein Intro spielt durch, eine Schleife loopt endlos, und auf Go startet der Ausgang nahtlos." data-en="The S/L/F system (Start / Loop / Finish) enables sample-accurate transitions without silence or clicks. An intro plays through, a loop runs endlessly, and on Go the outro starts seamlessly.">
-          Das S/L/F-System (Start / Loop / Finish) ermöglicht samplegenaue Übergänge ohne Stille oder Klick. Ein Intro spielt durch, eine Schleife loopt endlos, und auf Go startet der Ausgang nahtlos.
+        <h3 data-de="Loops, die auf ihr Ende warten" data-en="Loops that wait for their cue">Loops, die auf ihr Ende warten</h3>
+        <p data-de="Musik kann als Intro, Endlosschleife und Ausgang strukturiert werden. Ein Loop spielt weiter, bis auf Go gedrückt wird – dann wartet er, bis die aktuelle Schleifen-Runde beendet ist, und startet den Ausgang exakt am richtigen Moment." data-en="Music can be structured as intro, endless loop and outro. A loop keeps playing until Go is pressed – then it waits for the current iteration to finish and starts the outro at exactly the right moment.">
+          Musik kann als Intro, Endlosschleife und Ausgang strukturiert werden. Ein Loop spielt weiter, bis auf Go gedrückt wird – dann wartet er, bis die aktuelle Schleifen-Runde beendet ist, und startet den Ausgang exakt am richtigen Moment.
         </p>
-        <p data-de="Für nahtlose Übergänge WAV-Dateien verwenden – MP3 und AAC haben Encoder-Padding, das eine Lücke erzeugt." data-en="Use WAV files for gapless transitions – MP3 and AAC have encoder padding that creates a gap.">
-          Für nahtlose Übergänge WAV-Dateien verwenden – MP3 und AAC haben Encoder-Padding, das eine Lücke erzeugt.
+        <p data-de="Auch Übergänge von einem Stück direkt ins nächste sind möglich: Das Ende des ersten Titels löst automatisch den nächsten aus." data-en="Transitions from one track directly into the next are also possible: the end of the first track automatically triggers the next.">
+          Auch Übergänge von einem Stück direkt ins nächste sind möglich: Das Ende des ersten Titels löst automatisch den nächsten aus.
         </p>
-        <div class="feat-tags">
-          <span class="tag g">Start</span>
-          <span class="tag b">Loop</span>
-          <span class="tag y">Finish · Bridge</span>
-        </div>
+      </div>
+    </div>
+
+    <!-- Feature NEW-A: Waveform-Editor (Länge, Fade-in, Fade-out) -->
+    <div class="feat-block reverse">
+      <div class="feat-graphic">
+        <svg viewBox="0 0 280 200" width="280" height="200" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Waveform background -->
+          <rect x="20" y="55" width="240" height="90" rx="8" fill="#21252b" stroke="#383c44"/>
+          <!-- Fade-in ramp (left) -->
+          <polygon points="30,130 30,65 68,65" fill="#61afef22"/>
+          <line x1="30" y1="130" x2="68" y2="65" stroke="#61afef" stroke-width="1.5" stroke-dasharray="4,2"/>
+          <!-- Waveform (middle) -->
+          <path d="M68 100 Q82 70 96 100 Q110 130 124 100 Q138 70 152 100 Q166 130 180 100 Q194 70 208 100 Q216 85 222 100" stroke="#abb2bf" stroke-width="1.5" stroke-linecap="round"/>
+          <!-- Fade-out ramp (right) -->
+          <polygon points="222,65 222,130 260,130" fill="#e5c07b22"/>
+          <line x1="222" y1="65" x2="260" y2="130" stroke="#e5c07b" stroke-width="1.5" stroke-dasharray="4,2"/>
+          <!-- Start marker -->
+          <line x1="30" y1="50" x2="30" y2="150" stroke="#98c379" stroke-width="1.5"/>
+          <rect x="20" y="38" width="36" height="14" rx="4" fill="#1e3a2a" stroke="#98c37966"/>
+          <text x="38" y="49" text-anchor="middle" font-size="7.5" fill="#98c379">Start</text>
+          <!-- End marker -->
+          <line x1="260" y1="50" x2="260" y2="150" stroke="#e06c75" stroke-width="1.5"/>
+          <rect x="244" y="38" width="32" height="14" rx="4" fill="#2a1e1e" stroke="#e06c7566"/>
+          <text x="260" y="49" text-anchor="middle" font-size="7.5" fill="#e06c75">Ende</text>
+          <!-- Fade-in label -->
+          <text x="47" y="168" text-anchor="middle" font-size="8" fill="#61afef">Fade-in</text>
+          <!-- Fade-out label -->
+          <text x="238" y="168" text-anchor="middle" font-size="8" fill="#e5c07b">Fade-out</text>
+          <!-- Volume slider on right -->
+          <rect x="268" y="65" width="8" height="80" rx="4" fill="#383c44"/>
+          <rect x="268" y="65" width="8" height="52" rx="4" fill="#61afef66"/>
+          <circle cx="272" cy="117" r="5" fill="#61afef"/>
+          <text x="272" y="158" text-anchor="middle" font-size="7.5" fill="#5c6370">Vol</text>
+        </svg>
+      </div>
+      <div class="feat-text">
+        <h3 data-de="Audio direkt in der Software anpassen" data-en="Adjust audio directly in the software">Audio direkt in der Software anpassen</h3>
+        <p data-de="Start- und Endpunkt, Fade-in, Fade-out und Lautstärke lassen sich per Maus auf der Wellenform einstellen und werden automatisch gespeichert. Kein Audioschnitt-Programm nötig." data-en="Start point, end point, fade-in, fade-out and volume can be set with the mouse on the waveform and are saved automatically. No audio editing software needed.">
+          Start- und Endpunkt, Fade-in, Fade-out und Lautstärke lassen sich per Maus auf der Wellenform einstellen und werden automatisch gespeichert. Kein Audioschnitt-Programm nötig.
+        </p>
+        <p data-de="Das Ergebnis ist sofort hörbar – Wiedergabe-Button klicken, Marker verschieben, fertig." data-en="The result is immediately audible – click play, move the markers, done.">
+          Das Ergebnis ist sofort hörbar – Wiedergabe-Button klicken, Marker verschieben, fertig.
+        </p>
+      </div>
+    </div>
+
+    <!-- Feature NEW-B: Cues beeinflussen andere Cues -->
+    <div class="feat-block">
+      <div class="feat-graphic">
+        <svg viewBox="0 0 280 200" width="280" height="200" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Cue A (playing) -->
+          <rect x="20" y="30" width="100" height="50" rx="8" fill="#1e3a2a" stroke="#98c379" stroke-width="1.5"/>
+          <text x="70" y="51" text-anchor="middle" font-size="9" fill="#98c379" font-weight="700">Cue 3</text>
+          <text x="70" y="63" text-anchor="middle" font-size="8" fill="#5c6370">Hauptthema</text>
+          <circle cx="105" cy="38" r="5" fill="#98c379"/>
+          <!-- Arrow → affect -->
+          <path d="M120 55 L158 55" stroke="#e5c07b" stroke-width="1.5" marker-end="url(#arY)"/>
+          <text x="139" y="48" text-anchor="middle" font-size="7.5" fill="#e5c07b">⇢</text>
+          <!-- Cue B (affected) -->
+          <rect x="160" y="30" width="100" height="50" rx="8" fill="#21252b" stroke="#383c44"/>
+          <text x="210" y="51" text-anchor="middle" font-size="9" fill="#abb2bf" font-weight="700">Cue 4</text>
+          <text x="210" y="63" text-anchor="middle" font-size="8" fill="#5c6370">Dialog</text>
+          <!-- Action boxes below -->
+          <rect x="160" y="100" width="46" height="30" rx="6" fill="#2a221a" stroke="#e5c07b88"/>
+          <text x="183" y="114" text-anchor="middle" font-size="7.5" fill="#e5c07b">Vol</text>
+          <text x="183" y="123" text-anchor="middle" font-size="7" fill="#5c6370">50 %</text>
+          <rect x="214" y="100" width="46" height="30" rx="6" fill="#2a1e1e" stroke="#e06c7588"/>
+          <text x="237" y="114" text-anchor="middle" font-size="7.5" fill="#e06c75">Fade</text>
+          <text x="237" y="123" text-anchor="middle" font-size="7" fill="#5c6370">out</text>
+          <line x1="210" y1="80" x2="210" y2="100" stroke="#383c44" stroke-width="1" stroke-dasharray="2,2"/>
+          <!-- Auto-trigger label -->
+          <text x="140" y="155" text-anchor="middle" font-size="8" fill="#5c6370">Cue 4 beeinflusst Cue 3 beim Auslösen</text>
+          <!-- Defs -->
+          <defs>
+            <marker id="arY" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="#e5c07b"/>
+            </marker>
+          </defs>
+        </svg>
+      </div>
+      <div class="feat-text">
+        <h3 data-de="Cues, die andere Cues beeinflussen" data-en="Cues that affect other cues">Cues, die andere Cues beeinflussen</h3>
+        <p data-de="Wird ein Cue ausgelöst, kann er gleichzeitig einen anderen Cue beeinflussen: die Lautstärke der laufenden Hintergrundmusik senken, sie langsam ausfaden oder komplett stoppen." data-en="When a cue is triggered, it can simultaneously affect another cue: lower the volume of the running background music, slowly fade it out, or stop it completely.">
+          Wird ein Cue ausgelöst, kann er gleichzeitig einen anderen Cue beeinflussen: die Lautstärke der laufenden Hintergrundmusik senken, sie langsam ausfaden oder komplett stoppen.
+        </p>
+        <p data-de="So lässt sich zum Beispiel festlegen: Sobald der Dialog-Cue ausgelöst wird, blendet die Musik aus dem vorherigen Cue in drei Sekunden aus – ohne dass dafür ein extra Go-Button nötig ist." data-en="For example: as soon as the dialogue cue fires, the music from the previous cue fades out over three seconds – no extra Go press needed.">
+          So lässt sich zum Beispiel festlegen: Sobald der Dialog-Cue ausgelöst wird, blendet die Musik aus dem vorherigen Cue in drei Sekunden aus – ohne dass dafür ein extra Go-Button nötig ist.
+        </p>
+      </div>
+    </div>
+
+    <!-- Feature NEW-C: Auto-Trigger -->
+    <div class="feat-block reverse">
+      <div class="feat-graphic">
+        <svg viewBox="0 0 280 200" width="280" height="200" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Timeline bar -->
+          <rect x="20" y="85" width="240" height="10" rx="5" fill="#383c44"/>
+          <rect x="20" y="85" width="145" height="10" rx="5" fill="#61afef44"/>
+          <!-- Playhead -->
+          <line x1="165" y1="60" x2="165" y2="105" stroke="#61afef" stroke-width="1.5"/>
+          <polygon points="160,60 165,52 170,60" fill="#61afef"/>
+          <!-- Auto-trigger marker -->
+          <line x1="200" y1="72" x2="200" y2="105" stroke="#e5c07b" stroke-width="1.5" stroke-dasharray="3,2"/>
+          <circle cx="200" cy="90" r="5" fill="#e5c07b"/>
+          <rect x="186" y="56" width="40" height="14" rx="4" fill="#3a321e" stroke="#e5c07b88"/>
+          <text x="206" y="67" text-anchor="middle" font-size="7.5" fill="#e5c07b">Auto-Cue</text>
+          <!-- Arrow from marker to next cue -->
+          <path d="M200 105 Q200 140 165 148" stroke="#e5c07b" stroke-width="1.2" fill="none" marker-end="url(#arYY)"/>
+          <!-- Next cue box -->
+          <rect x="105" y="148" width="120" height="36" rx="7" fill="#1e3a52" stroke="#61afef88"/>
+          <text x="165" y="162" text-anchor="middle" font-size="8" fill="#61afef" font-weight="700">Nächster Cue</text>
+          <text x="165" y="174" text-anchor="middle" font-size="7.5" fill="#5c6370">wird automatisch ausgelöst</text>
+          <!-- Time labels -->
+          <text x="20"  y="110" font-size="8" fill="#5c6370">0:00</text>
+          <text x="240" y="110" font-size="8" fill="#5c6370" text-anchor="end">Ende</text>
+          <defs>
+            <marker id="arYY" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="#e5c07b"/>
+            </marker>
+          </defs>
+        </svg>
+      </div>
+      <div class="feat-text">
+        <h3 data-de="Automatische Trigger zur richtigen Zeit" data-en="Automatic triggers at the right time">Automatische Trigger zur richtigen Zeit</h3>
+        <p data-de="Ein Cue kann so eingestellt werden, dass er sich automatisch auslöst, wenn ein anderer Cue eine bestimmte Zeitposition in der Wiedergabe erreicht. So lassen sich Abläufe vorprogrammieren, die exakt synchron zur Musik passieren müssen." data-en="A cue can be set to fire automatically when another cue reaches a specific playback position. This lets you pre-program sequences that must happen in exact sync with the music.">
+          Ein Cue kann so eingestellt werden, dass er sich automatisch auslöst, wenn ein anderer Cue eine bestimmte Zeitposition in der Wiedergabe erreicht. So lassen sich Abläufe vorprogrammieren, die exakt synchron zur Musik passieren müssen.
+        </p>
+        <p data-de="Den Zeitpunkt festlegen ist einfach: Wiedergabe bis zur richtigen Stelle laufen lassen, dann den Auto-Cue-Marker setzen. Kein Eintippen von Zeitcodes." data-en="Setting the time is simple: let playback run to the right spot, then set the auto-cue marker. No typing timecodes.">
+          Den Zeitpunkt festlegen ist einfach: Wiedergabe bis zur richtigen Stelle laufen lassen, dann den Auto-Cue-Marker setzen. Kein Eintippen von Zeitcodes.
+        </p>
       </div>
     </div>
 
@@ -421,11 +538,6 @@ footer a:hover{text-decoration:underline}
         <p data-de="Go und Back lassen sich jedem MIDI-Controller, Bluetooth-Pedal oder Keyboard zuweisen. Per Langdruck auf den Back-Button werden alle Wiedergaben sofort gestoppt." data-en="Go and Back can be assigned to any MIDI controller, Bluetooth pedal or keyboard. Long-pressing Back stops all playback immediately.">
           Go und Back lassen sich jedem MIDI-Controller, Bluetooth-Pedal oder Keyboard zuweisen. Per Langdruck auf den Back-Button werden alle Wiedergaben sofort gestoppt.
         </p>
-        <div class="feat-tags">
-          <span class="tag b">MIDI · MTC</span>
-          <span class="tag p">OSC</span>
-          <span class="tag g" data-de="X32 Routing" data-en="X32 Routing">X32 Routing</span>
-        </div>
       </div>
     </div>
 
@@ -458,7 +570,6 @@ footer a:hover{text-decoration:underline}
           <text x="200" y="171" text-anchor="middle" font-size="7.5" fill="#5c6370">dialog-click.wav</text>
           <line x1="200" y1="137" x2="200" y2="148" stroke="#383c44" stroke-width="1" stroke-dasharray="2,2"/>
           <!-- "Aggregate Device" label -->
-          <text x="140" y="195" text-anchor="middle" font-size="8" fill="#5c6370">via Aggregate Device</text>
         </svg>
       </div>
       <div class="feat-text">
@@ -469,11 +580,6 @@ footer a:hover{text-decoration:underline}
         <p data-de="Die Kanalzuweisung erfolgt in den Einstellungen per Routing-Matrix. Auch PDF- und DOCX-Export des Regiebuchs ist eingebaut." data-en="Channel assignment is done in the settings via a routing matrix. PDF and DOCX export of the script is also built in.">
           Die Kanalzuweisung erfolgt in den Einstellungen per Routing-Matrix. Auch PDF- und DOCX-Export des Regiebuchs ist eingebaut.
         </p>
-        <div class="feat-tags">
-          <span class="tag b" data-de="Haupt-Audio" data-en="Main Audio">Haupt-Audio</span>
-          <span class="tag g" data-de="Monitor-Mix" data-en="Monitor Mix">Monitor-Mix</span>
-          <span class="tag y" data-de="PDF · DOCX Export" data-en="PDF · DOCX Export">PDF · DOCX Export</span>
-        </div>
       </div>
     </div>
 
@@ -536,11 +642,6 @@ footer a:hover{text-decoration:underline}
         <p data-de="Alles ist auch vollständig über die Oberfläche bedienbar – Text schreiben, Trigger anlegen, Einstellungen. Wer nie einen Texteditor öffnen möchte, muss es nicht." data-en="Everything is also fully operable via the interface – writing text, creating triggers, settings. Those who never want to open a text editor don't have to.">
           Alles ist auch vollständig über die Oberfläche bedienbar – Text schreiben, Trigger anlegen, Einstellungen. Wer nie einen Texteditor öffnen möchte, muss es nicht.
         </p>
-        <div class="feat-tags">
-          <span class="tag g" data-de="Eine Datei" data-en="One file">Eine Datei</span>
-          <span class="tag b" data-de="Git-kompatibel" data-en="Git-compatible">Git-kompatibel</span>
-          <span class="tag y" data-de="Kein Texteditor nötig" data-en="No text editor needed">Kein Texteditor nötig</span>
-        </div>
       </div>
     </div>
 
