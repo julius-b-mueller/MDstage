@@ -97,11 +97,12 @@ nav{position:sticky;top:0;z-index:100;background:var(--bg2);border-bottom:1px so
 
 /* ── Download ────────────────────────────── */
 .dl-section{padding:5rem 2rem;background:var(--bg2)}
-.dl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:1rem;margin-bottom:2.5rem}
-.dl-card{background:var(--bg);border:1px solid var(--border);border-radius:var(--r);padding:1.4rem 1.2rem;display:flex;flex-direction:column;gap:.45rem}
-.dl-card-icon{font-size:1.8rem}
-.dl-card h3{font-size:.92rem;font-weight:700;color:#fff}
-.dl-card .dl-sub{font-size:.76rem;color:var(--dim)}
+.dl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:.6rem;margin-bottom:2rem}
+.dl-card{background:var(--bg);border:1px solid var(--border);border-radius:var(--r);padding:.75rem 1rem;display:flex;align-items:center;gap:.75rem}
+.dl-card-icon{font-size:1.3rem;flex-shrink:0}
+.dl-card-info{flex:1;min-width:0}
+.dl-card h3{font-size:.82rem;font-weight:700;color:#fff;margin:0}
+.dl-card .dl-sub{font-size:.72rem;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dl-btn{margin-top:auto;padding-top:.7rem;display:inline-flex;align-items:center;gap:.4rem;background:var(--bg3);border:1px solid var(--border);color:var(--text);text-decoration:none;padding:.48rem .85rem;border-radius:6px;font-size:.82rem;font-weight:600;transition:background .15s}
 .dl-btn:hover{background:var(--border)}
 .dl-btn.primary{background:var(--blue);color:#1e2127;border-color:var(--blue)}
@@ -115,6 +116,7 @@ nav{position:sticky;top:0;z-index:100;background:var(--bg2);border-bottom:1px so
 .warn-body .hidden{display:none}
 code{background:var(--bg3);border:1px solid var(--border);padding:1px 5px;border-radius:3px;font-family:'SF Mono','Fira Code',monospace;font-size:.82em;color:var(--yellow)}
 pre{background:var(--bg3);border:1px solid var(--border);padding:.65rem .9rem;border-radius:6px;margin:.45rem 0;font-family:'SF Mono','Fira Code',monospace;font-size:.82rem;color:var(--green);overflow-x:auto}
+.disclaimer{font-size:.78rem;color:var(--dim);margin-top:1.4rem;line-height:1.6;max-width:600px}
 .free-tag{display:inline-flex;align-items:center;gap:.4rem;background:#1e3a2a;border:1px solid #98c37944;color:var(--green);padding:.45rem .9rem;border-radius:20px;font-size:.82rem;font-weight:600;margin-bottom:1.4rem}
 
 /* ── Footer ──────────────────────────────── */
@@ -787,38 +789,32 @@ footer a:hover{text-decoration:underline}
     <div class="dl-grid">
       <div class="dl-card">
         <div class="dl-card-icon">🍎</div>
-        <h3>macOS</h3>
-        <div class="dl-sub">Apple Silicon (M-Series)</div>
+        <div class="dl-card-info"><h3>macOS</h3><div class="dl-sub">Apple Silicon</div></div>
         <a href="downloads/MainDesk-macos-arm64.dmg" class="dl-btn primary">↓ .dmg</a>
       </div>
       <div class="dl-card">
         <div class="dl-card-icon">🍎</div>
-        <h3>macOS</h3>
-        <div class="dl-sub">Intel (x64)</div>
+        <div class="dl-card-info"><h3>macOS</h3><div class="dl-sub">Intel (x64)</div></div>
         <a href="downloads/MainDesk-macos-x64.dmg" class="dl-btn">↓ .dmg</a>
       </div>
       <div class="dl-card">
         <div class="dl-card-icon">🪟</div>
-        <h3>Windows</h3>
-        <div class="dl-sub">64-bit Installer</div>
+        <div class="dl-card-info"><h3>Windows</h3><div class="dl-sub">64-bit</div></div>
         <a href="downloads/MainDesk-windows-x64.exe" class="dl-btn">↓ .exe</a>
       </div>
       <div class="dl-card">
         <div class="dl-card-icon">🐧</div>
-        <h3>Linux</h3>
-        <div class="dl-sub">AppImage (universal)</div>
+        <div class="dl-card-info"><h3>Linux</h3><div class="dl-sub">AppImage</div></div>
         <a href="downloads/MainDesk-linux-x64.AppImage" class="dl-btn">↓ AppImage</a>
       </div>
       <div class="dl-card">
         <div class="dl-card-icon">🐧</div>
-        <h3>Linux</h3>
-        <div class="dl-sub">Debian / Ubuntu</div>
+        <div class="dl-card-info"><h3>Linux</h3><div class="dl-sub">Debian / Ubuntu</div></div>
         <a href="downloads/MainDesk-linux-x64.deb" class="dl-btn">↓ .deb</a>
       </div>
       <div class="dl-card">
         <div class="dl-card-icon">🐧</div>
-        <h3>Linux</h3>
-        <div class="dl-sub">Fedora / RHEL</div>
+        <div class="dl-card-info"><h3>Linux</h3><div class="dl-sub">Fedora / RHEL</div></div>
         <a href="downloads/MainDesk-linux-x64.rpm" class="dl-btn">↓ .rpm</a>
       </div>
     </div>
@@ -854,7 +850,9 @@ footer a:hover{text-decoration:underline}
           <p data-de="Das Apple Developer Program kostet 99 $/Jahr. Da Main Desk kostenlos ist, verzichten wir darauf. Die Warnung bedeutet nicht, dass die Software schädlich ist – Apple und Microsoft haben schlicht keine Gebühr erhalten." data-en="The Apple Developer Program costs $99/year. Since Main Desk is free, we skip that. The warning does not mean the software is harmful – Apple and Microsoft simply haven't received a fee.">Das Apple Developer Program kostet 99 $/Jahr. Da Main Desk kostenlos ist, verzichten wir darauf. Die Warnung bedeutet nicht, dass die Software schädlich ist – Apple und Microsoft haben schlicht keine Gebühr erhalten.</p>
         </div>
       </div>
-    </div>
+    <p class="disclaimer" data-de='Die Software wird „wie besehen" (as is) bereitgestellt. Es werden keine Garantien gegeben und keine Haftung für Schäden übernommen, die durch die Nutzung der Software entstehen.' data-en='The software is provided "as is". No warranties are given and no liability is accepted for damages arising from the use of the software.'>
+      Die Software wird „wie besehen" (as is) bereitgestellt. Es werden keine Garantien gegeben und keine Haftung für Schäden übernommen, die durch die Nutzung der Software entstehen.
+    </p>
   </div>
 </section>
 
