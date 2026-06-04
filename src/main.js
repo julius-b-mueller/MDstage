@@ -5157,7 +5157,7 @@ async function initApp() {
     }
 
     // Ask to format if the script doesn't match canonical style
-    if (needsFormatting(text)) {
+    if (!window.__webPreview && needsFormatting(text)) {
         const scriptPath0 = await window.electronAPI.getScriptPath()
         const fileName = scriptPath0.split(/[\\/]/).pop()
         const backupName = fileName.replace(/\.md$/, '~unformatted.md')
@@ -5179,15 +5179,36 @@ async function initApp() {
     }
 
     // Show current file name in title bar
-    const scriptPath = await window.electronAPI.getScriptPath()
-    document.title = scriptPath.split(/[\\/]/).pop()
-    const scriptDir = scriptPath.substring(0, scriptPath.lastIndexOf('/'))
-    audioBasePath = encodeURI('file://' + scriptDir + '/audio/')
+    if (window.__webPreview) {
+        audioBasePath = 'audio/'
+        document.title = 'Main Desk – Vorschau'
+    } else {
+        const scriptPath = await window.electronAPI.getScriptPath()
+        document.title = scriptPath.split(/[\\/]/).pop()
+        const scriptDir = scriptPath.substring(0, scriptPath.lastIndexOf('/'))
+        audioBasePath = encodeURI('file://' + scriptDir + '/audio/')
+    }
 
     validateYamlBlocks(text)
     scriptText = text
     document.getElementById('script-content').innerHTML = makeHtmlSafe(text)
     convertCodeblocks()
+
+    if (!window.__webPreview) {
+        const appVersion = await window.electronAPI.getAppVersion()
+        const fileVersion = config?.app_version
+        if (fileVersion && String(fileVersion) !== appVersion) {
+            showConfirmDialog({
+                title: 'Versionshinweis',
+                body: `Diese Datei wurde mit <strong>Version ${escapeHtml(String(fileVersion))}</strong> erstellt.<br>` +
+                      `Aktuelle Version: <strong>${escapeHtml(appVersion)}</strong><br><br>` +
+                      `Die Datei kann trotzdem verwendet werden. Beim nächsten Speichern der Einstellungen wird die Version aktualisiert.`,
+                confirmLabel: 'OK',
+                cancelLabel: 'Ignorieren',
+            })
+        }
+    }
+
     colorText()
     showParseErrors()
     markControlledTriggers()

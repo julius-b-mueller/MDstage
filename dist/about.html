@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Über Main Desk</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        html { scroll-behavior: smooth; }
+        body {
+            background: #282c34;
+            color: #abb2bf;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            font-size: 14px;
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        /* ── Header ──────────────────────────────────────────────────── */
+        .app-header {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 2.2rem 2rem 1.6rem;
+            background: #21252b;
+            border-bottom: 1px solid #383c44;
+            text-align: center;
+        }
+        .app-header img {
+            width: 72px;
+            height: 72px;
+            border-radius: 16px;
+            margin-bottom: 1rem;
+        }
+        .app-header h1 {
+            font-size: 1.5rem;
+            font-weight: 800;
+            letter-spacing: -.02em;
+            color: #fff;
+            margin-bottom: .2rem;
+        }
+        .app-version {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #61afef;
+            margin-bottom: .2rem;
+        }
+        .app-build {
+            font-size: .76rem;
+            color: #5c6370;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* ── Sections ────────────────────────────────────────────────── */
+        .section {
+            padding: 1.4rem 1.6rem;
+            border-bottom: 1px solid #2c313a;
+        }
+        .section-title {
+            font-size: .7rem;
+            font-weight: 700;
+            letter-spacing: .1em;
+            text-transform: uppercase;
+            color: #5c6370;
+            margin-bottom: 1rem;
+        }
+
+        /* ── License list ────────────────────────────────────────────── */
+        .license-item {
+            margin-bottom: 1.1rem;
+            padding-bottom: 1.1rem;
+            border-bottom: 1px solid #2c313a;
+        }
+        .license-item:last-child {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+        .license-header {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: .5rem;
+            margin-bottom: .15rem;
+        }
+        .license-name {
+            font-weight: 700;
+            color: #fff;
+            font-size: .9rem;
+        }
+        .license-badge {
+            font-size: .7rem;
+            font-weight: 600;
+            padding: .1rem .5rem;
+            border-radius: 4px;
+            flex-shrink: 0;
+        }
+        .badge-mit     { background: #1e3a2a; color: #98c379; border: 1px solid #98c37944; }
+        .badge-bsd     { background: #1e3a52; color: #61afef; border: 1px solid #61afef44; }
+        .badge-apache  { background: #3a321e; color: #e5c07b; border: 1px solid #e5c07b44; }
+        .badge-dual    { background: #2e1e3a; color: #c678dd; border: 1px solid #c678dd44; }
+        .license-copy {
+            font-size: .78rem;
+            color: #5c6370;
+            margin-bottom: .15rem;
+        }
+        .license-link {
+            font-size: .75rem;
+            color: #61afef;
+            text-decoration: none;
+        }
+        .license-link:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+
+<div class="app-header">
+    <img src="assets/icon.png" alt="Main Desk">
+    <h1>Main Desk</h1>
+    <div class="app-version" id="ver">…</div>
+    <div class="app-build"  id="bld"></div>
+</div>
+
+<div class="section">
+    <div class="section-title">Open-Source-Lizenzen</div>
+
+    <div class="license-item">
+        <div class="license-header">
+            <span class="license-name">WaveSurfer.js</span>
+            <span class="license-badge badge-bsd">BSD 3-Clause</span>
+        </div>
+        <div class="license-copy">Copyright © 2012–2024 katspaugh and contributors</div>
+        <a class="license-link" href="https://wavesurfer.xyz" target="_blank">wavesurfer.xyz</a>
+    </div>
+
+    <div class="license-item">
+        <div class="license-header">
+            <span class="license-name">Showdown</span>
+            <span class="license-badge badge-mit">MIT</span>
+        </div>
+        <div class="license-copy">Copyright © 2007 John Fraser &nbsp;·&nbsp; Copyright © 2014 Estevão Soares dos Santos</div>
+        <a class="license-link" href="https://github.com/showdownjs/showdown" target="_blank">github.com/showdownjs/showdown</a>
+    </div>
+
+    <div class="license-item">
+        <div class="license-header">
+            <span class="license-name">js-yaml</span>
+            <span class="license-badge badge-mit">MIT</span>
+        </div>
+        <div class="license-copy">Copyright © 2011–2023 Vitaly Puzrin</div>
+        <a class="license-link" href="https://github.com/nodeca/js-yaml" target="_blank">github.com/nodeca/js-yaml</a>
+    </div>
+
+    <div class="license-item">
+        <div class="license-header">
+            <span class="license-name">DOMPurify</span>
+            <span class="license-badge badge-dual">Apache-2.0 / MPL-2.0</span>
+        </div>
+        <div class="license-copy">Copyright © 2015–2024 Mario Heiderich</div>
+        <a class="license-link" href="https://github.com/cure53/DOMPurify" target="_blank">github.com/cure53/DOMPurify</a>
+    </div>
+
+    <div class="license-item">
+        <div class="license-header">
+            <span class="license-name">docx</span>
+            <span class="license-badge badge-mit">MIT</span>
+        </div>
+        <div class="license-copy">Copyright © 2016 Dolan Miu</div>
+        <a class="license-link" href="https://github.com/dolanmiu/docx" target="_blank">github.com/dolanmiu/docx</a>
+    </div>
+
+    <div class="license-item">
+        <div class="license-header">
+            <span class="license-name">WebMidi.js</span>
+            <span class="license-badge badge-apache">Apache-2.0</span>
+        </div>
+        <div class="license-copy">Copyright © Jean-Philippe Côté</div>
+        <a class="license-link" href="https://github.com/djipco/webmidi" target="_blank">github.com/djipco/webmidi</a>
+    </div>
+
+    <div class="license-item">
+        <div class="license-header">
+            <span class="license-name">Electron</span>
+            <span class="license-badge badge-mit">MIT</span>
+        </div>
+        <div class="license-copy">Copyright © 2013–2024 GitHub Inc. and Electron contributors</div>
+        <a class="license-link" href="https://github.com/electron/electron" target="_blank">github.com/electron/electron</a>
+    </div>
+
+</div>
+
+<script>
+    async function init() {
+        const version   = await window.electronAPI.getAppVersion()
+        const buildInfo = await window.electronAPI.getBuildInfo()
+
+        document.getElementById('ver').textContent = 'Version ' + version
+
+        const parts = []
+        if (buildInfo.date)                       parts.push(buildInfo.date)
+        if (buildInfo.commit && buildInfo.commit !== 'dev') parts.push('Commit ' + buildInfo.commit)
+        document.getElementById('bld').textContent = parts.join('  ·  ')
+    }
+    init().catch(() => {})
+</script>
+</body>
+</html>

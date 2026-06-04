@@ -2,6 +2,12 @@
   "name": "evb-ai",
   "productName": "Main Desk",
   "version": "1.0.0",
+  "description": "Das interaktive Inspizientenbuch",
+  "author": {
+    "name": "Julius Müller",
+    "email": "info@maindesk.org"
+  },
+  "homepage": "https://essener-volksbuehne.gitlab.io/evb-ai",
   "main": "electron/main.js",
   "scripts": {
     "build": "webpack && node scripts/build-version.js && electron-builder --publish never",

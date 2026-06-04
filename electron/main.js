@@ -155,6 +155,7 @@ function persistSettings(settings) {
     if ('mainAudioDevice' in existing) existing = {}
     existing[hostname] = mdSettings
     parsed.config.settings = existing
+    parsed.config.app_version = app.getVersion()
 
     const newYaml = yaml.dump(parsed, { indent: 4, lineWidth: -1, noRefs: true })
     const newBlock = '```yaml\n' + newYaml.trimEnd() + '\n```'
@@ -165,6 +166,7 @@ let mainWindow = null
 let settingsWindow = null
 let roleEditorWindow = null
 let liveWindow = null
+let aboutWindow = null
 
 function createMainWindow() {
     mainWindow = new BrowserWindow({
@@ -262,13 +264,32 @@ function createLiveWindow() {
     if (mainWindow) mainWindow.webContents.send('live-window-state', true)
 }
 
+function createAboutWindow() {
+    if (aboutWindow) { aboutWindow.focus(); return }
+    aboutWindow = new BrowserWindow({
+        width: 520,
+        height: 700,
+        title: 'Über Main Desk',
+        resizable: false,
+        minimizable: false,
+        webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            preload: path.join(__dirname, 'preload.js'),
+        },
+    })
+    aboutWindow.setMenu(null)
+    aboutWindow.loadFile(path.join(__dirname, '../dist/about.html'))
+    aboutWindow.on('closed', () => { aboutWindow = null })
+}
+
 async function createNewFile() {
     const result = await dialog.showSaveDialog(mainWindow, {
         filters: [{ name: 'Markdown', extensions: ['md'] }],
         defaultPath: 'skript.md',
     })
     if (!result.canceled && result.filePath) {
-        const template = '```yaml\nconfig:\n    roles: {}\n```\n'
+        const template = `\`\`\`yaml\nconfig:\n    app_version: "${app.getVersion()}"\n    roles: {}\n\`\`\`\n`
         fs.writeFileSync(result.filePath, template, 'utf8')
         scriptMdPath = result.filePath
         saveLastFilePath(scriptMdPath)
@@ -316,13 +337,7 @@ function buildMenu() {
             submenu: [
                 {
                     label: menuT('about'),
-                    click: () => dialog.showMessageBox(mainWindow ?? null, {
-                        type: 'info',
-                        title: 'Main Desk',
-                        message: 'Main Desk',
-                        detail: `Version ${app.getVersion()}${buildInfo.date ? '  ·  ' + buildInfo.date : ''}\nCommit: ${buildInfo.commit}`,
-                        buttons: ['OK'],
-                    }),
+                    click: createAboutWindow,
                 },
                 { type: 'separator' },
                 {
@@ -694,6 +709,8 @@ app.whenReady().then(async () => {
         }
     })
 
+    ipcMain.handle('get-app-version', () => app.getVersion())
+    ipcMain.handle('get-build-info',  () => buildInfo)
     ipcMain.handle('get-settings', () => loadSettings())
 
     ipcMain.handle('save-settings', (_, settings) => {

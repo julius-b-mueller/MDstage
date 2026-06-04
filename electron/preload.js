@@ -12,6 +12,8 @@ ipcRenderer.on('live-back', () => {
 })
 
 contextBridge.exposeInMainWorld('electronAPI', {
+    getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+    getBuildInfo:  () => ipcRenderer.invoke('get-build-info'),
     getSettings: () => ipcRenderer.invoke('get-settings'),
     saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
     getHostname: () => ipcRenderer.invoke('get-hostname'),

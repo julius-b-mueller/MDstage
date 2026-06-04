@@ -2,6 +2,22 @@ stages:
   - build
   - deploy
 
+# ── Web bundle (for the website preview) ─────────────────────────────────────
+build:web:
+  stage: build
+  image: node:20-alpine
+  script:
+    - npm ci
+    - npx webpack --mode production
+  artifacts:
+    name: "web-bundle"
+    paths:
+      - dist/
+    expire_in: 2 weeks
+  only:
+    - main
+    - tags
+
 # ── Linux & Windows (cross-compiled from Linux with Wine) ────────────
 build:linux-windows:
   stage: build
@@ -60,6 +76,7 @@ pages:
     - job: build:linux-windows
     - job: build:macos
       optional: true
+    - job: build:web
   script:
     - cp -r website public
     - mkdir -p public/downloads
@@ -67,6 +84,8 @@ pages:
     - find artifacts -type f | xargs -I{} cp {} public/downloads/ 2>/dev/null || true
     - echo "Contents of public/downloads/:"
     - ls -lh public/downloads/ || echo "(empty)"
+    # Copy the web bundle so preview/index.html can load it as ../app/
+    - cp -r dist public/app
   artifacts:
     paths:
       - public

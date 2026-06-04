@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Main Desk – Vorschau</title>
+    <link rel="stylesheet" href="../app/styles.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8">
+    <!-- Set preview flag and load shim before bundle.js so MIDI override is in place -->
+    <script>window.__webPreview = true</script>
+    <script src="shim.js"></script>
+    <style>
+        #preview-notice {
+            background: #2a221a;
+            border-bottom: 1px solid #e5c07b44;
+            border-left: 4px solid #e5c07b;
+            padding: 0.5rem 1rem;
+            font-size: 0.78rem;
+            color: #abb2bf;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-shrink: 0;
+            position: relative;
+            z-index: 200;
+        }
+        #preview-notice strong { color: #e5c07b; }
+    </style>
+</head>
+<body>
+    <div id="preview-notice">
+        <strong>⚠ Vorschau-Modus</strong>
+        MIDI und OSC sind nicht verfügbar. Änderungen am Skript werden nicht gespeichert.
+    </div>
+
+    <div id="scene-sidebar">
+        <div class="scene-sidebar-header" data-i18n="sidebar.title">Szenen</div>
+        <div id="scene-list"></div>
+    </div>
+
+    <div id="search-bar" class="hidden">
+        <input id="search-input" type="text" data-i18n-ph="search.ph" placeholder="Suchen…" autocomplete="off" spellcheck="false">
+        <span id="search-count"></span>
+        <button id="search-prev" data-i18n-title="search.prev.title" title="Vorheriges (Shift+Enter)">↑</button>
+        <button id="search-next" data-i18n-title="search.next.title" title="Nächstes (Enter)">↓</button>
+        <button id="search-close" data-i18n-title="search.close.title" title="Schließen (Esc)">×</button>
+    </div>
+
+    <div id="header-shield"></div>
+    <div id="script-content"></div>
+    <div class="sidebar-toggle-button button" style="font-size:1.4rem" data-i18n-title="toolbar.sidebar.title" title="Szenenübersicht (Strg+B)">☰</div>
+
+    <div class="buttons">
+        <div class="clock">00:00:00</div>
+        <div class="tc-display">--:--:--:--</div>
+        <!-- LIVE button hidden — live view is always visible in the side-by-side preview -->
+        <div class="button live-window-button" style="display:none"></div>
+        <div class="button reload-button" style="font-size:1.4rem">↺</div>
+        <div class="button current-trigger-button" style="font-size:1.4rem">⌖</div>
+        <div class="button emergency em-light"><img src="../app/assets/em-light.svg" alt=""></div>
+        <div class="button emergency em-mic"><img src="../app/assets/em-mic.svg" alt=""></div>
+        <div class="button emergency em-music"><img src="../app/assets/em-music.svg" alt=""></div>
+    </div>
+    <script src="../app/i18n.js"></script>
+    <script src="../app/bundle.js"></script>
+</body>
+</html>
