@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Impressum &amp; Datenschutz – Main Desk</title>
+<link rel="icon" type="image/png" href="assets/icon.png">
+<style>
+:root {
+  --bg:#282c34;--bg2:#21252b;--bg3:#2c313a;--border:#383c44;
+  --text:#abb2bf;--dim:#5c6370;--blue:#61afef;--r:10px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;font-size:16px;line-height:1.7}
+nav{position:sticky;top:0;z-index:100;background:var(--bg2);border-bottom:1px solid var(--border);padding:0 2rem;display:flex;align-items:center;gap:2rem;height:56px}
+.nav-logo{font-size:1.1rem;font-weight:700;color:#fff;text-decoration:none;letter-spacing:-.02em;display:flex;align-items:center;gap:.45rem}
+.nav-links{display:flex;gap:.2rem;flex:1}
+.nav-links a{color:var(--dim);text-decoration:none;padding:.35rem .7rem;border-radius:6px;font-size:.88rem;transition:color .15s,background .15s}
+.nav-links a:hover{color:var(--text);background:var(--bg3)}
+.lang-toggle{display:flex;gap:2px;background:var(--bg3);border-radius:6px;padding:3px}
+.lang-btn{background:none;border:none;cursor:pointer;padding:3px 9px;border-radius:4px;font-size:.8rem;font-weight:600;color:var(--dim);transition:all .15s}
+.lang-btn.active{background:var(--border);color:#fff}
+main{max-width:700px;margin:0 auto;padding:4rem 2rem 6rem}
+h1{font-size:2rem;font-weight:800;color:#fff;letter-spacing:-.02em;margin-bottom:.5rem}
+.subtitle{color:var(--dim);margin-bottom:3rem;font-size:.95rem}
+h2{font-size:1.1rem;font-weight:700;color:#fff;margin:2.5rem 0 .6rem;padding-bottom:.4rem;border-bottom:1px solid var(--border)}
+p{margin-bottom:.8rem;font-size:.95rem}
+a{color:var(--blue);text-decoration:none}
+a:hover{text-decoration:underline}
+.placeholder{background:var(--bg3);border:1px dashed var(--border);border-radius:var(--r);padding:1rem 1.2rem;color:var(--dim);font-size:.88rem;margin-bottom:.8rem}
+footer{text-align:center;padding:2rem;color:var(--dim);font-size:.82rem;border-top:1px solid var(--border)}
+@media(max-width:640px){nav{padding:0 1rem}main{padding:2.5rem 1.2rem 4rem}}
+</style>
+</head>
+<body>
+<nav>
+  <a href="index.html" class="nav-logo">
+    <img src="assets/icon.png" width="24" height="24" alt="Main Desk" style="border-radius:5px;flex-shrink:0">
+    Main Desk
+  </a>
+  <div class="nav-links">
+    <a href="index.html" data-de="Zurück" data-en="Back">Zurück</a>
+    <a href="about.html" data-de="Über" data-en="About">Über</a>
+  </div>
+  <div class="lang-toggle">
+    <button class="lang-btn active" onclick="setLang('de')">DE</button>
+    <button class="lang-btn"        onclick="setLang('en')">EN</button>
+  </div>
+</nav>
+
+<main>
+  <!-- ── DE ──────────────────────────────────────────────────── -->
+  <div id="content-de">
+    <h1>Impressum</h1>
+    <p class="subtitle">Angaben gemäß §5 TMG</p>
+
+    <h2>Verantwortlich</h2>
+    <div class="placeholder">
+      ✏ Hier deinen Namen und deine Postanschrift eintragen:<br><br>
+      Vorname Nachname<br>
+      Musterstraße 1<br>
+      12345 Musterstadt
+    </div>
+    <p><strong>E-Mail:</strong> <a href="mailto:info@maindesk.org">info@maindesk.org</a></p>
+
+    <h2>Haftungsausschluss</h2>
+    <p>Die Inhalte dieser Website wurden mit größtmöglicher Sorgfalt erstellt. Für die Richtigkeit, Vollständigkeit und Aktualität der Inhalte wird jedoch keine Gewähr übernommen.</p>
+
+    <h1 style="margin-top:4rem">Datenschutzerklärung</h1>
+    <p class="subtitle" data-de="Stand: Juni 2025" data-en="As of June 2025">Stand: Juni 2025</p>
+
+    <h2>Grundsatz</h2>
+    <p>Der Betreiber dieser Website erhebt, verarbeitet oder speichert keine personenbezogenen Daten. Es werden keine Cookies gesetzt, kein Tracking durchgeführt und keine Analyse-Tools eingesetzt. Die Software Main Desk selbst sendet keine Daten ins Internet („kein Phone-Home").</p>
+
+    <h2>Hosting</h2>
+    <p>Diese Website wird über <strong>GitLab Pages</strong> (GitLab B.V., Prins Bernhardplein 200, 1097 JB Amsterdam, Niederlande) gehostet. GitLab verarbeitet beim Abrufen der Seite technisch notwendige Verbindungsdaten (z. B. IP-Adresse, Zeitstempel, aufgerufene Seiten) in Form von Server-Zugriffsprotokollen. Auf diese Daten hat der Betreiber keinen Zugriff.</p>
+    <p>Weitere Informationen zur Datenverarbeitung durch GitLab: <a href="https://about.gitlab.com/privacy/" target="_blank" rel="noopener">about.gitlab.com/privacy</a></p>
+
+    <h2>Kontakt</h2>
+    <p>Bei Fragen zum Datenschutz: <a href="mailto:info@maindesk.org">info@maindesk.org</a></p>
+  </div>
+
+  <!-- ── EN ──────────────────────────────────────────────────── -->
+  <div id="content-en" style="display:none">
+    <h1>Legal Notice</h1>
+    <p class="subtitle">Information pursuant to §5 TMG (German Telemedia Act)</p>
+
+    <h2>Responsible</h2>
+    <div class="placeholder">
+      ✏ Enter your name and postal address here:<br><br>
+      First Last<br>
+      123 Example Street<br>
+      12345 Example City, Germany
+    </div>
+    <p><strong>Email:</strong> <a href="mailto:info@maindesk.org">info@maindesk.org</a></p>
+
+    <h2>Disclaimer</h2>
+    <p>The content of this website has been compiled with the greatest possible care. However, no warranty is given for the accuracy, completeness or timeliness of the content.</p>
+
+    <h1 style="margin-top:4rem">Privacy Policy</h1>
+    <p class="subtitle">As of June 2025</p>
+
+    <h2>General principle</h2>
+    <p>The operator of this website does not collect, process or store any personal data. No cookies are set, no tracking is performed and no analytics tools are used. The Main Desk software itself does not send any data to the internet ("no phone home").</p>
+
+    <h2>Hosting</h2>
+    <p>This website is hosted via <strong>GitLab Pages</strong> (GitLab B.V., Prins Bernhardplein 200, 1097 JB Amsterdam, Netherlands). When the page is accessed, GitLab processes technically necessary connection data (e.g. IP address, timestamp, requested pages) in the form of server access logs. The operator has no access to this data.</p>
+    <p>For more information on data processing by GitLab: <a href="https://about.gitlab.com/privacy/" target="_blank" rel="noopener">about.gitlab.com/privacy</a></p>
+
+    <h2>Contact</h2>
+    <p>For privacy-related questions: <a href="mailto:info@maindesk.org">info@maindesk.org</a></p>
+  </div>
+</main>
+
+<footer>
+  <span data-de="Für die Bühne gemacht." data-en="Made for the stage.">Für die Bühne gemacht.</span>
+</footer>
+
+<script>
+  let currentLang = localStorage.getItem('md-lang') || 'de'
+  function setLang(lang) {
+    currentLang = lang
+    localStorage.setItem('md-lang', lang)
+    document.documentElement.lang = lang
+    document.querySelectorAll('.lang-btn').forEach((b,i) => b.classList.toggle('active',(i===0&&lang==='de')||(i===1&&lang==='en')))
+    document.getElementById('content-de').style.display = lang === 'de' ? '' : 'none'
+    document.getElementById('content-en').style.display = lang === 'en' ? '' : 'none'
+    document.querySelectorAll('[data-de]').forEach(el => { const t = el.getAttribute('data-'+lang); if (t) el.innerHTML = t })
+  }
+  setLang(currentLang)
+</script>
+</body>
+</html>

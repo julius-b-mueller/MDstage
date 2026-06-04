@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Über – Main Desk</title>
+<link rel="icon" type="image/png" href="assets/icon.png">
+<style>
+:root {
+  --bg:#282c34;--bg2:#21252b;--bg3:#2c313a;--border:#383c44;
+  --text:#abb2bf;--dim:#5c6370;--blue:#61afef;--green:#98c379;--r:10px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;font-size:16px;line-height:1.7}
+nav{position:sticky;top:0;z-index:100;background:var(--bg2);border-bottom:1px solid var(--border);padding:0 2rem;display:flex;align-items:center;gap:2rem;height:56px}
+.nav-logo{font-size:1.1rem;font-weight:700;color:#fff;text-decoration:none;letter-spacing:-.02em;display:flex;align-items:center;gap:.45rem}
+.nav-links{display:flex;gap:.2rem;flex:1}
+.nav-links a{color:var(--dim);text-decoration:none;padding:.35rem .7rem;border-radius:6px;font-size:.88rem;transition:color .15s,background .15s}
+.nav-links a:hover{color:var(--text);background:var(--bg3)}
+.lang-toggle{display:flex;gap:2px;background:var(--bg3);border-radius:6px;padding:3px}
+.lang-btn{background:none;border:none;cursor:pointer;padding:3px 9px;border-radius:4px;font-size:.8rem;font-weight:600;color:var(--dim);transition:all .15s}
+.lang-btn.active{background:var(--border);color:#fff}
+main{max-width:700px;margin:0 auto;padding:5rem 2rem 6rem}
+.about-header{margin-bottom:3.5rem}
+.about-header h1{font-size:2.2rem;font-weight:800;color:#fff;letter-spacing:-.03em;margin-bottom:.6rem}
+.about-header p{font-size:1.05rem;color:var(--dim);line-height:1.75;max-width:560px}
+.placeholder{background:var(--bg3);border:1px dashed var(--border);border-radius:var(--r);padding:1.4rem 1.6rem;color:var(--dim);font-size:.92rem;margin-bottom:2rem;line-height:1.8}
+.placeholder strong{color:var(--text)}
+.section{margin-bottom:2.5rem}
+.section h2{font-size:1.05rem;font-weight:700;color:#fff;margin-bottom:.6rem;padding-bottom:.35rem;border-bottom:1px solid var(--border)}
+p{margin-bottom:.8rem;font-size:.95rem}
+a{color:var(--blue);text-decoration:none}
+a:hover{text-decoration:underline}
+.contact-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:1.2rem 1.4rem;display:flex;align-items:center;gap:1rem;margin-top:1.2rem}
+.contact-card a{font-weight:600;font-size:1rem}
+footer{text-align:center;padding:2rem;color:var(--dim);font-size:.82rem;border-top:1px solid var(--border)}
+@media(max-width:640px){nav{padding:0 1rem}main{padding:3rem 1.2rem 4rem}}
+</style>
+</head>
+<body>
+<nav>
+  <a href="index.html" class="nav-logo">
+    <img src="assets/icon.png" width="24" height="24" alt="Main Desk" style="border-radius:5px;flex-shrink:0">
+    Main Desk
+  </a>
+  <div class="nav-links">
+    <a href="index.html" data-de="Zurück" data-en="Back">Zurück</a>
+    <a href="impressum.html" data-de="Impressum" data-en="Legal">Impressum</a>
+  </div>
+  <div class="lang-toggle">
+    <button class="lang-btn active" onclick="setLang('de')">DE</button>
+    <button class="lang-btn"        onclick="setLang('en')">EN</button>
+  </div>
+</nav>
+
+<main>
+
+  <!-- ── DE ──────────────────────────────────────────────────── -->
+  <div id="content-de">
+    <div class="about-header">
+      <h1>Über Main Desk</h1>
+      <p>Eine Software für alle, die Shows fahren.</p>
+    </div>
+
+    <div class="section">
+      <h2>Über das Projekt</h2>
+      <div class="placeholder">
+        ✏ <strong>Hier deinen eigenen Text einfügen.</strong><br>
+        Zum Beispiel: Wie ist Main Desk entstanden? In welchem Kontext hast du es entwickelt?
+        Was hat dich motiviert? Für welche Art von Produktionen setzt du es selbst ein?
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Über mich</h2>
+      <div class="placeholder">
+        ✏ <strong>Wer steckt dahinter?</strong><br>
+        Ein paar Sätze über dich – Beruf, Hintergrund, wo du arbeitest oder tätig bist.
+        So viel oder so wenig, wie du möchtest.
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Kontakt &amp; Feedback</h2>
+      <p>Rückmeldungen, Bugreports und Fragen sind herzlich willkommen. Am liebsten per Mail – und besonders freue ich mich zu hören, wo du Main Desk einsetzt.</p>
+      <div class="contact-card">
+        <span style="font-size:1.4rem">✉</span>
+        <a href="mailto:info@maindesk.org">info@maindesk.org</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── EN ──────────────────────────────────────────────────── -->
+  <div id="content-en" style="display:none">
+    <div class="about-header">
+      <h1>About Main Desk</h1>
+      <p>Software for everyone who runs shows.</p>
+    </div>
+
+    <div class="section">
+      <h2>About the project</h2>
+      <div class="placeholder">
+        ✏ <strong>Add your own text here.</strong><br>
+        For example: How did Main Desk come about? In what context did you develop it?
+        What motivated you? What kind of productions do you use it for yourself?
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>About me</h2>
+      <div class="placeholder">
+        ✏ <strong>Who's behind it?</strong><br>
+        A few sentences about yourself – your background, where you work or are active.
+        As much or as little as you like.
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Contact &amp; feedback</h2>
+      <p>Feedback, bug reports and questions are very welcome. Email is best – and I'm especially happy to hear where you're using Main Desk.</p>
+      <div class="contact-card">
+        <span style="font-size:1.4rem">✉</span>
+        <a href="mailto:info@maindesk.org">info@maindesk.org</a>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<footer>
+  <span data-de="Für die Bühne gemacht." data-en="Made for the stage.">Für die Bühne gemacht.</span>
+</footer>
+
+<script>
+  let currentLang = localStorage.getItem('md-lang') || 'de'
+  function setLang(lang) {
+    currentLang = lang
+    localStorage.setItem('md-lang', lang)
+    document.documentElement.lang = lang
+    document.querySelectorAll('.lang-btn').forEach((b,i) => b.classList.toggle('active',(i===0&&lang==='de')||(i===1&&lang==='en')))
+    document.getElementById('content-de').style.display = lang === 'de' ? '' : 'none'
+    document.getElementById('content-en').style.display = lang === 'en' ? '' : 'none'
+    document.querySelectorAll('[data-de]').forEach(el => { const t = el.getAttribute('data-'+lang); if (t) el.innerHTML = t })
+  }
+  setLang(currentLang)
+</script>
+</body>
+</html>
