@@ -28,6 +28,32 @@
         #preview-notice strong { color: #e5c07b; }
         /* Buttonleiste unter dem Banner (Banner ~36px hoch) */
         .buttons { top: calc(0.5rem + 36px) !important; }
+
+        /* LIVE-Button in der Vorschau */
+        .live-window-button {
+            font-size: 0.75rem !important;
+            font-weight: 700 !important;
+            letter-spacing: 0.04em !important;
+            padding: 0 0.6rem !important;
+            background: #1e3a52 !important;
+            border: 1px solid #61afef66 !important;
+            color: #61afef !important;
+            border-radius: 6px !important;
+            display: flex !important;
+            align-items: center !important;
+            gap: 0.3rem !important;
+            white-space: nowrap !important;
+            cursor: pointer !important;
+        }
+        .live-window-button:hover { background: #243e5a !important; border-color: #61afef !important; }
+        .live-btn-arrow {
+            display: inline-block;
+            animation: live-arrow-pulse 1.3s ease-in-out infinite;
+        }
+        @keyframes live-arrow-pulse {
+            0%, 100% { opacity: 1;   transform: translate(0, 0); }
+            50%       { opacity: 0.2; transform: translate(2px, -2px); }
+        }
     </style>
 </head>
 <body>
@@ -56,8 +82,9 @@
     <div class="buttons">
         <div class="clock">00:00:00</div>
         <div class="tc-display">--:--:--:--</div>
-        <!-- LIVE button hidden — live view is always visible in the side-by-side preview -->
-        <div class="button live-window-button" style="display:none"></div>
+        <div class="button live-window-button">
+            Live-Ansicht öffnen <span class="live-btn-arrow">↗</span>
+        </div>
         <div class="button reload-button" style="font-size:1.4rem">↺</div>
         <div class="button current-trigger-button" style="font-size:1.4rem">⌖</div>
         <div class="button emergency em-light"><img src="../app/assets/em-light.svg" alt=""></div>

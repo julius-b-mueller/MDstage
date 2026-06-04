@@ -1,5 +1,6 @@
 // Preview shim — provides browser-compatible electronAPI and disables MIDI/OSC.
-// Loaded before bundle.js in preview-main.html, and before the inline script in preview-live.html.
+// Communication between main view and live view uses BroadcastChannel so both
+// iframes and standalone windows work without a routing wrapper.
 
 window.__webPreview = true
 
@@ -13,6 +14,24 @@ navigator.requestMIDIAccess = () => Promise.resolve({
     removeEventListener: () => {},
     dispatchEvent:       () => false,
 })
+
+// ── BroadcastChannel (replaces postMessage routing through wrapper) ────────────
+// Works across iframes AND separate windows as long as they share the same origin.
+const _ch = new BroadcastChannel('maindesk-preview')
+
+const _liveStateListeners  = []
+const _liveVolumeListeners = []
+
+_ch.onmessage = ({ data }) => {
+    if (!data?.type) return
+    const { type } = data
+    if (type === 'live-state')     _liveStateListeners.forEach(cb => cb(data.state))
+    if (type === 'live-volumes')   _liveVolumeListeners.forEach(cb => cb(data.volumes))
+    if (type === 'live-go')        window.dispatchEvent(new CustomEvent('__live-go__'))
+    if (type === 'live-back')      window.dispatchEvent(new CustomEvent('__live-back__'))
+    if (type === 'select-variant') window.__selectVariant?.(data.idx)
+    if (type === 'stop-audio')     window.__stopAudio?.(data.cueIdx)
+}
 
 // ── electronAPI shim ──────────────────────────────────────────────────────────
 
@@ -29,8 +48,6 @@ const _settings = {
 }
 
 let _scriptCache = null
-const _liveStateListeners  = []
-const _liveVolumeListeners = []
 
 window.electronAPI = {
     getAppVersion: () => Promise.resolve('0.0.0'),
@@ -58,25 +75,32 @@ window.electronAPI = {
     onScriptChanged:       () => {},
     showEditorContextMenu: () => {},
 
-    // Main → Live (broadcast live state through wrapper page)
-    sendLiveState:  (state)   => { window.parent.postMessage({ type: 'live-state',   state   }, '*'); return Promise.resolve() },
-    sendLiveVolumes:(volumes) => { window.parent.postMessage({ type: 'live-volumes', volumes }, '*') },
+    // Main → broadcasts live state to all listeners (iframes + separate windows)
+    sendLiveState:  (state)   => { _ch.postMessage({ type: 'live-state',   state   }); return Promise.resolve() },
+    sendLiveVolumes:(volumes) => { _ch.postMessage({ type: 'live-volumes', volumes }) },
 
-    // Live window: register callbacks that receive messages from wrapper
-    onLiveState:   (cb) => { _liveStateListeners.push(cb)  },
-    onLiveVolumes: (cb) => { _liveVolumeListeners.push(cb) },
+    // Live → receives state updates
+    onLiveState:   (cb) => _liveStateListeners.push(cb),
+    onLiveVolumes: (cb) => _liveVolumeListeners.push(cb),
 
-    // Live → Main commands (sent up to wrapper, then forwarded to main iframe)
-    liveGo:       ()      => { window.parent.postMessage({ type: 'live-go'        }, '*') },
-    liveBack:     ()      => { window.parent.postMessage({ type: 'live-back'       }, '*') },
-    selectVariant:(idx)   => { window.parent.postMessage({ type: 'select-variant', idx     }, '*') },
-    stopAudio:    (cueIdx)=> { window.parent.postMessage({ type: 'stop-audio',     cueIdx  }, '*') },
+    // Live → sends commands back to main
+    liveGo:       ()       => _ch.postMessage({ type: 'live-go' }),
+    liveBack:     ()       => _ch.postMessage({ type: 'live-back' }),
+    selectVariant:(idx)    => _ch.postMessage({ type: 'select-variant', idx }),
+    stopAudio:    (cueIdx) => _ch.postMessage({ type: 'stop-audio',     cueIdx }),
 
-    onLiveGo:         () => {},
-    onLiveBack:       () => {},
-    // Live window is always "open" in the side-by-side preview
-    onLiveWindowState:(cb) => { setTimeout(() => cb(true), 0) },
-    openLiveWindow:   () => {},
+    onLiveGo:  () => {},
+    onLiveBack: () => {},
+    onLiveWindowState: (cb) => setTimeout(() => cb(true), 0),
+
+    // Opens the live view in a separate browser window
+    openLiveWindow: () => {
+        window.open(
+            'preview-live.html',
+            'maindesk-live',
+            'width=960,height=720,menubar=no,toolbar=no,location=no,status=no'
+        )
+    },
 
     exportPdf:       () => Promise.resolve(),
     exportDocx:      () => Promise.resolve(),
@@ -84,16 +108,3 @@ window.electronAPI = {
     saveEmLightNote: () => Promise.resolve(),
     sendOsc:         () => {},
 }
-
-// Route messages from the wrapper page to registered callbacks / live-action handlers
-window.addEventListener('message', (e) => {
-    if (!e.data?.type) return
-    const { type } = e.data
-    if (type === 'live-state')      _liveStateListeners.forEach(cb => cb(e.data.state))
-    if (type === 'live-volumes')    _liveVolumeListeners.forEach(cb => cb(e.data.volumes))
-    // Mirror the Electron preload's DOM-event dispatch so main.js listeners fire
-    if (type === 'live-go')         window.dispatchEvent(new CustomEvent('__live-go__'))
-    if (type === 'live-back')       window.dispatchEvent(new CustomEvent('__live-back__'))
-    if (type === 'select-variant')  window.__selectVariant?.(e.data.idx)
-    if (type === 'stop-audio')      window.__stopAudio?.(e.data.cueIdx)
-})

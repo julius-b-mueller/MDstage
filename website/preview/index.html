@@ -67,26 +67,7 @@
         </div>
     </div>
 
-    <script>
-        const mainFrame = document.getElementById('main-frame')
-        const liveFrame = document.getElementById('live-frame')
-
-        window.addEventListener('message', (e) => {
-            if (!e.data?.type) return
-            const { type } = e.data
-
-            // Main iframe → Live iframe (state broadcasts)
-            if (type === 'live-state' || type === 'live-volumes') {
-                liveFrame.contentWindow.postMessage(e.data, '*')
-                return
-            }
-            // Live iframe → Main iframe (Go/Back/variant commands)
-            if (type === 'live-go' || type === 'live-back' ||
-                type === 'select-variant' || type === 'stop-audio') {
-                mainFrame.contentWindow.postMessage(e.data, '*')
-                return
-            }
-        })
-    </script>
+    <!-- Kein Routing nötig — Kommunikation läuft via BroadcastChannel direkt
+         zwischen den Frames (und ggf. separaten Fenstern). -->
 </body>
 </html>
