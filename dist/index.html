@@ -11,21 +11,21 @@
 
 <body>
     <div id="scene-sidebar">
-        <div class="scene-sidebar-header">Szenen</div>
+        <div class="scene-sidebar-header" data-i18n="sidebar.title">Szenen</div>
         <div id="scene-list"></div>
     </div>
 
     <div id="search-bar" class="hidden">
-        <input id="search-input" type="text" placeholder="Suchen…" autocomplete="off" spellcheck="false">
+        <input id="search-input" type="text" data-i18n-ph="search.ph" placeholder="Suchen…" autocomplete="off" spellcheck="false">
         <span id="search-count"></span>
-        <button id="search-prev" title="Vorheriges (Shift+Enter)">↑</button>
-        <button id="search-next" title="Nächstes (Enter)">↓</button>
-        <button id="search-close" title="Schließen (Esc)">×</button>
+        <button id="search-prev" data-i18n-title="search.prev.title" title="Vorheriges (Shift+Enter)">↑</button>
+        <button id="search-next" data-i18n-title="search.next.title" title="Nächstes (Enter)">↓</button>
+        <button id="search-close" data-i18n-title="search.close.title" title="Schließen (Esc)">×</button>
     </div>
 
     <div id="header-shield"></div>
     <div id="script-content"></div>
-    <div class="sidebar-toggle-button button" style="font-size:1.4rem" title="Szenenübersicht (Strg+B)">☰</div>
+    <div class="sidebar-toggle-button button" style="font-size:1.4rem" data-i18n-title="toolbar.sidebar.title" title="Szenenübersicht (Strg+B)">☰</div>
 
     <div class="buttons">
         <div class="clock">00:00:00</div>
@@ -41,6 +41,7 @@
         <div class="button emergency em-mic"><img src="assets/em-mic.svg" alt=""></div>
         <div class="button emergency em-music"><img src="assets/em-music.svg" alt=""></div>
     </div>
+    <script src="i18n.js"></script>
     <script src="bundle.js"></script>
 </body>
 

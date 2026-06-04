@@ -4,6 +4,7 @@
     <title>Einstellungen</title>
     <link rel="stylesheet" href="styles.css">
     <meta charset="UTF-8">
+    <script src="i18n.js"></script>
     <style>
         body { padding: 1.5rem; padding-bottom: 5rem; }
         .field { margin-bottom: 1.2rem; }
@@ -90,18 +91,18 @@
 </head>
 <body>
     <div id="hostname-label" style="font-size:0.78rem;color:#5c6370;margin-bottom:1rem;"></div>
-    <div class="section-title">Audio-Ausgabe</div>
+    <div class="section-title" data-i18n="s.audio">Audio-Ausgabe</div>
     <div class="field">
-        <label>Audio-Gerät</label>
+        <label data-i18n="s.audio.device">Audio-Gerät</label>
         <select id="main-audio-device">
-            <option value="">— Standard —</option>
+            <option value="" data-i18n="s.default.device">— Standard —</option>
         </select>
-        <p class="hint">Für Monitor-Mix: Aggregate Device in macOS Audio-MIDI-Setup anlegen (Haupt + Monitor als ein Gerät), dann die Kanalpaare unten wählen.</p>
+        <p class="hint" data-i18n="s.audio.hint">Für Monitor-Mix: Aggregate Device in macOS Audio-MIDI-Setup anlegen (Haupt + Monitor als ein Gerät), dann die Kanalpaare unten wählen.</p>
     </div>
     <div class="field">
         <label style="display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf;margin-bottom:0.5rem">
             <input type="checkbox" id="monitor-enable" style="width:auto">
-            Monitor-Mix aktiviert
+            <span data-i18n="s.monitor.enable">Monitor-Mix aktiviert</span>
         </label>
         <p class="hint" id="monitor-hint" style="margin:0 0 0.6rem"></p>
         <table class="routing-table" id="routing-table">
@@ -119,77 +120,77 @@
         </table>
     </div>
 
-    <div class="section-title">MIDI</div>
+    <div class="section-title" data-i18n="s.midi">MIDI</div>
     <div class="field">
-        <label>X32 Fernbedienung</label>
+        <label data-i18n="s.midi.x32">X32 Fernbedienung</label>
         <select id="x32-device">
-            <option value="">— kein Gerät —</option>
+            <option value="" data-i18n="s.no.device">— kein Gerät —</option>
         </select>
     </div>
     <div class="field">
-        <label>Trigger-Noten</label>
+        <label data-i18n="s.midi.trigger">Trigger-Noten</label>
         <select id="trigger-device">
-            <option value="">— kein Gerät —</option>
+            <option value="" data-i18n="s.no.device">— kein Gerät —</option>
         </select>
     </div>
     <div class="field">
-        <label>MIDI-Timecode</label>
+        <label data-i18n="s.midi.tc">MIDI-Timecode</label>
         <select id="tc-device">
-            <option value="">— kein Gerät —</option>
+            <option value="" data-i18n="s.no.device">— kein Gerät —</option>
         </select>
     </div>
-    <div class="section-title">OSC</div>
+    <div class="section-title" data-i18n="s.osc">OSC</div>
     <div class="field">
         <label style="display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf">
             <input type="checkbox" id="osc-enabled" style="width:auto">
-            OSC aktiviert
+            <span data-i18n="s.osc.enabled">OSC aktiviert</span>
         </label>
     </div>
     <div id="osc-fields">
         <div class="field">
-            <label>Ziel-Adresse</label>
+            <label data-i18n="s.osc.host">Ziel-Adresse</label>
             <input type="text" id="osc-host" placeholder="127.0.0.1">
         </div>
         <div class="field">
-            <label>Port</label>
+            <label data-i18n="s.osc.port">Port</label>
             <input type="number" id="osc-port" min="1" max="65535" placeholder="8000">
         </div>
     </div>
 
-    <div class="section-title">Live-Tasten (MIDI-Eingang)</div>
+    <div class="section-title" data-i18n="s.midi.live">Live-Tasten (MIDI-Eingang)</div>
     <div class="field">
-        <label>Eingangs-Gerät (Go / Back)</label>
+        <label data-i18n="s.midi.live.device">Eingangs-Gerät (Go / Back)</label>
         <select id="live-input-device">
-            <option value="">— alle Geräte —</option>
+            <option value="" data-i18n="s.midi.live.device.all">— alle Geräte —</option>
         </select>
     </div>
     <div class="field">
-        <label>Go</label>
+        <label data-i18n="s.midi.go">Go</label>
         <div class="midi-learn-row">
             <span id="go-midi-label">— nicht belegt —</span>
-            <button class="btn" id="go-learn-btn">Lernen</button>
+            <button class="btn" id="go-learn-btn" data-i18n="s.midi.learn">Lernen</button>
             <button class="btn" id="go-clear-btn">✕</button>
         </div>
     </div>
     <div class="field">
-        <label>Back</label>
+        <label data-i18n="s.midi.back">Back</label>
         <div class="midi-learn-row">
             <span id="back-midi-label">— nicht belegt —</span>
-            <button class="btn" id="back-learn-btn">Lernen</button>
+            <button class="btn" id="back-learn-btn" data-i18n="s.midi.learn">Lernen</button>
             <button class="btn" id="back-clear-btn">✕</button>
         </div>
     </div>
 
-    <div class="section-title">Notfall-Licht</div>
+    <div class="section-title" data-i18n="s.emlight">Notfall-Licht</div>
     <div class="field">
-        <label>Trigger-Note (gilt für alle PCs)</label>
+        <label data-i18n="s.emlight.note">Trigger-Note (gilt für alle PCs)</label>
         <div style="display:flex;gap:0.5rem;align-items:center">
             <div style="flex:1">
-                <label style="font-size:0.78rem;margin-bottom:0.2rem">Kanal (1–16)</label>
+                <label style="font-size:0.78rem;margin-bottom:0.2rem" data-i18n="s.emlight.ch">Kanal (1–16)</label>
                 <input type="number" id="em-light-ch" min="1" max="16" value="1">
             </div>
             <div style="flex:1">
-                <label style="font-size:0.78rem;margin-bottom:0.2rem">Note (0–127)</label>
+                <label style="font-size:0.78rem;margin-bottom:0.2rem" data-i18n="s.emlight.note.n">Note (0–127)</label>
                 <input type="number" id="em-light-note" min="0" max="127" value="0">
             </div>
             <div style="padding-bottom:0">
@@ -197,28 +198,36 @@
                 <button class="btn" id="em-light-clear">✕</button>
             </div>
         </div>
-        <p class="hint">Wird über den Trigger-MIDI-Ausgang gesendet. Leer lassen = Button deaktiviert.</p>
+        <p class="hint" data-i18n="s.emlight.hint">Wird über den Trigger-MIDI-Ausgang gesendet. Leer lassen = Button deaktiviert.</p>
     </div>
 
-    <div class="section-title">Text-Editor</div>
+    <div class="section-title" data-i18n="s.lang">Sprache</div>
     <div class="field">
-        <label>In Editor öffnen (Rechtsklick)</label>
+        <select id="app-language">
+            <option value="de">Deutsch</option>
+            <option value="en">English</option>
+        </select>
+    </div>
+
+    <div class="section-title" data-i18n="s.editor">Text-Editor</div>
+    <div class="field">
+        <label data-i18n="s.editor.app">In Editor öffnen (Rechtsklick)</label>
         <select id="editor-app">
-            <option value="">— deaktiviert —</option>
+            <option value="" data-i18n="s.editor.app.none">— deaktiviert —</option>
             <option value="vscode">VS Code</option>
             <option value="zed">Zed</option>
             <option value="custom">Custom…</option>
         </select>
     </div>
     <div class="field" id="custom-cmd-field" style="display:none">
-        <label>Befehl</label>
-        <input type="text" id="editor-custom-cmd" placeholder="z.B. myeditor {file}:{line}">
-        <p class="hint">{file} = Dateipfad &nbsp;·&nbsp; {line} = Zeilennummer (1-basiert)</p>
+        <label data-i18n="s.editor.cmd">Befehl</label>
+        <input type="text" id="editor-custom-cmd" data-i18n-ph="s.editor.cmd.ph" placeholder="z.B. myeditor {file}:{line}">
+        <p class="hint" data-i18n="s.editor.hint">{file} = Dateipfad &nbsp;·&nbsp; {line} = Zeilennummer (1-basiert)</p>
     </div>
 
     <div class="actions">
-        <button class="btn" id="cancel">Abbrechen</button>
-        <button class="btn btn-primary" id="save">Speichern</button>
+        <button class="btn" id="cancel" data-i18n="s.cancel">Abbrechen</button>
+        <button class="btn btn-primary" id="save" data-i18n="s.save">Speichern</button>
     </div>
     <script>
         let deviceIdMap = new Map()  // label → deviceId
@@ -230,6 +239,12 @@
                 window.electronAPI.getHostname(),
                 window.electronAPI.getEmLightNote(),
             ])
+            // Apply language before rendering anything else
+            window.applyI18n(settings.appLanguage || 'de')
+            const langSel = document.getElementById('app-language')
+            langSel.value = settings.appLanguage || 'de'
+            langSel.addEventListener('change', () => window.applyI18n(langSel.value))
+
             let emLightNote = emLightNote0 || null
             document.getElementById('hostname-label').textContent = 'Dieser PC: ' + hn
 
@@ -307,8 +322,8 @@
                 monThL.style.opacity = monitorEnabled ? '' : '0.35'
                 monThR.style.opacity = monitorEnabled ? '' : '0.35'
                 monitorHint.textContent = !monPossible
-                    ? 'Monitor benötigt mind. 4 Kanäle — Aggregate Device in Audio-MIDI-Setup anlegen.'
-                    : !monitorEnabled ? 'Monitor deaktiviert.'
+                    ? window.t('s.monitor.need4')
+                    : !monitorEnabled ? window.t('s.monitor.disabled')
                     : ''
 
                 routingBody.innerHTML = ''
@@ -454,7 +469,7 @@
             let midiBackNote = settings.midiBackNote || null
             let learningFor  = null  // 'go' | 'back'
 
-            function midiNoteLabel(n) { return n ? `K${n.ch}  N${n.note}` : '— nicht belegt —' }
+            function midiNoteLabel(n) { return n ? `K${n.ch}  N${n.note}` : window.t('s.midi.unassigned') }
             function applyMidiLabel(which, note) {
                 const el = document.getElementById(which + '-midi-label')
                 el.textContent = midiNoteLabel(note)
@@ -466,9 +481,9 @@
             function stopLearn() {
                 learningFor = null
                 document.getElementById('go-learn-btn').classList.remove('btn-active')
-                document.getElementById('go-learn-btn').textContent = 'Lernen'
+                document.getElementById('go-learn-btn').textContent = window.t('s.midi.learn')
                 document.getElementById('back-learn-btn').classList.remove('btn-active')
-                document.getElementById('back-learn-btn').textContent = 'Lernen'
+                document.getElementById('back-learn-btn').textContent = window.t('s.midi.learn')
             }
 
             try {
@@ -499,7 +514,7 @@
                     learningFor = which
                     const btn = document.getElementById(which + '-learn-btn')
                     btn.classList.add('btn-active')
-                    btn.textContent = '⏹ Warte…'
+                    btn.textContent = window.t('s.midi.learn.wait')
                 }
             }
             document.getElementById('go-learn-btn').addEventListener('click', () => toggleLearn('go'))
@@ -570,6 +585,7 @@
                     midiGoNote,
                     midiBackNote,
                     midiLiveDevice: liveInputSelect.value || null,
+                    appLanguage: langSel.value || 'de',
                     oscEnabled: oscEnabledEl.checked,
                     oscHost:    oscHostEl.value.trim() || '127.0.0.1',
                     oscPort:    isNaN(oscPortVal) ? 8000 : Math.max(1, Math.min(65535, oscPortVal)),

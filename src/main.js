@@ -166,6 +166,11 @@ let mtc = null
 let oscEnabled = false
 let oscHost = '127.0.0.1'
 let oscPort = 8000
+let appLanguage = 'de'
+
+// t() is defined by dist/i18n.js which is loaded before bundle.js in index.html.
+// Fallback for unit-test contexts where window.t may not exist.
+function t(key) { return (window.t ? window.t(key) : null) ?? key }
 
 // Kick off MIDI access request immediately at module load, before any async init.
 // Electron 36 / Chromium requires this to be initiated early to avoid the
@@ -283,7 +288,7 @@ function doSearch(query) {
 
     const count = searchMatches.length
     if (count === 0) {
-        document.getElementById('search-count').textContent = 'Nicht gefunden'
+        document.getElementById('search-count').textContent = t('search.notfound')
         return
     }
     searchIdx = 0
@@ -296,7 +301,7 @@ function applySearchCurrent() {
     if (cur) {
         cur.scrollIntoView({ behavior: 'smooth', block: 'center' })
         document.getElementById('search-count').textContent =
-            `${searchIdx + 1} / ${searchMatches.length}`
+            `${searchIdx + 1}${t('search.result')}${searchMatches.length}`
     }
 }
 
@@ -749,11 +754,11 @@ function openEditor(blockEl, clientX, clientY) {
     const controls = document.createElement('div')
     controls.className = 'editor-controls'
     const btnUp   = document.createElement('button')
-    btnUp.className = 'editor-btn'; btnUp.textContent = '▲'; btnUp.title = 'Nach oben'
+    btnUp.className = 'editor-btn'; btnUp.textContent = '▲'; btnUp.title = t('editor.up.title')
     const btnDown = document.createElement('button')
-    btnDown.className = 'editor-btn'; btnDown.textContent = '▼'; btnDown.title = 'Nach unten'
-    const btnDel  = document.createElement('button')
-    btnDel.className = 'editor-btn editor-btn-delete'; btnDel.textContent = '✕'; btnDel.title = 'Löschen'
+    btnDown.className = 'editor-btn'; btnDown.textContent = '▼'; btnDown.title = t('editor.down.title')
+const btnDel  = document.createElement('button')
+    btnDel.className = 'editor-btn editor-btn-delete'; btnDel.textContent = '✕'; btnDel.title = t('editor.del2.title')
     controls.append(btnUp, btnDown, btnDel)
     wrapper.appendChild(controls)
 
@@ -951,7 +956,7 @@ function openNewBlock(afterBlockEl, forceAfterRole) {
     const div = document.createElement('div')
     div.className = 'inline-editor inline-editor-new'
     div.contentEditable = 'true'
-    div.dataset.placeholder = isAfterRole ? 'Dialogue…' : 'Regieanweisung oder Rolle…'
+    div.dataset.placeholder = isAfterRole ? t('editor.ph.dialogue') : t('editor.ph.stage')
 
     const wrapper = document.createElement('div')
     wrapper.className = 'new-block-wrapper'
@@ -960,11 +965,11 @@ function openNewBlock(afterBlockEl, forceAfterRole) {
     const controls = document.createElement('div')
     controls.className = 'editor-controls new-block-controls'
     const btnUp   = document.createElement('button')
-    btnUp.className = 'editor-btn'; btnUp.textContent = '▲'; btnUp.title = 'Block darüber bearbeiten'
+    btnUp.className = 'editor-btn'; btnUp.textContent = '▲'; btnUp.title = t('editor.up.title')
     const btnDown = document.createElement('button')
-    btnDown.className = 'editor-btn'; btnDown.textContent = '▼'; btnDown.title = 'Block darunter bearbeiten'
+    btnDown.className = 'editor-btn'; btnDown.textContent = '▼'; btnDown.title = t('editor.down.title')
     const btnDel  = document.createElement('button')
-    btnDel.className = 'editor-btn editor-btn-delete'; btnDel.textContent = '✕'; btnDel.title = 'Abbrechen'
+    btnDel.className = 'editor-btn editor-btn-delete'; btnDel.textContent = '✕'; btnDel.title = t('editor.del.title')
     controls.append(btnUp, btnDown, btnDel)
     wrapper.append(div, controls)
 
@@ -1010,7 +1015,7 @@ function openEmptyScriptEditor() {
     const div = document.createElement('div')
     div.className = 'inline-editor inline-editor-new'
     div.contentEditable = 'true'
-    div.dataset.placeholder = 'Regieanweisung oder Rolle…'
+    div.dataset.placeholder = t('editor.ph.stage')
 
     const wrapper = document.createElement('div')
     wrapper.className = 'new-block-wrapper'
@@ -1022,7 +1027,7 @@ function openEmptyScriptEditor() {
     const btnDel = document.createElement('button')
     btnDel.className = 'editor-btn editor-btn-delete'
     btnDel.textContent = '✕'
-    btnDel.title = 'Abbrechen'
+    btnDel.title = t('editor.del.title')
     controls.append(btnDel)
     wrapper.append(div, controls)
 
@@ -1177,7 +1182,7 @@ function acceptGhostInline() {
     el.appendChild(space)
 
     inlineEditor.confirmedRole = match
-    el.dataset.placeholder = 'Text…'
+    el.dataset.placeholder = t('editor.ph.text')
     if (roleColor) el.style.color = roleColor
 
     el.focus()
@@ -1909,15 +1914,15 @@ function exitPickMode() {
 function updateAutoBtnAppearance(btn, idx) {
     const aty = triggerYamls[idx]?.auto_trigger
     if (shiftHeld && aty) {
-        btn.textContent = '✕ Auto-Cue'
+        btn.textContent = t('btn.autocue.delete')
         btn.classList.remove('trigger-action-btn-active')
         btn.classList.add('trigger-action-btn-danger')
-        btn.title = 'Auto-Cue löschen (Shift+Klick)'
+        btn.title = t('btn.autocue.title.delete')
     } else {
-        btn.textContent = '⏱ Auto-Cue'
+        btn.textContent = t('btn.autocue')
         btn.classList.remove('trigger-action-btn-danger')
         btn.classList.toggle('trigger-action-btn-active', !!aty)
-        btn.title = aty ? 'Auto-Cue bearbeiten' : 'Auto-Cue setzen'
+        btn.title = aty ? t('btn.autocue.title.edit') : t('btn.autocue.title.set')
     }
 }
 
@@ -2291,8 +2296,8 @@ function buildTrigger(codeblockYaml, index) {
     triggerDownBtn.classList.add("trigger-move-btn")
     triggerUpBtn.textContent = "▲"
     triggerDownBtn.textContent = "▼"
-    triggerUpBtn.title = "Nach oben"
-    triggerDownBtn.title = "Nach unten"
+    triggerUpBtn.title = t('btn.move.up.title')
+    triggerDownBtn.title = t('btn.move.down.title')
     triggerMoveDiv.append(triggerUpBtn, triggerDownBtn)
 
     triggerUpBtn.addEventListener("mousedown",   (e) => { e.stopPropagation(); moveTriggerInScript(index, 'up') })
@@ -2309,7 +2314,7 @@ function buildTrigger(codeblockYaml, index) {
     // Warning banner (initially hidden; updated by updateLoopBtnAppearance / updateLoopBtnWavWarning)
     const wavWarnEl = document.createElement('div')
     wavWarnEl.className = 'trigger-wav-warning'
-    wavWarnEl.textContent = '⚠ Kein nahtloser Übergang – MP3/AAC haben Encoder-Padding. WAV verwenden.'
+    wavWarnEl.textContent = t('warn.wav')
     wavWarnEl.style.display = 'none'
     triggerDiv.insertBefore(wavWarnEl, triggerDiv.firstChild ?? null)
     triggerDiv.appendChild(triggerRow)
@@ -2320,8 +2325,8 @@ function buildTrigger(codeblockYaml, index) {
 
     const triggerEditBtn = document.createElement("button")
     triggerEditBtn.classList.add("trigger-action-btn")
-    triggerEditBtn.textContent = "✎ Bearbeiten"
-    triggerEditBtn.title = "Trigger bearbeiten"
+    triggerEditBtn.textContent = t('btn.edit')
+    triggerEditBtn.title = t('btn.edit.title')
     triggerEditBtn.addEventListener("mousedown", (e) => { e.stopPropagation() })
     triggerEditBtn.addEventListener("click", (e) => {
         e.stopPropagation()
@@ -3371,8 +3376,8 @@ function buildTrigger(codeblockYaml, index) {
     const adjustBtn = document.createElement("button")
     adjustBtn.classList.add("trigger-action-btn")
     if (hasAdjust) adjustBtn.classList.add("trigger-action-btn-active")
-    adjustBtn.textContent = "⇢ Bezug"
-    adjustBtn.title = "Anderen Trigger beeinflussen"
+    adjustBtn.textContent = t('btn.adjust')
+    adjustBtn.title = t('btn.adjust.title')
     adjustBtn.addEventListener("mousedown", e => e.stopPropagation())
     adjustBtn.addEventListener("click", e => {
         e.stopPropagation()
@@ -3391,8 +3396,8 @@ function buildTrigger(codeblockYaml, index) {
     autoBtn._triggerIndex = index
     autoBtn._hovering = false
     if (codeblockYaml.auto_trigger) autoBtn.classList.add('trigger-action-btn-active')
-    autoBtn.textContent = '⏱ Auto-Cue'
-    autoBtn.title = codeblockYaml.auto_trigger ? 'Auto-Cue bearbeiten' : 'Auto-Cue setzen'
+    autoBtn.textContent = t('btn.autocue')
+    autoBtn.title = codeblockYaml.auto_trigger ? t('btn.autocue.title.edit') : t('btn.autocue.title.set')
     autoTriggerBtns.set(index, autoBtn)
 
     autoBtn.addEventListener('mouseenter', () => { autoBtn._hovering = true;  updateAutoBtnAppearance(autoBtn, index) })
@@ -3458,8 +3463,8 @@ function buildTrigger(codeblockYaml, index) {
     // ── Variante button ──────────────────────────────────────────────────
     const copyBtn = document.createElement("button")
     copyBtn.classList.add("trigger-action-btn")
-    copyBtn.textContent = "⊕ Variante"
-    copyBtn.title = "Als nebenläufige Variante duplizieren"
+    copyBtn.textContent = t('btn.variant')
+    copyBtn.title = t('btn.variant.title')
     copyBtn.addEventListener("mousedown", e => e.stopPropagation())
     copyBtn.addEventListener("click", e => {
         e.stopPropagation()
@@ -3508,8 +3513,8 @@ function buildInsertZones() {
         hotspot.addEventListener('mousedown', e => e.stopPropagation())
         const btn = document.createElement('button')
         btn.classList.add('insert-btn')
-        btn.textContent = '+'
-        btn.title = 'Trigger hier einfügen'
+        btn.textContent = t('btn.insert')
+        btn.title = t('btn.insert.title')
         hotspot.appendChild(btn)
         zone.appendChild(hotspot)
         btn.addEventListener('click', (e) => {
@@ -3662,21 +3667,21 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     box.addEventListener('click', e => e.stopPropagation())
 
     const titleEl = document.createElement('h3')
-    titleEl.textContent = isEdit ? 'Trigger bearbeiten' : isCopy ? 'Trigger duplizieren' : 'Neuer Trigger'
+    titleEl.textContent = isEdit ? t('dlg.trigger.edit') : isCopy ? t('dlg.trigger.copy') : t('dlg.trigger.new')
     box.appendChild(titleEl)
 
     // ── Mikrofon ────────────────────────────────────────────────────
     const micWrap = document.createElement('div')
     micWrap.classList.add('dialog-field')
     const micTopLabel = document.createElement('label')
-    micTopLabel.textContent = 'Mikrofon'
+    micTopLabel.textContent = t('dlg.trigger.mic')
     const micGroup = document.createElement('div')
     micGroup.classList.add('dialog-check-group')
 
     const muteallLbl = document.createElement('label')
     const muteallCb = document.createElement('input')
     muteallCb.type = 'checkbox'
-    muteallLbl.append(muteallCb, ' Alle aus')
+    muteallLbl.append(muteallCb, t('dlg.trigger.mic.muteall'))
     micGroup.appendChild(muteallLbl)
 
     const roleCheckboxes = {}
@@ -3713,12 +3718,12 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     const mfWrap = document.createElement('div')
     mfWrap.classList.add('dialog-field')
     const mfLabel = document.createElement('label')
-    mfLabel.textContent = 'Musik-Datei'
+    mfLabel.textContent = t('dlg.trigger.music')
     const mfSelect = document.createElement('select')
     mfSelect.classList.add('dialog-select')
     const emptyOpt = document.createElement('option')
     emptyOpt.value = ''
-    emptyOpt.textContent = '— keine —'
+    emptyOpt.textContent = t('dlg.trigger.music.none')
     mfSelect.appendChild(emptyOpt)
     for (const f of audioFiles) {
         const opt = document.createElement('option')
@@ -3738,12 +3743,12 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     const monWrap = document.createElement('div')
     monWrap.classList.add('dialog-field')
     const monLabel = document.createElement('label')
-    monLabel.textContent = 'Monitor-Mix'
+    monLabel.textContent = t('dlg.trigger.monitor')
     const monSelect = document.createElement('select')
     monSelect.classList.add('dialog-select')
     const monEmptyOpt = document.createElement('option')
     monEmptyOpt.value = ''
-    monEmptyOpt.textContent = '— gleich wie Haupt-Audio —'
+    monEmptyOpt.textContent = t('dlg.trigger.monitor.none')
     monSelect.appendChild(monEmptyOpt)
     for (const f of audioFiles) {
         const opt = document.createElement('option')
@@ -3780,21 +3785,21 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     checkMonitorDuration()
 
     // ── Hinweis ─────────────────────────────────────────────────────
-    const { wrap: noteWrap, input: noteInput } = mkDialogField('Hinweis', 'text', '')
+    const { wrap: noteWrap, input: noteInput } = mkDialogField(t('dlg.trigger.note'), 'text', '')
     if ((isEdit || isCopy) && existingYaml?.note) noteInput.value = existingYaml.note
     box.appendChild(noteWrap)
 
     // ── Lichtszene ───────────────────────────────────────────────────
-    const { wrap: lightWrap, input: lightInput } = mkDialogField('Lichtszene', 'text', '')
-    lightInput.placeholder = '— kein Licht-Cue —'
+    const { wrap: lightWrap, input: lightInput } = mkDialogField(t('dlg.trigger.light'), 'text', '')
+    lightInput.placeholder = t('dlg.trigger.light.ph')
     if ((isEdit || isCopy) && existingYaml?.light && typeof existingYaml.light === 'string') {
         lightInput.value = existingYaml.light
     }
     box.appendChild(lightWrap)
 
     // ── OSC-Pfad ─────────────────────────────────────────────────────
-    const { wrap: oscWrap, input: oscInput } = mkDialogField('OSC-Pfad (custom)', 'text', '')
-    oscInput.placeholder = '— Standard: /maindesk/triggernote/ch/note —'
+    const { wrap: oscWrap, input: oscInput } = mkDialogField(t('dlg.trigger.osc'), 'text', '')
+    oscInput.placeholder = t('dlg.trigger.osc.ph')
     if ((isEdit || isCopy) && existingYaml?.osc) oscInput.value = existingYaml.osc
     box.appendChild(oscWrap)
 
@@ -3803,16 +3808,16 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     oscArgWrap.classList.add('dialog-field')
     oscArgWrap.style.display = existingYaml?.osc ? '' : 'none'
     const oscArgLabel = document.createElement('label')
-    oscArgLabel.textContent = 'OSC-Argument'
+    oscArgLabel.textContent = t('dlg.trigger.osc_arg')
     const oscArgRow = document.createElement('div')
     oscArgRow.style.cssText = 'display:flex;gap:0.5rem'
 
     const oscArgTypeSelect = document.createElement('select')
     oscArgTypeSelect.classList.add('dialog-select')
     oscArgTypeSelect.style.cssText = 'width:auto;flex-shrink:0'
-    for (const t of ['int', 'float', 'string']) {
+    for (const typ of ['int', 'float', 'string']) {
         const o = document.createElement('option')
-        o.value = t; o.textContent = t
+        o.value = typ; o.textContent = typ
         oscArgTypeSelect.appendChild(o)
     }
 
@@ -3867,23 +3872,23 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         const tcWrap = document.createElement('div')
         tcWrap.classList.add('dialog-field')
         const tcLabel = document.createElement('label')
-        tcLabel.textContent = 'Start-Timecode (abgeleitet)'
+        tcLabel.textContent = t('dlg.trigger.tc.derived')
         const tcDisplay = document.createElement('div')
         tcDisplay.classList.add('dialog-tc-derived')
         const derived = derivedTcFor(triggerIndex)
         if (derived) {
             tcDisplay.textContent = '↳ ' + derived
-            tcDisplay.title = 'Timecode wird vom Start-Cue der S/L/F-Gruppe abgeleitet'
+            tcDisplay.title = t('dlg.trigger.tc.derived.title')
         } else {
-            tcDisplay.textContent = '—'
-            tcDisplay.title = 'Timecode wird abgeleitet (Start-Timecode oder Audiodauer unbekannt)'
+            tcDisplay.textContent = t('dlg.trigger.tc.derived.none')
+            tcDisplay.title = t('dlg.trigger.tc.derived.hint')
         }
         tcWrap.append(tcLabel, tcDisplay)
         box.appendChild(tcWrap)
     } else {
-        const { wrap, input } = mkDialogField('Start-Timecode (HH:MM:SS:FF)', 'text', '')
+        const { wrap, input } = mkDialogField(t('dlg.trigger.tc'), 'text', '')
         tcInput = input
-        tcInput.placeholder = '00:00:00:00'
+        tcInput.placeholder = t('dlg.trigger.tc.ph')
         if ((isEdit || isCopy) && existingYaml?.start_tc) tcInput.value = existingYaml.start_tc
         box.appendChild(wrap)
     }
@@ -3899,7 +3904,7 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         sameTnCheckbox.type = 'checkbox'
         const ptn = parentTriggerNote
         const ptnStr = ptn ? ` (${ptn.ch}.${ptn.note})` : ''
-        sameTnLabel.append(sameTnCheckbox, ` Gleiche trigger_note wie Original${ptnStr}`)
+        sameTnLabel.append(sameTnCheckbox, t('dlg.trigger.same_tn.prefix') + ptnStr)
         sameTnWrap.appendChild(sameTnLabel)
         box.appendChild(sameTnWrap)
         // default: checked; for edit, reflect actual state
@@ -3916,16 +3921,16 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
 
     const cancelBtn = document.createElement('button')
     cancelBtn.classList.add('dialog-btn')
-    cancelBtn.textContent = 'Abbrechen'
+    cancelBtn.textContent = t('btn.cancel')
 
     const confirmBtn = document.createElement('button')
     confirmBtn.classList.add('dialog-btn', 'dialog-btn-primary')
-    confirmBtn.textContent = isEdit ? 'Speichern' : 'Hinzufügen'
+    confirmBtn.textContent = isEdit ? t('btn.save') : t('btn.add')
 
     if (isEdit && !isCopy) {
         const deleteBtn = document.createElement('button')
         deleteBtn.classList.add('dialog-btn', 'dialog-btn-danger')
-        deleteBtn.textContent = 'Löschen'
+        deleteBtn.textContent = t('btn.delete')
         deleteBtn.addEventListener('click', () => { close(); deleteTriggerInScript(triggerIndex) })
         actions.append(deleteBtn, cancelBtn, confirmBtn)
     } else {
@@ -4054,14 +4059,14 @@ function showAdjustDialog(triggerIndex, existingYaml, targetIdx) {
     box.addEventListener('click',     e => e.stopPropagation())
 
     const titleEl = document.createElement('h3')
-    titleEl.textContent = 'Bezug konfigurieren'
+    titleEl.textContent = t('dlg.adjust.title')
     box.appendChild(titleEl)
 
     // ── Bezugs-Trigger ──────────────────────────────────────────────
     const targetWrap = document.createElement('div')
     targetWrap.classList.add('dialog-field')
     const targetLbl = document.createElement('label')
-    targetLbl.textContent = 'Bezugs-Trigger'
+    targetLbl.textContent = t('dlg.adjust.target')
     const targetInfo = document.createElement('div')
     targetInfo.style.cssText = 'margin: 0.3rem 0 0.5rem; font-size: 0.9rem; color: #abb2bf'
     function refreshTargetInfo(idx) {
@@ -4071,13 +4076,13 @@ function showAdjustDialog(triggerIndex, existingYaml, targetIdx) {
             const mf = ty.music ? (typeof ty.music === 'string' ? ty.music : ty.music.file) : null
             targetInfo.textContent = `${tn.ch}.${tn.note}` + (mf ? `  –  ${mf}` : '')
         } else {
-            targetInfo.textContent = '(kein Trigger ausgewählt)'
+            targetInfo.textContent = t('dlg.adjust.target.none')
         }
     }
     refreshTargetInfo(targetIdx)
     const repickBtn = document.createElement('button')
     repickBtn.classList.add('dialog-btn')
-    repickBtn.textContent = 'Anderen auswählen…'
+    repickBtn.textContent = t('dlg.adjust.repick')
     repickBtn.style.fontSize = '0.8rem'
     repickBtn.addEventListener('click', () => {
         close()
@@ -4090,14 +4095,14 @@ function showAdjustDialog(triggerIndex, existingYaml, targetIdx) {
     const actionWrap = document.createElement('div')
     actionWrap.classList.add('dialog-field')
     const actionLbl = document.createElement('label')
-    actionLbl.textContent = 'Aktion'
+    actionLbl.textContent = t('dlg.adjust.action')
     actionWrap.appendChild(actionLbl)
 
     const fadeoutLbl = document.createElement('label')
     fadeoutLbl.classList.add('dialog-loop-label')
     const fadeoutRb = document.createElement('input')
     fadeoutRb.type = 'radio'; fadeoutRb.name = `adj-${triggerIndex}`; fadeoutRb.value = 'fadeout'
-    fadeoutLbl.append(fadeoutRb, ' Fadeout (stoppen)')
+    fadeoutLbl.append(fadeoutRb, t('dlg.adjust.fadeout'))
 
     const volLbl = document.createElement('label')
     volLbl.classList.add('dialog-loop-label')
@@ -4108,7 +4113,7 @@ function showAdjustDialog(triggerIndex, existingYaml, targetIdx) {
     volInput.value = existingAdj?.volume ?? '0.5'
     volInput.style.cssText = 'width: 5rem; margin-left: 0.5rem'
     volInput.classList.add('dialog-volume-inline')
-    volLbl.append(volRb, ' Lautstärke auf ', volInput)
+    volLbl.append(volRb, t('dlg.adjust.volume'), volInput)
 
     if (existingAdj?.volume !== undefined) volRb.checked = true
     else fadeoutRb.checked = true
@@ -4120,7 +4125,7 @@ function showAdjustDialog(triggerIndex, existingYaml, targetIdx) {
     const fadeTimeWrap = document.createElement('div')
     fadeTimeWrap.classList.add('dialog-field')
     const fadeTimeLbl = document.createElement('label')
-    fadeTimeLbl.textContent = 'Fadezeit (Sekunden)'
+    fadeTimeLbl.textContent = t('dlg.adjust.fadetime')
     const fadeTimeInput = document.createElement('input')
     fadeTimeInput.type = 'number'; fadeTimeInput.min = '0'; fadeTimeInput.step = '0.5'
     fadeTimeInput.value = existingAdj?.fadetime ?? 3
@@ -4134,14 +4139,14 @@ function showAdjustDialog(triggerIndex, existingYaml, targetIdx) {
     actions.classList.add('dialog-actions')
     const cancelBtn = document.createElement('button')
     cancelBtn.classList.add('dialog-btn')
-    cancelBtn.textContent = 'Abbrechen'
+    cancelBtn.textContent = t('btn.cancel')
     const saveBtn = document.createElement('button')
     saveBtn.classList.add('dialog-btn', 'dialog-btn-primary')
-    saveBtn.textContent = 'Speichern'
+    saveBtn.textContent = t('btn.save')
     if (existingAdj) {
         const delBtn = document.createElement('button')
         delBtn.classList.add('dialog-btn', 'dialog-btn-danger')
-        delBtn.textContent = 'Deaktivieren'
+        delBtn.textContent = t('dlg.adjust.remove')
         delBtn.addEventListener('click', () => { close(); setAdjustOnTrigger(triggerIndex, triggerYamls[triggerIndex], null) })
         actions.append(delBtn, cancelBtn, saveBtn)
     } else {
@@ -4206,34 +4211,33 @@ function updateLoopBtnAppearance(btn, idx) {
         btn.textContent = '✕ S/L/F'
         btn.classList.remove('trigger-action-btn-active')
         btn.classList.add('trigger-action-btn-danger')
-        btn.title = 'Loop-Verbindung löschen (Shift+Klick)'
+        btn.title = t('btn.loopgrp.delete.title')
         return
     }
     btn.classList.remove('trigger-action-btn-danger')
     btn.classList.add('trigger-action-btn-active')
 
     if (hasCE && isOutro) {
-        // Bridge: outro of one loop + transition into next loop
         const ce = `${ty.chain_end.ch}.${ty.chain_end.note}`
         const from = sources.map(i => { const tn = triggerYamls[i]?.trigger_note; return tn ? `${tn.ch}.${tn.note}` : '?' }).join(', ')
         btn.textContent = 'Bridge'
-        btn.title = `Bridge: Ausgang von Schleife(n) ${from}, startet am Ende Trigger ${ce}`
+        btn.title = t('btn.loopgrp.bridge.title').replace('%1', from).replace('%2', ce)
     } else if (hasCE) {
         const ce = `${ty.chain_end.ch}.${ty.chain_end.note}`
         btn.textContent = 'Start'
-        btn.title = `Start: startet am Ende automatisch Trigger ${ce}`
+        btn.title = t('btn.loopgrp.start.title').replace('%1', ce)
     } else if (hasLO) {
         const lo = `${ty.loop_outro.ch}.${ty.loop_outro.note}`
         btn.textContent = 'Loop'
-        btn.title = `Loop: loopt bis Trigger ${lo} am Schleifen-Ende angeklickt wurde`
+        btn.title = t('btn.loopgrp.loop.title').replace('%1', lo)
     } else if (isOutro) {
         const from = sources.map(i => { const tn = triggerYamls[i]?.trigger_note; return tn ? `${tn.ch}.${tn.note}` : '?' }).join(', ')
         btn.textContent = 'Finish'
-        btn.title = `Finish: wird am Schleifen-Ende von Schleife(n) ${from} nahtlos gestartet`
+        btn.title = t('btn.loopgrp.finish.title').replace('%1', from)
     } else {
         btn.textContent = 'S/L/F'
         btn.classList.remove('trigger-action-btn-active')
-        btn.title = 'Loop-Struktur einrichten (Start, Loop, Finish …)'
+        btn.title = t('btn.loopgrp.title')
     }
 
     // WAV warning: gapless playback only works with WAV files
@@ -4628,6 +4632,7 @@ function broadcastLiveState() {
         selectedVariant,
         timecodeFrames: tcFrames,
         audioProgress,
+        appLanguage,
     })
 }
 
@@ -5134,6 +5139,8 @@ async function initApp() {
     mainChannelL    = savedSettings.mainChannelL    ?? 0
     mainChannelR    = savedSettings.mainChannelR    ?? 1
     monitorEnabled  = savedSettings.monitorEnabled  ?? false
+    appLanguage     = savedSettings.appLanguage     || 'de'
+    window.applyI18n?.(appLanguage)
     monitorChannelL = monitorEnabled ? (savedSettings.monitorChannelL ?? mainChannelL) : mainChannelL
     monitorChannelR = monitorEnabled ? (savedSettings.monitorChannelR ?? mainChannelR) : mainChannelR
     editorApp       = savedSettings.editorApp || null
@@ -5230,6 +5237,11 @@ async function initApp() {
             oscEnabled      = newSettings.oscEnabled ?? false
             oscHost         = newSettings.oscHost    || '127.0.0.1'
             oscPort         = newSettings.oscPort    ?? 8000
+            const newLang   = newSettings.appLanguage || 'de'
+            if (newLang !== appLanguage) {
+                appLanguage = newLang
+                window.applyI18n?.(appLanguage)
+            }
             if (changed)
                 for (const ta of triggerAudio.values()) { ta.decodedBuffer = null; ta._decoding = false }
             applyAudioDevices()
@@ -5519,7 +5531,7 @@ function showExportDialog() {
         box.className = 'dialog-box'
 
         const h3 = document.createElement('h3')
-        h3.textContent = 'Skript exportieren'
+        h3.textContent = t('dlg.export.title')
 
         const chkStyle = 'display:flex;align-items:center;gap:.6rem;color:#abb2bf;font-size:.9rem;margin-bottom:.8rem;cursor:pointer'
 
@@ -5529,7 +5541,7 @@ function showExportDialog() {
         chkCues.type = 'checkbox'
         chkCues.checked = false
         chkCues.style.cssText = 'width:15px;height:15px;cursor:pointer'
-        labelCues.append(chkCues, 'Cues einschließen')
+        labelCues.append(chkCues, t('dlg.export.cues'))
 
         const labelColors = document.createElement('label')
         labelColors.style.cssText = chkStyle + ';margin-bottom:1.5rem'
@@ -5537,7 +5549,7 @@ function showExportDialog() {
         chkColors.type = 'checkbox'
         chkColors.checked = true
         chkColors.style.cssText = 'width:15px;height:15px;cursor:pointer'
-        labelColors.append(chkColors, 'Rollenfarben verwenden')
+        labelColors.append(chkColors, t('dlg.export.colors'))
 
         const actions = document.createElement('div')
         actions.className = 'dialog-actions'
@@ -5546,17 +5558,17 @@ function showExportDialog() {
 
         const cancelBtn = document.createElement('button')
         cancelBtn.className = 'dialog-btn'
-        cancelBtn.textContent = 'Abbrechen'
+        cancelBtn.textContent = t('btn.cancel')
         cancelBtn.addEventListener('click', () => close(null))
 
         const pdfBtn = document.createElement('button')
         pdfBtn.className = 'dialog-btn dialog-btn-primary'
-        pdfBtn.textContent = 'Als PDF'
+        pdfBtn.textContent = t('dlg.export.pdf')
         pdfBtn.addEventListener('click', () => close({ format: 'pdf', withCues: chkCues.checked, withColors: chkColors.checked }))
 
         const docxBtn = document.createElement('button')
         docxBtn.className = 'dialog-btn dialog-btn-primary'
-        docxBtn.textContent = 'Als DOCX'
+        docxBtn.textContent = t('dlg.export.docx')
         docxBtn.addEventListener('click', () => close({ format: 'docx', withCues: chkCues.checked, withColors: chkColors.checked }))
 
         actions.append(cancelBtn, pdfBtn, docxBtn)

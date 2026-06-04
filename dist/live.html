@@ -4,6 +4,7 @@
     <title>Live-Ansicht</title>
     <meta charset="UTF-8">
     <link rel="stylesheet" href="styles.css">
+    <script src="i18n.js"></script>
     <style>
         /* ── Layout ─────────────────────────────────────────────────────── */
         html, body { height: 100%; overflow: hidden; }
@@ -286,8 +287,8 @@
     <div class="audio-panel" id="audio-panel"></div>
 
     <div class="bottom-bar">
-        <button class="ctrl-btn btn-back" id="btn-back" tabindex="-1">◀ Back</button>
-        <button class="ctrl-btn btn-go"   id="btn-go"   tabindex="-1">Go ▶</button>
+        <button class="ctrl-btn btn-back" id="btn-back" tabindex="-1" data-i18n="live.back">◀ Back</button>
+        <button class="ctrl-btn btn-go"   id="btn-go"   tabindex="-1" data-i18n="live.go">Go ▶</button>
     </div>
 
     <script>
@@ -614,7 +615,8 @@
 
         // ── Main render ──────────────────────────────────────────────────
         function render(state) {
-            const { blocks, nextCue, currentCue, selectedVariant, timecodeFrames, audioProgress } = state
+            const { blocks, nextCue, currentCue, selectedVariant, timecodeFrames, audioProgress, appLanguage } = state
+            if (appLanguage && appLanguage !== window.appLanguage) window.applyI18n(appLanguage)
 
             if (timecodeFrames !== null && timecodeFrames !== undefined) {
                 liveFrames = timecodeFrames; liveFramesAt = performance.now()

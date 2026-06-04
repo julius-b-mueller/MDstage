@@ -56,6 +56,7 @@ const defaultSettings = {
     midiGoNote: null, midiBackNote: null, midiLiveDevice: null,
     oscEnabled: false, oscHost: '127.0.0.1', oscPort: 8000,
     monitorEnabled: false,
+    appLanguage: 'de',
 }
 
 function encodeOscMessage(address, args = []) {
@@ -278,13 +279,43 @@ async function createNewFile() {
     }
 }
 
+function menuT(key) {
+    const lang = loadSettings().appLanguage || 'de'
+    // Minimal inline lookup — avoids pulling in the browser-side i18n.js
+    const M = {
+        de: {
+            about: 'Über Main Desk…', newfile: 'Neue Datei…', open: 'Datei öffnen…',
+            openwin: 'Öffnen…', settings: 'Einstellungen…', roleeditor: 'Rolleneditor…',
+            liveview: 'Live-Ansicht…', export: 'Exportieren…', hide: 'Ausblenden',
+            hideothers: 'Andere ausblenden', quit: 'Beenden',
+            file: 'Datei', exportmenu: 'Exportieren', prefs: 'Einstellungen',
+            midi: 'MIDI-Geräte…', help: 'Hilfe', edit: 'Bearbeiten',
+            dev: 'Entwickler', devtools: 'DevTools öffnen', devlive: 'DevTools (Live-Fenster)',
+            undo: 'Rückgängig', redo: 'Wiederholen', cut: 'Ausschneiden',
+            copy: 'Kopieren', paste: 'Einfügen', selectall: 'Alles auswählen',
+        },
+        en: {
+            about: 'About Main Desk…', newfile: 'New File…', open: 'Open File…',
+            openwin: 'Open…', settings: 'Settings…', roleeditor: 'Role Editor…',
+            liveview: 'Live View…', export: 'Export…', hide: 'Hide',
+            hideothers: 'Hide Others', quit: 'Quit',
+            file: 'File', exportmenu: 'Export', prefs: 'Settings',
+            midi: 'MIDI Devices…', help: 'Help', edit: 'Edit',
+            dev: 'Developer', devtools: 'Open DevTools', devlive: 'DevTools (Live window)',
+            undo: 'Undo', redo: 'Redo', cut: 'Cut',
+            copy: 'Copy', paste: 'Paste', selectall: 'Select All',
+        },
+    }
+    return (M[lang] || M.de)[key] ?? key
+}
+
 function buildMenu() {
     const template = [
         ...(process.platform === 'darwin' ? [{
             label: app.getName(),
             submenu: [
                 {
-                    label: 'Über Main Desk…',
+                    label: menuT('about'),
                     click: () => dialog.showMessageBox(mainWindow ?? null, {
                         type: 'info',
                         title: 'Main Desk',
@@ -295,33 +326,33 @@ function buildMenu() {
                 },
                 { type: 'separator' },
                 {
-                    label: 'Neue Datei…',
+                    label: menuT('newfile'),
                     accelerator: 'Cmd+N',
                     click: createNewFile,
                 },
                 {
-                    label: 'Datei öffnen…',
+                    label: menuT('open'),
                     accelerator: 'Cmd+O',
                     click: openFile,
                 },
                 { type: 'separator' },
                 {
-                    label: 'Einstellungen…',
+                    label: menuT('settings'),
                     accelerator: 'Cmd+,',
                     click: createSettingsWindow,
                 },
                 {
-                    label: 'Rolleneditor…',
+                    label: menuT('roleeditor'),
                     click: createRoleEditorWindow,
                 },
                 {
-                    label: 'Live-Ansicht…',
+                    label: menuT('liveview'),
                     accelerator: 'Cmd+L',
                     click: createLiveWindow,
                 },
                 { type: 'separator' },
                 {
-                    label: 'Exportieren…',
+                    label: menuT('export'),
                     accelerator: 'Cmd+E',
                     click: () => { if (mainWindow) mainWindow.webContents.executeJavaScript('window.__runExport && window.__runExport()').catch(() => {}) },
                 },
@@ -332,44 +363,44 @@ function buildMenu() {
                 { role: 'quit' },
             ],
         }] : [{
-            label: 'Datei',
+            label: menuT('file'),
             submenu: [
                 {
-                    label: 'Neue Datei…',
+                    label: menuT('newfile'),
                     accelerator: 'Ctrl+N',
                     click: createNewFile,
                 },
                 {
-                    label: 'Öffnen…',
+                    label: menuT('openwin'),
                     accelerator: 'Ctrl+O',
                     click: openFile,
                 },
             ],
         }, {
-            label: 'Exportieren',
+            label: menuT('exportmenu'),
             submenu: [{
-                label: 'Exportieren…',
+                label: menuT('export'),
                 accelerator: 'Ctrl+E',
                 click: () => { if (mainWindow) mainWindow.webContents.executeJavaScript('window.__runExport && window.__runExport()').catch(() => {}) },
             }],
         }, {
-            label: 'Einstellungen',
+            label: menuT('prefs'),
             submenu: [{
-                label: 'MIDI-Geräte…',
+                label: menuT('midi'),
                 accelerator: 'Ctrl+,',
                 click: createSettingsWindow,
             }, {
-                label: 'Rolleneditor…',
+                label: menuT('roleeditor'),
                 click: createRoleEditorWindow,
             }, {
-                label: 'Live-Ansicht…',
+                label: menuT('liveview'),
                 accelerator: 'Ctrl+L',
                 click: createLiveWindow,
             }],
         }, {
-            label: 'Hilfe',
+            label: menuT('help'),
             submenu: [{
-                label: 'Über Main Desk…',
+                label: menuT('about'),
                 click: () => dialog.showMessageBox(mainWindow ?? null, {
                     type: 'info',
                     title: 'Main Desk',
@@ -380,27 +411,27 @@ function buildMenu() {
             }],
         }]),
         {
-            label: 'Bearbeiten',
+            label: menuT('edit'),
             submenu: [
-                { role: 'undo' },
-                { role: 'redo' },
+                { role: 'undo', label: menuT('undo') },
+                { role: 'redo', label: menuT('redo') },
                 { type: 'separator' },
-                { role: 'cut' },
-                { role: 'copy' },
-                { role: 'paste' },
-                { role: 'selectAll' },
+                { role: 'cut',       label: menuT('cut') },
+                { role: 'copy',      label: menuT('copy') },
+                { role: 'paste',     label: menuT('paste') },
+                { role: 'selectAll', label: menuT('selectall') },
             ],
         },
         ...(!app.isPackaged ? [{
-            label: 'Entwickler',
+            label: menuT('dev'),
             submenu: [
                 {
-                    label: 'DevTools öffnen',
+                    label: menuT('devtools'),
                     accelerator: process.platform === 'darwin' ? 'Cmd+Alt+I' : 'Ctrl+Shift+I',
                     click: () => { if (mainWindow) mainWindow.webContents.openDevTools() },
                 },
                 {
-                    label: 'DevTools (Live-Fenster)',
+                    label: menuT('devlive'),
                     click: () => { if (liveWindow) liveWindow.webContents.openDevTools() },
                 },
                 { role: 'reload' },
@@ -670,6 +701,7 @@ app.whenReady().then(async () => {
         BrowserWindow.getAllWindows().forEach(win => {
             win.webContents.send('settings-changed', settings)
         })
+        Menu.setApplicationMenu(buildMenu())
     })
 
     ipcMain.handle('get-hostname', () => hostname)
