@@ -19,6 +19,9 @@ navigator.requestMIDIAccess = () => Promise.resolve({
 // Works across iframes AND separate windows as long as they share the same origin.
 const _ch = new BroadcastChannel('maindesk-preview')
 
+let _liveWindowStateListeners = []
+let _livePopupWin = null
+
 const _liveStateListeners  = []
 const _liveVolumeListeners = []
 
@@ -113,15 +116,25 @@ window.electronAPI = {
 
     onLiveGo:  () => {},
     onLiveBack: () => {},
-    onLiveWindowState: (cb) => setTimeout(() => cb(true), 0),
+    onLiveWindowState: (cb) => { _liveWindowStateListeners.push(cb) },
 
     // Opens the live view in a separate browser window
     openLiveWindow: () => {
-        window.open(
+        if (_livePopupWin && !_livePopupWin.closed) { _livePopupWin.focus(); return }
+        _livePopupWin = window.open(
             'preview-live.html',
             'maindesk-live',
             'width=960,height=720,menubar=no,toolbar=no,location=no,status=no'
         )
+        if (!_livePopupWin) return
+        _liveWindowStateListeners.forEach(cb => cb(true))
+        const poll = setInterval(() => {
+            if (_livePopupWin?.closed) {
+                clearInterval(poll)
+                _livePopupWin = null
+                _liveWindowStateListeners.forEach(cb => cb(false))
+            }
+        }, 500)
     },
 
     exportPdf:       () => Promise.resolve(),

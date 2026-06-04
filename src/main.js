@@ -168,6 +168,8 @@ let oscEnabled = false
 let oscHost = '127.0.0.1'
 let oscPort = 8000
 let appLanguage = 'de'
+let effectiveLightScene = null  // light: value of last fired cue that had one
+let effectiveMics       = null  // mic: value of last fired cue that had one
 let micMuteMethod     = 'x32'
 let micMuteMidiUnmute = 'B1 {ch} 00'
 let micMuteMidiMute   = 'B1 {ch} 7F'
@@ -579,7 +581,9 @@ function updateEditorParens(div) {
     // Serialize back to markdown so *(text)* patterns survive the rebuild.
     // Only re-wrap editor-stage-inline spans that still contain balanced (...) —
     // a partially deleted span must not emit raw asterisks into the text.
-    const dialogue = afterName.map(serializeRoleNode).join('')
+    // Strip trailing <br> tokens (sentinel line breaks added by insertRoleLineBreak)
+    // to avoid reconstructing spurious br-marker+<br> pairs on rebuild.
+    const dialogue = afterName.map(serializeRoleNode).join('').replace(/(<br>)+$/, '')
     afterName.forEach(n => n.remove())
     appendDialogueParsed(div, dialogue, roleColor)
     setCaretOffset(div, caretOffset)
@@ -892,10 +896,22 @@ const btnDel  = document.createElement('button')
                 openRoleChangeDropdown(nameSpan, el)
             })
         }
-        // Clamp cursor on selectionchange (catches triple-click, drag-select, etc.)
+        // Clamp cursor on selectionchange (catches mouse clicks, triple-click, drag-select, etc.)
         function clampRoleCaret() {
             if (!inlineEditor?.el) return
-            if (caretIsInRoleName(inlineEditor.el)) placeCaretAfterRoleName(inlineEditor.el)
+            if (caretIsInRoleName(inlineEditor.el)) { placeCaretAfterRoleName(inlineEditor.el); return }
+            // Snap out of the gap between a br-marker and its <br> (e.g. from mouse click on ↵)
+            const sel = window.getSelection()
+            if (!sel?.rangeCount || !sel.isCollapsed) return
+            const range = sel.getRangeAt(0)
+            const prev = nodeBeforeCaret(range)
+            if (prev?.classList?.contains('br-marker')) {
+                // Cursor is in the gap — snap backward to before the marker (end of prev line)
+                const r = document.createRange()
+                r.setStartBefore(prev)
+                r.collapse(true)
+                sel.removeAllRanges(); sel.addRange(r)
+            }
         }
         inlineEditor._caretClampHandler = clampRoleCaret
         document.addEventListener('selectionchange', clampRoleCaret)
@@ -941,6 +957,31 @@ function caretIsInRoleName(el) {
     return false
 }
 
+// Returns the DOM node immediately following the cursor (at end of line / end of node).
+// Walks up to parent if cursor is at the end of a text node inside a span.
+function nodeAfterCaret(range) {
+    if (range.startContainer.nodeType === Node.TEXT_NODE) {
+        if (range.startOffset < range.startContainer.length) return null
+        // At end of text node — look at next sibling, then parent's next sibling
+        return range.startContainer.nextSibling
+            ?? range.startContainer.parentNode?.nextSibling
+            ?? null
+    }
+    return range.startContainer.childNodes[range.startOffset] ?? null
+}
+
+// Returns the DOM node immediately before the cursor.
+function nodeBeforeCaret(range) {
+    if (range.startContainer.nodeType === Node.TEXT_NODE) {
+        if (range.startOffset > 0) return null
+        // At start of text node — look at prev sibling, then parent's prev sibling
+        return range.startContainer.previousSibling
+            ?? range.startContainer.parentNode?.previousSibling
+            ?? null
+    }
+    return range.startContainer.childNodes[range.startOffset - 1] ?? null
+}
+
 function onEditorKey(e) {
     if (e.key === 'Escape') { e.preventDefault(); closeEditor(true); return }
 
@@ -949,7 +990,7 @@ function onEditorKey(e) {
         const el = inlineEditor.el
         const ns = el.querySelector('.editor-role-name')
         if (ns) {
-            if (e.key === 'ArrowLeft' || e.key === 'Home') {
+            if (e.key === 'ArrowLeft' || e.key === 'Home' || e.key === 'Backspace') {
                 // Check if cursor is at the very start of dialogue (right after name span)
                 const sel = window.getSelection()
                 const range = sel?.rangeCount ? sel.getRangeAt(0) : null
@@ -958,7 +999,11 @@ function onEditorKey(e) {
                     // cursor container is the parent el right after the name span
                     (range.startContainer === el && range.startOffset <= 1) ||
                     // cursor is inside the name span
-                    ns.contains(range.startContainer)
+                    ns.contains(range.startContainer) ||
+                    // cursor is at offset 0 of a text node whose parent's previous sibling is the name span
+                    (range.startOffset === 0 &&
+                     range.startContainer.nodeType === Node.TEXT_NODE &&
+                     range.startContainer.parentNode?.previousSibling === ns)
                 if (atDialogueStart) {
                     e.preventDefault()
                     if (caretIsInRoleName(el)) placeCaretAfterRoleName(el)
@@ -970,6 +1015,126 @@ function onEditorKey(e) {
                 if (!e.ctrlKey && !e.metaKey && !e.altKey) {
                     e.preventDefault()
                     placeCaretAfterRoleName(el)
+                    return
+                }
+            }
+        }
+
+        // Skip br-marker on ArrowRight: jump directly past both marker and <br>
+        if (e.key === 'ArrowRight') {
+            const sel = window.getSelection()
+            const range = sel?.rangeCount ? sel.getRangeAt(0) : null
+            if (range) {
+                const next = nodeAfterCaret(range)
+                if (next?.classList?.contains('br-marker')) {
+                    const br = next.nextSibling
+                    if (br?.tagName === 'BR') {
+                        e.preventDefault()
+                        const r = document.createRange()
+                        r.setStartAfter(br)
+                        r.collapse(true)
+                        sel.removeAllRanges(); sel.addRange(r)
+                        return
+                    }
+                }
+                // Cursor is already between br-marker and <br> — skip the <br>
+                const prev = nodeBeforeCaret(range)
+                if (prev?.classList?.contains('br-marker')) {
+                    const br = nodeAfterCaret(range)
+                    if (br?.tagName === 'BR') {
+                        e.preventDefault()
+                        const r = document.createRange()
+                        r.setStartAfter(br)
+                        r.collapse(true)
+                        sel.removeAllRanges(); sel.addRange(r)
+                        return
+                    }
+                }
+            }
+        }
+
+        // Backspace at start of a post-br line: remove both <br> and the preceding br-marker
+        if (e.key === 'Backspace') {
+            const sel = window.getSelection()
+            const range = sel?.rangeCount ? sel.getRangeAt(0) : null
+            if (range && range.collapsed) {
+                const prev = nodeBeforeCaret(range)
+                let br = null, marker = null
+                if (prev?.tagName === 'BR') {
+                    // Cursor is right after <br>
+                    br = prev
+                    if (br.previousSibling?.classList?.contains('br-marker')) marker = br.previousSibling
+                } else if (prev?.classList?.contains('br-marker')) {
+                    // Cursor is between br-marker and <br>
+                    marker = prev
+                    if (marker.nextSibling?.tagName === 'BR') br = marker.nextSibling
+                }
+                if (br && marker) {
+                    e.preventDefault()
+                    // Remove nodes first, then place cursor — avoids detached-range issues
+                    const parent    = marker.parentNode
+                    const beforeNode = marker.previousSibling
+                    marker.remove()
+                    br.remove()
+                    const r = document.createRange()
+                    if (beforeNode) r.setStartAfter(beforeNode)
+                    else            r.setStart(parent, 0)
+                    r.collapse(true)
+                    sel.removeAllRanges(); sel.addRange(r)
+                    onEditorInput.call(el)
+                    return
+                }
+            }
+        }
+
+        // Delete at end of a line: remove the br-marker + <br> pair going forward
+        if (e.key === 'Delete') {
+            const sel = window.getSelection()
+            const range = sel?.rangeCount ? sel.getRangeAt(0) : null
+            if (range && range.collapsed) {
+                const next = nodeAfterCaret(range)
+                let marker = null, br = null
+                if (next?.classList?.contains('br-marker')) {
+                    marker = next
+                    if (marker.nextSibling?.tagName === 'BR') br = marker.nextSibling
+                } else if (next?.tagName === 'BR' && nodeBeforeCaret(range)?.classList?.contains('br-marker')) {
+                    // Cursor is in the gap between marker and <br>
+                    br = next; marker = br.previousSibling
+                }
+                if (marker && br) {
+                    e.preventDefault()
+                    marker.remove(); br.remove()
+                    onEditorInput.call(el)
+                    return
+                }
+            }
+        }
+
+        // Skip br-marker on ArrowLeft: jump directly before the marker
+        if (e.key === 'ArrowLeft') {
+            const sel = window.getSelection()
+            const range = sel?.rangeCount ? sel.getRangeAt(0) : null
+            if (range) {
+                const prev = nodeBeforeCaret(range)
+                // Cursor is right after a <br> → also skip the br-marker before it
+                if (prev?.tagName === 'BR') {
+                    const marker = prev.previousSibling
+                    if (marker?.classList?.contains('br-marker')) {
+                        e.preventDefault()
+                        const r = document.createRange()
+                        r.setStartBefore(marker)
+                        r.collapse(true)
+                        sel.removeAllRanges(); sel.addRange(r)
+                        return
+                    }
+                }
+                // Cursor is between br-marker and <br> → jump before the marker
+                if (prev?.classList?.contains('br-marker')) {
+                    e.preventDefault()
+                    const r = document.createRange()
+                    r.setStartBefore(prev)
+                    r.collapse(true)
+                    sel.removeAllRanges(); sel.addRange(r)
                     return
                 }
             }
@@ -1351,6 +1516,48 @@ function onNewBlockKey(e) {
     if (e.key === 'Tab') {
         e.preventDefault()  // must be in keydown to prevent focus movement
         if (inlineEditor?.el === e.currentTarget) acceptGhostInline()
+        return
+    }
+    // Backspace at start of a post-br line in a confirmed-role block: remove br-marker + <br>
+    if (e.key === 'Backspace' && inlineEditor?.confirmedRole) {
+        const el = e.currentTarget
+        const sel = window.getSelection()
+        const range = sel?.rangeCount ? sel.getRangeAt(0) : null
+        if (range && range.collapsed) {
+            const prev = nodeBeforeCaret(range)
+            let br = null, marker = null
+            if (prev?.tagName === 'BR') {
+                br = prev
+                if (br.previousSibling?.classList?.contains('br-marker')) marker = br.previousSibling
+            } else if (prev?.classList?.contains('br-marker')) {
+                marker = prev
+                if (marker.nextSibling?.tagName === 'BR') br = marker.nextSibling
+            }
+            if (marker && br) {
+                e.preventDefault()
+                const parent     = marker.parentNode
+                const beforeNode = marker.previousSibling
+                marker.remove(); br.remove()
+                const r = document.createRange()
+                if (beforeNode) r.setStartAfter(beforeNode)
+                else            r.setStart(parent, 0)
+                r.collapse(true)
+                sel.removeAllRanges(); sel.addRange(r)
+                onNewBlockInput.call(el)
+                return
+            }
+            // Block Backspace at the very start of dialogue (before the role span)
+            const roleSpan = el.querySelector('.role-confirmed')
+            if (roleSpan) {
+                const atStart =
+                    (range.startContainer === el && range.startOffset <= 1) ||
+                    roleSpan.contains(range.startContainer) ||
+                    (range.startOffset === 0 &&
+                     range.startContainer.nodeType === Node.TEXT_NODE &&
+                     range.startContainer.parentNode?.previousSibling === roleSpan)
+                if (atStart) { e.preventDefault(); return }
+            }
+        }
     }
     // Enter is handled via onNewBlockBeforeInput (reliable in Electron/Chromium contenteditable)
 }
@@ -1411,7 +1618,7 @@ function updateNewBlockParens(el) {
         if (seen) afterRole.push(n)
         if (n === roleSpan) seen = true
     }
-    const dialogue = afterRole.map(n => n.classList?.contains('ac-ghost') ? '' : serializeRoleNode(n)).join('')
+    const dialogue = afterRole.map(n => n.classList?.contains('ac-ghost') ? '' : serializeRoleNode(n)).join('').replace(/(<br>)+$/, '')
     afterRole.filter(n => !n.classList?.contains('ac-ghost')).forEach(n => n.remove())
     appendDialogueParsed(el, dialogue, roleColor)
     setCaretOffset(el, caretOffset)
@@ -1967,6 +2174,8 @@ function rerender(newText) {
     fileToTriggers.clear()
     usedChs = []
     config = {}
+    effectiveLightScene = null
+    effectiveMics       = null
     loopOutroPending.clear()
     loopOutroInitialRemaining.clear()
     loopBtns.clear()
@@ -2905,6 +3114,8 @@ function buildTrigger(codeblockYaml, index) {
 
         function _nonAudioActions(nextIdx, nextTa) {
             const ty = triggerYamls[nextIdx]
+            if (ty?.light) effectiveLightScene = ty.light
+            if (ty?.mic !== undefined && ty?.mic !== null) effectiveMics = ty.mic
             x32UnmuteChannels(ty?.mic)
             sendTriggerNote(nextIdx)
             const startTc = ty?.start_tc
@@ -2937,6 +3148,8 @@ function buildTrigger(codeblockYaml, index) {
         function fireGaplessTransition(nextIdx) {
             const nextTa = triggerAudio.get(nextIdx)
             const ty = triggerYamls[nextIdx]
+            if (ty?.light) effectiveLightScene = ty.light
+            if (ty?.mic !== undefined && ty?.mic !== null) effectiveMics = ty.mic
             if (!nextTa || !ty?.music) {
                 // Audio-less outro: execute non-audio actions directly instead of going
                 // through triggerAction, which would re-queue the outro via outro-interception
@@ -4649,7 +4862,11 @@ function triggerAction(cue) {
         return
     }
 
-    x32UnmuteChannels(triggerYamls[cue].mic)
+    const _ty = triggerYamls[cue]
+    if (_ty?.light)  effectiveLightScene = _ty.light
+    if (_ty?.mic !== undefined && _ty?.mic !== null) effectiveMics = _ty.mic
+
+    x32UnmuteChannels(_ty.mic)
 
     const startTc = triggerYamls[cue].start_tc
     if (startTc && mtc && mtc.activeTcIndex !== null && mtc.activeTcIndex !== cue) {
@@ -4877,6 +5094,17 @@ function broadcastLiveState() {
     const tcFrames = (mtc && mtc.activeTcIndex !== null && mtc.wsRef)
         ? mtc.getCurrentFrames()
         : null
+    // Build effective mic display from effectiveMics
+    let effectiveMicColors = null
+    if (effectiveMics === 'muteall') {
+        effectiveMicColors = null  // null = muteall
+    } else if (effectiveMics) {
+        const micArr = typeof effectiveMics === 'string' ? [effectiveMics] : effectiveMics
+        effectiveMicColors = micArr.map(name => ({
+            name, color: config.roles?.[name]?.color || null
+        }))
+    }
+
     window.electronAPI.sendLiveState({
         blocks: liveBlocks,
         currentCue: liveCurrent,
@@ -4885,6 +5113,10 @@ function broadcastLiveState() {
         timecodeFrames: tcFrames,
         audioProgress,
         appLanguage,
+        effectiveLightScene,
+        effectiveMuteall: effectiveMics === 'muteall',
+        effectiveMicColors: effectiveMics === 'muteall' ? null : (effectiveMicColors ?? undefined),
+        hasMicState: effectiveMics !== null,
     })
 }
 
