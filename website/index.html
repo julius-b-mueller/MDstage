@@ -3,334 +3,147 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Main Desk – Stage Management Software</title>
-<meta name="description" content="Professionelle Regie-Software für Bühnenproduktionen. Audiowiedergabe, MIDI, OSC, Live-Ansicht und mehr – alles in einer Markdown-Datei.">
+<title>Main Desk – Das interaktive Inspizientenbuch</title>
+<meta name="description" content="Main Desk verwandelt das Regiebuch in eine interaktive Schaltzentrale: Musik, Mikrofone, Licht und Timecode – alles mit Go und Back.">
 <style>
-  :root {
-    --bg:        #282c34;
-    --bg2:       #21252b;
-    --bg3:       #2c313a;
-    --border:    #383c44;
-    --text:      #abb2bf;
-    --text-dim:  #5c6370;
-    --blue:      #61afef;
-    --green:     #98c379;
-    --yellow:    #e5c07b;
-    --purple:    #c678dd;
-    --red:       #e06c75;
-    --radius:    10px;
-  }
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  html { scroll-behavior: smooth; }
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-    font-size: 16px;
-    line-height: 1.6;
-  }
+:root {
+  --bg:      #282c34;
+  --bg2:     #21252b;
+  --bg3:     #2c313a;
+  --border:  #383c44;
+  --text:    #abb2bf;
+  --dim:     #5c6370;
+  --blue:    #61afef;
+  --green:   #98c379;
+  --yellow:  #e5c07b;
+  --purple:  #c678dd;
+  --red:     #e06c75;
+  --r:       10px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;font-size:16px;line-height:1.6}
 
-  /* ── Nav ─────────────────────────────────────── */
-  nav {
-    position: sticky; top: 0; z-index: 100;
-    background: var(--bg2);
-    border-bottom: 1px solid var(--border);
-    padding: 0 2rem;
-    display: flex; align-items: center; gap: 2rem;
-    height: 56px;
-  }
-  .nav-logo {
-    font-size: 1.15rem; font-weight: 700; color: #fff;
-    text-decoration: none; letter-spacing: -0.02em;
-    display: flex; align-items: center; gap: 0.5rem;
-  }
-  .nav-logo svg { flex-shrink: 0; }
-  .nav-links { display: flex; gap: 0.25rem; flex: 1; }
-  .nav-links a {
-    color: var(--text-dim); text-decoration: none;
-    padding: 0.35rem 0.75rem; border-radius: 6px;
-    font-size: 0.9rem; transition: color .15s, background .15s;
-  }
-  .nav-links a:hover { color: var(--text); background: var(--bg3); }
-  .lang-toggle {
-    display: flex; gap: 2px;
-    background: var(--bg3); border-radius: 6px; padding: 3px;
-  }
-  .lang-btn {
-    background: none; border: none; cursor: pointer;
-    padding: 3px 10px; border-radius: 4px;
-    font-size: 0.82rem; font-weight: 600;
-    color: var(--text-dim); transition: all .15s;
-  }
-  .lang-btn.active { background: var(--border); color: #fff; }
-  .nav-cta {
-    background: var(--blue); color: #1e2127;
-    text-decoration: none; padding: 0.4rem 1rem;
-    border-radius: 6px; font-size: 0.88rem; font-weight: 600;
-    transition: background .15s; white-space: nowrap;
-  }
-  .nav-cta:hover { background: #71bfff; }
+/* ── Nav ─────────────────────────────────── */
+nav{position:sticky;top:0;z-index:100;background:var(--bg2);border-bottom:1px solid var(--border);padding:0 2rem;display:flex;align-items:center;gap:2rem;height:56px}
+.nav-logo{font-size:1.1rem;font-weight:700;color:#fff;text-decoration:none;letter-spacing:-.02em;display:flex;align-items:center;gap:.45rem}
+.nav-links{display:flex;gap:.2rem;flex:1}
+.nav-links a{color:var(--dim);text-decoration:none;padding:.35rem .7rem;border-radius:6px;font-size:.88rem;transition:color .15s,background .15s}
+.nav-links a:hover{color:var(--text);background:var(--bg3)}
+.lang-toggle{display:flex;gap:2px;background:var(--bg3);border-radius:6px;padding:3px}
+.lang-btn{background:none;border:none;cursor:pointer;padding:3px 9px;border-radius:4px;font-size:.8rem;font-weight:600;color:var(--dim);transition:all .15s}
+.lang-btn.active{background:var(--border);color:#fff}
+.nav-cta{background:var(--blue);color:#1e2127;text-decoration:none;padding:.38rem .95rem;border-radius:6px;font-size:.86rem;font-weight:600;transition:background .15s;white-space:nowrap}
+.nav-cta:hover{background:#71bfff}
 
-  /* ── Hero ────────────────────────────────────── */
-  .hero {
-    text-align: center;
-    padding: 7rem 2rem 5rem;
-    background: radial-gradient(ellipse 80% 50% at 50% -10%, #1a3a5c44 0%, transparent 70%);
-  }
-  .hero-badge {
-    display: inline-flex; align-items: center; gap: 0.4rem;
-    background: #1e3a5244; border: 1px solid #61afef44;
-    color: var(--blue); padding: 0.3rem 0.8rem;
-    border-radius: 20px; font-size: 0.8rem; font-weight: 600;
-    letter-spacing: 0.04em; text-transform: uppercase;
-    margin-bottom: 1.5rem;
-  }
-  .hero h1 {
-    font-size: clamp(2.5rem, 6vw, 4rem);
-    font-weight: 800; letter-spacing: -0.03em;
-    color: #fff; line-height: 1.1;
-    margin-bottom: 1.2rem;
-  }
-  .hero h1 span { color: var(--blue); }
-  .hero-sub {
-    font-size: clamp(1rem, 2vw, 1.2rem);
-    color: var(--text-dim); max-width: 560px; margin: 0 auto 2.5rem;
-    line-height: 1.7;
-  }
-  .hero-actions { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
-  .btn-primary {
-    background: var(--blue); color: #1e2127;
-    padding: 0.75rem 1.75rem; border-radius: var(--radius);
-    text-decoration: none; font-weight: 700; font-size: 1rem;
-    transition: background .15s, transform .1s;
-    display: inline-flex; align-items: center; gap: 0.5rem;
-  }
-  .btn-primary:hover { background: #71bfff; transform: translateY(-1px); }
-  .btn-secondary {
-    background: var(--bg3); color: var(--text);
-    border: 1px solid var(--border);
-    padding: 0.75rem 1.75rem; border-radius: var(--radius);
-    text-decoration: none; font-weight: 600; font-size: 1rem;
-    transition: background .15s, transform .1s;
-    display: inline-flex; align-items: center; gap: 0.5rem;
-  }
-  .btn-secondary:hover { background: var(--border); transform: translateY(-1px); }
-  .hero-note {
-    margin-top: 1.2rem;
-    font-size: 0.82rem; color: var(--text-dim);
-    display: flex; align-items: center; justify-content: center; gap: 0.4rem;
-  }
+/* ── Hero ────────────────────────────────── */
+.hero{padding:6rem 2rem 5rem;text-align:center;background:radial-gradient(ellipse 90% 55% at 50% -5%,#1a3a5c40 0%,transparent 70%)}
+.hero-badge{display:inline-flex;align-items:center;gap:.4rem;background:#1e3a5244;border:1px solid #61afef44;color:var(--blue);padding:.28rem .8rem;border-radius:20px;font-size:.76rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-bottom:1.4rem}
+.hero h1{font-size:clamp(2.2rem,5.5vw,3.8rem);font-weight:800;letter-spacing:-.03em;color:#fff;line-height:1.1;margin-bottom:1.4rem}
+.hero h1 em{font-style:normal;color:var(--blue)}
+.hero-lead{font-size:clamp(1.05rem,1.8vw,1.25rem);color:var(--text);max-width:680px;margin:0 auto 1.4rem;line-height:1.75}
+.hero-kicker{font-size:clamp(.95rem,1.5vw,1.05rem);color:var(--dim);max-width:560px;margin:0 auto 2.8rem;line-height:1.7}
+.hero-actions{display:flex;gap:1rem;justify-content:center;flex-wrap:wrap}
+.btn-primary{background:var(--blue);color:#1e2127;padding:.7rem 1.6rem;border-radius:var(--r);text-decoration:none;font-weight:700;font-size:.98rem;display:inline-flex;align-items:center;gap:.45rem;transition:background .15s,transform .1s}
+.btn-primary:hover{background:#71bfff;transform:translateY(-1px)}
+.btn-ghost{background:var(--bg3);color:var(--text);border:1px solid var(--border);padding:.7rem 1.6rem;border-radius:var(--r);text-decoration:none;font-weight:600;font-size:.98rem;display:inline-flex;align-items:center;gap:.45rem;transition:background .15s,transform .1s}
+.btn-ghost:hover{background:var(--border);transform:translateY(-1px)}
 
-  /* ── Window mockup ───────────────────────────── */
-  .mockup-wrap {
-    max-width: 860px; margin: 0 auto;
-    padding: 3rem 2rem 0;
-  }
-  .mockup {
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    overflow: hidden;
-    box-shadow: 0 40px 80px #00000088, 0 0 0 1px #ffffff08;
-  }
-  .mockup-bar {
-    background: #1a1d23;
-    padding: 0.7rem 1rem;
-    display: flex; align-items: center; gap: 0.4rem;
-    border-bottom: 1px solid var(--border);
-  }
-  .dot { width: 12px; height: 12px; border-radius: 50%; }
-  .dot-r { background: #ff5f57; }
-  .dot-y { background: #febc2e; }
-  .dot-g { background: #28c840; }
-  .mockup-title {
-    flex: 1; text-align: center;
-    font-size: 0.78rem; color: var(--text-dim);
-  }
-  .mockup-body { padding: 1.2rem 1.5rem; }
-  .mock-row {
-    display: flex; align-items: center; gap: 1rem;
-    padding: 0.6rem 0.8rem; border-radius: 6px; margin-bottom: 0.5rem;
-  }
-  .mock-row.current { border-left: 4px solid var(--yellow); background: #2a2e38; }
-  .mock-row.next    { border: 2px solid rgba(255,255,255,.6); background: #1e2430; border-radius: 8px; }
-  .mock-row.plain   { border-left: 4px solid var(--border); }
-  .mock-cue-num {
-    font-size: 2rem; font-weight: 700; color: var(--text-dim);
-    min-width: 2.5rem;
-  }
-  .mock-info { flex: 1; }
-  .mock-label { font-size: 0.75rem; color: var(--text-dim); margin-bottom: 0.2rem; }
-  .mock-detail { font-size: 0.9rem; color: var(--text); }
-  .mock-note { font-size: 0.85rem; color: var(--text-dim); max-width: 40%; text-align: right; }
-  .mock-badge {
-    font-size: 0.7rem; font-weight: 700; padding: 2px 7px;
-    border-radius: 4px; text-transform: uppercase; letter-spacing: 0.05em;
-  }
-  .mock-badge.loop { background: #1e3a52; color: var(--blue); }
-  .mock-badge.mic  { background: #1e3a2a; color: var(--green); }
-  .mock-script-line {
-    padding: 0.3rem 0.8rem;
-    font-size: 0.9rem; color: var(--text-dim);
-    font-style: italic;
-  }
+/* ── How it works ────────────────────────── */
+.flow-section{padding:4rem 2rem;border-top:1px solid var(--border)}
+.flow-inner{max-width:820px;margin:0 auto;text-align:center}
+.flow-steps{display:flex;align-items:flex-start;justify-content:center;gap:0;flex-wrap:wrap;margin-top:3rem}
+.flow-step{flex:1;min-width:160px;max-width:200px;display:flex;flex-direction:column;align-items:center;gap:.6rem;padding:0 .5rem}
+.flow-icon{width:56px;height:56px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:1.5rem;flex-shrink:0}
+.flow-icon.b{background:#1e3a52}
+.flow-icon.g{background:#1e3a2a}
+.flow-icon.y{background:#3a321e}
+.flow-icon.p{background:#2e1e3a}
+.flow-step h4{font-size:.9rem;font-weight:700;color:#fff;text-align:center}
+.flow-step p{font-size:.8rem;color:var(--dim);text-align:center;line-height:1.5}
+.flow-arrow{display:flex;align-items:center;padding:0 .25rem;margin-top:1.9rem;color:var(--border);font-size:1.5rem;flex-shrink:0}
 
-  /* ── Sections ────────────────────────────────── */
-  section { padding: 5rem 2rem; }
-  .section-inner { max-width: 1000px; margin: 0 auto; }
-  .section-label {
-    font-size: 0.75rem; font-weight: 700; letter-spacing: 0.1em;
-    text-transform: uppercase; color: var(--blue);
-    margin-bottom: 0.75rem;
-  }
-  .section-title {
-    font-size: clamp(1.6rem, 3vw, 2.2rem);
-    font-weight: 800; letter-spacing: -0.02em;
-    color: #fff; margin-bottom: 0.75rem;
-  }
-  .section-sub {
-    font-size: 1.05rem; color: var(--text-dim);
-    max-width: 520px; line-height: 1.7; margin-bottom: 3rem;
-  }
+/* ── Section scaffold ────────────────────── */
+.feat-section{padding:5rem 2rem}
+.feat-section:nth-child(even){background:var(--bg2)}
+.feat-inner{max-width:1000px;margin:0 auto}
+.section-label{font-size:.72rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--blue);margin-bottom:.6rem}
+.section-title{font-size:clamp(1.55rem,2.8vw,2.1rem);font-weight:800;letter-spacing:-.02em;color:#fff;margin-bottom:.7rem}
+.section-sub{font-size:1rem;color:var(--dim);max-width:500px;line-height:1.75;margin-bottom:3rem}
 
-  /* ── Feature grid ────────────────────────────── */
-  .features-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 1.25rem;
-  }
-  .feature-card {
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 1.5rem;
-    transition: border-color .2s, transform .2s;
-  }
-  .feature-card:hover { border-color: #4b5263; transform: translateY(-2px); }
-  .feature-icon {
-    width: 40px; height: 40px; border-radius: 8px;
-    display: flex; align-items: center; justify-content: center;
-    margin-bottom: 1rem; font-size: 1.25rem;
-  }
-  .feature-icon.blue   { background: #1e3a52; }
-  .feature-icon.green  { background: #1e3a2a; }
-  .feature-icon.yellow { background: #3a321e; }
-  .feature-icon.purple { background: #2e1e3a; }
-  .feature-icon.red    { background: #3a1e1e; }
-  .feature-icon.teal   { background: #1e3a38; }
-  .feature-card h3 { font-size: 1rem; font-weight: 700; color: #fff; margin-bottom: 0.4rem; }
-  .feature-card p  { font-size: 0.88rem; color: var(--text-dim); line-height: 1.6; }
+/* ── Feature blocks ──────────────────────── */
+.feat-block{display:grid;grid-template-columns:1fr 1fr;gap:3.5rem;align-items:center;margin-bottom:5rem}
+.feat-block:last-child{margin-bottom:0}
+.feat-block.reverse{direction:rtl}
+.feat-block.reverse>*{direction:ltr}
+.feat-graphic{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:2rem;display:flex;align-items:center;justify-content:center;min-height:220px}
+.feat-block.reverse .feat-graphic{background:var(--bg)}
+.feat-text{}
+.feat-text h3{font-size:1.25rem;font-weight:700;color:#fff;margin-bottom:.6rem}
+.feat-text p{font-size:.92rem;color:var(--text);line-height:1.75;margin-bottom:.8rem}
+.feat-text p:last-child{margin-bottom:0}
+.feat-tags{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:1rem}
+.tag{font-size:.72rem;font-weight:600;padding:.2rem .6rem;border-radius:4px;letter-spacing:.03em}
+.tag.b{background:#1e3a52;color:var(--blue)}
+.tag.g{background:#1e3a2a;color:var(--green)}
+.tag.y{background:#3a321e;color:var(--yellow)}
+.tag.p{background:#2e1e3a;color:var(--purple)}
 
-  /* ── Divider ─────────────────────────────────── */
-  .divider { border: none; border-top: 1px solid var(--border); margin: 0; }
+@media(max-width:700px){
+  .feat-block,.feat-block.reverse{grid-template-columns:1fr;direction:ltr}
+  .feat-block.reverse>*{direction:ltr}
+}
 
-  /* ── Download section ────────────────────────── */
-  #download { background: var(--bg2); }
-  .download-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 1rem; margin-bottom: 2.5rem;
-  }
-  .dl-card {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 1.5rem 1.25rem;
-    display: flex; flex-direction: column; gap: 0.5rem;
-  }
-  .dl-card-icon { font-size: 2rem; margin-bottom: 0.25rem; }
-  .dl-card h3 { font-size: 0.95rem; font-weight: 700; color: #fff; }
-  .dl-card .dl-type { font-size: 0.78rem; color: var(--text-dim); }
-  .dl-card .dl-btn {
-    margin-top: auto; padding-top: 0.75rem;
-    display: inline-flex; align-items: center; gap: 0.4rem;
-    background: var(--bg3); border: 1px solid var(--border);
-    color: var(--text); text-decoration: none;
-    padding: 0.5rem 0.9rem; border-radius: 6px;
-    font-size: 0.85rem; font-weight: 600;
-    transition: background .15s;
-  }
-  .dl-card .dl-btn:hover { background: var(--border); }
-  .dl-card .dl-btn.primary {
-    background: var(--blue); color: #1e2127; border-color: var(--blue);
-  }
-  .dl-card .dl-btn.primary:hover { background: #71bfff; }
+/* ── Download ────────────────────────────── */
+.dl-section{padding:5rem 2rem;background:var(--bg2)}
+.dl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:1rem;margin-bottom:2.5rem}
+.dl-card{background:var(--bg);border:1px solid var(--border);border-radius:var(--r);padding:1.4rem 1.2rem;display:flex;flex-direction:column;gap:.45rem}
+.dl-card-icon{font-size:1.8rem}
+.dl-card h3{font-size:.92rem;font-weight:700;color:#fff}
+.dl-card .dl-sub{font-size:.76rem;color:var(--dim)}
+.dl-btn{margin-top:auto;padding-top:.7rem;display:inline-flex;align-items:center;gap:.4rem;background:var(--bg3);border:1px solid var(--border);color:var(--text);text-decoration:none;padding:.48rem .85rem;border-radius:6px;font-size:.82rem;font-weight:600;transition:background .15s}
+.dl-btn:hover{background:var(--border)}
+.dl-btn.primary{background:var(--blue);color:#1e2127;border-color:var(--blue)}
+.dl-btn.primary:hover{background:#71bfff}
+.warn-box{background:#2a221a;border:1px solid #e5c07b44;border-left:4px solid var(--yellow);border-radius:var(--r);padding:1.2rem 1.4rem;margin-bottom:1.4rem}
+.warn-box h4{color:var(--yellow);font-size:.88rem;font-weight:700;margin-bottom:.5rem;display:flex;align-items:center;gap:.4rem}
+.warn-tabs{display:flex;gap:.4rem;margin-bottom:.9rem;flex-wrap:wrap}
+.warn-tab{background:var(--bg2);border:1px solid var(--border);color:var(--dim);padding:.28rem .7rem;border-radius:5px;font-size:.8rem;font-weight:600;cursor:pointer;transition:all .15s}
+.warn-tab.active{background:var(--border);color:#fff}
+.warn-body{font-size:.86rem;color:var(--text);line-height:1.7}
+.warn-body .hidden{display:none}
+code{background:var(--bg3);border:1px solid var(--border);padding:1px 5px;border-radius:3px;font-family:'SF Mono','Fira Code',monospace;font-size:.82em;color:var(--yellow)}
+pre{background:var(--bg3);border:1px solid var(--border);padding:.65rem .9rem;border-radius:6px;margin:.45rem 0;font-family:'SF Mono','Fira Code',monospace;font-size:.82rem;color:var(--green);overflow-x:auto}
+.free-tag{display:inline-flex;align-items:center;gap:.4rem;background:#1e3a2a;border:1px solid #98c37944;color:var(--green);padding:.45rem .9rem;border-radius:20px;font-size:.82rem;font-weight:600;margin-bottom:1.4rem}
 
-  /* ── Warning box ─────────────────────────────── */
-  .warning-box {
-    background: #2a221a;
-    border: 1px solid #e5c07b44;
-    border-left: 4px solid var(--yellow);
-    border-radius: var(--radius);
-    padding: 1.25rem 1.5rem;
-    margin-bottom: 1.5rem;
-  }
-  .warning-box h4 {
-    color: var(--yellow); font-size: 0.9rem; font-weight: 700;
-    margin-bottom: 0.5rem;
-    display: flex; align-items: center; gap: 0.5rem;
-  }
-  .warning-tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
-  .warning-tab {
-    background: var(--bg2); border: 1px solid var(--border);
-    color: var(--text-dim); padding: 0.3rem 0.75rem;
-    border-radius: 6px; font-size: 0.82rem; font-weight: 600;
-    cursor: pointer; transition: all .15s;
-  }
-  .warning-tab.active { background: var(--border); color: #fff; }
-  .warning-content { font-size: 0.88rem; color: var(--text); line-height: 1.7; }
-  .warning-content .hidden { display: none; }
-  code {
-    background: var(--bg3); border: 1px solid var(--border);
-    padding: 1px 6px; border-radius: 4px;
-    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85em;
-    color: #e5c07b;
-  }
-  pre {
-    background: var(--bg3); border: 1px solid var(--border);
-    padding: 0.75rem 1rem; border-radius: 6px; margin: 0.5rem 0;
-    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85rem;
-    color: var(--green); overflow-x: auto;
-  }
-  .free-badge {
-    display: inline-flex; align-items: center; gap: 0.4rem;
-    background: #1e3a2a; border: 1px solid #98c37944;
-    color: var(--green); padding: 0.5rem 1rem;
-    border-radius: 20px; font-size: 0.85rem; font-weight: 600;
-    margin-bottom: 1.5rem;
-  }
+/* ── Footer ──────────────────────────────── */
+footer{background:var(--bg2);border-top:1px solid var(--border);padding:2.2rem 2rem;text-align:center}
+footer p{font-size:.82rem;color:var(--dim);margin-bottom:.35rem}
+footer a{color:var(--blue);text-decoration:none}
+footer a:hover{text-decoration:underline}
 
-  /* ── Footer ──────────────────────────────────── */
-  footer {
-    background: var(--bg2);
-    border-top: 1px solid var(--border);
-    padding: 2.5rem 2rem;
-    text-align: center;
-  }
-  footer p { font-size: 0.85rem; color: var(--text-dim); margin-bottom: 0.4rem; }
-  footer a { color: var(--blue); text-decoration: none; }
-  footer a:hover { text-decoration: underline; }
-
-  @media (max-width: 640px) {
-    nav { padding: 0 1rem; gap: 1rem; }
-    .nav-links { display: none; }
-    .hero { padding: 4rem 1.5rem 3rem; }
-    section { padding: 3.5rem 1.5rem; }
-  }
+@media(max-width:640px){
+  nav{padding:0 1rem;gap:.8rem}
+  .nav-links{display:none}
+  .hero{padding:3.5rem 1.5rem 3rem}
+  .feat-section{padding:3rem 1.5rem}
+  .flow-arrow{display:none}
+}
 </style>
 </head>
 <body>
 
-<!-- ── Nav ─────────────────────────────────────────────────────────── -->
+<!-- ── Nav ──────────────────────────────────────────────── -->
 <nav>
   <a href="#" class="nav-logo">
-    <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
-      <rect width="22" height="22" rx="5" fill="#61afef22"/>
-      <path d="M4 11h14M4 7h14M4 15h8" stroke="#61afef" stroke-width="2" stroke-linecap="round"/>
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <rect width="20" height="20" rx="5" fill="#61afef22"/>
+      <path d="M3 10h14M3 6.5h14M3 13.5h8" stroke="#61afef" stroke-width="1.8" stroke-linecap="round"/>
     </svg>
     Main Desk
   </a>
   <div class="nav-links">
+    <a href="#concept" data-de="Konzept" data-en="Concept">Konzept</a>
     <a href="#features" data-de="Features" data-en="Features">Features</a>
     <a href="#download" data-de="Download" data-en="Download">Download</a>
   </div>
@@ -341,309 +154,443 @@
   <a href="#download" class="nav-cta" data-de="Herunterladen" data-en="Download">Herunterladen</a>
 </nav>
 
-<!-- ── Hero ────────────────────────────────────────────────────────── -->
+<!-- ── Hero ─────────────────────────────────────────────── -->
 <section class="hero">
   <div class="hero-badge">
-    <svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#98c379"/></svg>
-    <span data-de="Kostenlos &amp; Open Source" data-en="Free &amp; Open Source">Kostenlos &amp; Open Source</span>
+    <svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3.5" fill="#98c379"/></svg>
+    <span data-de="Kostenlos · Open Source" data-en="Free · Open Source">Kostenlos · Open Source</span>
   </div>
-  <h1 data-de="Regie-Software für<br><span>Bühnenproduktionen</span>" data-en="Stage Management<br><span>Software</span>">
-    Regie-Software für<br><span>Bühnenproduktionen</span>
+  <h1 data-de="Das Regiebuch,<br>das <em>mitarbeitet</em>" data-en="The script that<br><em>runs the show</em>">
+    Das Regiebuch,<br>das <em>mitarbeitet</em>
   </h1>
-  <p class="hero-sub" data-de="Skript, Cues, Audio, MIDI und Live-Ansicht in einer einzigen Markdown-Datei. Designed für Theater, Konzerte und Events." data-en="Script, cues, audio, MIDI and live view in a single Markdown file. Designed for theatre, concerts and events.">
-    Skript, Cues, Audio, MIDI und Live-Ansicht in einer einzigen Markdown-Datei. Designed für Theater, Konzerte und Events.
+  <p class="hero-lead" data-de="Main Desk ist ein interaktives Inspizientenbuch: Das Textbuch einer Produktion wird mit Cues ausgestattet – für Musik, Mikrofone, Lichtszenen und Timecode. Beim Durchspielen drückst du nur noch Go." data-en="Main Desk is an interactive stage manager's script: embed cues for music, microphones, lighting and timecode directly into the script. During the show, all you do is press Go.">
+    Main Desk ist ein interaktives Inspizientenbuch: Das Textbuch einer Produktion wird mit Cues ausgestattet – für Musik, Mikrofone, Lichtszenen und Timecode. Beim Durchspielen drückst du nur noch Go.
+  </p>
+  <p class="hero-kicker" data-de="Entspannt für erfahrene Regisseure – aber auch eine einzelne Person ohne jede Technik-Vorerfahrung kann damit eine komplette Show mit einem Go-Button fahren." data-en="Effortless for experienced directors – but even a single person with no technical background can run a full show with just one Go button.">
+    Entspannt für erfahrene Regisseure – aber auch eine einzelne Person ohne jede Technik-Vorerfahrung kann damit eine komplette Show mit einem Go-Button fahren.
   </p>
   <div class="hero-actions">
     <a href="#download" class="btn-primary">
-      <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/><path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/></svg>
-      <span data-de="Herunterladen" data-en="Download">Herunterladen</span>
+      <svg width="15" height="15" fill="currentColor" viewBox="0 0 16 16"><path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/><path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/></svg>
+      <span data-de="Kostenlos herunterladen" data-en="Download Free">Kostenlos herunterladen</span>
     </a>
-    <a href="#features" class="btn-secondary" data-de="Features ansehen" data-en="See Features">Features ansehen</a>
+    <a href="#concept" class="btn-ghost" data-de="Wie es funktioniert" data-en="How it works">Wie es funktioniert</a>
   </div>
-  <p class="hero-note">
-    <svg width="13" height="13" fill="#5c6370" viewBox="0 0 16 16"><path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm.93 9.412-1 4.705c-.07.34-.352.57-.683.57-.408 0-.683-.34-.607-.682l1-4.705c.07-.34.352-.57.683-.57.408 0 .683.34.607.682zm.117-2.412a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/></svg>
-    <span data-de="Kostenlos. Kein Account. Keine Cloud." data-en="Free. No account. No cloud.">Kostenlos. Kein Account. Keine Cloud.</span>
-  </p>
 </section>
 
-<!-- ── App Mockup ───────────────────────────────────────────────────── -->
-<div class="mockup-wrap">
-  <div class="mockup">
-    <div class="mockup-bar">
-      <div class="dot dot-r"></div>
-      <div class="dot dot-y"></div>
-      <div class="dot dot-g"></div>
-      <div class="mockup-title">Stück.md — Main Desk</div>
-    </div>
-    <div class="mockup-body">
-      <div class="mock-script-line" data-de="*Licht: Bühne dunkel. Musik setzt ein.*" data-en="*Light: Stage dark. Music begins.*">*Licht: Bühne dunkel. Musik setzt ein.*</div>
-      <div class="mock-row current">
-        <div class="mock-cue-num">3</div>
-        <div class="mock-info">
-          <div class="mock-label" data-de="Aktuell" data-en="Current">Aktuell</div>
-          <div class="mock-detail">
-            <span class="mock-badge loop">Loop</span>
-            &nbsp;Hauptthema.wav
-          </div>
-        </div>
-        <div class="mock-note" style="color:var(--green)">▶ 1:42</div>
+<!-- ── How it works ─────────────────────────────────────── -->
+<section class="flow-section" id="concept">
+  <div class="flow-inner">
+    <p class="section-label" style="text-align:center" data-de="So einfach geht's" data-en="How it works">So einfach geht's</p>
+    <h2 class="section-title" style="text-align:center" data-de="Vom Skript zur Show in vier Schritten" data-en="From script to show in four steps">Vom Skript zur Show in vier Schritten</h2>
+    <div class="flow-steps">
+      <div class="flow-step">
+        <div class="flow-icon b">📝</div>
+        <h4 data-de="Skript schreiben" data-en="Write the script">Skript schreiben</h4>
+        <p data-de="Das Textbuch als Markdown-Datei – mit Szenen, Dialogen und Regieanweisungen." data-en="The script as a Markdown file – scenes, dialogue and stage directions.">Das Textbuch als Markdown-Datei – mit Szenen, Dialogen und Regieanweisungen.</p>
       </div>
-      <div class="mock-row next">
-        <div class="mock-cue-num">4</div>
-        <div class="mock-info">
-          <div class="mock-label" data-de="Nächster Cue" data-en="Next Cue">Nächster Cue</div>
-          <div class="mock-detail">
-            <span class="mock-badge mic">🎤 Anna, Ben</span>
-            &nbsp;<span data-de="Dialog Szene 2" data-en="Dialogue Scene 2">Dialog Szene 2</span>
-          </div>
-        </div>
-        <div class="mock-note" style="color:var(--text-dim)">→ GO</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <div class="flow-icon y">⚡</div>
+        <h4 data-de="Cues einbetten" data-en="Embed cues">Cues einbetten</h4>
+        <p data-de="An den richtigen Stellen im Text YAML-Cues einfügen: Musik, Mikro, Licht, OSC…" data-en="Insert YAML cues at the right places: music, mic, light, OSC…">An den richtigen Stellen im Text YAML-Cues einfügen: Musik, Mikro, Licht, OSC…</p>
       </div>
-      <div class="mock-row plain">
-        <div class="mock-cue-num">5</div>
-        <div class="mock-info">
-          <div class="mock-detail" data-de="Finish: Abgang-Musik.wav" data-en="Finish: ExitMusic.wav">Finish: Abgang-Musik.wav</div>
-        </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <div class="flow-icon g">🖥</div>
+        <h4 data-de="Live-Ansicht öffnen" data-en="Open Live View">Live-Ansicht öffnen</h4>
+        <p data-de="Separates Fenster für den Regie-Monitor zeigt aktuellen und nächsten Cue." data-en="Separate window for the monitor shows current and next cue.">Separates Fenster für den Regie-Monitor zeigt aktuellen und nächsten Cue.</p>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <div class="flow-icon p">▶</div>
+        <h4 data-de="Show fahren" data-en="Run the show">Show fahren</h4>
+        <p data-de="Go drücken – fertig. Auch per MIDI-Controller oder Bluetooth-Pedal." data-en="Press Go – done. Also via MIDI controller or Bluetooth pedal.">Go drücken – fertig. Auch per MIDI-Controller oder Bluetooth-Pedal.</p>
       </div>
     </div>
   </div>
-</div>
+</section>
 
-<hr class="divider" style="margin-top: 4rem;">
-
-<!-- ── Features ────────────────────────────────────────────────────── -->
-<section id="features">
-  <div class="section-inner">
-    <p class="section-label" data-de="Was Main Desk kann" data-en="What Main Desk does">Was Main Desk kann</p>
-    <h2 class="section-title" data-de="Alles für die Regie,<br>nichts Überflüssiges" data-en="Everything for stage management,<br>nothing superfluous">Alles für die Regie,<br>nichts Überflüssiges</h2>
-    <p class="section-sub" data-de="Speziell entwickelt für den professionellen Bühneneinsatz. Kein Overhead, keine Ablenkung." data-en="Built specifically for professional stage use. No overhead, no distraction.">
-      Speziell entwickelt für den professionellen Bühneneinsatz. Kein Overhead, keine Ablenkung.
+<!-- ── Features ──────────────────────────────────────────── -->
+<section class="feat-section" id="features">
+  <div class="feat-inner">
+    <p class="section-label" data-de="Features" data-en="Features">Features</p>
+    <h2 class="section-title" data-de="Alles, was eine Produktion braucht" data-en="Everything a production needs">Alles, was eine Produktion braucht</h2>
+    <p class="section-sub" data-de="Von der kleinen Schulaufführung bis zum professionellen Theater – Main Desk passt sich der Produktion an." data-en="From the small school play to the professional theatre – Main Desk adapts to the production.">
+      Von der kleinen Schulaufführung bis zum professionellen Theater – Main Desk passt sich der Produktion an.
     </p>
-    <div class="features-grid">
 
-      <div class="feature-card">
-        <div class="feature-icon blue">🎬</div>
-        <h3 data-de="Live-Ansicht" data-en="Live View">Live-Ansicht</h3>
-        <p data-de="Separates Fenster für Bühnen- oder Regiemonitor zeigt aktuellen und nächsten Cue, Go/Back-Tasten, Audio-Fortschritt und Varianten-Auswahl." data-en="Separate window for stage or director's monitor shows current and next cue, Go/Back buttons, audio progress and variant selection.">
-          Separates Fenster für Bühnen- oder Regiemonitor zeigt aktuellen und nächsten Cue, Go/Back-Tasten, Audio-Fortschritt und Varianten-Auswahl.
-        </p>
+    <!-- Feature 1: Interaktives Inspizientenbuch -->
+    <div class="feat-block">
+      <div class="feat-graphic">
+        <!-- Script + Cue SVG -->
+        <svg viewBox="0 0 280 200" width="280" height="200" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Page background -->
+          <rect x="20" y="10" width="240" height="180" rx="8" fill="#21252b" stroke="#383c44"/>
+          <!-- Text lines -->
+          <rect x="36" y="28" width="140" height="7" rx="3" fill="#383c44"/>
+          <rect x="36" y="42" width="100" height="7" rx="3" fill="#383c44"/>
+          <!-- Cue block 1 -->
+          <rect x="36" y="58" width="208" height="34" rx="5" fill="#1e3a2a" stroke="#98c379" stroke-width="1.2"/>
+          <rect x="36" y="58" width="4" height="34" rx="2" fill="#98c379"/>
+          <rect x="48" y="65" width="50" height="5" rx="2" fill="#98c37966"/>
+          <rect x="48" y="74" width="80" height="5" rx="2" fill="#98c37944"/>
+          <!-- Music icon in cue -->
+          <circle cx="222" cy="75" r="9" fill="#98c37922" stroke="#98c37966"/>
+          <text x="222" y="79" text-anchor="middle" font-size="10" fill="#98c379">♪</text>
+          <!-- Text lines -->
+          <rect x="36" y="102" width="120" height="7" rx="3" fill="#383c44"/>
+          <rect x="36" y="116" width="160" height="7" rx="3" fill="#383c44"/>
+          <!-- Cue block 2 -->
+          <rect x="36" y="132" width="208" height="34" rx="5" fill="#1e3a52" stroke="#61afef" stroke-width="1.2"/>
+          <rect x="36" y="132" width="4" height="34" rx="2" fill="#61afef"/>
+          <rect x="48" y="139" width="55" height="5" rx="2" fill="#61afef66"/>
+          <rect x="48" y="148" width="70" height="5" rx="2" fill="#61afef44"/>
+          <!-- Mic icon in cue -->
+          <circle cx="222" cy="149" r="9" fill="#61afef22" stroke="#61afef66"/>
+          <text x="222" y="153" text-anchor="middle" font-size="10" fill="#61afef">🎤</text>
+          <!-- Cue number badges -->
+          <rect x="244" y="62" width="0" height="0"/>
+          <!-- Right side numbers -->
+          <text x="255" y="79" text-anchor="middle" font-size="9" fill="#5c6370">1</text>
+          <text x="255" y="153" text-anchor="middle" font-size="9" fill="#5c6370">2</text>
+        </svg>
       </div>
-
-      <div class="feature-card">
-        <div class="feature-icon green">🎵</div>
-        <h3 data-de="Nahtlose Audio-Übergänge" data-en="Gapless Audio">Nahtlose Audio-Übergänge</h3>
-        <p data-de="S/L/F-System (Start / Loop / Finish) für samplegenaue Übergänge ohne Klick oder Stille — via WebAudio AudioBufferSourceNode." data-en="S/L/F system (Start / Loop / Finish) for sample-accurate transitions without click or silence — via WebAudio AudioBufferSourceNode.">
-          S/L/F-System (Start / Loop / Finish) für samplegenaue Übergänge ohne Klick oder Stille — via WebAudio AudioBufferSourceNode.
+      <div class="feat-text">
+        <h3 data-de="Cues direkt im Textbuch" data-en="Cues right inside the script">Cues direkt im Textbuch</h3>
+        <p data-de="Musik, Mikrofone, Lichtszenen und mehr werden als YAML-Blöcke direkt an der richtigen Stelle im Skript eingebettet. Das Textbuch und die Show-Steuerung sind eine einzige Datei." data-en="Music, microphones, lighting and more are embedded as YAML blocks directly at the right place in the script. The script and show control are a single file.">
+          Musik, Mikrofone, Lichtszenen und mehr werden als YAML-Blöcke direkt an der richtigen Stelle im Skript eingebettet. Das Textbuch und die Show-Steuerung sind eine einzige Datei.
         </p>
-      </div>
-
-      <div class="feature-card">
-        <div class="feature-icon yellow">🎛</div>
-        <h3>MIDI &amp; OSC</h3>
-        <p data-de="X32-Mikrofon-Routing, Trigger-Noten, MIDI Timecode (MTC 25fps) und custom OSC-Nachrichten pro Cue. Go/Back via MIDI-Controller." data-en="X32 mic routing, trigger notes, MIDI Timecode (MTC 25fps) and custom OSC messages per cue. Go/Back via MIDI controller.">
-          X32-Mikrofon-Routing, Trigger-Noten, MIDI Timecode (MTC 25fps) und custom OSC-Nachrichten pro Cue. Go/Back via MIDI-Controller.
+        <p data-de="Ein Cue ist schnell hinzugefügt: Schaltfläche klicken, Datei wählen, fertig. Keine separate Cue-Software, keine Synchronisation." data-en="Adding a cue is quick: click the button, choose a file, done. No separate cueing software, no synchronisation.">
+          Ein Cue ist schnell hinzugefügt: Schaltfläche klicken, Datei wählen, fertig. Keine separate Cue-Software, keine Synchronisation.
         </p>
+        <div class="feat-tags">
+          <span class="tag g" data-de="Musik · Mikrofone · Licht" data-en="Music · Microphones · Lighting">Musik · Mikrofone · Licht</span>
+          <span class="tag b" data-de="MIDI · OSC · Timecode" data-en="MIDI · OSC · Timecode">MIDI · OSC · Timecode</span>
+        </div>
       </div>
-
-      <div class="feature-card">
-        <div class="feature-icon purple">📝</div>
-        <h3 data-de="Markdown-Workflow" data-en="Markdown Workflow">Markdown-Workflow</h3>
-        <p data-de="Skript und alle Cues leben in einer einzigen .md-Datei. Git-versionierbar, im Texteditor bearbeitbar, auf mehreren Rechnern nutzbar." data-en="Script and all cues live in a single .md file. Git-versionable, editable in any text editor, usable on multiple machines.">
-          Skript und alle Cues leben in einer einzigen .md-Datei. Git-versionierbar, im Texteditor bearbeitbar, auf mehreren Rechnern nutzbar.
-        </p>
-      </div>
-
-      <div class="feature-card">
-        <div class="feature-icon red">📤</div>
-        <h3 data-de="Export" data-en="Export">Export</h3>
-        <p data-de="PDF und DOCX-Export mit Deckblatt, Inhaltsverzeichnis, Rollennamen in Farbe und allen Cue-Informationen — druckfertig für Probe und Aufführung." data-en="PDF and DOCX export with title page, table of contents, coloured role names and all cue info — print-ready for rehearsal and performance.">
-          PDF und DOCX-Export mit Deckblatt, Inhaltsverzeichnis, Rollennamen in Farbe und allen Cue-Informationen — druckfertig für Probe und Aufführung.
-        </p>
-      </div>
-
-      <div class="feature-card">
-        <div class="feature-icon teal">🖥</div>
-        <h3 data-de="Dual-Audio-Ausgang" data-en="Dual Audio Output">Dual-Audio-Ausgang</h3>
-        <p data-de="Getrennte Kanäle für Haupt- und Monitor-Mix auf einem Aggregate Device. Pro Cue eigene Monitor-Datei (z.B. mit Klickspur)." data-en="Separate channels for main and monitor mix on one aggregate device. Per-cue monitor file (e.g. with click track).">
-          Getrennte Kanäle für Haupt- und Monitor-Mix auf einem Aggregate Device. Pro Cue eigene Monitor-Datei (z.B. mit Klickspur).
-        </p>
-      </div>
-
     </div>
+
+    <!-- Feature 2: Live-Ansicht / Go-Back -->
+    <div class="feat-block reverse">
+      <div class="feat-graphic">
+        <!-- Live view SVG -->
+        <svg viewBox="0 0 280 200" width="280" height="200" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Screen frame -->
+          <rect x="15" y="10" width="250" height="180" rx="10" fill="#21252b" stroke="#383c44"/>
+          <!-- Current cue (amber) -->
+          <rect x="28" y="24" width="224" height="62" rx="7" fill="#282c34" stroke="#e5c07b55"/>
+          <rect x="28" y="24" width="5" height="62" rx="3" fill="#e5c07b"/>
+          <text x="42" y="40" font-size="8.5" fill="#5c6370">AKTUELL</text>
+          <text x="42" y="54" font-size="12" fill="#fff" font-weight="bold">Cue 3 · Hauptthema</text>
+          <rect x="42" y="62" width="70" height="6" rx="3" fill="#98c37944"/>
+          <circle cx="230" cy="55" r="6" fill="#98c37944"/>
+          <circle cx="230" cy="55" r="3.5" fill="#98c379"/>
+          <!-- Progress bar -->
+          <rect x="28" y="88" width="224" height="3" rx="1.5" fill="#2c313a"/>
+          <rect x="28" y="88" width="110" height="3" rx="1.5" fill="#e5c07b88"/>
+          <!-- Next cue (white glow) -->
+          <rect x="28" y="100" width="224" height="62" rx="7" fill="#1e2430" stroke="rgba(255,255,255,.7)" stroke-width="1.5"/>
+          <text x="42" y="116" font-size="8.5" fill="rgba(255,255,255,.5)">NÄCHSTER CUE</text>
+          <text x="42" y="130" font-size="12" fill="#fff" font-weight="bold">Cue 4 · Dialog Szene 2</text>
+          <rect x="42" y="138" width="55" height="6" rx="3" fill="#61afef44"/>
+          <!-- Go/Back buttons -->
+          <rect x="28" y="170" width="95" height="14" rx="5" fill="#383c44"/>
+          <text x="75" y="181" text-anchor="middle" font-size="8" fill="#abb2bf">◀ Back</text>
+          <rect x="133" y="170" width="119" height="14" rx="5" fill="#98c379"/>
+          <text x="193" y="181" text-anchor="middle" font-size="8" fill="#1e2127" font-weight="700">Go ▶</text>
+        </svg>
+      </div>
+      <div class="feat-text">
+        <h3 data-de="Live-Ansicht: immer den Überblick" data-en="Live View: always in control">Live-Ansicht: immer den Überblick</h3>
+        <p data-de="Ein separates Fenster – für den zweiten Monitor oder ein Tablet – zeigt den aktuellen und den nächsten Cue. Mit den Tasten Go und Back läuft die Show." data-en="A separate window – for a second monitor or tablet – shows the current and next cue. The show runs with Go and Back.">
+          Ein separates Fenster – für den zweiten Monitor oder ein Tablet – zeigt den aktuellen und den nächsten Cue. Mit den Tasten Go und Back läuft die Show.
+        </p>
+        <p data-de="Go und Back funktionieren auch per Tastatur, MIDI-Controller oder Bluetooth-Pedal. Wer möchte, kann Varianten auswählen, bevor er Go drückt." data-en="Go and Back also work via keyboard, MIDI controller or Bluetooth pedal. Variants can be selected before pressing Go.">
+          Go und Back funktionieren auch per Tastatur, MIDI-Controller oder Bluetooth-Pedal. Wer möchte, kann Varianten auswählen, bevor er Go drückt.
+        </p>
+        <div class="feat-tags">
+          <span class="tag y" data-de="Aktueller Cue" data-en="Current cue">Aktueller Cue</span>
+          <span class="tag g" data-de="Nächster Cue" data-en="Next cue">Nächster Cue</span>
+          <span class="tag b" data-de="Go · Back" data-en="Go · Back">Go · Back</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Feature 3: Gapless Audio / S-L-F -->
+    <div class="feat-block">
+      <div class="feat-graphic">
+        <!-- Gapless audio SVG -->
+        <svg viewBox="0 0 280 200" width="280" height="200" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Labels -->
+          <text x="45" y="22" text-anchor="middle" font-size="9" fill="#98c379" font-weight="700">START</text>
+          <text x="140" y="22" text-anchor="middle" font-size="9" fill="#61afef" font-weight="700">LOOP</text>
+          <text x="235" y="22" text-anchor="middle" font-size="9" fill="#e5c07b" font-weight="700">FINISH</text>
+          <!-- Start waveform block -->
+          <rect x="15" y="30" width="60" height="80" rx="6" fill="#1e3a2a" stroke="#98c379" stroke-width="1.2"/>
+          <path d="M22 70 Q27 50 32 70 Q37 90 42 70 Q47 50 52 70 Q57 90 62 70 Q67 50 70 70" stroke="#98c379" stroke-width="1.5" stroke-linecap="round"/>
+          <!-- Arrow Start→Loop -->
+          <path d="M78 70 L100 70" stroke="#383c44" stroke-width="1.5" stroke-dasharray="3,2" marker-end="url(#arr)"/>
+          <!-- Loop waveform block -->
+          <rect x="103" y="30" width="74" height="80" rx="6" fill="#1e3a52" stroke="#61afef" stroke-width="1.2"/>
+          <path d="M110 70 Q117 45 124 70 Q131 95 138 70 Q145 45 152 70 Q159 95 166 70 Q170 45 173 70" stroke="#61afef" stroke-width="1.5" stroke-linecap="round"/>
+          <!-- Loop arrow (circular) -->
+          <path d="M117 118 Q140 138 163 118" stroke="#61afef" stroke-width="1.5" fill="none" marker-end="url(#arb)"/>
+          <text x="140" y="148" text-anchor="middle" font-size="8" fill="#61afef88">loopt endlos</text>
+          <!-- Arrow Loop→Finish (on cue) -->
+          <path d="M180 70 L200 70" stroke="#383c44" stroke-width="1.5" stroke-dasharray="3,2" marker-end="url(#arr)"/>
+          <text x="190" y="63" text-anchor="middle" font-size="7" fill="#e5c07b88">Go</text>
+          <!-- Finish waveform block -->
+          <rect x="203" y="30" width="62" height="80" rx="6" fill="#3a321e" stroke="#e5c07b" stroke-width="1.2"/>
+          <path d="M210 70 Q217 50 224 70 Q231 90 238 70 Q245 50 252 70 Q257 60 263 70" stroke="#e5c07b" stroke-width="1.5" stroke-linecap="round"/>
+          <!-- Seamless label -->
+          <rect x="60" y="60" width="26" height="20" rx="3" fill="#282c34" stroke="#383c44"/>
+          <text x="73" y="74" text-anchor="middle" font-size="9" fill="#5c6370">⇥⇤</text>
+          <rect x="178" y="60" width="26" height="20" rx="3" fill="#282c34" stroke="#383c44"/>
+          <text x="191" y="74" text-anchor="middle" font-size="9" fill="#5c6370">⇥⇤</text>
+          <!-- Bottom label -->
+          <text x="140" y="178" text-anchor="middle" font-size="9" fill="#5c6370">Samplegenauer, nahtloser Übergang</text>
+          <!-- Defs -->
+          <defs>
+            <marker id="arr" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="#383c44"/>
+            </marker>
+            <marker id="arb" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="#61afef"/>
+            </marker>
+          </defs>
+        </svg>
+      </div>
+      <div class="feat-text">
+        <h3 data-de="Nahtlose Audio-Übergänge" data-en="Gapless Audio Transitions">Nahtlose Audio-Übergänge</h3>
+        <p data-de="Das S/L/F-System (Start / Loop / Finish) ermöglicht samplegenaue Übergänge ohne Stille oder Klick. Ein Intro spielt durch, eine Schleife loopt endlos, und auf Go startet der Ausgang nahtlos." data-en="The S/L/F system (Start / Loop / Finish) enables sample-accurate transitions without silence or clicks. An intro plays through, a loop runs endlessly, and on Go the outro starts seamlessly.">
+          Das S/L/F-System (Start / Loop / Finish) ermöglicht samplegenaue Übergänge ohne Stille oder Klick. Ein Intro spielt durch, eine Schleife loopt endlos, und auf Go startet der Ausgang nahtlos.
+        </p>
+        <p data-de="Für nahtlose Übergänge WAV-Dateien verwenden – MP3 und AAC haben Encoder-Padding, das eine Lücke erzeugt." data-en="Use WAV files for gapless transitions – MP3 and AAC have encoder padding that creates a gap.">
+          Für nahtlose Übergänge WAV-Dateien verwenden – MP3 und AAC haben Encoder-Padding, das eine Lücke erzeugt.
+        </p>
+        <div class="feat-tags">
+          <span class="tag g">Start</span>
+          <span class="tag b">Loop</span>
+          <span class="tag y">Finish · Bridge</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Feature 4: Show Control -->
+    <div class="feat-block reverse">
+      <div class="feat-graphic">
+        <!-- Show control hub SVG -->
+        <svg viewBox="0 0 280 200" width="280" height="200" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Center hub -->
+          <rect x="95" y="75" width="90" height="50" rx="9" fill="#21252b" stroke="#61afef" stroke-width="1.5"/>
+          <text x="140" y="96" text-anchor="middle" font-size="9" fill="#61afef" font-weight="700">Main Desk</text>
+          <text x="140" y="109" text-anchor="middle" font-size="7.5" fill="#5c6370">Show Control</text>
+          <!-- MIDI Mixer (top-left) -->
+          <rect x="15" y="15" width="60" height="40" rx="6" fill="#1e3a52" stroke="#61afef88"/>
+          <text x="45" y="30" text-anchor="middle" font-size="7.5" fill="#61afef">🎛 X32</text>
+          <text x="45" y="42" text-anchor="middle" font-size="7" fill="#5c6370">Mikrofone</text>
+          <line x1="75" y1="35" x2="95" y2="85" stroke="#61afef44" stroke-width="1.2" stroke-dasharray="3,2"/>
+          <!-- Lights (top-right) -->
+          <rect x="205" y="15" width="60" height="40" rx="6" fill="#3a321e" stroke="#e5c07b88"/>
+          <text x="235" y="30" text-anchor="middle" font-size="7.5" fill="#e5c07b">✦ Licht</text>
+          <text x="235" y="42" text-anchor="middle" font-size="7" fill="#5c6370">DMX / Noten</text>
+          <line x1="205" y1="35" x2="185" y2="85" stroke="#e5c07b44" stroke-width="1.2" stroke-dasharray="3,2"/>
+          <!-- Timecode (bottom-left) -->
+          <rect x="15" y="145" width="60" height="40" rx="6" fill="#1e3a2a" stroke="#98c37988"/>
+          <text x="45" y="160" text-anchor="middle" font-size="7.5" fill="#98c379">⏱ MTC</text>
+          <text x="45" y="172" text-anchor="middle" font-size="7" fill="#5c6370">MIDI Timecode</text>
+          <line x1="75" y1="165" x2="95" y2="125" stroke="#98c37944" stroke-width="1.2" stroke-dasharray="3,2"/>
+          <!-- OSC (bottom-right) -->
+          <rect x="205" y="145" width="60" height="40" rx="6" fill="#2e1e3a" stroke="#c678dd88"/>
+          <text x="235" y="160" text-anchor="middle" font-size="7.5" fill="#c678dd">⌁ OSC</text>
+          <text x="235" y="172" text-anchor="middle" font-size="7" fill="#5c6370">Netzwerk</text>
+          <line x1="205" y1="165" x2="185" y2="125" stroke="#c678dd44" stroke-width="1.2" stroke-dasharray="3,2"/>
+          <!-- MIDI controller (top-center) -->
+          <rect x="108" y="15" width="64" height="30" rx="6" fill="#383c44" stroke="#5c6370"/>
+          <text x="140" y="28" text-anchor="middle" font-size="7.5" fill="#abb2bf">MIDI-Controller</text>
+          <text x="140" y="38" text-anchor="middle" font-size="7" fill="#5c6370">Go · Back</text>
+          <line x1="140" y1="45" x2="140" y2="75" stroke="#5c637044" stroke-width="1.2" stroke-dasharray="3,2"/>
+        </svg>
+      </div>
+      <div class="feat-text">
+        <h3 data-de="MIDI, OSC und Timecode" data-en="MIDI, OSC and Timecode">MIDI, OSC und Timecode</h3>
+        <p data-de="Main Desk ist die Schaltzentrale der Show: Mikrofon-Routing am X32-Mischpult via MIDI, custom OSC-Nachrichten an beliebige Systeme, MIDI Timecode (MTC 25fps) für Licht und Video." data-en="Main Desk is the show control hub: microphone routing on the X32 mixer via MIDI, custom OSC messages to any system, MIDI Timecode (MTC 25fps) for lighting and video.">
+          Main Desk ist die Schaltzentrale der Show: Mikrofon-Routing am X32-Mischpult via MIDI, custom OSC-Nachrichten an beliebige Systeme, MIDI Timecode (MTC 25fps) für Licht und Video.
+        </p>
+        <p data-de="Go und Back lassen sich jedem MIDI-Controller, Bluetooth-Pedal oder Keyboard zuweisen. Per Langdruck auf den Back-Button werden alle Wiedergaben sofort gestoppt." data-en="Go and Back can be assigned to any MIDI controller, Bluetooth pedal or keyboard. Long-pressing Back stops all playback immediately.">
+          Go und Back lassen sich jedem MIDI-Controller, Bluetooth-Pedal oder Keyboard zuweisen. Per Langdruck auf den Back-Button werden alle Wiedergaben sofort gestoppt.
+        </p>
+        <div class="feat-tags">
+          <span class="tag b">MIDI · MTC</span>
+          <span class="tag p">OSC</span>
+          <span class="tag g" data-de="X32 Routing" data-en="X32 Routing">X32 Routing</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Feature 5: Dual audio + Export -->
+    <div class="feat-block">
+      <div class="feat-graphic">
+        <!-- Dual audio routing SVG -->
+        <svg viewBox="0 0 280 200" width="280" height="200" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Source -->
+          <rect x="95" y="20" width="90" height="35" rx="7" fill="#21252b" stroke="#383c44"/>
+          <text x="140" y="33" text-anchor="middle" font-size="8" fill="#abb2bf">Audiodatei</text>
+          <text x="140" y="45" text-anchor="middle" font-size="8" fill="#5c6370">dialog.wav</text>
+          <!-- Splitter line down -->
+          <line x1="140" y1="55" x2="140" y2="75" stroke="#383c44" stroke-width="1.2"/>
+          <line x1="140" y1="75" x2="80" y2="95" stroke="#61afef44" stroke-width="1.2"/>
+          <line x1="140" y1="75" x2="200" y2="95" stroke="#98c37944" stroke-width="1.2"/>
+          <!-- Main output -->
+          <rect x="25" y="95" width="110" height="42" rx="7" fill="#1e3a52" stroke="#61afef" stroke-width="1.2"/>
+          <text x="80" y="111" text-anchor="middle" font-size="8" fill="#61afef" font-weight="700">Main-Ausgang</text>
+          <text x="80" y="122" text-anchor="middle" font-size="7.5" fill="#5c6370">Kanal 1+2 · PA-Anlage</text>
+          <rect x="34" y="129" width="92" height="4" rx="2" fill="#61afef44"/>
+          <!-- Monitor output -->
+          <rect x="145" y="95" width="110" height="42" rx="7" fill="#1e3a2a" stroke="#98c379" stroke-width="1.2"/>
+          <text x="200" y="111" text-anchor="middle" font-size="8" fill="#98c379" font-weight="700">Monitor-Ausgang</text>
+          <text x="200" y="122" text-anchor="middle" font-size="7.5" fill="#5c6370">Kanal 3+4 · Kopfhörer</text>
+          <rect x="154" y="129" width="92" height="4" rx="2" fill="#98c37944"/>
+          <!-- Monitor file option -->
+          <rect x="145" y="148" width="110" height="30" rx="6" fill="#282c34" stroke="#383c44" stroke-dasharray="3,2"/>
+          <text x="200" y="160" text-anchor="middle" font-size="7.5" fill="#5c6370">optional:</text>
+          <text x="200" y="171" text-anchor="middle" font-size="7.5" fill="#5c6370">dialog-click.wav</text>
+          <line x1="200" y1="137" x2="200" y2="148" stroke="#383c44" stroke-width="1" stroke-dasharray="2,2"/>
+          <!-- "Aggregate Device" label -->
+          <text x="140" y="195" text-anchor="middle" font-size="8" fill="#5c6370">via Aggregate Device</text>
+        </svg>
+      </div>
+      <div class="feat-text">
+        <h3 data-de="Dual-Audio: Main und Monitor getrennt" data-en="Dual Audio: Main and Monitor separate">Dual-Audio: Main und Monitor getrennt</h3>
+        <p data-de="Auf einem einzigen Aggregate Device werden Haupt- und Monitor-Mix auf verschiedene Ausgangskanäle geroutet. Pro Cue kann eine eigene Monitor-Datei hinterlegt werden – z.B. mit Klickspur oder Regiesprechern." data-en="On a single aggregate device, main and monitor mix are routed to different output channels. Each cue can have its own monitor file – e.g. with a click track or director's cues.">
+          Auf einem einzigen Aggregate Device werden Haupt- und Monitor-Mix auf verschiedene Ausgangskanäle geroutet. Pro Cue kann eine eigene Monitor-Datei hinterlegt werden – z.B. mit Klickspur oder Regiesprechern.
+        </p>
+        <p data-de="Die Kanalzuweisung erfolgt in den Einstellungen per Routing-Matrix. Auch PDF- und DOCX-Export des Regiebuchs ist eingebaut." data-en="Channel assignment is done in the settings via a routing matrix. PDF and DOCX export of the script is also built in.">
+          Die Kanalzuweisung erfolgt in den Einstellungen per Routing-Matrix. Auch PDF- und DOCX-Export des Regiebuchs ist eingebaut.
+        </p>
+        <div class="feat-tags">
+          <span class="tag b" data-de="Haupt-Audio" data-en="Main Audio">Haupt-Audio</span>
+          <span class="tag g" data-de="Monitor-Mix" data-en="Monitor Mix">Monitor-Mix</span>
+          <span class="tag y" data-de="PDF · DOCX Export" data-en="PDF · DOCX Export">PDF · DOCX Export</span>
+        </div>
+      </div>
+    </div>
+
   </div>
 </section>
 
-<hr class="divider">
-
-<!-- ── Download ─────────────────────────────────────────────────────── -->
-<section id="download">
-  <div class="section-inner">
+<!-- ── Download ──────────────────────────────────────────── -->
+<section class="dl-section" id="download">
+  <div class="feat-inner">
     <p class="section-label">Download</p>
-    <h2 class="section-title" data-de="Kostenlos herunterladen" data-en="Download for Free">Kostenlos herunterladen</h2>
-    <p class="section-sub" data-de="Verfügbar für macOS, Windows und Linux. Keine Installation eines Accounts nötig." data-en="Available for macOS, Windows and Linux. No account required.">
-      Verfügbar für macOS, Windows und Linux. Keine Installation eines Accounts nötig.
+    <h2 class="section-title" data-de="Kostenlos und ohne Account" data-en="Free and without an account">Kostenlos und ohne Account</h2>
+    <p class="section-sub" data-de="Für macOS, Windows und Linux. Keine Telemetrie, keine Cloud, keine Subscription." data-en="For macOS, Windows and Linux. No telemetry, no cloud, no subscription.">
+      Für macOS, Windows und Linux. Keine Telemetrie, keine Cloud, keine Subscription.
     </p>
-
-    <div class="free-badge">
-      ✦ <span data-de="Kostenlos · Open Source · Keine Telemetrie" data-en="Free · Open Source · No Telemetry">Kostenlos · Open Source · Keine Telemetrie</span>
+    <div class="free-tag">
+      ✦ <span data-de="Frei · Open Source · MIT-Lizenz" data-en="Free · Open Source · MIT License">Frei · Open Source · MIT-Lizenz</span>
     </div>
-
-    <div class="download-grid">
+    <div class="dl-grid">
       <div class="dl-card">
         <div class="dl-card-icon">🍎</div>
         <h3>macOS</h3>
-        <div class="dl-type">Apple Silicon (M1/M2/M3/M4)</div>
-        <a href="downloads/MainDesk-macos-arm64.dmg" class="dl-btn primary">
-          ↓ <span data-de=".dmg herunterladen" data-en="Download .dmg">.dmg herunterladen</span>
-        </a>
+        <div class="dl-sub">Apple Silicon (M-Series)</div>
+        <a href="downloads/MainDesk-macos-arm64.dmg" class="dl-btn primary">↓ .dmg</a>
       </div>
       <div class="dl-card">
         <div class="dl-card-icon">🍎</div>
         <h3>macOS</h3>
-        <div class="dl-type">Intel (x64)</div>
-        <a href="downloads/MainDesk-macos-x64.dmg" class="dl-btn">
-          ↓ <span data-de=".dmg herunterladen" data-en="Download .dmg">.dmg herunterladen</span>
-        </a>
+        <div class="dl-sub">Intel (x64)</div>
+        <a href="downloads/MainDesk-macos-x64.dmg" class="dl-btn">↓ .dmg</a>
       </div>
       <div class="dl-card">
         <div class="dl-card-icon">🪟</div>
         <h3>Windows</h3>
-        <div class="dl-type">64-bit Installer</div>
-        <a href="downloads/MainDesk-windows-x64.exe" class="dl-btn">
-          ↓ <span data-de=".exe herunterladen" data-en="Download .exe">.exe herunterladen</span>
-        </a>
+        <div class="dl-sub">64-bit Installer</div>
+        <a href="downloads/MainDesk-windows-x64.exe" class="dl-btn">↓ .exe</a>
       </div>
       <div class="dl-card">
         <div class="dl-card-icon">🐧</div>
         <h3>Linux</h3>
-        <div class="dl-type">AppImage (universell)</div>
-        <a href="downloads/MainDesk-linux-x64.AppImage" class="dl-btn">
-          ↓ AppImage
-        </a>
+        <div class="dl-sub">AppImage (universal)</div>
+        <a href="downloads/MainDesk-linux-x64.AppImage" class="dl-btn">↓ AppImage</a>
       </div>
       <div class="dl-card">
         <div class="dl-card-icon">🐧</div>
         <h3>Linux</h3>
-        <div class="dl-type">Debian / Ubuntu (.deb)</div>
-        <a href="downloads/MainDesk-linux-x64.deb" class="dl-btn">
-          ↓ .deb
-        </a>
+        <div class="dl-sub">Debian / Ubuntu</div>
+        <a href="downloads/MainDesk-linux-x64.deb" class="dl-btn">↓ .deb</a>
       </div>
       <div class="dl-card">
         <div class="dl-card-icon">🐧</div>
         <h3>Linux</h3>
-        <div class="dl-type">Fedora / RHEL (.rpm)</div>
-        <a href="downloads/MainDesk-linux-x64.rpm" class="dl-btn">
-          ↓ .rpm
-        </a>
+        <div class="dl-sub">Fedora / RHEL</div>
+        <a href="downloads/MainDesk-linux-x64.rpm" class="dl-btn">↓ .rpm</a>
       </div>
     </div>
 
-    <!-- Warning box -->
-    <div class="warning-box">
+    <div class="warn-box">
       <h4>
-        <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></svg>
-        <span data-de="Hinweis: Unsignierte Software" data-en="Note: Unsigned Software">Hinweis: Unsignierte Software</span>
+        <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></svg>
+        <span data-de="Hinweis: Software ist nicht signiert" data-en="Note: Software is unsigned">Hinweis: Software ist nicht signiert</span>
       </h4>
-      <div class="warning-tabs">
-        <button class="warning-tab active" onclick="showWarning('mac')" id="tab-mac">macOS</button>
-        <button class="warning-tab"        onclick="showWarning('win')" id="tab-win">Windows</button>
-        <button class="warning-tab"        onclick="showWarning('lin')" id="tab-lin">Linux</button>
-        <button class="warning-tab"        onclick="showWarning('why')" id="tab-why" data-de="Warum?" data-en="Why?">Warum?</button>
+      <div class="warn-tabs">
+        <button class="warn-tab active" onclick="showWarn('mac')">macOS</button>
+        <button class="warn-tab"        onclick="showWarn('win')">Windows</button>
+        <button class="warn-tab"        onclick="showWarn('lin')">Linux</button>
+        <button class="warn-tab"        onclick="showWarn('why')" data-de="Warum?" data-en="Why?">Warum?</button>
       </div>
-      <div class="warning-content">
+      <div class="warn-body">
         <div id="warn-mac">
-          <p data-de="macOS zeigt beim ersten Start eine Warnung von Gatekeeper. So öffnest du Main Desk trotzdem:" data-en="macOS shows a Gatekeeper warning on first launch. Here's how to open Main Desk anyway:">
-            macOS zeigt beim ersten Start eine Warnung von Gatekeeper. So öffnest du Main Desk trotzdem:
-          </p>
-          <p style="margin-top:.5rem"><strong data-de="Option 1 – Systemeinstellungen:" data-en="Option 1 – System Settings:">Option 1 – Systemeinstellungen:</strong></p>
-          <p data-de='Systemeinstellungen → Datenschutz &amp; Sicherheit → ganz nach unten scrollen → „Main Desk" → „Trotzdem öffnen"' data-en='System Settings → Privacy &amp; Security → scroll down → "Main Desk" → "Open Anyway"'>
-            Systemeinstellungen → Datenschutz &amp; Sicherheit → ganz nach unten scrollen → „Main Desk" → „Trotzdem öffnen"
-          </p>
-          <p style="margin-top:.5rem"><strong data-de="Option 2 – Terminal (einmalig):" data-en="Option 2 – Terminal (once):">Option 2 – Terminal (einmalig):</strong></p>
+          <p data-de="macOS zeigt beim ersten Start eine Gatekeeper-Warnung. So öffnest du Main Desk trotzdem:" data-en="macOS shows a Gatekeeper warning on first launch. Here's how to open Main Desk anyway:">macOS zeigt beim ersten Start eine Gatekeeper-Warnung. So öffnest du Main Desk trotzdem:</p>
+          <p style="margin-top:.4rem"><strong data-de="Option A – Systemeinstellungen:" data-en="Option A – System Settings:">Option A – Systemeinstellungen:</strong></p>
+          <p data-de='Systemeinstellungen → Datenschutz &amp; Sicherheit → nach unten scrollen → „Trotzdem öffnen"' data-en='System Settings → Privacy &amp; Security → scroll down → "Open Anyway"'>Systemeinstellungen → Datenschutz &amp; Sicherheit → nach unten scrollen → „Trotzdem öffnen"</p>
+          <p style="margin-top:.4rem"><strong data-de="Option B – Terminal (einmalig):" data-en="Option B – Terminal (once):">Option B – Terminal (einmalig):</strong></p>
           <pre>xattr -cr /Applications/Main\ Desk.app</pre>
-          <p style="margin-top:.5rem; font-size:.82rem; color:var(--text-dim)" data-de="Danach startet die App normal. Der Befehl muss nur einmal ausgeführt werden." data-en="After that the app starts normally. The command only needs to be run once.">
-            Danach startet die App normal. Der Befehl muss nur einmal ausgeführt werden.
-          </p>
         </div>
         <div id="warn-win" class="hidden">
-          <p data-de="Windows SmartScreen zeigt eine Warnung beim ersten Start. So gehst du vor:" data-en="Windows SmartScreen shows a warning on first launch. Here's what to do:">
-            Windows SmartScreen zeigt eine Warnung beim ersten Start. So gehst du vor:
-          </p>
-          <ol style="margin:.5rem 0 0 1.2rem; line-height:2">
-            <li data-de='Klicke auf „Weitere Informationen"' data-en='Click "More info"'>Klicke auf „Weitere Informationen"</li>
-            <li data-de='Klicke auf „Trotzdem ausführen"' data-en='Click "Run anyway"'>Klicke auf „Trotzdem ausführen"</li>
-          </ol>
-          <p style="margin-top:.5rem; font-size:.82rem; color:var(--text-dim)" data-de="Diese Warnung erscheint nur beim ersten Start, nicht danach." data-en="This warning only appears on the first launch.">
-            Diese Warnung erscheint nur beim ersten Start, nicht danach.
-          </p>
+          <p data-de="Windows SmartScreen zeigt eine Warnung. Klicke auf „Weitere Informationen" → „Trotzdem ausführen". Erscheint nur beim ersten Start." data-en="Windows SmartScreen shows a warning. Click „More info" → „Run anyway". Appears only on first launch.">Windows SmartScreen zeigt eine Warnung. Klicke auf „Weitere Informationen" → „Trotzdem ausführen". Erscheint nur beim ersten Start.</p>
         </div>
         <div id="warn-lin" class="hidden">
-          <p data-de="Für AppImage: Datei ausführbar machen, dann starten:" data-en="For AppImage: make file executable, then run:">
-            Für AppImage: Datei ausführbar machen, dann starten:
-          </p>
+          <p data-de="AppImage ausführbar machen und starten:" data-en="Make AppImage executable and run:">AppImage ausführbar machen und starten:</p>
           <pre>chmod +x MainDesk-linux-x64.AppImage
 ./MainDesk-linux-x64.AppImage</pre>
-          <p data-de="Für .deb (Debian/Ubuntu):" data-en="For .deb (Debian/Ubuntu):" style="margin-top:.5rem">Für .deb (Debian/Ubuntu):</p>
-          <pre>sudo dpkg -i MainDesk-linux-x64.deb</pre>
         </div>
         <div id="warn-why" class="hidden">
-          <p data-de="Das Apple Developer Program kostet 99 $/Jahr, das Microsoft-Zertifikat deutlich mehr. Da Main Desk kostenlos und open source ist, verzichten wir darauf." data-en="The Apple Developer Program costs $99/year, a Microsoft certificate significantly more. Since Main Desk is free and open source, we skip that.">
-            Das Apple Developer Program kostet 99 $/Jahr, das Microsoft-Zertifikat deutlich mehr. Da Main Desk kostenlos und open source ist, verzichten wir darauf.
-          </p>
-          <p style="margin-top:.5rem" data-de="Die Sicherheitswarnung bedeutet nicht, dass die Software schädlich ist — sie bedeutet nur, dass Apple und Microsoft keine Gebühr erhalten haben. Der Quellcode ist öffentlich einsehbar." data-en="The security warning does not mean the software is harmful — it just means Apple and Microsoft haven't received a fee. The source code is publicly available.">
-            Die Sicherheitswarnung bedeutet nicht, dass die Software schädlich ist — sie bedeutet nur, dass Apple und Microsoft keine Gebühr erhalten haben. Der Quellcode ist öffentlich einsehbar.
-          </p>
+          <p data-de="Das Apple Developer Program kostet 99 $/Jahr. Da Main Desk kostenlos und open source ist, verzichten wir darauf. Die Warnung bedeutet nicht, dass die Software schädlich ist – Apple und Microsoft haben schlicht keine Gebühr erhalten. Der Quellcode ist öffentlich einsehbar." data-en="The Apple Developer Program costs $99/year. Since Main Desk is free and open source, we skip it. The warning does not mean the software is harmful – Apple and Microsoft simply haven't received a fee. The source code is publicly available.">Das Apple Developer Program kostet 99 $/Jahr. Da Main Desk kostenlos und open source ist, verzichten wir darauf. Die Warnung bedeutet nicht, dass die Software schädlich ist – Apple und Microsoft haben schlicht keine Gebühr erhalten. Der Quellcode ist öffentlich einsehbar.</p>
         </div>
       </div>
     </div>
-
   </div>
 </section>
 
-<!-- ── Footer ───────────────────────────────────────────────────────── -->
 <footer>
-  <p data-de="Main Desk ist freie Software, veröffentlicht unter der MIT-Lizenz." data-en="Main Desk is free software, released under the MIT License.">
-    Main Desk ist freie Software, veröffentlicht unter der MIT-Lizenz.
-  </p>
-  <p>
-    <a href="https://gitlab.com/your-namespace/evb-ai" id="gitlab-link">GitLab</a>
-    &nbsp;·&nbsp;
-    <span data-de="Gebaut für die Bühne." data-en="Built for the stage.">Gebaut für die Bühne.</span>
-  </p>
+  <p data-de="Main Desk ist freie Software unter der MIT-Lizenz." data-en="Main Desk is free software under the MIT License.">Main Desk ist freie Software unter der MIT-Lizenz.</p>
+  <p><a href="https://gitlab.com/your-namespace/evb-ai" id="gitlab-link">GitLab</a> &nbsp;·&nbsp; <span data-de="Für die Bühne gemacht." data-en="Made for the stage.">Für die Bühne gemacht.</span></p>
 </footer>
 
 <script>
-  // ── Language ────────────────────────────────────────────────────────
   let currentLang = localStorage.getItem('md-lang') || 'de'
 
   function setLang(lang) {
     currentLang = lang
     localStorage.setItem('md-lang', lang)
     document.documentElement.lang = lang
-    document.querySelectorAll('.lang-btn').forEach((b, i) => {
-      b.classList.toggle('active', (i === 0 && lang === 'de') || (i === 1 && lang === 'en'))
-    })
+    document.querySelectorAll('.lang-btn').forEach((b,i) => b.classList.toggle('active', (i===0&&lang==='de')||(i===1&&lang==='en')))
     document.querySelectorAll('[data-de]').forEach(el => {
-      const txt = el.getAttribute('data-' + lang)
-      if (txt === null) return
-      if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
-        el.placeholder = txt
-      } else if (el.children.length === 0 || el.tagName === 'H1') {
-        el.innerHTML = txt
-      } else {
-        el.textContent = txt
-      }
+      const txt = el.getAttribute('data-'+lang)
+      if (txt===null) return
+      if (el.tagName==='INPUT'||el.tagName==='TEXTAREA') el.placeholder = txt
+      else el.innerHTML = txt
     })
   }
-
   setLang(currentLang)
 
-  // ── Warning tabs ────────────────────────────────────────────────────
-  function showWarning(id) {
-    ['mac','win','lin','why'].forEach(k => {
-      document.getElementById('warn-' + k).classList.toggle('hidden', k !== id)
-      document.getElementById('tab-'  + k).classList.toggle('active', k === id)
+  function showWarn(id) {
+    ['mac','win','lin','why'].forEach(k=>{
+      document.getElementById('warn-'+k).classList.toggle('hidden',k!==id)
+      document.querySelector('[onclick="showWarn(\''+k+'\')"]').classList.toggle('active',k===id)
     })
   }
 </script>
