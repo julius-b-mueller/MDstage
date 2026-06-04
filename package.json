@@ -12,7 +12,7 @@
   "scripts": {
     "build": "webpack && node scripts/copy-preview.js && node scripts/build-version.js && electron-builder --publish never",
     "build:renderer": "webpack",
-    "build:preview": "webpack --mode production && node scripts/copy-preview.js",
+    "build:preview": "webpack --mode production && node scripts/copy-preview.js && node scripts/generate-audio-list.js",
     "build:version": "node scripts/build-version.js",
     "develop": "webpack --watch --progress",
     "start": "node scripts/patch-electron-macos.js && electron .",

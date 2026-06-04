@@ -89,7 +89,7 @@ window.electronAPI = {
             .catch(() => { const t = '```yaml\nconfig:\n    roles: {}\n```\n'; _scriptCache = t; return t })
     },
     writeScriptMd:  (t) => { _scriptCache = t; return Promise.resolve() },
-    listAudioFiles: () => Promise.resolve([]),
+    listAudioFiles: () => fetch('audio/files.json').then(r => r.ok ? r.json() : []).catch(() => []),
     getScriptPath:  () => Promise.resolve('preview/script.md'),
     backupScriptMd: () => Promise.resolve(''),
     getRoles:       () => Promise.resolve({}),
