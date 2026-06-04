@@ -48,6 +48,23 @@ const _settings = {
 }
 
 let _scriptCache = null
+const _settingsChangedListeners = []
+
+// Sprache wechseln und App-interne onSettingsChanged-Callbacks aufrufen
+window.__previewSetLanguage = (lang) => {
+    _settings.appLanguage = lang
+    try { sessionStorage.setItem('preview-lang', lang) } catch {}
+    _settingsChangedListeners.forEach(cb => cb({ ..._settings }))
+    document.querySelectorAll('.plang-btn').forEach(btn =>
+        btn.classList.toggle('active', btn.dataset.lang === lang)
+    )
+}
+
+// Gespeicherte Sprachpräferenz beim Laden wiederherstellen
+try {
+    const saved = sessionStorage.getItem('preview-lang')
+    if (saved) _settings.appLanguage = saved
+} catch {}
 
 window.electronAPI = {
     getAppVersion: () => Promise.resolve('0.0.0'),
@@ -71,7 +88,7 @@ window.electronAPI = {
     saveRoles:      () => Promise.resolve(),
     newFile:        () => Promise.resolve(),
 
-    onSettingsChanged:     () => {},
+    onSettingsChanged: (cb) => _settingsChangedListeners.push(cb),
     onScriptChanged:       () => {},
     showEditorContextMenu: () => {},
 

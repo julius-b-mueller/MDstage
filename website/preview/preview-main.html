@@ -26,6 +26,15 @@
             z-index: 25;
         }
         #preview-notice strong { color: #e5c07b; }
+        .preview-lang-toggle { display:flex; gap:2px; margin-left:auto; flex-shrink:0; }
+        .plang-btn {
+            background: none; border: 1px solid #5c637055; color: #5c6370;
+            cursor: pointer; padding: 2px 8px; border-radius: 4px;
+            font-size: 0.72rem; font-weight: 700; font-family: inherit;
+            transition: all 0.15s;
+        }
+        .plang-btn.active { background: #383c44; color: #fff; border-color: #5c6370; }
+        .plang-btn:hover:not(.active) { color: #abb2bf; border-color: #5c6370; }
 
         /* Banner-Höhe ≈ 36px (padding 2×0.5rem + Zeilenhöhe) */
 
@@ -68,7 +77,18 @@
     <div id="preview-notice">
         <strong>⚠ Vorschau-Modus</strong>
         MIDI und OSC sind nicht verfügbar. Änderungen am Skript werden nicht gespeichert.
+        <div class="preview-lang-toggle">
+            <button class="plang-btn" data-lang="de" onclick="window.__previewSetLanguage('de')">DE</button>
+            <button class="plang-btn" data-lang="en" onclick="window.__previewSetLanguage('en')">EN</button>
+        </div>
     </div>
+    <script>
+        // Aktiven Button nach dem Laden setzen
+        ;(function() {
+            const l = (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('preview-lang')) || 'de'
+            document.querySelectorAll('.plang-btn').forEach(b => b.classList.toggle('active', b.dataset.lang === l))
+        })()
+    </script>
 
     <div id="scene-sidebar">
         <div class="scene-sidebar-header" data-i18n="sidebar.title">Szenen</div>
