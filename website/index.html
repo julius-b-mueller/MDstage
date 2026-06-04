@@ -97,12 +97,12 @@ nav{position:sticky;top:0;z-index:100;background:var(--bg2);border-bottom:1px so
 
 /* ── Download ────────────────────────────── */
 .dl-section{padding:5rem 2rem;background:var(--bg2)}
-.dl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:.6rem;margin-bottom:2rem}
-.dl-card{background:var(--bg);border:1px solid var(--border);border-radius:var(--r);padding:.75rem 1rem;display:flex;align-items:center;gap:.75rem}
-.dl-card-icon{font-size:1.3rem;flex-shrink:0}
-.dl-card-info{flex:1;min-width:0}
-.dl-card h3{font-size:.82rem;font-weight:700;color:#fff;margin:0}
-.dl-card .dl-sub{font-size:.72rem;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dl-grid{display:flex;flex-direction:column;gap:.4rem;margin-bottom:2rem;max-width:520px}
+.dl-card{background:var(--bg);border:1px solid var(--border);border-radius:var(--r);padding:.6rem 1rem;display:flex;align-items:center;gap:.75rem}
+.dl-card-icon{font-size:1.1rem;flex-shrink:0;width:1.4rem;text-align:center}
+.dl-card-info{flex:1;min-width:0;display:flex;align-items:baseline;gap:.5rem}
+.dl-card h3{font-size:.85rem;font-weight:700;color:#fff;margin:0;white-space:nowrap}
+.dl-card .dl-sub{font-size:.78rem;color:var(--dim)}
 .dl-btn{margin-top:auto;padding-top:.7rem;display:inline-flex;align-items:center;gap:.4rem;background:var(--bg3);border:1px solid var(--border);color:var(--text);text-decoration:none;padding:.48rem .85rem;border-radius:6px;font-size:.82rem;font-weight:600;transition:background .15s}
 .dl-btn:hover{background:var(--border)}
 .dl-btn.primary{background:var(--blue);color:#1e2127;border-color:var(--blue)}
