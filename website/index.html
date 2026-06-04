@@ -187,13 +187,13 @@ footer a:hover{text-decoration:underline}
       <div class="flow-step">
         <div class="flow-icon b">📝</div>
         <h4 data-de="Skript schreiben" data-en="Write the script">Skript schreiben</h4>
-        <p data-de="Das Textbuch als Markdown-Datei – mit Szenen, Dialogen und Regieanweisungen." data-en="The script as a Markdown file – scenes, dialogue and stage directions.">Das Textbuch als Markdown-Datei – mit Szenen, Dialogen und Regieanweisungen.</p>
+        <p data-de="Das Textbuch direkt in Main Desk verfassen – mit Szenen, Dialogen und Regieanweisungen." data-en="Write the script directly in Main Desk – scenes, dialogue and stage directions.">Das Textbuch direkt in Main Desk verfassen – mit Szenen, Dialogen und Regieanweisungen.</p>
       </div>
       <div class="flow-arrow">→</div>
       <div class="flow-step">
         <div class="flow-icon y">⚡</div>
         <h4 data-de="Cues einbetten" data-en="Embed cues">Cues einbetten</h4>
-        <p data-de="An den richtigen Stellen im Text YAML-Cues einfügen: Musik, Mikro, Licht, OSC…" data-en="Insert YAML cues at the right places: music, mic, light, OSC…">An den richtigen Stellen im Text YAML-Cues einfügen: Musik, Mikro, Licht, OSC…</p>
+        <p data-de="An den richtigen Stellen im Text Trigger einfügen: Musik, Mikrofone, Licht, OSC…" data-en="Insert triggers at the right places in the script: music, mics, lights, OSC…">An den richtigen Stellen im Text Trigger einfügen: Musik, Mikrofone, Licht, OSC…</p>
       </div>
       <div class="flow-arrow">→</div>
       <div class="flow-step">
@@ -258,11 +258,11 @@ footer a:hover{text-decoration:underline}
       </div>
       <div class="feat-text">
         <h3 data-de="Cues direkt im Textbuch" data-en="Cues right inside the script">Cues direkt im Textbuch</h3>
-        <p data-de="Musik, Mikrofone, Lichtszenen und mehr werden als YAML-Blöcke direkt an der richtigen Stelle im Skript eingebettet. Das Textbuch und die Show-Steuerung sind eine einzige Datei." data-en="Music, microphones, lighting and more are embedded as YAML blocks directly at the right place in the script. The script and show control are a single file.">
-          Musik, Mikrofone, Lichtszenen und mehr werden als YAML-Blöcke direkt an der richtigen Stelle im Skript eingebettet. Das Textbuch und die Show-Steuerung sind eine einzige Datei.
+        <p data-de="Trigger für Musik, Mikrofone, Lichtszenen und mehr werden direkt an der richtigen Stelle im Skript platziert. Das Textbuch und die Show-Steuerung bilden eine Einheit – kein ständiges Umschalten zwischen verschiedenen Programmen." data-en="Triggers for music, microphones, lighting and more are placed directly at the right point in the script. The script and show control are one unit – no switching between different applications.">
+          Trigger für Musik, Mikrofone, Lichtszenen und mehr werden direkt an der richtigen Stelle im Skript platziert. Das Textbuch und die Show-Steuerung bilden eine Einheit – kein ständiges Umschalten zwischen verschiedenen Programmen.
         </p>
-        <p data-de="Ein Cue ist schnell hinzugefügt: Schaltfläche klicken, Datei wählen, fertig. Keine separate Cue-Software, keine Synchronisation." data-en="Adding a cue is quick: click the button, choose a file, done. No separate cueing software, no synchronisation.">
-          Ein Cue ist schnell hinzugefügt: Schaltfläche klicken, Datei wählen, fertig. Keine separate Cue-Software, keine Synchronisation.
+        <p data-de="Jeden Trigger über die Benutzeroberfläche anlegen und bearbeiten: Audiodatei wählen, Mikrofone zuweisen, Lichtszene eintragen. Kein Texteditor nötig." data-en="Create and edit every trigger via the UI: choose audio file, assign microphones, enter light scene. No text editor required.">
+          Jeden Trigger über die Benutzeroberfläche anlegen und bearbeiten: Audiodatei wählen, Mikrofone zuweisen, Lichtszene eintragen. Kein Texteditor nötig.
         </p>
         <div class="feat-tags">
           <span class="tag g" data-de="Musik · Mikrofone · Licht" data-en="Music · Microphones · Lighting">Musik · Mikrofone · Licht</span>
@@ -473,6 +473,73 @@ footer a:hover{text-decoration:underline}
           <span class="tag b" data-de="Haupt-Audio" data-en="Main Audio">Haupt-Audio</span>
           <span class="tag g" data-de="Monitor-Mix" data-en="Monitor Mix">Monitor-Mix</span>
           <span class="tag y" data-de="PDF · DOCX Export" data-en="PDF · DOCX Export">PDF · DOCX Export</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Feature 6: Eine Datei, die ganze Show -->
+    <div class="feat-block reverse" style="margin-bottom:0">
+      <div class="feat-graphic">
+        <!-- One file / Git SVG -->
+        <svg viewBox="0 0 280 200" width="280" height="200" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- File icon -->
+          <rect x="90" y="10" width="100" height="120" rx="8" fill="#21252b" stroke="#383c44"/>
+          <path d="M150 10 L190 50 L150 50 Z" fill="#282c34" stroke="#383c44"/>
+          <rect x="105" y="58" width="70" height="6" rx="3" fill="#383c44"/>
+          <rect x="105" y="70" width="50" height="6" rx="3" fill="#383c44"/>
+          <!-- Trigger badge in file -->
+          <rect x="105" y="82" width="70" height="16" rx="4" fill="#1e3a2a" stroke="#98c37966"/>
+          <rect x="105" y="82" width="3" height="16" rx="2" fill="#98c379"/>
+          <rect x="113" y="86" width="30" height="4" rx="2" fill="#98c37966"/>
+          <rect x="105" y="102" width="70" height="6" rx="3" fill="#383c44"/>
+          <rect x="105" y="112" width="45" height="16" rx="4" fill="#1e3a52" stroke="#61afef66"/>
+          <rect x="105" y="112" width="3" height="16" rx="2" fill="#61afef"/>
+          <rect x="113" y="116" width="25" height="4" rx="2" fill="#61afef66"/>
+          <!-- File label -->
+          <text x="140" y="144" text-anchor="middle" font-size="9" fill="#5c6370">show.md</text>
+
+          <!-- Git timeline on the left -->
+          <line x1="38" y1="30" x2="38" y2="170" stroke="#383c44" stroke-width="2"/>
+          <!-- Commits -->
+          <circle cx="38" cy="45"  r="6" fill="#98c379"/>
+          <text x="52" y="49" font-size="7.5" fill="#5c6370">Probenversion</text>
+          <circle cx="38" cy="75"  r="6" fill="#61afef"/>
+          <text x="52" y="79" font-size="7.5" fill="#5c6370">Trigger ergänzt</text>
+          <circle cx="38" cy="105" r="6" fill="#e5c07b"/>
+          <text x="52" y="109" font-size="7.5" fill="#5c6370">Szene 3 geändert</text>
+          <circle cx="38" cy="135" r="6" fill="#c678dd"/>
+          <text x="52" y="139" font-size="7.5" fill="#5c6370">Premiere</text>
+          <!-- Connect line to file -->
+          <line x1="90" y1="70" x2="62" y2="70" stroke="#383c44" stroke-width="1" stroke-dasharray="3,2"/>
+
+          <!-- Two person icons (collaboration) -->
+          <circle cx="220" cy="60" r="10" fill="#1e3a52" stroke="#61afef88"/>
+          <text x="220" y="64" text-anchor="middle" font-size="11">👤</text>
+          <circle cx="248" cy="60" r="10" fill="#1e3a2a" stroke="#98c37988"/>
+          <text x="248" y="64" text-anchor="middle" font-size="11">👤</text>
+          <line x1="225" y1="68" x2="215" y2="85" stroke="#383c44" stroke-width="1" stroke-dasharray="2,2"/>
+          <line x1="243" y1="68" x2="225" y2="85" stroke="#383c44" stroke-width="1" stroke-dasharray="2,2"/>
+          <text x="234" y="82" text-anchor="middle" font-size="7.5" fill="#5c6370">Regie</text>
+          <text x="210" y="145" text-anchor="middle" font-size="8" fill="#5c6370">Git</text>
+          <path d="M210 148 L230 160" stroke="#5c6370" stroke-width="1"/>
+          <path d="M238 148 L220 160" stroke="#5c6370" stroke-width="1"/>
+        </svg>
+      </div>
+      <div class="feat-text">
+        <h3 data-de="Die ganze Show steckt in einer Datei" data-en="The whole show in a single file">Die ganze Show steckt in einer Datei</h3>
+        <p data-de="Textbuch und alle Trigger werden als eine einzige Markdown-Datei gespeichert. Das macht Zusammenarbeit einfach: Die Datei liegt im geteilten Ordner, auf einem USB-Stick oder in einem Git-Repository – und alle arbeiten immer an derselben Version." data-en="Script and all triggers are stored as a single Markdown file. That makes collaboration simple: the file lives in a shared folder, on a USB stick or in a Git repository – everyone always works on the same version.">
+          Textbuch und alle Trigger werden als eine einzige Markdown-Datei gespeichert. Das macht Zusammenarbeit einfach: Die Datei liegt im geteilten Ordner, auf einem USB-Stick oder in einem Git-Repository – und alle arbeiten immer an derselben Version.
+        </p>
+        <p data-de="Wer Git nutzt, bekommt vollständige Versionshistorie, kann Probenversionen mit Premierenversionen vergleichen und Änderungen nachvollziehen. Wer das nicht braucht, ignoriert es einfach." data-en="Git users get full version history, can compare rehearsal and premiere versions, and track every change. Those who don't need it can simply ignore it.">
+          Wer Git nutzt, bekommt vollständige Versionshistorie, kann Probenversionen mit Premierenversionen vergleichen und Änderungen nachvollziehen. Wer das nicht braucht, ignoriert es einfach.
+        </p>
+        <p data-de="Alles ist auch vollständig über die Oberfläche bedienbar – Text schreiben, Trigger anlegen, Einstellungen. Wer nie einen Texteditor öffnen möchte, muss es nicht." data-en="Everything is also fully operable via the interface – writing text, creating triggers, settings. Those who never want to open a text editor don't have to.">
+          Alles ist auch vollständig über die Oberfläche bedienbar – Text schreiben, Trigger anlegen, Einstellungen. Wer nie einen Texteditor öffnen möchte, muss es nicht.
+        </p>
+        <div class="feat-tags">
+          <span class="tag g" data-de="Eine Datei" data-en="One file">Eine Datei</span>
+          <span class="tag b" data-de="Git-kompatibel" data-en="Git-compatible">Git-kompatibel</span>
+          <span class="tag y" data-de="Kein Texteditor nötig" data-en="No text editor needed">Kein Texteditor nötig</span>
         </div>
       </div>
     </div>
