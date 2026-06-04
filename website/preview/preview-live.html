@@ -24,8 +24,8 @@
             flex-shrink: 0;
             z-index: 20;
         }
-        .live-header .clock    { font-size: 2.4rem; line-height: 2.8rem; width: auto; min-width: 9rem; margin-right: 0; }
-        .live-header .tc-display { font-size: 1.5rem; line-height: 2.8rem; margin-right: 0; padding: 0 0.7rem; }
+        .live-header .clock    { font-size: 2.4rem; line-height: 2.8rem; width: auto; min-width: 9rem; margin-right: 0; white-space: nowrap; }
+        .live-header .tc-display { font-size: 1.5rem; line-height: 2.8rem; margin-right: 0; padding: 0 0.7rem; white-space: nowrap; }
 
         /* ── Script area ─────────────────────────────────────────────────── */
         .script-area { flex: 1; min-height: 0; overflow: hidden; position: relative; }
@@ -271,6 +271,10 @@
     </style>
 </head>
 <body>
+    <div id="live-preview-notice" style="background:#1e2a3a;border-bottom:1px solid #61afef33;padding:0.3rem 1rem;font-size:0.72rem;color:#5c6370;flex-shrink:0">
+        <span style="color:#61afef">ℹ</span>
+        In der Desktop-App ist dies ein separates Fenster – auf einen zweiten Monitor ziehbar.
+    </div>
     <div class="live-header">
         <div class="clock" id="live-clock">00:00:00</div>
         <div class="tc-display" id="live-tc">--:--:--:--</div>

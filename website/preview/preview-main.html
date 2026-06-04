@@ -19,11 +19,15 @@
             display: flex;
             align-items: center;
             gap: 0.5rem;
-            flex-shrink: 0;
-            position: relative;
-            z-index: 200;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 25;
         }
         #preview-notice strong { color: #e5c07b; }
+        /* Buttonleiste unter dem Banner (Banner ~36px hoch) */
+        .buttons { top: calc(0.5rem + 36px) !important; }
     </style>
 </head>
 <body>
