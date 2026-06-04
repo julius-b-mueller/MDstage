@@ -54,6 +54,9 @@ const _settingsChangedListeners = []
 window.__previewSetLanguage = (lang) => {
     _settings.appLanguage = lang
     try { sessionStorage.setItem('preview-lang', lang) } catch {}
+    // Sofort anwenden — nicht auf den async onSettingsChanged-Flow warten
+    window.applyI18n?.(lang)
+    // Interne Variable + Live-Ansicht via nächsten broadcastLiveState aktualisieren
     _settingsChangedListeners.forEach(cb => cb({ ..._settings }))
     document.querySelectorAll('.plang-btn').forEach(btn =>
         btn.classList.toggle('active', btn.dataset.lang === lang)
