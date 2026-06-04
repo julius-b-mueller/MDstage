@@ -26,24 +26,31 @@
             z-index: 25;
         }
         #preview-notice strong { color: #e5c07b; }
-        /* Buttonleiste unter dem Banner (Banner ~36px hoch) */
-        .buttons { top: calc(0.5rem + 36px) !important; }
 
-        /* LIVE-Button in der Vorschau */
+        /* Banner-Höhe ≈ 36px (padding 2×0.5rem + Zeilenhöhe) */
+
+        /* Inhalt unter das Banner schieben */
+        body           { padding-top: 36px; }
+        /* Buttons unter das Banner */
+        .buttons       { top: calc(0.5rem + 36px) !important; }
+        /* Sticky-Headings unter dem Banner einrasten;
+           z-index über #header-shield (11), damit sie nicht dahinter verschwinden */
+        h1, h2         { top: 36px !important; z-index: 15 !important; }
+        /* Shield nicht nötig — Headings haben eigenen Hintergrund */
+        #header-shield { display: none !important; }
+
+        /* LIVE-Button */
         .live-window-button {
-            font-size: 0.75rem !important;
+            width: auto !important;
+            padding: 0 0.65rem !important;
+            font-size: 0.78rem !important;
             font-weight: 700 !important;
-            letter-spacing: 0.04em !important;
-            padding: 0 0.6rem !important;
+            letter-spacing: 0.06em !important;
+            gap: 0.25rem !important;
             background: #1e3a52 !important;
-            border: 1px solid #61afef66 !important;
+            border: 1px solid #61afef55 !important;
             color: #61afef !important;
-            border-radius: 6px !important;
-            display: flex !important;
-            align-items: center !important;
-            gap: 0.3rem !important;
             white-space: nowrap !important;
-            cursor: pointer !important;
         }
         .live-window-button:hover { background: #243e5a !important; border-color: #61afef !important; }
         .live-btn-arrow {
@@ -82,8 +89,8 @@
     <div class="buttons">
         <div class="clock">00:00:00</div>
         <div class="tc-display">--:--:--:--</div>
-        <div class="button live-window-button">
-            Live-Ansicht öffnen <span class="live-btn-arrow">↗</span>
+        <div class="button live-window-button" title="Live-Ansicht in separatem Fenster öffnen">
+            LIVE <span class="live-btn-arrow">↗</span>
         </div>
         <div class="button reload-button" style="font-size:1.4rem">↺</div>
         <div class="button current-trigger-button" style="font-size:1.4rem">⌖</div>
