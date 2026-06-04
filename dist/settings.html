@@ -122,10 +122,47 @@
 
     <div class="section-title" data-i18n="s.midi">MIDI</div>
     <div class="field">
-        <label data-i18n="s.midi.x32">X32 Fernbedienung</label>
+        <label data-i18n="s.midi.x32">X32 / Mischpult MIDI-Ausgang</label>
         <select id="x32-device">
             <option value="" data-i18n="s.no.device">— kein Gerät —</option>
         </select>
+    </div>
+    <div class="field">
+        <label>Mikrofon-Stummschaltung</label>
+        <select id="mic-mute-method">
+            <option value="x32">X32 (CC-Kanal 2)</option>
+            <option value="custom-midi">Custom MIDI</option>
+            <option value="custom-osc">Custom OSC</option>
+        </select>
+    </div>
+    <div id="mic-mute-custom-midi" style="display:none">
+        <div class="field">
+            <label>Unmute-Befehl (Hex-Bytes)</label>
+            <input type="text" id="mic-mute-midi-unmute" placeholder="B1 {ch} 00">
+            <p class="hint">Platzhalter: <code>{ch}</code> = Kanalindex (0-basiert), <code>{val}</code> = 00 (unmute). Bytes als Hex, Leerzeichen-getrennt.</p>
+        </div>
+        <div class="field">
+            <label>Mute-Befehl (Hex-Bytes)</label>
+            <input type="text" id="mic-mute-midi-mute" placeholder="B1 {ch} 7F">
+            <p class="hint">Platzhalter: <code>{ch}</code> = Kanalindex, <code>{val}</code> = 7F (mute).</p>
+        </div>
+    </div>
+    <div id="mic-mute-custom-osc" style="display:none">
+        <div class="field">
+            <label>OSC-Pfad-Template</label>
+            <input type="text" id="mic-mute-osc-path" placeholder="/ch/{ch}/mix/on">
+            <p class="hint">Platzhalter: <code>{ch}</code> = Kanalindex (1-basiert, 2-stellig), z.B. <code>/ch/01/mix/on</code>.</p>
+        </div>
+        <div class="field" style="display:flex;gap:1rem">
+            <div style="flex:1">
+                <label>Unmute-Wert</label>
+                <input type="text" id="mic-mute-osc-unmute-val" placeholder="1">
+            </div>
+            <div style="flex:1">
+                <label>Mute-Wert</label>
+                <input type="text" id="mic-mute-osc-mute-val" placeholder="0">
+            </div>
+        </div>
     </div>
     <div class="field">
         <label data-i18n="s.midi.trigger">Trigger-Noten</label>
@@ -420,6 +457,31 @@
 
             await refreshRoutingTable()
 
+            // ── Mic mute method ───────────────────────────────────────
+            const micMuteMethodSel     = document.getElementById('mic-mute-method')
+            const micMuteCustomMidiDiv = document.getElementById('mic-mute-custom-midi')
+            const micMuteCustomOscDiv  = document.getElementById('mic-mute-custom-osc')
+            const micMuteMidiUnmuteEl  = document.getElementById('mic-mute-midi-unmute')
+            const micMuteMidiMuteEl    = document.getElementById('mic-mute-midi-mute')
+            const micMuteOscPathEl     = document.getElementById('mic-mute-osc-path')
+            const micMuteOscUnmuteEl   = document.getElementById('mic-mute-osc-unmute-val')
+            const micMuteOscMuteEl     = document.getElementById('mic-mute-osc-mute-val')
+
+            micMuteMethodSel.value    = settings.micMuteMethod     || 'x32'
+            micMuteMidiUnmuteEl.value = settings.micMuteMidiUnmute || 'B1 {ch} 00'
+            micMuteMidiMuteEl.value   = settings.micMuteMidiMute   || 'B1 {ch} 7F'
+            micMuteOscPathEl.value    = settings.micMuteOscPath    || '/ch/{ch}/mix/on'
+            micMuteOscUnmuteEl.value  = settings.micMuteOscUnmute  !== undefined ? String(settings.micMuteOscUnmute) : '1'
+            micMuteOscMuteEl.value    = settings.micMuteOscMute    !== undefined ? String(settings.micMuteOscMute)   : '0'
+
+            function updateMicMuteVisibility() {
+                const m = micMuteMethodSel.value
+                micMuteCustomMidiDiv.style.display = m === 'custom-midi' ? '' : 'none'
+                micMuteCustomOscDiv.style.display  = m === 'custom-osc'  ? '' : 'none'
+            }
+            updateMicMuteVisibility()
+            micMuteMethodSel.addEventListener('change', updateMicMuteVisibility)
+
             // ── MIDI ──────────────────────────────────────────────────
             const x32Select       = document.getElementById('x32-device')
             const triggerSelect   = document.getElementById('trigger-device')
@@ -589,6 +651,12 @@
                     oscEnabled: oscEnabledEl.checked,
                     oscHost:    oscHostEl.value.trim() || '127.0.0.1',
                     oscPort:    isNaN(oscPortVal) ? 8000 : Math.max(1, Math.min(65535, oscPortVal)),
+                    micMuteMethod:     micMuteMethodSel.value  || 'x32',
+                    micMuteMidiUnmute: micMuteMidiUnmuteEl.value.trim() || 'B1 {ch} 00',
+                    micMuteMidiMute:   micMuteMidiMuteEl.value.trim()   || 'B1 {ch} 7F',
+                    micMuteOscPath:    micMuteOscPathEl.value.trim()    || '/ch/{ch}/mix/on',
+                    micMuteOscUnmute:  micMuteOscUnmuteEl.value.trim()  || '1',
+                    micMuteOscMute:    micMuteOscMuteEl.value.trim()    || '0',
                 })
                 window.close()
             })

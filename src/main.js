@@ -14,6 +14,7 @@ let audioWarnings = [] // {file, cueNum}
 const loopOutroPending = new Map()         // loopTriggerIdx → outroTriggerIdx
 const loopOutroInitialRemaining = new Map() // loopTriggerIdx → remaining at arm time
 const loopBtns = new Map()          // triggerIdx → button element
+const slfGripUpdaters = new Map()   // triggerIdx → updateSlfGrips fn
 // loopTriggerIdx → { outroIdx, loopVirtualStartTime }
 // loopVirtualStartTime: AudioContext time at which the loop was at position mp.start
 const loopGroups = new Map()
@@ -167,6 +168,12 @@ let oscEnabled = false
 let oscHost = '127.0.0.1'
 let oscPort = 8000
 let appLanguage = 'de'
+let micMuteMethod     = 'x32'
+let micMuteMidiUnmute = 'B1 {ch} 00'
+let micMuteMidiMute   = 'B1 {ch} 7F'
+let micMuteOscPath    = '/ch/{ch}/mix/on'
+let micMuteOscUnmute  = '1'
+let micMuteOscMute    = '0'
 
 // t() is defined by dist/i18n.js which is loaded before bundle.js in index.html.
 // Fallback for unit-test contexts where window.t may not exist.
@@ -438,8 +445,14 @@ function insertRoleLineBreak() {
     if (!sel?.rangeCount) return
     const range = sel.getRangeAt(0)
     range.deleteContents()
+    // Insert visual marker + actual <br>
+    const marker = document.createElement('span')
+    marker.className = 'br-marker'
+    marker.contentEditable = 'false'
+    marker.textContent = '↵'
     const br = document.createElement('br')
     range.insertNode(br)
+    br.before(marker)
     // Contenteditable quirk: a trailing <br> is invisible without content after it.
     // Add a sentinel <br> so the new line shows up; it gets stripped on save.
     let hasContentAfter = false
@@ -464,6 +477,7 @@ function insertRoleLineBreak() {
 function serializeRoleNode(n) {
     if (n.nodeType === Node.TEXT_NODE) return n.textContent
     if (n.tagName === 'BR') return '<br>'
+    if (n.classList?.contains('br-marker')) return ''  // visual-only indicator, not stored
     if (n.classList?.contains('editor-stage-inline')) {
         const t = n.textContent
         return (t.startsWith('(') && t.endsWith(')')) ? '*' + t + '*' : t
@@ -476,6 +490,10 @@ function serializeRoleNode(n) {
 // Append parsed dialogue text (with inline stage direction coloring) to parent element.
 // Recognizes both *(text)* (markdown) and plain (text) (user-typed, auto-converted on save).
 function appendDialogueParsed(parent, text, roleColor) {
+    // Strip soft sentence-wrap newlines (added by wrapSentences for markdown readability).
+    // Hard line breaks are represented as the literal string "<br>" and handled below.
+    text = text.replace(/\n/g, ' ').replace(/ {2,}/g, ' ')
+
     const re = /\*\(([^)]+)\)\*|\(([^)]+)\)|<br>/g
     let last = 0, m
     while ((m = re.exec(text)) !== null) {
@@ -487,6 +505,12 @@ function appendDialogueParsed(parent, text, roleColor) {
             parent.appendChild(s)
         }
         if (m[0] === '<br>') {
+            // Show a visible indicator before the actual line break
+            const marker = document.createElement('span')
+            marker.className = 'br-marker'
+            marker.contentEditable = 'false'
+            marker.textContent = '↵'
+            parent.appendChild(marker)
             parent.appendChild(document.createElement('br'))
         } else {
             const inner = m[1] ?? m[2]
@@ -730,6 +754,76 @@ function serializeEditorMarkdown(div) {
     return textOf(div).trim()  // fallback (should not normally be reached)
 }
 
+// ── Role-change dropdown ───────────────────────────────────────────────────────
+
+function openRoleChangeDropdown(nameSpan, editorEl) {
+    document.getElementById('role-change-dropdown')?.remove()
+
+    const roles = Object.keys(config.roles || {})
+    if (!roles.length) return
+
+    const dropdown = document.createElement('div')
+    dropdown.id = 'role-change-dropdown'
+    dropdown.style.cssText = `
+        position: fixed;
+        background: #21252b;
+        border: 1px solid #4b5263;
+        border-radius: 5px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+        z-index: 300;
+        min-width: 10rem;
+        padding: 0.3rem 0;
+        font-size: 0.95rem;
+    `
+
+    const rect = nameSpan.getBoundingClientRect()
+    dropdown.style.left = rect.left + 'px'
+    dropdown.style.top  = (rect.bottom + 4) + 'px'
+
+    for (const roleName of roles) {
+        const color = ROLE_COLORS[config.roles[roleName]?.color] || '#abb2bf'
+        const item = document.createElement('div')
+        item.style.cssText = `
+            padding: 0.4rem 1rem;
+            cursor: pointer;
+            color: ${color};
+            white-space: nowrap;
+        `
+        item.textContent = roleName
+        item.addEventListener('mouseenter', () => { item.style.background = '#2c313a' })
+        item.addEventListener('mouseleave', () => { item.style.background = '' })
+        item.addEventListener('mousedown', (e) => {
+            e.preventDefault()
+            dropdown.remove()
+            // Update role name in editor
+            const newColor = ROLE_COLORS[config.roles[roleName]?.color] || ''
+            nameSpan.textContent = roleName
+            nameSpan.style.color = newColor || ''
+            // Re-color all dialogue text spans
+            for (const node of editorEl.childNodes) {
+                if (node === nameSpan) continue
+                if (node.nodeType === Node.ELEMENT_NODE && (node.classList.contains('editor-role-text'))) {
+                    node.style.color = newColor || ''
+                }
+            }
+            // Move caret to start of dialogue (after the name span)
+            requestAnimationFrame(() => {
+                editorEl.focus()
+                placeCaretAfterRoleName(editorEl)
+            })
+        })
+        dropdown.appendChild(item)
+    }
+
+    document.body.appendChild(dropdown)
+
+    // Close on outside click
+    function onOutside(e) {
+        if (!dropdown.contains(e.target)) { dropdown.remove(); document.removeEventListener('mousedown', onOutside, true) }
+    }
+    document.addEventListener('mousedown', onOutside, true)
+}
+
 // ── Existing block editor ──────────────────────────────────────────────────────
 
 function openEditor(blockEl, clientX, clientY) {
@@ -771,11 +865,41 @@ const btnDel  = document.createElement('button')
     blockEl.style.visibility = 'hidden'
     inlineEditor = { el, blockEl, lineStart: info.lineStart, lineEnd: info.lineEnd, isNew: false }
 
+    // Track scroll so the fixed wrapper follows the block
+    function onEditorScroll() {
+        if (!inlineEditor?.blockEl) return
+        const w = inlineEditor.el.closest('.editor-wrapper')
+        if (!w) return
+        const r2 = inlineEditor.blockEl.getBoundingClientRect()
+        w.style.top = r2.top + 'px'
+    }
+    inlineEditor._scrollHandler = onEditorScroll
+    window.addEventListener('scroll', onEditorScroll, { passive: true })
+
     el.addEventListener('keydown', onEditorKey)
     el.addEventListener('input',   onEditorInput)
     el.addEventListener('blur',    () => setTimeout(() => {
         if (inlineEditor?.el === el) closeEditor(true)
     }, 180))
+
+    // Role name: make non-editable, prevent cursor from entering, click opens dropdown
+    if (el.dataset.editorType === 'role') {
+        const nameSpan = el.querySelector('.editor-role-name')
+        if (nameSpan) {
+            nameSpan.contentEditable = 'false'
+            nameSpan.addEventListener('mousedown', (e) => {
+                e.preventDefault()
+                openRoleChangeDropdown(nameSpan, el)
+            })
+        }
+        // Clamp cursor on selectionchange (catches triple-click, drag-select, etc.)
+        function clampRoleCaret() {
+            if (!inlineEditor?.el) return
+            if (caretIsInRoleName(inlineEditor.el)) placeCaretAfterRoleName(inlineEditor.el)
+        }
+        inlineEditor._caretClampHandler = clampRoleCaret
+        document.addEventListener('selectionchange', clampRoleCaret)
+    }
 
     btnUp.addEventListener('mousedown',   (e) => { e.preventDefault(); moveBlock(-1) })
     btnDown.addEventListener('mousedown', (e) => { e.preventDefault(); moveBlock(1) })
@@ -790,8 +914,68 @@ function syncEditorHeight() {
     if (wrapper) inlineEditor.blockEl.style.minHeight = wrapper.offsetHeight + 'px'
 }
 
+// Places the cursor right AFTER the role name span (start of dialogue).
+// Using setStartAfter avoids placing it inside the span's text node.
+function placeCaretAfterRoleName(el) {
+    const ns = el?.querySelector('.editor-role-name')
+    if (!ns) return
+    const sel = window.getSelection()
+    const r = document.createRange()
+    r.setStartAfter(ns)
+    r.collapse(true)
+    sel.removeAllRanges()
+    sel.addRange(r)
+}
+
+// Returns true if the cursor (or anchor) is inside or at the end of the role name span.
+function caretIsInRoleName(el) {
+    const ns = el?.querySelector('.editor-role-name')
+    if (!ns) return false
+    const sel = window.getSelection()
+    if (!sel?.rangeCount) return false
+    const range = sel.getRangeAt(0)
+    // Inside the span itself
+    if (ns.contains(range.startContainer)) return true
+    // Edge case: cursor at el offset 0 (before the span) when no text before name
+    if (range.startContainer === el && range.startOffset === 0) return true
+    return false
+}
+
 function onEditorKey(e) {
     if (e.key === 'Escape') { e.preventDefault(); closeEditor(true); return }
+
+    // Clamp cursor: don't let it move into the role name
+    if (inlineEditor?.el?.dataset.editorType === 'role') {
+        const el = inlineEditor.el
+        const ns = el.querySelector('.editor-role-name')
+        if (ns) {
+            if (e.key === 'ArrowLeft' || e.key === 'Home') {
+                // Check if cursor is at the very start of dialogue (right after name span)
+                const sel = window.getSelection()
+                const range = sel?.rangeCount ? sel.getRangeAt(0) : null
+                if (!range) { e.preventDefault(); return }
+                const atDialogueStart =
+                    // cursor container is the parent el right after the name span
+                    (range.startContainer === el && range.startOffset <= 1) ||
+                    // cursor is inside the name span
+                    ns.contains(range.startContainer)
+                if (atDialogueStart) {
+                    e.preventDefault()
+                    if (caretIsInRoleName(el)) placeCaretAfterRoleName(el)
+                    return
+                }
+            }
+            if (caretIsInRoleName(el) && e.key !== 'Escape') {
+                // Any other key while inside name: block and move caret out
+                if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+                    e.preventDefault()
+                    placeCaretAfterRoleName(el)
+                    return
+                }
+            }
+        }
+    }
+
     if (e.key === 'Enter' && e.shiftKey && inlineEditor?.el?.dataset.editorType === 'role') {
         e.preventDefault()
         insertRoleLineBreak()
@@ -860,6 +1044,12 @@ function saveCurrentEdit() {
 
 function closeEditor(save) {
     if (!inlineEditor) return
+    if (inlineEditor._scrollHandler) {
+        window.removeEventListener('scroll', inlineEditor._scrollHandler)
+    }
+    if (inlineEditor._caretClampHandler) {
+        document.removeEventListener('selectionchange', inlineEditor._caretClampHandler)
+    }
     if (save) saveCurrentEdit()
     ;(inlineEditor.el.closest('.editor-wrapper') ?? inlineEditor.el).remove()
     if (inlineEditor.blockEl) inlineEditor.blockEl.style.visibility = ''
@@ -974,8 +1164,8 @@ function openNewBlock(afterBlockEl, forceAfterRole) {
     wrapper.append(div, controls)
 
     afterBlockEl.after(wrapper)
-    wrapper.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
     div.focus()
+    requestAnimationFrame(() => wrapper.scrollIntoView({ block: 'center', behavior: 'smooth' }))
     inlineEditor = { el: div, wrapper, blockEl: null, afterBlockEl, lineStart: info.lineEnd + 1, isNew: true, isAfterRole }
 
     div.addEventListener('keydown',     onNewBlockKey)
@@ -1069,7 +1259,9 @@ function getDialogue(el) {
     for (const node of el.childNodes) {
         if (node === roleSpan) { after = true; continue }
         if (after && !(node.nodeType === Node.ELEMENT_NODE && node.classList.contains('ac-ghost'))) {
-            text += node.tagName === 'BR' ? '<br>' : node.textContent
+            if (node.tagName === 'BR') text += '<br>'
+            else if (node.classList?.contains('br-marker')) { /* skip visual indicator */ }
+            else text += node.textContent
         }
     }
     return text.replace(/^\s+/, '')
@@ -1778,6 +1970,7 @@ function rerender(newText) {
     loopOutroPending.clear()
     loopOutroInitialRemaining.clear()
     loopBtns.clear()
+    slfGripUpdaters.clear()
     loopGroups.clear()
 
     validateYamlBlocks(newText)
@@ -2639,9 +2832,26 @@ function buildTrigger(codeblockYaml, index) {
             endTopGrip.style.left   = fox + "px"
         }
 
+        function isSlfCue() {
+            const ty = triggerYamls[index]
+            return !!(ty?.chain_end || ty?.loop_outro || loopSourcesOf(index).length > 0)
+        }
+
+        function updateSlfGrips() {
+            const slf = isSlfCue()
+            startBotGrip.style.display = slf ? 'none' : ''
+            endBotGrip.style.display   = slf ? 'none' : ''
+            startTopGrip.style.display = slf ? 'none' : ''
+            endTopGrip.style.display   = slf ? 'none' : ''
+            fadeinReg.style.display    = slf ? 'none' : ''
+            fadeoutReg.style.display   = slf ? 'none' : ''
+        }
+        slfGripUpdaters.set(index, updateSlfGrips)
+
         function shiftDrag(el, onDrag) {
             el.addEventListener("mousedown", (e) => {
                 if (!shiftHeld) return
+                if (isSlfCue()) return  // start/end/fade not adjustable for SLF cues
                 e.stopPropagation(); e.preventDefault()
                 const move = (me) => {
                     const rect = waveformContainer.getBoundingClientRect()
@@ -2669,7 +2879,7 @@ function buildTrigger(codeblockYaml, index) {
         shiftDrag(startTopGrip, (t) => { mp.fadein  = Math.max(0, Math.min(t - mp.start, (mp.end ?? ws.getDuration()) - mp.start)) })
         shiftDrag(endTopGrip,   (t) => { const e = mp.end ?? ws.getDuration(); mp.fadeout = Math.max(0, Math.min(e - t, e - mp.start)) })
 
-        ws.on("ready",  () => { waveformContainer.appendChild(overlay); updateMarkers(); autoMarkerState.refresh?.(); preDecodeForGapless(index); updateDerivedTcBadges() })
+        ws.on("ready",  () => { waveformContainer.appendChild(overlay); updateMarkers(); updateSlfGrips(); autoMarkerState.refresh?.(); preDecodeForGapless(index); updateDerivedTcBadges() })
         ws.on("scroll", () => { updateMarkers(); autoMarkerState.refresh?.() })
         ws.on("zoom",   () => { updateMarkers(); autoMarkerState.refresh?.() })
         ws.on("redraw", () => { updateMarkers(); autoMarkerState.refresh?.() })
@@ -2727,7 +2937,17 @@ function buildTrigger(codeblockYaml, index) {
         function fireGaplessTransition(nextIdx) {
             const nextTa = triggerAudio.get(nextIdx)
             const ty = triggerYamls[nextIdx]
-            if (!nextTa || !ty?.music) { triggerAction(nextIdx); return }
+            if (!nextTa || !ty?.music) {
+                // Audio-less outro: execute non-audio actions directly instead of going
+                // through triggerAction, which would re-queue the outro via outro-interception
+                // while the loop source is still playing.
+                x32UnmuteChannels(ty?.mic)
+                sendTriggerNote(nextIdx)
+                sendOscMessage(nextIdx)
+                cueHistory.push(nextIdx)
+                broadcastLiveState()
+                return
+            }
 
             const ns     = nextTa.mp?.start ?? 0
             const vol    = typeof ty.music === 'object' && ty.music.volume != null ? ty.music.volume : 0.8
@@ -3022,6 +3242,8 @@ function buildTrigger(codeblockYaml, index) {
         })
 
         ws.on("error",  () => {
+            // Ignore errors from destroyed/replaced instances (e.g. aborted fetch during rerender)
+            if (triggerAudio.get(index)?.ws !== ws) return
             if (!audioWarnings.some(w => w.file === musicFile)) {
                 audioWarnings.push({ file: musicFile, cueNum: index })
                 showParseErrors()
@@ -3363,6 +3585,10 @@ function buildTrigger(codeblockYaml, index) {
         if (liveViewOpen) {
             // Arm the trigger as next cue instead of firing it immediately
             setArmedCue(index)
+            // If it's part of a variant group (sibling or root with siblings), also select it
+            const isSibling = !!triggerYamls[index]?.sibling
+            const hasNextSibling = !!(triggerYamls[index + 1]?.sibling)
+            if (isSibling || hasNextSibling) selectedVariant = index
             broadcastLiveState()
             return
         }
@@ -3506,6 +3732,7 @@ function buildInsertZones() {
     let blockCounter = 0
     for (let i = 0; i <= blockEls.length; i++) {
         const insertAfterBlockIdx = blockCounter
+        const previousBlockEl = i > 0 ? blockEls[i - 1] : null
         const zone = document.createElement('div')
         zone.classList.add('insert-zone')
         const hotspot = document.createElement('div')
@@ -3519,7 +3746,12 @@ function buildInsertZones() {
         zone.appendChild(hotspot)
         btn.addEventListener('click', (e) => {
             e.stopPropagation()
-            showTriggerDialog({ insertAfterBlockIdx })
+            if (shiftHeld && previousBlockEl) {
+                // SHIFT + click → open text editor instead of trigger dialog
+                openNewBlock(previousBlockEl)
+            } else {
+                showTriggerDialog({ insertAfterBlockIdx })
+            }
         })
         if (i < blockEls.length) {
             content.insertBefore(zone, blockEls[i])
@@ -3558,12 +3790,31 @@ function deleteTriggerInScript(triggerIndex) {
     if (!scriptText) return
     const blocks = tokenizeScript(scriptText)
     let yamlCount = 0
+    let deletedIdx = -1
     for (let i = 0; i < blocks.length; i++) {
         if (blocks[i].type === 'yaml') {
             yamlCount++
             if (yamlCount === triggerIndex + 1) {
                 blocks.splice(i, 1)
+                deletedIdx = i
                 break
+            }
+        }
+    }
+    // If we deleted the root of a sibling group, the new first element would
+    // have sibling:true but no root before it — strip the flag.
+    if (deletedIdx >= 0 && deletedIdx < blocks.length && blocks[deletedIdx].type === 'yaml') {
+        const prevIsYaml = deletedIdx > 0 && blocks[deletedIdx - 1].type === 'yaml'
+        if (!prevIsYaml) {
+            const m = blocks[deletedIdx].content.match(/^```yaml\n([\s\S]*?)\n```$/)
+            if (m) {
+                try {
+                    const parsed = yaml.load(m[1])
+                    if (parsed?.sibling) {
+                        delete parsed.sibling
+                        blocks[deletedIdx] = { type: 'yaml', content: '```yaml\n' + yaml.dump(parsed, { indent: 4, lineWidth: -1, noRefs: true }).trimEnd() + '\n```' }
+                    }
+                } catch {}
             }
         }
     }
@@ -4288,6 +4539,7 @@ function updateLoopGroupInScript(triggerIndex, key, value) {
         }
     }
     for (const [idx, btn] of loopBtns) updateLoopBtnAppearance(btn, idx)
+    for (const [idx, fn] of slfGripUpdaters) fn()
 }
 
 function fadeOutAndStop(cueIdx) {
@@ -5032,16 +5284,43 @@ function x32UnmuteChannels(mic) {
     if (!mic) return
     let channels = []
     if (typeof mic === "string") {
-        if (mic !== "muteall") channels.push(config.roles[mic].ch)
+        if (mic !== "muteall") channels.push(config.roles[mic]?.ch)
     } else {
-        for (let index = 0; index < mic.length; index++) {
-            channels.push(config.roles[mic[index]].ch)
-        }
+        for (const m of mic) channels.push(config.roles[m]?.ch)
     }
-    if (!midiX32) return
-    for (let index = 0; index < usedChs.length; index++) {
-        const value = channels.includes(usedChs[index]) ? 0 : 127
-        midiX32.send([0xB1, usedChs[index] - 1, value])  // CC on channel 2
+    channels = channels.filter(Boolean)
+
+    if (micMuteMethod === 'x32') {
+        if (!midiX32) return
+        for (const used of usedChs) {
+            const value = channels.includes(used) ? 0 : 127
+            midiX32.send([0xB1, used - 1, value])
+        }
+    } else if (micMuteMethod === 'custom-midi') {
+        if (!midiX32) return
+        function parseMidiTemplate(tmpl, ch, val) {
+            return tmpl.trim().split(/\s+/).map(byte => {
+                const s = byte.replace('{ch}', ch).replace('{val}', val)
+                return parseInt(s, 16)
+            }).filter(n => !isNaN(n))
+        }
+        for (const used of usedChs) {
+            const isUnmuted = channels.includes(used)
+            const tmpl = isUnmuted ? micMuteMidiUnmute : micMuteMidiMute
+            const bytes = parseMidiTemplate(tmpl, used - 1, isUnmuted ? 0x00 : 0x7F)
+            if (bytes.length) midiX32.send(bytes)
+        }
+    } else if (micMuteMethod === 'custom-osc') {
+        if (!oscEnabled || !window.electronAPI?.sendOsc) return
+        function padCh(n) { return String(n).padStart(2, '0') }
+        for (const used of usedChs) {
+            const isUnmuted = channels.includes(used)
+            const val = isUnmuted ? micMuteOscUnmute : micMuteOscMute
+            const path = micMuteOscPath.replace('{ch}', padCh(used)).replace('{val}', val)
+            const numVal = parseFloat(val)
+            const args = isNaN(numVal) ? [val] : [numVal]
+            window.electronAPI.sendOsc({ path, args, host: oscHost, port: oscPort })
+        }
     }
 }
 
@@ -5147,6 +5426,12 @@ async function initApp() {
     oscEnabled      = savedSettings.oscEnabled ?? false
     oscHost         = savedSettings.oscHost    || '127.0.0.1'
     oscPort         = savedSettings.oscPort    ?? 8000
+    micMuteMethod     = savedSettings.micMuteMethod     || 'x32'
+    micMuteMidiUnmute = savedSettings.micMuteMidiUnmute || 'B1 {ch} 00'
+    micMuteMidiMute   = savedSettings.micMuteMidiMute   || 'B1 {ch} 7F'
+    micMuteOscPath    = savedSettings.micMuteOscPath    || '/ch/{ch}/mix/on'
+    micMuteOscUnmute  = savedSettings.micMuteOscUnmute  !== undefined ? String(savedSettings.micMuteOscUnmute) : '1'
+    micMuteOscMute    = savedSettings.micMuteOscMute    !== undefined ? String(savedSettings.micMuteOscMute)   : '0'
 
     let text = await window.electronAPI.getScriptMd()
 
@@ -5258,6 +5543,12 @@ async function initApp() {
             oscEnabled      = newSettings.oscEnabled ?? false
             oscHost         = newSettings.oscHost    || '127.0.0.1'
             oscPort         = newSettings.oscPort    ?? 8000
+            micMuteMethod     = newSettings.micMuteMethod     || 'x32'
+            micMuteMidiUnmute = newSettings.micMuteMidiUnmute || 'B1 {ch} 00'
+            micMuteMidiMute   = newSettings.micMuteMidiMute   || 'B1 {ch} 7F'
+            micMuteOscPath    = newSettings.micMuteOscPath    || '/ch/{ch}/mix/on'
+            micMuteOscUnmute  = newSettings.micMuteOscUnmute  !== undefined ? String(newSettings.micMuteOscUnmute) : '1'
+            micMuteOscMute    = newSettings.micMuteOscMute    !== undefined ? String(newSettings.micMuteOscMute)   : '0'
             const newLang   = newSettings.appLanguage || 'de'
             if (newLang !== appLanguage) {
                 appLanguage = newLang

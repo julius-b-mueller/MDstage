@@ -24,6 +24,30 @@
         .live-header .clock    { font-size: 2.4rem; line-height: 2.8rem; width: auto; min-width: 9rem; margin-right: 0; }
         .live-header .tc-display { font-size: 1.5rem; line-height: 2.8rem; margin-right: 0; padding: 0 0.7rem; }
 
+        /* ── Current state strip ─────────────────────────────────────────── */
+        .live-status {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+            margin-left: auto;
+            align-items: flex-end;
+            font-size: 1rem;
+            color: #7c8898;
+            min-width: 0;
+            overflow: hidden;
+        }
+        .live-status-row {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .live-status-light { color: #e5c07b; }
+        .live-status-mic span { border-radius: 3px; padding: 0 0.35rem; font-size: 0.92rem; }
+        .live-status-label { opacity: 0.55; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.06em; }
+
         /* ── Script area ─────────────────────────────────────────────────── */
         .script-area { flex: 1; min-height: 0; overflow: hidden; position: relative; }
         .script-scroll { height: 100%; overflow: hidden; }
@@ -276,6 +300,7 @@
     <div class="live-header">
         <div class="clock" id="live-clock">00:00:00</div>
         <div class="tc-display" id="live-tc">--:--:--:--</div>
+        <div class="live-status" id="live-status"></div>
     </div>
 
     <div class="script-area">
@@ -294,6 +319,7 @@
     <script>
         const clockEl    = document.getElementById('live-clock')
         const tcEl       = document.getElementById('live-tc')
+        const statusEl   = document.getElementById('live-status')
         const blocksEl   = document.getElementById('script-blocks')
         const scrollEl   = document.getElementById('script-scroll')
         const audioPanEl = document.getElementById('audio-panel')
@@ -614,6 +640,35 @@
         }
 
         // ── Main render ──────────────────────────────────────────────────
+        // ── Current-state status strip ───────────────────────────────────
+        function updateStatus(blocks, currentCue) {
+            const cur = blocks.find(b => b.type === 'trigger' && b.cueIdx === currentCue)
+            statusEl.innerHTML = ''
+            if (!cur) return
+
+            if (cur.lightScene) {
+                const row = document.createElement('div')
+                row.className = 'live-status-row live-status-light'
+                row.innerHTML = `<span class="live-status-label">✦</span> ${esc(cur.lightScene)}`
+                statusEl.appendChild(row)
+            }
+
+            if (cur.muteall) {
+                const row = document.createElement('div')
+                row.className = 'live-status-row live-status-mic'
+                row.innerHTML = `${MIC_SVG} <span style="color:#e06c75">alle aus</span>`
+                statusEl.appendChild(row)
+            } else if (cur.micColors && cur.micColors.length) {
+                const row = document.createElement('div')
+                row.className = 'live-status-row live-status-mic'
+                let spans = MIC_SVG + ' '
+                for (const { name, color } of cur.micColors)
+                    spans += `<span${color ? ` class="color-${color}"` : ''}>${esc(name)}</span> `
+                row.innerHTML = spans
+                statusEl.appendChild(row)
+            }
+        }
+
         function render(state) {
             const { blocks, nextCue, currentCue, selectedVariant, timecodeFrames, audioProgress, appLanguage } = state
             if (appLanguage && appLanguage !== window.appLanguage) window.applyI18n(appLanguage)
@@ -626,6 +681,7 @@
 
             renderScript(blocks, nextCue, currentCue ?? 0, selectedVariant)
             syncAudio(audioProgress || [])
+            updateStatus(blocks, currentCue ?? 0)
         }
 
         // ── Controls ─────────────────────────────────────────────────────
