@@ -15,29 +15,50 @@ concurrency:
 
 jobs:
 
-  # ── Linux & Windows ───────────────────────────────────────────────────────
-  build-linux-windows:
+  # ── Linux ─────────────────────────────────────────────────────────────────
+  build-linux:
     runs-on: ubuntu-latest
-    container:
-      image: electronuserland/builder:wine
-      env:
-        HOME: /root
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
       - run: npm ci
       - run: npx webpack --mode production
       - run: node scripts/build-version.js
-      - run: npx electron-builder --linux AppImage deb rpm --win nsis --publish never
+      - run: npx electron-builder --linux AppImage deb rpm --publish never
       - run: |
           mkdir -p artifacts
           find release -name "*.AppImage" -exec cp {} artifacts/MainDesk-linux-x64.AppImage \; 2>/dev/null || true
           find release -name "*.deb"      -exec cp {} artifacts/MainDesk-linux-x64.deb \;      2>/dev/null || true
           find release -name "*.rpm"      -exec cp {} artifacts/MainDesk-linux-x64.rpm \;      2>/dev/null || true
-          find release -name "*.exe"      -exec cp {} artifacts/MainDesk-windows-x64.exe \;    2>/dev/null || true
           ls -lh artifacts/
       - uses: actions/upload-artifact@v4
         with:
-          name: linux-windows
+          name: linux
+          path: artifacts/
+          retention-days: 14
+
+  # ── Windows ───────────────────────────────────────────────────────────────
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npx webpack --mode production
+      - run: node scripts/build-version.js
+      - run: npx electron-builder --win nsis --publish never
+      - run: |
+          mkdir -p artifacts
+          Get-ChildItem -Recurse release -Filter "*.exe" | Copy-Item -Destination artifacts/MainDesk-windows-x64.exe
+          Get-ChildItem artifacts/
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
           path: artifacts/
           retention-days: 14
 
@@ -82,9 +103,8 @@ jobs:
 
   # ── GitHub Pages ──────────────────────────────────────────────────────────
   deploy-pages:
-    needs: [build-linux-windows, build-macos, build-web]
-    # Läuft auch wenn macOS fehlschlägt, solange Linux/Windows und Web erfolgreich waren
-    if: ${{ always() && needs.build-linux-windows.result == 'success' && needs.build-web.result == 'success' }}
+    needs: [build-linux, build-windows, build-macos, build-web]
+    if: ${{ always() && needs.build-linux.result == 'success' && needs.build-windows.result == 'success' && needs.build-web.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -96,13 +116,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: linux-windows
+          name: linux
+          path: artifacts/
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows
           path: artifacts/
       - uses: actions/download-artifact@v4
         with:
           name: macos
           path: artifacts/
-        continue-on-error: true   # optional — kein Fehler wenn macOS-Build fehlschlug
+        continue-on-error: true
       - uses: actions/download-artifact@v4
         with:
           name: web-bundle
