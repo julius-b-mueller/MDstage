@@ -614,6 +614,7 @@
 
             renderScript(blocks, nextCue, currentCue ?? 0, selectedVariant)
             syncAudio(audioProgress || [])
+            updateInfoBar(state)
         }
 
         btnGo.addEventListener('click', () => {

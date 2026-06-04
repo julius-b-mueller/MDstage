@@ -741,10 +741,25 @@ app.whenReady().then(async () => {
         const audioDir = path.join(path.dirname(scriptMdPath), 'audio')
         try {
             if (!fs.existsSync(audioDir)) fs.mkdirSync(audioDir)
-            return fs.readdirSync(audioDir).filter(f => /\.(mp3|wav)$/i.test(f)).sort()
+            return fs.readdirSync(audioDir).filter(f => /\.(mp3|wav|aiff|flac|ogg|aac|m4a)$/i.test(f)).sort()
         } catch {
             return []
         }
+    })
+
+    ipcMain.handle('handle-audio-drop', (_, srcPath) => {
+        const audioDir = path.join(path.dirname(scriptMdPath), 'audio')
+        if (!fs.existsSync(audioDir)) fs.mkdirSync(audioDir, { recursive: true })
+        const fileName = path.basename(srcPath)
+        const destPath = path.join(audioDir, fileName)
+        const srcResolved  = path.resolve(srcPath)
+        const audioDirResolved = path.resolve(audioDir)
+        const alreadyInDir = srcResolved.startsWith(audioDirResolved + path.sep)
+                          || srcResolved === destPath
+        if (!alreadyInDir && !fs.existsSync(destPath)) {
+            fs.copyFileSync(srcPath, destPath)
+        }
+        return fileName
     })
 
     ipcMain.handle('get-roles', () => {

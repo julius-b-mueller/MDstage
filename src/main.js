@@ -9,8 +9,9 @@ let config = {}
 let usedChs = []
 let triggers = []
 let triggerYamls = []
-let parseErrors = []   // {blockNum, line, message}
-let audioWarnings = [] // {file, cueNum}
+let parseErrors    = []   // {blockNum, line, message}
+let audioWarnings  = []   // {file, cueNum}
+let noteConflicts  = []   // {key, first, second} – duplicate trigger_note entries
 const loopOutroPending = new Map()         // loopTriggerIdx → outroTriggerIdx
 const loopOutroInitialRemaining = new Map() // loopTriggerIdx → remaining at arm time
 const loopBtns = new Map()          // triggerIdx → button element
@@ -150,7 +151,9 @@ const MIC_SVG = `<svg class="t-icon" viewBox="0 0 12 18" width="10" height="15" 
 const TAPE_SVG = `<svg class="t-icon" viewBox="0 0 22 12" width="22" height="12" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round"><circle cx="5" cy="6" r="4"/><circle cx="5" cy="6" r="1.3"/><line x1="5" y1="2" x2="5" y2="4.7"/><line x1="1.5" y1="8" x2="3.9" y2="6.7"/><line x1="8.5" y1="8" x2="6.1" y2="6.7"/><circle cx="17" cy="6" r="4"/><circle cx="17" cy="6" r="1.3"/><line x1="17" y1="2" x2="17" y2="4.7"/><line x1="13.5" y1="8" x2="15.9" y2="6.7"/><line x1="20.5" y1="8" x2="18.1" y2="6.7"/><line x1="9" y1="2" x2="13" y2="2"/><line x1="9" y1="10" x2="13" y2="10"/></svg>`
 
 let currentCue = 0
-let cueHistory = []
+let cueHistory     = []
+let cueHistoryAuto = []   // parallel to cueHistory: true = fired by auto_trigger YAML
+let pendingAutoTrigger = false  // set just before calling triggerAction from auto-trigger
 let liveViewOpen = false
 let armedCue = null
 let midiGoNote = null
@@ -170,12 +173,27 @@ let oscPort = 8000
 let appLanguage = 'de'
 let effectiveLightScene = null  // light: value of last fired cue that had one
 let effectiveMics       = null  // mic: value of last fired cue that had one
-let micMuteMethod     = 'x32'
-let micMuteMidiUnmute = 'B1 {ch} 00'
-let micMuteMidiMute   = 'B1 {ch} 7F'
-let micMuteOscPath    = '/ch/{ch}/mix/on'
-let micMuteOscUnmute  = '1'
-let micMuteOscMute    = '0'
+let micMuteMethod        = 'x32'
+let micMuteMidiType      = 'sysex'
+let micMuteMidiUnmute    = 'B1 {ch} 00'
+let micMuteMidiMute      = 'B1 {ch} 7F'
+let micMuteMidiNoteCh    = '1'
+let micMuteMidiNoteNum   = '{ch}'
+let micMuteMidiVelOn     = 127
+let micMuteMidiVelOff    = 0
+let micMuteMidiCcCh      = '2'
+let micMuteMidiCcNum     = '{ch}'
+let micMuteMidiCcValOn   = 0
+let micMuteMidiCcValOff  = 127
+let micMuteMidiPcCh      = '1'
+let micMuteMidiPcOn      = 0
+let micMuteMidiPcOff     = 1
+let micMuteOscOnPath     = '/ch/{ch}/mix/on'
+let micMuteOscOnArgType  = 'float'
+let micMuteOscOnArg      = '1'
+let micMuteOscOffPath    = '/ch/{ch}/mix/on'
+let micMuteOscOffArgType = 'float'
+let micMuteOscOffArg     = '0'
 
 // t() is defined by dist/i18n.js which is loaded before bundle.js in index.html.
 // Fallback for unit-test contexts where window.t may not exist.
@@ -1805,6 +1823,13 @@ document.addEventListener('keyup', (e) => {
 window.addEventListener('blur', () => { shiftHeld = false; document.body.classList.remove('shift-held') })
 window.addEventListener('scroll', updateSidebarActive, { passive: true })
 
+// Prevent Electron from navigating to dropped files (default browser/Electron behaviour).
+// Individual drop targets handle the files themselves.
+if (!window.__webPreview) {
+    document.addEventListener('dragover', (e) => { e.preventDefault() })
+    document.addEventListener('drop',     (e) => { e.preventDefault() })
+}
+
 const _headerShield = document.getElementById('header-shield')
 function updateHeaderShield() {
     if (!_headerShield) return
@@ -2199,6 +2224,8 @@ function rerender(newText) {
         window.scrollTo({ top: scrollY, behavior: 'instant' })
         checkEmptyScript()
         updateHeaderShield()
+        // Try to compute derived TCs immediately in case audio was already loaded
+        updateDerivedTcBadges()
     })
 }
 
@@ -2207,14 +2234,41 @@ function escapeHtml(s) {
 }
 
 function validateYamlBlocks(text) {
-    parseErrors = []
+    parseErrors   = []
     audioWarnings = []
+    noteConflicts = []
+    const parsedBlocks = []  // {blockNum, line, yaml, groupId}
     let blockNum = 0
     for (const m of text.matchAll(/```yaml\n([\s\S]*?)\n```/g)) {
         blockNum++
         const line = text.slice(0, m.index).split('\n').length
-        try { yaml.load(m[1]) } catch (e) {
+        let parsed = null
+        try {
+            parsed = yaml.load(m[1])
+        } catch (e) {
             parseErrors.push({ blockNum, line, message: e.message })
+        }
+        parsedBlocks.push({ blockNum, line, yaml: parsed })
+    }
+    // Assign variant-group IDs: each non-sibling trigger starts a new group
+    let groupId = 0
+    for (const b of parsedBlocks) {
+        if (b.blockNum === 1) { b.groupId = 0; continue }
+        if (!b.yaml?.sibling) groupId++
+        b.groupId = groupId
+    }
+    // Detect duplicate trigger_notes, ignoring intentional same-note variants
+    const seenTriggerNotes = new Map()  // "ch.note" → {blockNum, groupId}
+    for (const b of parsedBlocks) {
+        if (b.blockNum === 1 || !b.yaml?.trigger_note) continue
+        const key = `${b.yaml.trigger_note.ch}.${b.yaml.trigger_note.note}`
+        if (seenTriggerNotes.has(key)) {
+            const prev = seenTriggerNotes.get(key)
+            if (prev.groupId !== b.groupId) {
+                noteConflicts.push({ key, first: prev.blockNum, second: b.blockNum })
+            }
+        } else {
+            seenTriggerNotes.set(key, { blockNum: b.blockNum, groupId: b.groupId })
         }
     }
 }
@@ -2222,7 +2276,7 @@ function validateYamlBlocks(text) {
 function showParseErrors() {
     const existing = document.getElementById('parse-error-banner')
     if (existing) existing.remove()
-    if (!parseErrors.length && !audioWarnings.length) return
+    if (!parseErrors.length && !audioWarnings.length && !noteConflicts.length) return
     const banner = document.createElement('div')
     banner.id = 'parse-error-banner'
     banner.className = 'parse-error-banner'
@@ -2241,6 +2295,12 @@ function showParseErrors() {
             `<li>${escapeHtml(file)}</li>`
         ).join('')
         html += `<strong>${audioWarnings.length} Audiodatei${audioWarnings.length > 1 ? 'en' : ''} nicht gefunden</strong><ul>${items}</ul>`
+    }
+    if (noteConflicts.length) {
+        const items = noteConflicts.map(({ key, first, second }) =>
+            `<li>MIDI-Note ${escapeHtml(key)}: Block ${first} und Block ${second}</li>`
+        ).join('')
+        html += `<strong>${noteConflicts.length} doppelte MIDI-Note${noteConflicts.length > 1 ? 'n' : ''}</strong><ul>${items}</ul>`
     }
     banner.innerHTML = html
     document.body.prepend(banner)
@@ -2472,6 +2532,7 @@ function setupAutoTriggers() {
                 currentCue = lastPast.targetIdx
                 markTriggers(lastPast.targetIdx)
                 scrollToTrigger(lastPast.targetIdx)
+                pendingAutoTrigger = true
                 triggerAction(lastPast.targetIdx)
             }
         }
@@ -2487,6 +2548,7 @@ function setupAutoTriggers() {
                     currentCue = link.targetIdx
                     markTriggers(link.targetIdx)
                     scrollToTrigger(link.targetIdx)
+                    pendingAutoTrigger = true
                     triggerAction(link.targetIdx)
                     continue
                 }
@@ -2784,9 +2846,9 @@ function buildTrigger(codeblockYaml, index) {
                 triggerMusic.appendChild(document.createTextNode(", "))
             }
             if (codeblockYaml.music.adjust.fadeout) {
-                triggerMusic.appendChild(document.createTextNode(`⇢ ${adjRef} ausfaden`))
+                triggerMusic.appendChild(document.createTextNode(`⇢ ${adjRef} ${t('adj.display.fadeout')}`))
             } else if (codeblockYaml.music.adjust.volume !== undefined) {
-                triggerMusic.appendChild(document.createTextNode(`⇢ ${adjRef} auf ${codeblockYaml.music.adjust.volume * 100}%`))
+                triggerMusic.appendChild(document.createTextNode(`⇢ ${adjRef} ${t('adj.display.volume.pre')} ${Math.round(codeblockYaml.music.adjust.volume * 100)}%`))
             }
         }
         // Insert after mic (if present), before light
@@ -3205,7 +3267,7 @@ function buildTrigger(codeblockYaml, index) {
                     }
                 }
             }
-            cueHistory.push(nextIdx)
+            cueHistory.push(nextIdx); cueHistoryAuto.push(false)
             broadcastLiveState()
         }
 
@@ -3221,7 +3283,7 @@ function buildTrigger(codeblockYaml, index) {
                 x32UnmuteChannels(ty?.mic)
                 sendTriggerNote(nextIdx)
                 sendOscMessage(nextIdx)
-                cueHistory.push(nextIdx)
+                cueHistory.push(nextIdx); cueHistoryAuto.push(false)
                 broadcastLiveState()
                 return
             }
@@ -3782,6 +3844,7 @@ function buildTrigger(codeblockYaml, index) {
                                 atSetup.markFired(past[0].targetIdx)
                                 currentCue = past[0].targetIdx
                                 markTriggers(past[0].targetIdx)
+                                pendingAutoTrigger = true
                                 triggerAction(past[0].targetIdx)
                             }
                         }
@@ -4094,6 +4157,193 @@ function makeWaveBtn(label, title) {
     return btn
 }
 
+// Enforce HH:MM:SS:FF format on a text input. Allows only digits, auto-inserts
+// colons, validates ranges (MM/SS < 60, FF < 25), and marks invalid values.
+function installTcMask(input) {
+    function digits(val) { return val.replace(/\D/g, '').slice(0, 8) }
+
+    function format(d) {
+        let out = ''
+        for (let i = 0; i < d.length; i++) {
+            if (i === 2 || i === 4 || i === 6) out += ':'
+            out += d[i]
+        }
+        return out
+    }
+
+    function isValid(val) {
+        if (!val) return true
+        if (!/^\d{2}:\d{2}:\d{2}:\d{2}$/.test(val)) return false
+        const [, m, s, f] = val.split(':').map(Number)
+        return m < 60 && s < 60 && f < 25
+    }
+
+    input.addEventListener('keydown', (e) => {
+        if (e.metaKey || e.ctrlKey) return
+        if (['Backspace','Delete','ArrowLeft','ArrowRight','Tab','Home','End'].includes(e.key)) return
+        if (!/^\d$/.test(e.key)) e.preventDefault()
+    })
+
+    input.addEventListener('input', () => {
+        const pos = input.selectionStart
+        const digsBefore = input.value.slice(0, pos).replace(/\D/g, '').length
+        const d = digits(input.value)
+        const formatted = format(d)
+        input.value = formatted
+        // Restore cursor after the same number of digits, skipping any colon
+        let seen = 0, newPos = 0
+        for (let i = 0; i < formatted.length; i++) {
+            if (seen >= digsBefore) break
+            if (/\d/.test(formatted[i])) seen++
+            newPos = i + 1
+        }
+        if (formatted[newPos] === ':') newPos++
+        input.setSelectionRange(newPos, newPos)
+        input.classList.toggle('tc-input-invalid', !isValid(formatted))
+    })
+
+    input.addEventListener('blur', () => {
+        input.classList.toggle('tc-input-invalid', !isValid(input.value))
+    })
+}
+
+// Searchable combobox replacing a plain <select> for audio file lists.
+// Returns { element, getValue, setValue, addOption, onChange }.
+function createAudioSelect(files, emptyLabel) {
+    let selectedValue = ''
+    let isOpen = false
+    const changeListeners = []
+    const allOptions = [{ value: '', label: emptyLabel }]
+    for (const f of files) allOptions.push({ value: f, label: f })
+
+    const wrap = document.createElement('div')
+    wrap.className = 'audio-select-wrap'
+
+    const inputRow = document.createElement('div')
+    inputRow.className = 'audio-select-input-row'
+
+    const input = document.createElement('input')
+    input.type = 'text'; input.className = 'audio-select-input'
+    input.placeholder = emptyLabel; input.autocomplete = 'off'; input.spellcheck = false
+
+    const arrow = document.createElement('span')
+    arrow.className = 'audio-select-arrow'; arrow.textContent = '▾'
+
+    const dropdown = document.createElement('div')
+    dropdown.className = 'audio-select-dropdown'; dropdown.style.display = 'none'
+
+    inputRow.append(input, arrow)
+    wrap.append(inputRow, dropdown)
+
+    function buildList(filter) {
+        dropdown.innerHTML = ''
+        const q = (filter || '').toLowerCase()
+        let count = 0
+        for (const opt of allOptions) {
+            if (q && opt.value && !opt.label.toLowerCase().includes(q)) continue
+            const div = document.createElement('div')
+            div.className = 'audio-select-option' + (opt.value === selectedValue ? ' selected' : '')
+            div.textContent = opt.label; div.dataset.value = opt.value
+            div.addEventListener('mousedown', (e) => { e.preventDefault(); doSelect(opt.value) })
+            dropdown.appendChild(div); count++
+        }
+        return count
+    }
+
+    function open() {
+        if (isOpen) return; isOpen = true
+        input.value = ''; input.placeholder = 'Suchen…'
+        buildList('')
+        dropdown.style.display = ''
+        // scroll selected into view
+        const sel = dropdown.querySelector('.selected')
+        if (sel) sel.scrollIntoView({ block: 'nearest' })
+    }
+
+    function close() {
+        if (!isOpen) return; isOpen = false
+        dropdown.style.display = 'none'
+        input.placeholder = emptyLabel
+        input.value = selectedValue || ''
+    }
+
+    function doSelect(value) {
+        selectedValue = value
+        isOpen = false
+        dropdown.style.display = 'none'
+        input.placeholder = emptyLabel
+        input.value = selectedValue || ''
+        changeListeners.forEach(cb => cb(value))
+    }
+
+    input.addEventListener('focus', open)
+    input.addEventListener('input', () => { if (!isOpen) { isOpen = true; dropdown.style.display = '' } buildList(input.value) })
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { e.stopPropagation(); close(); return }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault()
+            const items = [...dropdown.querySelectorAll('.audio-select-option')]
+            const cur = items.findIndex(d => d.classList.contains('selected'))
+            const next = e.key === 'ArrowDown' ? Math.min(cur + 1, items.length - 1) : Math.max(cur - 1, 0)
+            items.forEach(d => d.classList.remove('selected'))
+            if (items[next]) { items[next].classList.add('selected'); items[next].scrollIntoView({ block: 'nearest' }) }
+        }
+        if (e.key === 'Enter') {
+            e.preventDefault()
+            const sel = dropdown.querySelector('.audio-select-option.selected')
+            if (sel) doSelect(sel.dataset.value)
+        }
+    })
+    arrow.addEventListener('mousedown', (e) => { e.preventDefault(); if (isOpen) close(); else { input.focus() } })
+
+    // Close when clicking outside
+    const outsideHandler = (e) => {
+        if (!wrap.isConnected) { document.removeEventListener('mousedown', outsideHandler); return }
+        if (!wrap.contains(e.target)) close()
+    }
+    document.addEventListener('mousedown', outsideHandler)
+
+    // Drag & Drop (Electron only)
+    if (!window.__webPreview) {
+        wrap.addEventListener('dragover', (e) => {
+            e.preventDefault(); e.stopPropagation()
+            // During dragover, file names are not yet accessible (browser security).
+            // Accept any file drag and let the drop handler filter by extension.
+            if ([...e.dataTransfer.items].some(i => i.kind === 'file'))
+                wrap.classList.add('audio-drop-active')
+        })
+        wrap.addEventListener('dragleave', (e) => {
+            if (!wrap.contains(e.relatedTarget)) wrap.classList.remove('audio-drop-active')
+        })
+        wrap.addEventListener('drop', async (e) => {
+            e.preventDefault(); e.stopPropagation(); wrap.classList.remove('audio-drop-active')
+            const file = e.dataTransfer.files[0]
+            if (!file) return
+            if (!/\.(mp3|wav|aiff|flac|ogg|aac|m4a)$/i.test(file.name)) return
+            // file.path was removed in Electron 28; use webUtils.getPathForFile instead
+            const filePath = window.electronAPI.getPathForFile(file)
+            if (!filePath) return
+            try {
+                const filename = await window.electronAPI.handleAudioDrop(filePath)
+                addOption(filename); doSelect(filename)
+            } catch (err) { console.error('Audio drop failed:', err) }
+        })
+    }
+
+    function addOption(filename) {
+        if (!allOptions.find(o => o.value === filename))
+            allOptions.push({ value: filename, label: filename })
+    }
+
+    return {
+        element: wrap,
+        getValue: () => selectedValue,
+        setValue(v) { selectedValue = v || ''; input.value = selectedValue; input.placeholder = emptyLabel },
+        addOption,
+        onChange(cb) { changeListeners.push(cb) },
+    }
+}
+
 function mkDialogField(labelText, type, defaultVal) {
     const wrap = document.createElement('div')
     wrap.classList.add('dialog-field')
@@ -4351,24 +4601,13 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     mfWrap.classList.add('dialog-field')
     const mfLabel = document.createElement('label')
     mfLabel.textContent = t('dlg.trigger.music')
-    const mfSelect = document.createElement('select')
-    mfSelect.classList.add('dialog-select')
-    const emptyOpt = document.createElement('option')
-    emptyOpt.value = ''
-    emptyOpt.textContent = t('dlg.trigger.music.none')
-    mfSelect.appendChild(emptyOpt)
-    for (const f of audioFiles) {
-        const opt = document.createElement('option')
-        opt.value = f
-        opt.textContent = f
-        mfSelect.appendChild(opt)
-    }
-    mfWrap.append(mfLabel, mfSelect)
+    const mfComp = createAudioSelect(audioFiles, t('dlg.trigger.music.none'))
+    mfWrap.append(mfLabel, mfComp.element)
     box.appendChild(mfWrap)
 
     if ((isEdit || isCopy) && existingYaml?.music) {
         const currentFile = typeof existingYaml.music === 'string' ? existingYaml.music : existingYaml.music.file
-        if (currentFile) mfSelect.value = currentFile
+        if (currentFile) mfComp.setValue(currentFile)
     }
 
     // ── Monitor-Mix ─────────────────────────────────────────────────
@@ -4376,30 +4615,19 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     monWrap.classList.add('dialog-field')
     const monLabel = document.createElement('label')
     monLabel.textContent = t('dlg.trigger.monitor')
-    const monSelect = document.createElement('select')
-    monSelect.classList.add('dialog-select')
-    const monEmptyOpt = document.createElement('option')
-    monEmptyOpt.value = ''
-    monEmptyOpt.textContent = t('dlg.trigger.monitor.none')
-    monSelect.appendChild(monEmptyOpt)
-    for (const f of audioFiles) {
-        const opt = document.createElement('option')
-        opt.value = f
-        opt.textContent = f
-        monSelect.appendChild(opt)
-    }
+    const monComp = createAudioSelect(audioFiles, t('dlg.trigger.monitor.none'))
     const monWarning = document.createElement('div')
     monWarning.style.cssText = 'color:#e5c07b;font-size:0.82rem;margin-top:0.3rem;display:none'
-    monWrap.append(monLabel, monSelect, monWarning)
+    monWrap.append(monLabel, monComp.element, monWarning)
     box.appendChild(monWrap)
 
     if ((isEdit || isCopy) && existingYaml?.music && typeof existingYaml.music === 'object' && existingYaml.music.monitor) {
-        monSelect.value = existingYaml.music.monitor
+        monComp.setValue(existingYaml.music.monitor)
     }
 
     async function checkMonitorDuration() {
-        const mf = mfSelect.value
-        const mf2 = monSelect.value
+        const mf = mfComp.getValue()
+        const mf2 = monComp.getValue()
         if (!mf || !mf2) { monWarning.style.display = 'none'; return }
         const [d1, d2] = await Promise.all([
             new Promise(res => { const a = new Audio('audio/' + mf);  a.addEventListener('loadedmetadata', () => res(a.duration)); a.addEventListener('error', () => res(null)) }),
@@ -4412,8 +4640,8 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
             monWarning.style.display = 'none'
         }
     }
-    mfSelect.addEventListener('change', checkMonitorDuration)
-    monSelect.addEventListener('change', checkMonitorDuration)
+    mfComp.onChange(checkMonitorDuration)
+    monComp.onChange(checkMonitorDuration)
     checkMonitorDuration()
 
     // ── Hinweis ─────────────────────────────────────────────────────
@@ -4521,8 +4749,33 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         const { wrap, input } = mkDialogField(t('dlg.trigger.tc'), 'text', '')
         tcInput = input
         tcInput.placeholder = t('dlg.trigger.tc.ph')
+        tcInput.classList.add('tc-input')
+        installTcMask(tcInput)
         if ((isEdit || isCopy) && existingYaml?.start_tc) tcInput.value = existingYaml.start_tc
         box.appendChild(wrap)
+    }
+
+    // ── MIDI-Note (nur beim Bearbeiten, nicht bei neuen Triggern) ────
+    let tnInput = null
+    if (isEdit && !isCopy && existingYaml?.trigger_note) {
+        const { wrap: tnWrap, input: tnIn } = mkDialogField('MIDI-Note (Kanal.Note)', 'text', '')
+        tnInput = tnIn
+        tnInput.classList.add('tc-input')
+        tnInput.placeholder = `${existingYaml.trigger_note.ch}.${existingYaml.trigger_note.note}`
+        tnInput.value = `${existingYaml.trigger_note.ch}.${existingYaml.trigger_note.note}`
+        // Validate uniqueness on input (exclude same variant group)
+        const myGroupRoot = groupRootOf(triggerIndex)
+        tnInput.addEventListener('input', () => {
+            const parts = tnInput.value.trim().split('.')
+            const c = parseInt(parts[0]), n = parseInt(parts[1])
+            if (isNaN(c) || isNaN(n)) { tnInput.classList.remove('tc-input-invalid'); return }
+            const inUse = triggerYamls.some((ty, i) =>
+                i > 0 && i !== triggerIndex && groupRootOf(i) !== myGroupRoot
+                && ty?.trigger_note?.ch === c && ty?.trigger_note?.note === n)
+            tnInput.classList.toggle('tc-input-invalid', inUse)
+            tnInput.title = inUse ? `Note ${c}.${n} wird bereits von einem anderen Cue verwendet` : ''
+        })
+        box.appendChild(tnWrap)
     }
 
     // ── Gleiche trigger_note ─────────────────────────────────────────
@@ -4590,8 +4843,8 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         }
 
         // music (preserve existing object props like volume/start/end when editing or copying)
-        const mf = mfSelect.value
-        const mf2 = monSelect.value
+        const mf = mfComp.getValue()
+        const mf2 = monComp.getValue()
         if (mf) {
             if ((isEdit || isCopy) && existingYaml?.music && typeof existingYaml.music === 'object') {
                 newYaml.music = { ...existingYaml.music, file: mf }
@@ -4628,7 +4881,20 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
 
         // start_tc (only for root SLF cues; non-root members use derived TC)
         const tcVal = tcInput?.value.trim() ?? ''
-        if (tcVal) newYaml.start_tc = tcVal
+        if (/^\d{2}:\d{2}:\d{2}:\d{2}$/.test(tcVal)) newYaml.start_tc = tcVal
+
+        // trigger_note: apply manual override from tnInput if valid and not in use
+        if (tnInput) {
+            const parts = tnInput.value.trim().split('.')
+            const c = parseInt(parts[0]), n = parseInt(parts[1])
+            if (!isNaN(c) && !isNaN(n) && c >= 1 && c <= 16 && n >= 0 && n <= 127) {
+                const myGroupRoot = groupRootOf(triggerIndex)
+                const inUse = triggerYamls.some((ty, i) =>
+                    i > 0 && i !== triggerIndex && groupRootOf(i) !== myGroupRoot
+                    && ty?.trigger_note?.ch === c && ty?.trigger_note?.note === n)
+                if (!inUse) newYaml.trigger_note = { ch: c, note: n }
+            }
+        }
 
         // trigger_note: preserve when editing non-sibling; handle checkbox for siblings/copies
         if (sameTnCheckbox) {
@@ -5065,6 +5331,8 @@ function triggerAction(cue) {
     }
 
     cueHistory.push(cue)
+    cueHistoryAuto.push(pendingAutoTrigger)
+    pendingAutoTrigger = false
     broadcastLiveState()
 
     // Pre-decode next audio in background for gapless playback
@@ -5105,7 +5373,7 @@ function broadcastLiveState() {
     let nextCue = liveNextOverride ?? armedCue
     if (nextCue === null) {
         for (let i = liveCurrent + 1; i < triggerYamls.length; i++) {
-            if (triggerYamls[i]) { nextCue = i; break }
+            if (triggerYamls[i] && !triggerYamls[i].sibling) { nextCue = i; break }
         }
     }
 
@@ -5300,6 +5568,7 @@ function goAction() {
     }
     for (let i = currentCue + 1; i < triggerYamls.length; i++) {
         if (!triggerYamls[i]) continue
+        if (triggerYamls[i].sibling) continue  // skip non-root variants — only reachable via selectedVariant
         // If a variant was chosen for this group, fire it instead of the first sibling
         if (selectedVariant !== null) {
             let sv = selectedVariant
@@ -5337,17 +5606,46 @@ function backAction() {
 
     setArmedCue(null)
     if (cueHistory.length < 1) return
-    const last = cueHistory.pop()
 
-    // Fade out any audio playing on the accidentally triggered cue
-    fadeOutAndStop(last)
+    // Pop auto-triggered cues AND the last manually triggered cue in one go,
+    // so Back always reverts to the previous manual state.
+    const popped = []
+    while (cueHistory.length > 0) {
+        const idx   = cueHistory.pop()
+        const isAuto = cueHistoryAuto.pop() ?? false
+        popped.push(idx)
+        if (!isAuto) break   // stop after the first non-auto entry
+    }
 
-    // Cancel any loop outro that was queued by the accidental trigger
-    for (const [loopIdx, outroIdx] of loopOutroPending) {
-        if (outroIdx === last) {
-            loopOutroPending.delete(loopIdx)
-            loopOutroInitialRemaining.delete(loopIdx)
-            setOutroPendingIndicator(last, false)
+    // Undo each popped cue's effects (audio, loop outro queues, music.adjust)
+    for (const pIdx of popped) {
+        fadeOutAndStop(pIdx)
+
+        for (const [loopIdx, outroIdx] of loopOutroPending) {
+            if (outroIdx === pIdx) {
+                loopOutroPending.delete(loopIdx)
+                loopOutroInitialRemaining.delete(loopIdx)
+                setOutroPendingIndicator(pIdx, false)
+            }
+        }
+
+        const pMusic = triggerYamls[pIdx]?.music
+        if (typeof pMusic === 'object' && pMusic.adjust) {
+            const adjIdx = findTriggerByNote(pMusic.adjust.trigger_note)
+            if (adjIdx !== null) {
+                const adjTa = triggerAudio.get(adjIdx)
+                if (adjTa) {
+                    const adjIsLoop = adjTa.mp?.loop || !!triggerYamls[adjIdx]?.loop_outro
+                    if (pMusic.adjust.fadeout && adjIsLoop) {
+                        cancelWsFade(adjTa.ws)
+                        adjTa.enableLoop()
+                        if (!adjTa.ws.isPlaying()) playMusic(adjIdx)
+                    } else if (pMusic.adjust.volume !== undefined && adjTa.ws.isPlaying()) {
+                        cancelWsFade(adjTa.ws)
+                        fadeAdjustVolume(adjTa, adjTa.mp.volume, pMusic.adjust.fadetime ?? 3)
+                    }
+                }
+            }
         }
     }
 
@@ -5355,34 +5653,11 @@ function backAction() {
 
     if (prev !== null) {
         x32UnmuteChannels(triggerYamls[prev]?.mic)
-        if (triggerYamls[last]?.light) sendTriggerNote(prev)
+        if (popped.some(p => triggerYamls[p]?.light)) sendTriggerNote(prev)
         // Restart prev's audio if it was a loop (simple mp.loop or managed loop_outro)
         const prevTa = triggerAudio.get(prev)
         const prevIsLoop = prevTa?.mp?.loop || !!triggerYamls[prev]?.loop_outro
         if (prevTa && !prevTa.ws.isPlaying() && prevIsLoop) playMusic(prev)
-
-        // Undo any volume change or fadeout that last's music.adjust caused
-        const lastMusic = triggerYamls[last]?.music
-        if (typeof lastMusic === 'object' && lastMusic.adjust) {
-            const adjIdx = findTriggerByNote(lastMusic.adjust.trigger_note)
-            if (adjIdx !== null) {
-                const adjTa = triggerAudio.get(adjIdx)
-                if (adjTa) {
-                    const adjIsLoop = adjTa.mp?.loop || !!triggerYamls[adjIdx]?.loop_outro
-                    if (lastMusic.adjust.fadeout && adjIsLoop) {
-                        // cancelWsFade restores currentVolume to pre-fade value if cancelled mid-fade;
-                        // if already complete, fadeAdjustAudio already restored it on finish.
-                        cancelWsFade(adjTa.ws)
-                        adjTa.enableLoop()
-                        if (!adjTa.ws.isPlaying()) playMusic(adjIdx)
-                    } else if (lastMusic.adjust.volume !== undefined && adjTa.ws.isPlaying()) {
-                        // Volume change was undone: fade back to original volume
-                        cancelWsFade(adjTa.ws)
-                        fadeAdjustVolume(adjTa, adjTa.mp.volume, lastMusic.adjust.fadetime ?? 3)
-                    }
-                }
-            }
-        }
         currentCue = prev
         markTriggers(prev)
     } else {
@@ -5390,6 +5665,18 @@ function backAction() {
         currentCue = 0
         markTriggers(0)
     }
+
+    // Recompute effectiveLightScene and effectiveMics from the remaining history
+    // so the live view always shows the correct state after Back.
+    effectiveLightScene = null
+    effectiveMics       = null
+    for (let i = cueHistory.length - 1; i >= 0; i--) {
+        const ty = triggerYamls[cueHistory[i]]
+        if (effectiveLightScene === null && ty?.light) effectiveLightScene = ty.light
+        if (effectiveMics === null && ty?.mic !== undefined && ty?.mic !== null) effectiveMics = ty.mic
+        if (effectiveLightScene !== null && effectiveMics !== null) break
+    }
+
     broadcastLiveState()
 }
 
@@ -5698,28 +5985,60 @@ function x32UnmuteChannels(mic) {
         }
     } else if (micMuteMethod === 'custom-midi') {
         if (!midiX32) return
-        function parseMidiTemplate(tmpl, ch, val) {
-            return tmpl.trim().split(/\s+/).map(byte => {
-                const s = byte.replace('{ch}', ch).replace('{val}', val)
-                return parseInt(s, 16)
-            }).filter(n => !isNaN(n))
-        }
-        for (const used of usedChs) {
-            const isUnmuted = channels.includes(used)
-            const tmpl = isUnmuted ? micMuteMidiUnmute : micMuteMidiMute
-            const bytes = parseMidiTemplate(tmpl, used - 1, isUnmuted ? 0x00 : 0x7F)
-            if (bytes.length) midiX32.send(bytes)
+        function resolveCh(tmpl, used0) { return parseInt(String(tmpl).replace('{ch}', used0)) }
+        if (micMuteMidiType === 'sysex') {
+            function parseMidiTemplate(tmpl, ch, val) {
+                return tmpl.trim().split(/\s+/).map(byte => {
+                    const s = byte.replace('{ch}', ch).replace('{val}', val)
+                    return parseInt(s, 16)
+                }).filter(n => !isNaN(n))
+            }
+            for (const used of usedChs) {
+                const isUnmuted = channels.includes(used)
+                const tmpl = isUnmuted ? micMuteMidiUnmute : micMuteMidiMute
+                const bytes = parseMidiTemplate(tmpl, used - 1, isUnmuted ? 0x00 : 0x7F)
+                if (bytes.length) midiX32.send(bytes)
+            }
+        } else if (micMuteMidiType === 'note') {
+            for (const used of usedChs) {
+                const isUnmuted = channels.includes(used)
+                const ch   = (resolveCh(micMuteMidiNoteCh, used - 1) - 1) & 0xF
+                const note = resolveCh(micMuteMidiNoteNum, used - 1) & 0x7F
+                const vel  = (isUnmuted ? micMuteMidiVelOn : micMuteMidiVelOff) & 0x7F
+                midiX32.send([0x90 | ch, note, vel])
+                if (vel > 0) setTimeout(() => midiX32?.send([0x80 | ch, note, 0]), 100)
+            }
+        } else if (micMuteMidiType === 'cc') {
+            for (const used of usedChs) {
+                const isUnmuted = channels.includes(used)
+                const ch  = (resolveCh(micMuteMidiCcCh, used - 1) - 1) & 0xF
+                const cc  = resolveCh(micMuteMidiCcNum, used - 1) & 0x7F
+                const val = (isUnmuted ? micMuteMidiCcValOn : micMuteMidiCcValOff) & 0x7F
+                midiX32.send([0xB0 | ch, cc, val])
+            }
+        } else if (micMuteMidiType === 'pc') {
+            for (const used of usedChs) {
+                const isUnmuted = channels.includes(used)
+                const ch   = (resolveCh(micMuteMidiPcCh, used - 1) - 1) & 0xF
+                const prog = (isUnmuted ? micMuteMidiPcOn : micMuteMidiPcOff) & 0x7F
+                midiX32.send([0xC0 | ch, prog])
+            }
         }
     } else if (micMuteMethod === 'custom-osc') {
         if (!oscEnabled || !window.electronAPI?.sendOsc) return
         function padCh(n) { return String(n).padStart(2, '0') }
         for (const used of usedChs) {
-            const isUnmuted = channels.includes(used)
-            const val = isUnmuted ? micMuteOscUnmute : micMuteOscMute
-            const path = micMuteOscPath.replace('{ch}', padCh(used)).replace('{val}', val)
-            const numVal = parseFloat(val)
-            const args = isNaN(numVal) ? [val] : [numVal]
-            window.electronAPI.sendOsc({ path, args, host: oscHost, port: oscPort })
+            const isUnmuted  = channels.includes(used)
+            const oscPath    = (isUnmuted ? micMuteOscOnPath    : micMuteOscOffPath).replace('{ch}', padCh(used))
+            const oscArgType = isUnmuted  ? micMuteOscOnArgType : micMuteOscOffArgType
+            const oscArg     = isUnmuted  ? micMuteOscOnArg     : micMuteOscOffArg
+            const args = []
+            if (oscArgType !== 'none' && oscArg !== '') {
+                if (oscArgType === 'int')        args.push(parseInt(oscArg) || 0)
+                else if (oscArgType === 'float') args.push(parseFloat(oscArg) || 0)
+                else                             args.push(String(oscArg))
+            }
+            window.electronAPI.sendOsc({ path: oscPath, args, host: oscHost, port: oscPort })
         }
     }
 }
@@ -5826,12 +6145,27 @@ async function initApp() {
     oscEnabled      = savedSettings.oscEnabled ?? false
     oscHost         = savedSettings.oscHost    || '127.0.0.1'
     oscPort         = savedSettings.oscPort    ?? 8000
-    micMuteMethod     = savedSettings.micMuteMethod     || 'x32'
-    micMuteMidiUnmute = savedSettings.micMuteMidiUnmute || 'B1 {ch} 00'
-    micMuteMidiMute   = savedSettings.micMuteMidiMute   || 'B1 {ch} 7F'
-    micMuteOscPath    = savedSettings.micMuteOscPath    || '/ch/{ch}/mix/on'
-    micMuteOscUnmute  = savedSettings.micMuteOscUnmute  !== undefined ? String(savedSettings.micMuteOscUnmute) : '1'
-    micMuteOscMute    = savedSettings.micMuteOscMute    !== undefined ? String(savedSettings.micMuteOscMute)   : '0'
+    micMuteMethod       = savedSettings.micMuteMethod   || 'x32'
+    micMuteMidiType     = savedSettings.micMuteMidiType || 'sysex'
+    micMuteMidiUnmute   = savedSettings.micMuteMidiUnmute || 'B1 {ch} 00'
+    micMuteMidiMute     = savedSettings.micMuteMidiMute   || 'B1 {ch} 7F'
+    micMuteMidiNoteCh   = savedSettings.micMuteMidiNoteCh   || '1'
+    micMuteMidiNoteNum  = savedSettings.micMuteMidiNoteNum  || '{ch}'
+    micMuteMidiVelOn    = savedSettings.micMuteMidiVelOn    ?? 127
+    micMuteMidiVelOff   = savedSettings.micMuteMidiVelOff   ?? 0
+    micMuteMidiCcCh     = savedSettings.micMuteMidiCcCh    || '2'
+    micMuteMidiCcNum    = savedSettings.micMuteMidiCcNum   || '{ch}'
+    micMuteMidiCcValOn  = savedSettings.micMuteMidiCcValOn  ?? 0
+    micMuteMidiCcValOff = savedSettings.micMuteMidiCcValOff ?? 127
+    micMuteMidiPcCh     = savedSettings.micMuteMidiPcCh    || '1'
+    micMuteMidiPcOn     = savedSettings.micMuteMidiPcOn     ?? 0
+    micMuteMidiPcOff    = savedSettings.micMuteMidiPcOff    ?? 1
+    micMuteOscOnPath     = savedSettings.micMuteOscOnPath  || savedSettings.micMuteOscPath || '/ch/{ch}/mix/on'
+    micMuteOscOnArgType  = savedSettings.micMuteOscOnArgType  || 'float'
+    micMuteOscOnArg      = savedSettings.micMuteOscOnArg  !== undefined ? String(savedSettings.micMuteOscOnArg)  : (savedSettings.micMuteOscUnmute !== undefined ? String(savedSettings.micMuteOscUnmute) : '1')
+    micMuteOscOffPath    = savedSettings.micMuteOscOffPath || savedSettings.micMuteOscPath || '/ch/{ch}/mix/on'
+    micMuteOscOffArgType = savedSettings.micMuteOscOffArgType || 'float'
+    micMuteOscOffArg     = savedSettings.micMuteOscOffArg !== undefined ? String(savedSettings.micMuteOscOffArg) : (savedSettings.micMuteOscMute   !== undefined ? String(savedSettings.micMuteOscMute)   : '0')
 
     let text = await window.electronAPI.getScriptMd()
 
@@ -5943,12 +6277,27 @@ async function initApp() {
             oscEnabled      = newSettings.oscEnabled ?? false
             oscHost         = newSettings.oscHost    || '127.0.0.1'
             oscPort         = newSettings.oscPort    ?? 8000
-            micMuteMethod     = newSettings.micMuteMethod     || 'x32'
-            micMuteMidiUnmute = newSettings.micMuteMidiUnmute || 'B1 {ch} 00'
-            micMuteMidiMute   = newSettings.micMuteMidiMute   || 'B1 {ch} 7F'
-            micMuteOscPath    = newSettings.micMuteOscPath    || '/ch/{ch}/mix/on'
-            micMuteOscUnmute  = newSettings.micMuteOscUnmute  !== undefined ? String(newSettings.micMuteOscUnmute) : '1'
-            micMuteOscMute    = newSettings.micMuteOscMute    !== undefined ? String(newSettings.micMuteOscMute)   : '0'
+            micMuteMethod       = newSettings.micMuteMethod   || 'x32'
+            micMuteMidiType     = newSettings.micMuteMidiType || 'sysex'
+            micMuteMidiUnmute   = newSettings.micMuteMidiUnmute || 'B1 {ch} 00'
+            micMuteMidiMute     = newSettings.micMuteMidiMute   || 'B1 {ch} 7F'
+            micMuteMidiNoteCh   = newSettings.micMuteMidiNoteCh   || '1'
+            micMuteMidiNoteNum  = newSettings.micMuteMidiNoteNum  || '{ch}'
+            micMuteMidiVelOn    = newSettings.micMuteMidiVelOn    ?? 127
+            micMuteMidiVelOff   = newSettings.micMuteMidiVelOff   ?? 0
+            micMuteMidiCcCh     = newSettings.micMuteMidiCcCh    || '2'
+            micMuteMidiCcNum    = newSettings.micMuteMidiCcNum   || '{ch}'
+            micMuteMidiCcValOn  = newSettings.micMuteMidiCcValOn  ?? 0
+            micMuteMidiCcValOff = newSettings.micMuteMidiCcValOff ?? 127
+            micMuteMidiPcCh     = newSettings.micMuteMidiPcCh    || '1'
+            micMuteMidiPcOn     = newSettings.micMuteMidiPcOn     ?? 0
+            micMuteMidiPcOff    = newSettings.micMuteMidiPcOff    ?? 1
+            micMuteOscOnPath     = newSettings.micMuteOscOnPath  || newSettings.micMuteOscPath || '/ch/{ch}/mix/on'
+            micMuteOscOnArgType  = newSettings.micMuteOscOnArgType  || 'float'
+            micMuteOscOnArg      = newSettings.micMuteOscOnArg  !== undefined ? String(newSettings.micMuteOscOnArg)  : (newSettings.micMuteOscUnmute !== undefined ? String(newSettings.micMuteOscUnmute) : '1')
+            micMuteOscOffPath    = newSettings.micMuteOscOffPath || newSettings.micMuteOscPath || '/ch/{ch}/mix/on'
+            micMuteOscOffArgType = newSettings.micMuteOscOffArgType || 'float'
+            micMuteOscOffArg     = newSettings.micMuteOscOffArg !== undefined ? String(newSettings.micMuteOscOffArg) : (newSettings.micMuteOscMute   !== undefined ? String(newSettings.micMuteOscMute)   : '0')
             const newLang   = newSettings.appLanguage || 'de'
             if (newLang !== appLanguage) {
                 appLanguage = newLang

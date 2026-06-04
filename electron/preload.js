@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron')
+const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
 // Dispatch DOM events so the renderer can listen without crossing the contextBridge
 // callback boundary (which is unreliable for renderer→preload function references).
@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getScriptMd: () => ipcRenderer.invoke('get-script-md'),
     writeScriptMd: (content) => ipcRenderer.invoke('write-script-md', content),
     listAudioFiles: () => ipcRenderer.invoke('list-audio-files'),
+    handleAudioDrop: (srcPath) => ipcRenderer.invoke('handle-audio-drop', srcPath),
+    getPathForFile:  (file)    => webUtils.getPathForFile(file),
     getScriptPath: () => ipcRenderer.invoke('get-script-path'),
     backupScriptMd: () => ipcRenderer.invoke('backup-script-md'),
     getRoles: () => ipcRenderer.invoke('get-roles'),

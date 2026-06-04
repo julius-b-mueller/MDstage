@@ -151,6 +151,19 @@ p {
     opacity: 0.7;
 }
 
+.trigger-number-input {
+    width: 4.2rem;
+    background: #2c313a;
+    color: #abb2bf;
+    border: 1px solid #61afef;
+    border-radius: 3px;
+    font-size: 0.78rem;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    padding: 0.1rem 0.3rem;
+    text-align: center;
+}
+.trigger-number-input.tc-input-invalid { border-color: #e06c75; color: #e06c75; }
+
 #header-shield {
     position: fixed;
     top: 0;
@@ -645,6 +658,40 @@ body.shift-held .insert-hotspot:hover .insert-btn { background: #61afef; }
 .dialog-field input[type="text"]:focus,
 .dialog-field input[type="number"]:focus,
 .dialog-select:focus { outline: none; border-color: #61afef; }
+
+.tc-input { font-family: 'SF Mono', 'Fira Code', monospace; letter-spacing: 0.05em; }
+.tc-input-invalid { border-color: #e06c75 !important; color: #e06c75; }
+
+/* ── Searchable audio select ─────────────────────────────── */
+.audio-select-wrap { position: relative; }
+.audio-select-input-row {
+    display: flex; align-items: center;
+    background: #383c44; border: 1px solid #4b5263; border-radius: 5px; overflow: visible;
+}
+.audio-select-input-row:focus-within { border-color: #61afef; }
+.audio-select-input {
+    flex: 1; background: transparent; color: #abb2bf; border: none;
+    padding: 0.45rem 0.7rem; font-size: 0.95rem; font-family: inherit; outline: none;
+    min-width: 0;
+}
+.audio-select-arrow {
+    color: #5c6370; padding: 0 0.6rem; cursor: pointer; user-select: none;
+    font-size: 0.7rem; flex-shrink: 0;
+}
+.audio-select-dropdown {
+    position: absolute; top: calc(100% + 2px); left: 0; right: 0;
+    background: #2c313a; border: 1px solid #4b5263; border-radius: 5px;
+    max-height: 200px; overflow-y: auto; z-index: 200;
+    box-shadow: 0 4px 16px #00000055;
+}
+.audio-select-option {
+    padding: 0.38rem 0.7rem; cursor: pointer; font-size: 0.9rem; color: #abb2bf;
+}
+.audio-select-option:hover,
+.audio-select-option.selected { background: #3e4451; color: #fff; }
+.audio-drop-active .audio-select-input-row {
+    border-color: #98c379; background: #1e3a2a;
+}
 
 .dialog-tc-derived {
     width: 100%;

@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Main Desk – Das interaktive Inspizientenbuch</title>
-<meta name="description" content="Main Desk verwandelt das Regiebuch in eine interaktive Schaltzentrale: Musik, Mikrofone, Licht und Timecode – alles mit Go und Back.">
+<title>MainDesk – Das interaktive Inspizientenbuch</title>
+<meta name="description" content="MainDesk verwandelt das Regiebuch in eine interaktive Schaltzentrale: Musik, Mikrofone, Licht und Timecode – alles mit Go und Back.">
 <link rel="icon" type="image/png" href="assets/icon.png">
 <style>
 :root {
@@ -34,8 +34,11 @@ nav{position:sticky;top:0;z-index:100;background:var(--bg2);border-bottom:1px so
 .lang-toggle{display:flex;gap:2px;background:var(--bg3);border-radius:6px;padding:3px}
 .lang-btn{background:none;border:none;cursor:pointer;padding:3px 9px;border-radius:4px;font-size:.8rem;font-weight:600;color:var(--dim);transition:all .15s}
 .lang-btn.active{background:var(--border);color:#fff}
+.nav-right{display:flex;align-items:center;gap:.5rem}
 .nav-cta{background:var(--blue);color:#1e2127;text-decoration:none;padding:.38rem .95rem;border-radius:6px;font-size:.86rem;font-weight:600;transition:background .15s;white-space:nowrap}
 .nav-cta:hover{background:#71bfff}
+.nav-try{background:var(--bg3);color:var(--green);border:1px solid #98c37944;text-decoration:none;padding:.38rem .8rem;border-radius:6px;font-size:.86rem;font-weight:600;transition:background .15s;white-space:nowrap;display:inline-flex;align-items:center;gap:.35rem}
+.nav-try:hover{background:#1e3a2a}
 
 /* ── Hero ────────────────────────────────── */
 .hero{padding:6rem 2rem 5rem;text-align:center;background:radial-gradient(ellipse 90% 55% at 50% -5%,#1a3a5c40 0%,transparent 70%)}
@@ -78,7 +81,7 @@ nav{position:sticky;top:0;z-index:100;background:var(--bg2);border-bottom:1px so
 .feat-block.reverse{direction:rtl}
 .feat-block.reverse>*{direction:ltr}
 .feat-graphic{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:2rem;display:flex;align-items:center;justify-content:center;min-height:220px}
-.feat-block.reverse .feat-graphic{background:var(--bg)}
+.feat-block.reverse .feat-graphic{background:var(--bg2)}
 .feat-text{}
 .feat-text h3{font-size:1.25rem;font-weight:700;color:#fff;margin-bottom:.6rem}
 .feat-text p{font-size:.92rem;color:var(--text);line-height:1.75;margin-bottom:.8rem}
@@ -135,6 +138,8 @@ footer a:hover{text-decoration:underline}
 @media(max-width:640px){
   nav{padding:0 1rem;gap:.8rem}
   .nav-links{display:none}
+  .nav-try{display:none}
+  .nav-right{gap:.35rem}
   .hero{padding:3.5rem 1.5rem 3rem}
   .feat-section{padding:3rem 1.5rem}
   .flow-arrow{display:none}
@@ -173,8 +178,8 @@ footer a:hover{text-decoration:underline}
 <!-- ── Nav ──────────────────────────────────────────────── -->
 <nav>
   <a href="#" class="nav-logo">
-    <img src="assets/icon.png" width="24" height="24" alt="Main Desk" style="border-radius:5px;flex-shrink:0">
-    Main Desk
+    <img src="assets/icon.png" width="24" height="24" alt="MainDesk" style="border-radius:5px;flex-shrink:0">
+    MainDesk
   </a>
   <div class="nav-links">
     <a href="#concept" data-de="Konzept" data-en="Concept">Konzept</a>
@@ -182,24 +187,30 @@ footer a:hover{text-decoration:underline}
     <a href="#download" data-de="Download" data-en="Download">Download</a>
     <a href="about.html" data-de="Über" data-en="About">Über</a>
   </div>
-  <div class="lang-toggle">
-    <button class="lang-btn active" onclick="setLang('de')">DE</button>
-    <button class="lang-btn"        onclick="setLang('en')">EN</button>
+  <div class="nav-right">
+    <a href="preview/" class="nav-try">
+      <svg width="13" height="13" fill="currentColor" viewBox="0 0 16 16"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8zm7.5-6.923c-.67.204-1.335.82-1.887 1.855A7.97 7.97 0 0 0 5.145 4H7.5V1.077zM4.09 4a9.267 9.267 0 0 1 .64-1.539 6.7 6.7 0 0 1 .597-.933A7.025 7.025 0 0 0 2.255 4H4.09zm-.582 3.5c.03-.877.138-1.718.312-2.5H1.674a6.958 6.958 0 0 0-.656 2.5h2.49zM4.847 5a12.5 12.5 0 0 0-.338 2.5H7.5V5H4.847zM8.5 5v2.5h2.99a12.495 12.495 0 0 0-.337-2.5H8.5zM4.51 8.5a12.5 12.5 0 0 0 .337 2.5H7.5V8.5H4.51zm3.99 0V11h2.653c.187-.765.306-1.608.338-2.5H8.5zM5.145 12c.138.386.295.744.468 1.068.552 1.035 1.218 1.65 1.887 1.855V12H5.145zm.182 2.472a6.696 6.696 0 0 1-.597-.933A9.268 9.268 0 0 1 4.09 12H2.255a7.024 7.024 0 0 0 3.072 2.472zM3.82 11a13.652 13.652 0 0 1-.312-2.5h-2.49c.062.89.291 1.733.656 2.5H3.82zm6.853 3.472A7.024 7.024 0 0 0 13.745 12H11.91a9.27 9.27 0 0 1-.64 1.539 6.688 6.688 0 0 1-.597.933zM8.5 12v2.923c.67-.204 1.335-.82 1.887-1.855.173-.324.33-.682.468-1.068H8.5zm3.68-1h2.146c.365-.767.594-1.61.656-2.5h-2.49a13.65 13.65 0 0 1-.312 2.5zm2.802-3.5a6.959 6.959 0 0 0-.656-2.5H12.18c.174.782.282 1.623.312 2.5h2.49zM11.27 2.461c.247.464.462.98.64 1.539h1.835a7.024 7.024 0 0 0-3.072-2.472c.218.284.418.598.597.933zM10.855 4a7.966 7.966 0 0 0-.468-1.068C9.835 1.897 9.17 1.282 8.5 1.077V4h2.355z"/></svg>
+      <span data-de="Im Browser testen" data-en="Try in browser">Im Browser testen</span>
+    </a>
+    <a href="#download" class="nav-cta" data-de="Herunterladen" data-en="Download">Herunterladen</a>
+    <div class="lang-toggle">
+      <button class="lang-btn active" onclick="setLang('de')">DE</button>
+      <button class="lang-btn"        onclick="setLang('en')">EN</button>
+    </div>
   </div>
-  <a href="#download" class="nav-cta" data-de="Herunterladen" data-en="Download">Herunterladen</a>
 </nav>
 
 <!-- ── Hero ─────────────────────────────────────────────── -->
 <section class="hero">
   <div class="hero-badge">
     <svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3.5" fill="#98c379"/></svg>
-    <span data-de="Kostenlos" data-en="Free">Kostenlos</span>
+    <span data-de="Kostenlos &amp; Open Source" data-en="Free &amp; Open Source">Kostenlos &amp; Open Source</span>
   </div>
-  <h1 data-de="Das Regiebuch,<br>das <em>mitarbeitet</em>" data-en="The script that<br><em>runs the show</em>">
-    Das Regiebuch,<br>das <em>mitarbeitet</em>
+  <h1 data-de="Das Regiebuch,<br>das <em>die Show fährt</em>" data-en="The script that<br><em>runs the show</em>">
+    Das Regiebuch,<br>das <em>die Show fährt</em>
   </h1>
-  <p class="hero-lead" data-de="Main Desk ist ein interaktives Inspizientenbuch: Das Textbuch einer Produktion wird mit Cues ausgestattet – für Musik, Mikrofone, Lichtszenen und Timecode. Beim Durchspielen drückst du nur noch Go." data-en="Main Desk is an interactive stage manager's script: embed cues for music, microphones, lighting and timecode directly into the script. During the show, all you do is press Go.">
-    Main Desk ist ein interaktives Inspizientenbuch: Das Textbuch einer Produktion wird mit Cues ausgestattet – für Musik, Mikrofone, Lichtszenen und Timecode. Beim Durchspielen drückst du nur noch Go.
+  <p class="hero-lead" data-de="MainDesk ist ein interaktives Inspizientenbuch: Das Textbuch einer Produktion wird mit Cues ausgestattet – für Musik, Mikrofone, Lichtszenen und Timecode. Beim Durchspielen drückst du nur noch Go." data-en="MainDesk is an interactive stage manager's script: embed cues for music, microphones, lighting and timecode directly into the script. During the show, all you do is press Go.">
+    MainDesk ist ein interaktives Inspizientenbuch: Das Textbuch einer Produktion wird mit Cues ausgestattet – für Musik, Mikrofone, Lichtszenen und Timecode. Beim Durchspielen drückst du nur noch Go.
   </p>
   <p class="hero-kicker" data-de="Entspannt für erfahrene Regisseure – aber auch eine einzelne Person ohne jede Technik-Vorerfahrung kann damit eine komplette Show mit einem Go-Button fahren." data-en="Effortless for experienced directors – but even a single person with no technical background can run a full show with just one Go button.">
     Entspannt für erfahrene Regisseure – aber auch eine einzelne Person ohne jede Technik-Vorerfahrung kann damit eine komplette Show mit einem Go-Button fahren.
@@ -210,7 +221,7 @@ footer a:hover{text-decoration:underline}
       <span data-de="Kostenlos herunterladen" data-en="Download Free">Kostenlos herunterladen</span>
     </a>
     <a href="preview/" class="btn-preview">
-      <svg width="15" height="15" fill="currentColor" viewBox="0 0 16 16"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8zm8-7a7 7 0 0 0-7 7 7 7 0 0 0 7 7 7 7 0 0 0 7-7 7 7 0 0 0-7-7zm.93 9.412-1 4.705a.5.5 0 0 1-.978-.208l1-4.705a.5.5 0 0 1 .978.208zM9.5 5a.5.5 0 0 1 .5.5V7h1.5a.5.5 0 0 1 0 1H10v1.5a.5.5 0 0 1-1 0V8H7.5a.5.5 0 0 1 0-1H9V5.5a.5.5 0 0 1 .5-.5z"/></svg>
+      <svg width="15" height="15" fill="currentColor" viewBox="0 0 16 16"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8zm7.5-6.923c-.67.204-1.335.82-1.887 1.855A7.97 7.97 0 0 0 5.145 4H7.5V1.077zM4.09 4a9.267 9.267 0 0 1 .64-1.539 6.7 6.7 0 0 1 .597-.933A7.025 7.025 0 0 0 2.255 4H4.09zm-.582 3.5c.03-.877.138-1.718.312-2.5H1.674a6.958 6.958 0 0 0-.656 2.5h2.49zM4.847 5a12.5 12.5 0 0 0-.338 2.5H7.5V5H4.847zM8.5 5v2.5h2.99a12.495 12.495 0 0 0-.337-2.5H8.5zM4.51 8.5a12.5 12.5 0 0 0 .337 2.5H7.5V8.5H4.51zm3.99 0V11h2.653c.187-.765.306-1.608.338-2.5H8.5zM5.145 12c.138.386.295.744.468 1.068.552 1.035 1.218 1.65 1.887 1.855V12H5.145zm.182 2.472a6.696 6.696 0 0 1-.597-.933A9.268 9.268 0 0 1 4.09 12H2.255a7.024 7.024 0 0 0 3.072 2.472zM3.82 11a13.652 13.652 0 0 1-.312-2.5h-2.49c.062.89.291 1.733.656 2.5H3.82zm6.853 3.472A7.024 7.024 0 0 0 13.745 12H11.91a9.27 9.27 0 0 1-.64 1.539 6.688 6.688 0 0 1-.597.933zM8.5 12v2.923c.67-.204 1.335-.82 1.887-1.855.173-.324.33-.682.468-1.068H8.5zm3.68-1h2.146c.365-.767.594-1.61.656-2.5h-2.49a13.65 13.65 0 0 1-.312 2.5zm2.802-3.5a6.959 6.959 0 0 0-.656-2.5H12.18c.174.782.282 1.623.312 2.5h2.49zM11.27 2.461c.247.464.462.98.64 1.539h1.835a7.024 7.024 0 0 0-3.072-2.472c.218.284.418.598.597.933zM10.855 4a7.966 7.966 0 0 0-.468-1.068C9.835 1.897 9.17 1.282 8.5 1.077V4h2.355z"/></svg>
       <span data-de="Im Browser testen" data-en="Try in browser">Im Browser testen</span>
     </a>
     <a href="#concept" class="btn-ghost" data-de="Wie es funktioniert" data-en="How it works">Wie es funktioniert</a>
@@ -226,7 +237,7 @@ footer a:hover{text-decoration:underline}
       <div class="flow-step">
         <div class="flow-icon b">📝</div>
         <h4 data-de="Skript schreiben" data-en="Write the script">Skript schreiben</h4>
-        <p data-de="Das Textbuch direkt in Main Desk verfassen – oder als Markdown-Datei importieren." data-en="Write the script directly in Main Desk – or import it from Markdown.">Das Textbuch direkt in Main Desk verfassen – oder als Markdown-Datei importieren.</p>
+        <p data-de="Das Textbuch direkt in MainDesk verfassen – oder als Markdown-Datei importieren." data-en="Write the script directly in MainDesk – or import it from Markdown.">Das Textbuch direkt in MainDesk verfassen – oder als Markdown-Datei importieren.</p>
       </div>
       <div class="flow-arrow">→</div>
       <div class="flow-step">
@@ -255,8 +266,8 @@ footer a:hover{text-decoration:underline}
   <div class="feat-inner">
     <p class="section-label" data-de="Features" data-en="Features">Features</p>
     <h2 class="section-title" data-de="Alles, was eine Produktion braucht" data-en="Everything a production needs">Alles, was eine Produktion braucht</h2>
-    <p class="section-sub" data-de="Von der kleinen Schulaufführung bis zum professionellen Theater – Main Desk passt sich der Produktion an." data-en="From the small school play to the professional theatre – Main Desk adapts to the production.">
-      Von der kleinen Schulaufführung bis zum professionellen Theater – Main Desk passt sich der Produktion an.
+    <p class="section-sub" data-de="Von der kleinen Schulaufführung bis zum professionellen Theater – MainDesk passt sich der Produktion an." data-en="From the small school play to the professional theatre – MainDesk adapts to the production.">
+      Von der kleinen Schulaufführung bis zum professionellen Theater – MainDesk passt sich der Produktion an.
     </p>
 
     <!-- Feature 1: Interaktives Inspizientenbuch -->
@@ -468,35 +479,33 @@ footer a:hover{text-decoration:underline}
           <text x="235" y="22" text-anchor="middle" font-size="9" fill="#e5c07b" font-weight="700">FINISH</text>
           <!-- Start waveform block -->
           <rect x="15" y="30" width="60" height="80" rx="6" fill="#1e3a2a" stroke="#98c379" stroke-width="1.2"/>
-          <path d="M22 70 Q27 50 32 70 Q37 90 42 70 Q47 50 52 70 Q57 90 62 70 Q67 50 70 70" stroke="#98c379" stroke-width="1.5" stroke-linecap="round"/>
+          <path d="M22 70 Q26 52 30 70 Q34 88 38 70 Q42 52 46 70 Q50 88 54 70 Q58 52 62 70 Q66 88 70 70" stroke="#98c379" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
           <!-- Arrow Start→Loop -->
-          <path d="M78 70 L100 70" stroke="#383c44" stroke-width="1.5" stroke-dasharray="3,2" marker-end="url(#arr)"/>
+          <path d="M78 70 L99 70" stroke="#5c6370" stroke-width="1.5" marker-end="url(#arr)"/>
           <!-- Loop waveform block -->
           <rect x="103" y="30" width="74" height="80" rx="6" fill="#1e3a52" stroke="#61afef" stroke-width="1.2"/>
-          <path d="M110 70 Q117 45 124 70 Q131 95 138 70 Q145 45 152 70 Q159 95 166 70 Q170 45 173 70" stroke="#61afef" stroke-width="1.5" stroke-linecap="round"/>
+          <path d="M110 70 Q114 52 118 70 Q122 88 126 70 Q130 52 134 70 Q138 88 142 70 Q146 52 150 70 Q154 88 158 70 Q162 52 166 70 Q170 88 174 70" stroke="#61afef" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
           <!-- Loop arrow (circular) -->
           <path d="M117 118 Q140 138 163 118" stroke="#61afef" stroke-width="1.5" fill="none" marker-end="url(#arb)"/>
           <text x="140" y="148" text-anchor="middle" font-size="8" fill="#61afef88" data-de="loopt endlos" data-en="loops endlessly">loopt endlos</text>
-          <!-- Arrow Loop→Finish (on cue) -->
-          <path d="M180 70 L200 70" stroke="#383c44" stroke-width="1.5" stroke-dasharray="3,2" marker-end="url(#arr)"/>
+          <!-- Arrow Loop→Finish (on Go) -->
+          <path d="M180 70 L199 70" stroke="#e5c07b" stroke-width="1.5" marker-end="url(#ary)"/>
           <text x="190" y="63" text-anchor="middle" font-size="7" fill="#e5c07b88">Go</text>
           <!-- Finish waveform block -->
           <rect x="203" y="30" width="62" height="80" rx="6" fill="#3a321e" stroke="#e5c07b" stroke-width="1.2"/>
-          <path d="M210 70 Q217 50 224 70 Q231 90 238 70 Q245 50 252 70 Q257 60 263 70" stroke="#e5c07b" stroke-width="1.5" stroke-linecap="round"/>
-          <!-- Seamless label -->
-          <rect x="60" y="60" width="26" height="20" rx="3" fill="#282c34" stroke="#383c44"/>
-          <text x="73" y="74" text-anchor="middle" font-size="9" fill="#5c6370">⇥⇤</text>
-          <rect x="178" y="60" width="26" height="20" rx="3" fill="#282c34" stroke="#383c44"/>
-          <text x="191" y="74" text-anchor="middle" font-size="9" fill="#5c6370">⇥⇤</text>
+          <path d="M210 70 Q214 52 218 70 Q222 88 226 70 Q230 52 234 70 Q238 88 242 70 Q246 52 250 70 Q254 88 258 70" stroke="#e5c07b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
           <!-- Bottom label -->
           <text x="140" y="178" text-anchor="middle" font-size="9" fill="#5c6370" data-de="Intro · Endlosschleife · Ausgang auf Go" data-en="Intro · Endless loop · Outro on Go">Intro · Endlosschleife · Ausgang auf Go</text>
           <!-- Defs -->
           <defs>
             <marker id="arr" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-              <path d="M0,0 L6,3 L0,6 Z" fill="#383c44"/>
+              <path d="M0,0 L6,3 L0,6 Z" fill="#5c6370"/>
             </marker>
             <marker id="arb" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
               <path d="M0,0 L6,3 L0,6 Z" fill="#61afef"/>
+            </marker>
+            <marker id="ary" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="#e5c07b"/>
             </marker>
           </defs>
         </svg>
@@ -522,7 +531,7 @@ footer a:hover{text-decoration:underline}
           <polygon points="30,130 30,65 68,65" fill="#61afef22"/>
           <line x1="30" y1="130" x2="68" y2="65" stroke="#61afef" stroke-width="1.5" stroke-dasharray="4,2"/>
           <!-- Waveform (middle) -->
-          <path d="M68 100 Q82 70 96 100 Q110 130 124 100 Q138 70 152 100 Q166 130 180 100 Q194 70 208 100 Q216 85 222 100" stroke="#abb2bf" stroke-width="1.5" stroke-linecap="round"/>
+          <path d="M68 100 Q79 72 90 100 Q101 128 112 100 Q123 72 134 100 Q145 128 156 100 Q167 72 178 100 Q189 128 200 100 Q211 72 222 100" stroke="#abb2bf" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
           <!-- Fade-out ramp (right) -->
           <polygon points="222,65 222,130 260,130" fill="#e5c07b22"/>
           <line x1="222" y1="65" x2="260" y2="130" stroke="#e5c07b" stroke-width="1.5" stroke-dasharray="4,2"/>
@@ -644,45 +653,52 @@ footer a:hover{text-decoration:underline}
     </div>
 
     <!-- Feature 4: Show Control -->
-    <div class="feat-block reverse">
+    <div class="feat-block">
       <div class="feat-graphic">
         <!-- Show control hub SVG -->
         <svg viewBox="0 0 280 200" width="280" height="200" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arHubB" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#61afef88"/></marker>
+            <marker id="arHubY" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#e5c07b88"/></marker>
+            <marker id="arHubG" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#98c37988"/></marker>
+            <marker id="arHubP" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#c678dd88"/></marker>
+            <marker id="arHubD" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#5c6370"/></marker>
+          </defs>
           <!-- Center hub -->
           <rect x="95" y="75" width="90" height="50" rx="9" fill="#21252b" stroke="#61afef" stroke-width="1.5"/>
-          <text x="140" y="96" text-anchor="middle" font-size="9" fill="#61afef" font-weight="700">Main Desk</text>
+          <text x="140" y="96" text-anchor="middle" font-size="9" fill="#61afef" font-weight="700">MainDesk</text>
           <text x="140" y="109" text-anchor="middle" font-size="7.5" fill="#5c6370">Show Control</text>
-          <!-- MIDI Mixer (top-left) -->
+          <!-- Mischpult (top-left) — MainDesk → Mischpult -->
           <rect x="15" y="15" width="60" height="40" rx="6" fill="#1e3a52" stroke="#61afef88"/>
-          <text x="45" y="30" text-anchor="middle" font-size="7.5" fill="#61afef">🎛 X32</text>
+          <text x="45" y="30" text-anchor="middle" font-size="7.5" fill="#61afef" data-de="Mischpult" data-en="Mixer">Mischpult</text>
           <text x="45" y="42" text-anchor="middle" font-size="7" fill="#5c6370" data-de="Mikrofone" data-en="Microphones">Mikrofone</text>
-          <line x1="75" y1="35" x2="95" y2="85" stroke="#61afef44" stroke-width="1.2" stroke-dasharray="3,2"/>
-          <!-- Lights (top-right) -->
+          <path d="M95 83 L77 53" stroke="#61afef88" stroke-width="1.2" marker-end="url(#arHubB)"/>
+          <!-- Lights (top-right) — MainDesk → Licht -->
           <rect x="205" y="15" width="60" height="40" rx="6" fill="#3a321e" stroke="#e5c07b88"/>
           <text x="235" y="30" text-anchor="middle" font-size="7.5" fill="#e5c07b" data-de="✦ Licht" data-en="✦ Lighting">✦ Licht</text>
           <text x="235" y="42" text-anchor="middle" font-size="7" fill="#5c6370" data-de="DMX / Noten" data-en="DMX / Notes">DMX / Noten</text>
-          <line x1="205" y1="35" x2="185" y2="85" stroke="#e5c07b44" stroke-width="1.2" stroke-dasharray="3,2"/>
-          <!-- Timecode (bottom-left) -->
+          <path d="M185 83 L203 53" stroke="#e5c07b88" stroke-width="1.2" marker-end="url(#arHubY)"/>
+          <!-- Timecode (bottom-left) — MainDesk → MTC -->
           <rect x="15" y="145" width="60" height="40" rx="6" fill="#1e3a2a" stroke="#98c37988"/>
           <text x="45" y="160" text-anchor="middle" font-size="7.5" fill="#98c379">⏱ MTC</text>
           <text x="45" y="172" text-anchor="middle" font-size="7" fill="#5c6370">MIDI Timecode</text>
-          <line x1="75" y1="165" x2="95" y2="125" stroke="#98c37944" stroke-width="1.2" stroke-dasharray="3,2"/>
-          <!-- OSC (bottom-right) -->
+          <path d="M95 117 L77 147" stroke="#98c37988" stroke-width="1.2" marker-end="url(#arHubG)"/>
+          <!-- OSC (bottom-right) — MainDesk → OSC -->
           <rect x="205" y="145" width="60" height="40" rx="6" fill="#2e1e3a" stroke="#c678dd88"/>
           <text x="235" y="160" text-anchor="middle" font-size="7.5" fill="#c678dd">⌁ OSC</text>
           <text x="235" y="172" text-anchor="middle" font-size="7" fill="#5c6370" data-de="Netzwerk" data-en="Network">Netzwerk</text>
-          <line x1="205" y1="165" x2="185" y2="125" stroke="#c678dd44" stroke-width="1.2" stroke-dasharray="3,2"/>
-          <!-- MIDI controller (top-center) -->
+          <path d="M185 117 L203 147" stroke="#c678dd88" stroke-width="1.2" marker-end="url(#arHubP)"/>
+          <!-- MIDI controller (top-center) — Controller → MainDesk -->
           <rect x="108" y="15" width="64" height="30" rx="6" fill="#383c44" stroke="#5c6370"/>
           <text x="140" y="28" text-anchor="middle" font-size="7.5" fill="#abb2bf">MIDI-Controller</text>
           <text x="140" y="38" text-anchor="middle" font-size="7" fill="#5c6370">Go · Back</text>
-          <line x1="140" y1="45" x2="140" y2="75" stroke="#5c637044" stroke-width="1.2" stroke-dasharray="3,2"/>
+          <path d="M140 45 L140 73" stroke="#5c6370" stroke-width="1.2" marker-end="url(#arHubD)"/>
         </svg>
       </div>
       <div class="feat-text">
         <h3 data-de="MIDI, OSC und Timecode" data-en="MIDI, OSC and Timecode">MIDI, OSC und Timecode</h3>
-        <p data-de="Main Desk ist die Schaltzentrale der Show: Mikrofon-Routing am X32-Mischpult via MIDI, custom OSC-Nachrichten an beliebige Systeme, MIDI Timecode (MTC 25fps) für Licht und Video." data-en="Main Desk is the show control hub: microphone routing on the X32 mixer via MIDI, custom OSC messages to any system, MIDI Timecode (MTC 25fps) for lighting and video.">
-          Main Desk ist die Schaltzentrale der Show: Mikrofon-Routing am X32-Mischpult via MIDI, custom OSC-Nachrichten an beliebige Systeme, MIDI Timecode (MTC 25fps) für Licht und Video.
+        <p data-de="MainDesk ist die Schaltzentrale der Show: Mikrofon-Routing am X32-Mischpult via MIDI, custom OSC-Nachrichten an beliebige Systeme, MIDI Timecode (MTC 25fps) für Licht und Video." data-en="MainDesk is the show control hub: microphone routing on the X32 mixer via MIDI, custom OSC messages to any system, MIDI Timecode (MTC 25fps) for lighting and video.">
+          MainDesk ist die Schaltzentrale der Show: Mikrofon-Routing am X32-Mischpult via MIDI, custom OSC-Nachrichten an beliebige Systeme, MIDI Timecode (MTC 25fps) für Licht und Video.
         </p>
         <p data-de="Go und Back lassen sich jedem MIDI-Controller, Bluetooth-Pedal oder Keyboard zuweisen. Per Langdruck auf den Back-Button werden alle Wiedergaben sofort gestoppt." data-en="Go and Back can be assigned to any MIDI controller, Bluetooth pedal or keyboard. Long-pressing Back stops all playback immediately.">
           Go und Back lassen sich jedem MIDI-Controller, Bluetooth-Pedal oder Keyboard zuweisen. Per Langdruck auf den Back-Button werden alle Wiedergaben sofort gestoppt.
@@ -691,7 +707,7 @@ footer a:hover{text-decoration:underline}
     </div>
 
     <!-- Feature 5: Dual audio + Export -->
-    <div class="feat-block">
+    <div class="feat-block reverse">
       <div class="feat-graphic">
         <!-- Dual audio routing SVG -->
         <svg viewBox="0 0 280 200" width="280" height="200" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -733,7 +749,7 @@ footer a:hover{text-decoration:underline}
     </div>
 
     <!-- Feature 6: Eine Datei, die ganze Show -->
-    <div class="feat-block reverse" style="margin-bottom:0">
+    <div class="feat-block" style="margin-bottom:0">
       <div class="feat-graphic">
         <!-- One file / Git SVG -->
         <svg viewBox="0 0 280 200" width="280" height="200" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -795,8 +811,11 @@ footer a:hover{text-decoration:underline}
       Für macOS, Windows und Linux. Keine Telemetrie, keine Cloud, keine Subscription.
     </p>
     <div class="free-tag">
-      ✦ <span data-de="Kostenlos · Keine Telemetrie · Keine Cloud" data-en="Free · No telemetry · No cloud">Kostenlos · Keine Telemetrie · Keine Cloud</span>
+      ✦ <span data-de="Kostenlos · Open Source · Keine Telemetrie · Keine Cloud" data-en="Free · Open Source · No telemetry · No cloud">Kostenlos · Open Source · Keine Telemetrie · Keine Cloud</span>
     </div>
+    <p style="font-size:.85rem;color:var(--dim);margin-bottom:1.6rem">
+      <span data-de="Der Quellcode ist auf " data-en="The source code is on ">Der Quellcode ist auf </span><a href="https://github.com/julius-b-mueller/MainDesk" target="_blank" rel="noopener" style="color:var(--blue)">GitHub</a><span data-de=" verfügbar." data-en=" available."> verfügbar.</span>
+    </p>
 
     <div class="preview-card">
       <div class="preview-card-icon">🌐</div>
@@ -805,7 +824,7 @@ footer a:hover{text-decoration:underline}
         <p data-de="Die vollständige App läuft direkt im Browser: Skript lesen, Trigger bedienen, Go und Back drücken, Audio abspielen. MIDI und OSC stehen in der Browser-Vorschau nicht zur Verfügung." data-en="The full app runs directly in your browser: read the script, fire triggers, press Go and Back, play audio. MIDI and OSC are not available in the browser preview.">Die vollständige App läuft direkt im Browser: Skript lesen, Trigger bedienen, Go und Back drücken, Audio abspielen. MIDI und OSC stehen in der Browser-Vorschau nicht zur Verfügung.</p>
       </div>
       <a href="preview/" class="btn-preview" style="flex-shrink:0">
-        <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8zm.93 9.412-1 4.705a.5.5 0 0 1-.978-.208l1-4.705a.5.5 0 0 1 .978.208zM9.5 5a.5.5 0 0 1 .5.5V7h1.5a.5.5 0 0 1 0 1H10v1.5a.5.5 0 0 1-1 0V8H7.5a.5.5 0 0 1 0-1H9V5.5a.5.5 0 0 1 .5-.5z"/></svg>
+        <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8zm7.5-6.923c-.67.204-1.335.82-1.887 1.855A7.97 7.97 0 0 0 5.145 4H7.5V1.077zM4.09 4a9.267 9.267 0 0 1 .64-1.539 6.7 6.7 0 0 1 .597-.933A7.025 7.025 0 0 0 2.255 4H4.09zm-.582 3.5c.03-.877.138-1.718.312-2.5H1.674a6.958 6.958 0 0 0-.656 2.5h2.49zM4.847 5a12.5 12.5 0 0 0-.338 2.5H7.5V5H4.847zM8.5 5v2.5h2.99a12.495 12.495 0 0 0-.337-2.5H8.5zM4.51 8.5a12.5 12.5 0 0 0 .337 2.5H7.5V8.5H4.51zm3.99 0V11h2.653c.187-.765.306-1.608.338-2.5H8.5zM5.145 12c.138.386.295.744.468 1.068.552 1.035 1.218 1.65 1.887 1.855V12H5.145zm.182 2.472a6.696 6.696 0 0 1-.597-.933A9.268 9.268 0 0 1 4.09 12H2.255a7.024 7.024 0 0 0 3.072 2.472zM3.82 11a13.652 13.652 0 0 1-.312-2.5h-2.49c.062.89.291 1.733.656 2.5H3.82zm6.853 3.472A7.024 7.024 0 0 0 13.745 12H11.91a9.27 9.27 0 0 1-.64 1.539 6.688 6.688 0 0 1-.597.933zM8.5 12v2.923c.67-.204 1.335-.82 1.887-1.855.173-.324.33-.682.468-1.068H8.5zm3.68-1h2.146c.365-.767.594-1.61.656-2.5h-2.49a13.65 13.65 0 0 1-.312 2.5zm2.802-3.5a6.959 6.959 0 0 0-.656-2.5H12.18c.174.782.282 1.623.312 2.5h2.49zM11.27 2.461c.247.464.462.98.64 1.539h1.835a7.024 7.024 0 0 0-3.072-2.472c.218.284.418.598.597.933zM10.855 4a7.966 7.966 0 0 0-.468-1.068C9.835 1.897 9.17 1.282 8.5 1.077V4h2.355z"/></svg>
         <span data-de="Vorschau öffnen" data-en="Open preview">Vorschau öffnen</span>
       </a>
     </div>
@@ -856,11 +875,8 @@ footer a:hover{text-decoration:underline}
       </div>
       <div class="warn-body">
         <div id="warn-mac">
-          <p data-de="macOS zeigt beim ersten Start eine Gatekeeper-Warnung. So öffnest du Main Desk trotzdem:" data-en="macOS shows a Gatekeeper warning on first launch. Here's how to open Main Desk anyway:">macOS zeigt beim ersten Start eine Gatekeeper-Warnung. So öffnest du Main Desk trotzdem:</p>
-          <p style="margin-top:.4rem"><strong data-de="Option A – Systemeinstellungen:" data-en="Option A – System Settings:">Option A – Systemeinstellungen:</strong></p>
-          <p data-de='Systemeinstellungen → Datenschutz &amp; Sicherheit → nach unten scrollen → „Trotzdem öffnen"' data-en='System Settings → Privacy &amp; Security → scroll down → "Open Anyway"'>Systemeinstellungen → Datenschutz &amp; Sicherheit → nach unten scrollen → „Trotzdem öffnen"</p>
-          <p style="margin-top:.4rem"><strong data-de="Option B – Terminal (einmalig):" data-en="Option B – Terminal (once):">Option B – Terminal (einmalig):</strong></p>
-          <pre>xattr -cr /Applications/Main\ Desk.app</pre>
+          <p data-de="macOS zeigt beim ersten Start eine Gatekeeper-Warnung. So öffnest du MainDesk trotzdem:" data-en="macOS shows a Gatekeeper warning on first launch. Here's how to open MainDesk anyway:">macOS zeigt beim ersten Start eine Gatekeeper-Warnung. So öffnest du MainDesk trotzdem:</p>
+          <p style="margin-top:.4rem" data-de='Systemeinstellungen → Datenschutz &amp; Sicherheit → nach unten scrollen → „Trotzdem öffnen"' data-en='System Settings → Privacy &amp; Security → scroll down → "Open Anyway"'>Systemeinstellungen → Datenschutz &amp; Sicherheit → nach unten scrollen → „Trotzdem öffnen"</p>
         </div>
         <div id="warn-win" class="hidden">
           <p data-de="Windows SmartScreen zeigt eine Warnung. Klicke auf „Weitere Informationen" → „Trotzdem ausführen". Erscheint nur beim ersten Start." data-en="Windows SmartScreen shows a warning. Click „More info" → „Run anyway". Appears only on first launch.">Windows SmartScreen zeigt eine Warnung. Klicke auf „Weitere Informationen" → „Trotzdem ausführen". Erscheint nur beim ersten Start.</p>
@@ -871,7 +887,7 @@ footer a:hover{text-decoration:underline}
 ./MainDesk-linux-x64.AppImage</pre>
         </div>
         <div id="warn-why" class="hidden">
-          <p data-de="Das Apple Developer Program kostet 99 $/Jahr. Da Main Desk kostenlos ist, verzichten wir darauf. Die Warnung bedeutet nicht, dass die Software schädlich ist – Apple und Microsoft haben schlicht keine Gebühr erhalten." data-en="The Apple Developer Program costs $99/year. Since Main Desk is free, we skip that. The warning does not mean the software is harmful – Apple and Microsoft simply haven't received a fee.">Das Apple Developer Program kostet 99 $/Jahr. Da Main Desk kostenlos ist, verzichten wir darauf. Die Warnung bedeutet nicht, dass die Software schädlich ist – Apple und Microsoft haben schlicht keine Gebühr erhalten.</p>
+          <p data-de="Das Apple Developer Program kostet 99 $/Jahr. Da MainDesk kostenlos ist, verzichten wir darauf. Die Warnung bedeutet nicht, dass die Software schädlich ist – Apple und Microsoft haben schlicht keine Gebühr erhalten." data-en="The Apple Developer Program costs $99/year. Since MainDesk is free, we skip that. The warning does not mean the software is harmful – Apple and Microsoft simply haven't received a fee.">Das Apple Developer Program kostet 99 $/Jahr. Da MainDesk kostenlos ist, verzichten wir darauf. Die Warnung bedeutet nicht, dass die Software schädlich ist – Apple und Microsoft haben schlicht keine Gebühr erhalten.</p>
         </div>
       </div>
     <p class="disclaimer" data-de='Die Software wird „wie besehen" (as is) bereitgestellt. Es werden keine Garantien gegeben und keine Haftung für Schäden übernommen, die durch die Nutzung der Software entstehen.' data-en='The software is provided "as is". No warranties are given and no liability is accepted for damages arising from the use of the software.'>
@@ -884,6 +900,7 @@ footer a:hover{text-decoration:underline}
   <p>
     <span data-de="Für die Bühne gemacht." data-en="Made for the stage.">Für die Bühne gemacht.</span>
     &nbsp;·&nbsp; <a href="mailto:info@maindesk.org">info@maindesk.org</a>
+    &nbsp;·&nbsp; <a href="https://github.com/julius-b-mueller/MainDesk" target="_blank" rel="noopener">GitHub</a>
     &nbsp;·&nbsp; <a href="about.html" data-de="Über" data-en="About">Über</a>
     &nbsp;·&nbsp; <a href="impressum.html" data-de="Impressum &amp; Datenschutz" data-en="Legal &amp; Privacy">Impressum &amp; Datenschutz</a>
   </p>
@@ -891,11 +908,11 @@ footer a:hover{text-decoration:underline}
 
 <div id="cookie-banner">
   <p class="cookie-text">
-    <span id="cb-text-de"><strong>Keine Cookies. Keine Daten. Kein Tracking.</strong> Main Desk funkt nicht nach Hause – ich habe also keinen blassen Schimmer, ob du es verwendest. Falls du möchtest: Schreib mir kurz, wo du es einsetzt. Ich freue mich immer über Rückmeldung.</span>
-    <span id="cb-text-en" style="display:none"><strong>No cookies. No data. No tracking.</strong> Main Desk doesn't phone home – so I have absolutely no idea if you're using it. If you'd like to let me know: drop me a quick email about where you're using it. I always appreciate hearing from people.</span>
+    <span id="cb-text-de"><strong>Keine Cookies. Keine Daten. Kein Tracking.</strong> MainDesk funkt nicht nach Hause – ich habe also keinen blassen Schimmer, ob du es verwendest. Falls du möchtest: Schreib mir kurz, wo du es einsetzt. Ich freue mich immer über Rückmeldung.</span>
+    <span id="cb-text-en" style="display:none"><strong>No cookies. No data. No tracking.</strong> MainDesk doesn't phone home – so I have absolutely no idea if you're using it. If you'd like to let me know: drop me a quick email about where you're using it. I always appreciate hearing from people.</span>
   </p>
   <div class="cookie-actions">
-    <a class="cookie-mail" id="cb-mail" href="mailto:info@maindesk.org?subject=Main%20Desk%20Einsatz" data-subject-de="Main Desk Einsatz" data-subject-en="Using Main Desk">
+    <a class="cookie-mail" id="cb-mail" href="mailto:info@maindesk.org?subject=MainDesk%20Einsatz" data-subject-de="MainDesk Einsatz" data-subject-en="Using MainDesk">
       <span id="cb-mail-de">✉ Mail schreiben</span>
       <span id="cb-mail-en" style="display:none">✉ Send a mail</span>
     </a>

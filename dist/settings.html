@@ -137,32 +137,83 @@
     </div>
     <div id="mic-mute-custom-midi" style="display:none">
         <div class="field">
-            <label>Unmute-Befehl (Hex-Bytes)</label>
-            <input type="text" id="mic-mute-midi-unmute" placeholder="B1 {ch} 00">
-            <p class="hint">Platzhalter: <code>{ch}</code> = Kanalindex (0-basiert), <code>{val}</code> = 00 (unmute). Bytes als Hex, Leerzeichen-getrennt.</p>
+            <label>Typ</label>
+            <select id="mic-mute-midi-type">
+                <option value="sysex">SysEx / Hex-Bytes</option>
+                <option value="note">Note On/Off</option>
+                <option value="cc">Control Change (CC)</option>
+                <option value="pc">Program Change (PC)</option>
+            </select>
         </div>
-        <div class="field">
-            <label>Mute-Befehl (Hex-Bytes)</label>
-            <input type="text" id="mic-mute-midi-mute" placeholder="B1 {ch} 7F">
-            <p class="hint">Platzhalter: <code>{ch}</code> = Kanalindex, <code>{val}</code> = 7F (mute).</p>
+        <div id="mm-sysex">
+            <div class="field">
+                <label>ON-Befehl (Hex-Bytes)</label>
+                <input type="text" id="mic-mute-midi-unmute" placeholder="B1 {ch} 00">
+                <p class="hint"><code>{ch}</code> = Kanalindex (0-basiert). Bytes als Hex, Leerzeichen-getrennt.</p>
+            </div>
+            <div class="field">
+                <label>OFF-Befehl (Hex-Bytes)</label>
+                <input type="text" id="mic-mute-midi-mute" placeholder="B1 {ch} 7F">
+            </div>
+        </div>
+        <div id="mm-note" style="display:none">
+            <div class="field" style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+                <div><label>MIDI-Kanal (1–16)</label><input type="text" id="mm-note-ch" placeholder="1"></div>
+                <div><label>Note (0–127 oder {ch})</label><input type="text" id="mm-note-num" placeholder="{ch}"></div>
+            </div>
+            <div class="field" style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+                <div><label>Velocity ON</label><input type="number" id="mm-note-vel-on" min="0" max="127" placeholder="127"></div>
+                <div><label>Velocity OFF</label><input type="number" id="mm-note-vel-off" min="0" max="127" placeholder="0"></div>
+            </div>
+            <p class="hint"><code>{ch}</code> = Kanalindex (0-basiert)</p>
+        </div>
+        <div id="mm-cc" style="display:none">
+            <div class="field" style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+                <div><label>MIDI-Kanal (1–16)</label><input type="text" id="mm-cc-ch" placeholder="2"></div>
+                <div><label>CC-Nummer (0–127 oder {ch})</label><input type="text" id="mm-cc-num" placeholder="{ch}"></div>
+            </div>
+            <div class="field" style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+                <div><label>Wert ON</label><input type="number" id="mm-cc-val-on" min="0" max="127" placeholder="0"></div>
+                <div><label>Wert OFF</label><input type="number" id="mm-cc-val-off" min="0" max="127" placeholder="127"></div>
+            </div>
+            <p class="hint"><code>{ch}</code> = Kanalindex (0-basiert)</p>
+        </div>
+        <div id="mm-pc" style="display:none">
+            <div class="field" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.5rem">
+                <div><label>MIDI-Kanal (1–16)</label><input type="text" id="mm-pc-ch" placeholder="1"></div>
+                <div><label>Programm ON (0–127)</label><input type="number" id="mm-pc-on" min="0" max="127" placeholder="0"></div>
+                <div><label>Programm OFF (0–127)</label><input type="number" id="mm-pc-off" min="0" max="127" placeholder="1"></div>
+            </div>
         </div>
     </div>
     <div id="mic-mute-custom-osc" style="display:none">
         <div class="field">
-            <label>OSC-Pfad-Template</label>
-            <input type="text" id="mic-mute-osc-path" placeholder="/ch/{ch}/mix/on">
-            <p class="hint">Platzhalter: <code>{ch}</code> = Kanalindex (1-basiert, 2-stellig), z.B. <code>/ch/01/mix/on</code>.</p>
-        </div>
-        <div class="field" style="display:flex;gap:1rem">
-            <div style="flex:1">
-                <label>Unmute-Wert</label>
-                <input type="text" id="mic-mute-osc-unmute-val" placeholder="1">
-            </div>
-            <div style="flex:1">
-                <label>Mute-Wert</label>
-                <input type="text" id="mic-mute-osc-mute-val" placeholder="0">
+            <label style="color:#98c379">ON (Unmute)</label>
+            <input type="text" id="mic-mute-osc-on-path" placeholder="/ch/{ch}/mix/on">
+            <div style="display:flex;gap:.5rem;margin-top:.4rem">
+                <select id="mic-mute-osc-on-type" style="width:auto;flex-shrink:0">
+                    <option value="none">— kein Argument —</option>
+                    <option value="string">string</option>
+                    <option value="int">int</option>
+                    <option value="float">float</option>
+                </select>
+                <input type="text" id="mic-mute-osc-on-arg" placeholder="Wert" style="flex:1">
             </div>
         </div>
+        <div class="field">
+            <label style="color:#e06c75">OFF (Mute)</label>
+            <input type="text" id="mic-mute-osc-off-path" placeholder="/ch/{ch}/mix/on">
+            <div style="display:flex;gap:.5rem;margin-top:.4rem">
+                <select id="mic-mute-osc-off-type" style="width:auto;flex-shrink:0">
+                    <option value="none">— kein Argument —</option>
+                    <option value="string">string</option>
+                    <option value="int">int</option>
+                    <option value="float">float</option>
+                </select>
+                <input type="text" id="mic-mute-osc-off-arg" placeholder="Wert" style="flex:1">
+            </div>
+        </div>
+        <p class="hint"><code>{ch}</code> = Kanalindex (1-basiert, 2-stellig)</p>
     </div>
     <div class="field">
         <label data-i18n="s.midi.trigger">Trigger-Noten</label>
@@ -463,24 +514,47 @@
             const micMuteCustomOscDiv  = document.getElementById('mic-mute-custom-osc')
             const micMuteMidiUnmuteEl  = document.getElementById('mic-mute-midi-unmute')
             const micMuteMidiMuteEl    = document.getElementById('mic-mute-midi-mute')
-            const micMuteOscPathEl     = document.getElementById('mic-mute-osc-path')
-            const micMuteOscUnmuteEl   = document.getElementById('mic-mute-osc-unmute-val')
-            const micMuteOscMuteEl     = document.getElementById('mic-mute-osc-mute-val')
+            const micMuteMidiTypeSel   = document.getElementById('mic-mute-midi-type')
 
-            micMuteMethodSel.value    = settings.micMuteMethod     || 'x32'
+            micMuteMethodSel.value    = settings.micMuteMethod   || 'x32'
+            micMuteMidiTypeSel.value  = settings.micMuteMidiType || 'sysex'
             micMuteMidiUnmuteEl.value = settings.micMuteMidiUnmute || 'B1 {ch} 00'
             micMuteMidiMuteEl.value   = settings.micMuteMidiMute   || 'B1 {ch} 7F'
-            micMuteOscPathEl.value    = settings.micMuteOscPath    || '/ch/{ch}/mix/on'
-            micMuteOscUnmuteEl.value  = settings.micMuteOscUnmute  !== undefined ? String(settings.micMuteOscUnmute) : '1'
-            micMuteOscMuteEl.value    = settings.micMuteOscMute    !== undefined ? String(settings.micMuteOscMute)   : '0'
+            document.getElementById('mm-note-ch').value    = settings.micMuteMidiNoteCh   || '1'
+            document.getElementById('mm-note-num').value   = settings.micMuteMidiNoteNum  || '{ch}'
+            document.getElementById('mm-note-vel-on').value  = settings.micMuteMidiVelOn  ?? 127
+            document.getElementById('mm-note-vel-off').value = settings.micMuteMidiVelOff ?? 0
+            document.getElementById('mm-cc-ch').value      = settings.micMuteMidiCcCh    || '2'
+            document.getElementById('mm-cc-num').value     = settings.micMuteMidiCcNum   || '{ch}'
+            document.getElementById('mm-cc-val-on').value  = settings.micMuteMidiCcValOn  ?? 0
+            document.getElementById('mm-cc-val-off').value = settings.micMuteMidiCcValOff ?? 127
+            document.getElementById('mm-pc-ch').value      = settings.micMuteMidiPcCh    || '1'
+            document.getElementById('mm-pc-on').value      = settings.micMuteMidiPcOn     ?? 0
+            document.getElementById('mm-pc-off').value     = settings.micMuteMidiPcOff    ?? 1
+            // OSC: separate on/off paths with backwards compat for old single-path setting
+            document.getElementById('mic-mute-osc-on-path').value  = settings.micMuteOscOnPath  || settings.micMuteOscPath || '/ch/{ch}/mix/on'
+            document.getElementById('mic-mute-osc-off-path').value = settings.micMuteOscOffPath || settings.micMuteOscPath || '/ch/{ch}/mix/on'
+            document.getElementById('mic-mute-osc-on-type').value  = settings.micMuteOscOnArgType  || 'float'
+            document.getElementById('mic-mute-osc-off-type').value = settings.micMuteOscOffArgType || 'float'
+            document.getElementById('mic-mute-osc-on-arg').value   = settings.micMuteOscOnArg  !== undefined ? String(settings.micMuteOscOnArg)  : (settings.micMuteOscUnmute !== undefined ? String(settings.micMuteOscUnmute) : '1')
+            document.getElementById('mic-mute-osc-off-arg').value  = settings.micMuteOscOffArg !== undefined ? String(settings.micMuteOscOffArg) : (settings.micMuteOscMute   !== undefined ? String(settings.micMuteOscMute)   : '0')
 
             function updateMicMuteVisibility() {
                 const m = micMuteMethodSel.value
                 micMuteCustomMidiDiv.style.display = m === 'custom-midi' ? '' : 'none'
                 micMuteCustomOscDiv.style.display  = m === 'custom-osc'  ? '' : 'none'
             }
+            function updateMidiTypeVisibility() {
+                const t = micMuteMidiTypeSel.value
+                document.getElementById('mm-sysex').style.display = t === 'sysex' ? '' : 'none'
+                document.getElementById('mm-note').style.display  = t === 'note'  ? '' : 'none'
+                document.getElementById('mm-cc').style.display    = t === 'cc'    ? '' : 'none'
+                document.getElementById('mm-pc').style.display    = t === 'pc'    ? '' : 'none'
+            }
             updateMicMuteVisibility()
+            updateMidiTypeVisibility()
             micMuteMethodSel.addEventListener('change', updateMicMuteVisibility)
+            micMuteMidiTypeSel.addEventListener('change', updateMidiTypeVisibility)
 
             // ── MIDI ──────────────────────────────────────────────────
             const x32Select       = document.getElementById('x32-device')
@@ -651,12 +725,27 @@
                     oscEnabled: oscEnabledEl.checked,
                     oscHost:    oscHostEl.value.trim() || '127.0.0.1',
                     oscPort:    isNaN(oscPortVal) ? 8000 : Math.max(1, Math.min(65535, oscPortVal)),
-                    micMuteMethod:     micMuteMethodSel.value  || 'x32',
+                    micMuteMethod:    micMuteMethodSel.value  || 'x32',
+                    micMuteMidiType:  micMuteMidiTypeSel.value || 'sysex',
                     micMuteMidiUnmute: micMuteMidiUnmuteEl.value.trim() || 'B1 {ch} 00',
                     micMuteMidiMute:   micMuteMidiMuteEl.value.trim()   || 'B1 {ch} 7F',
-                    micMuteOscPath:    micMuteOscPathEl.value.trim()    || '/ch/{ch}/mix/on',
-                    micMuteOscUnmute:  micMuteOscUnmuteEl.value.trim()  || '1',
-                    micMuteOscMute:    micMuteOscMuteEl.value.trim()    || '0',
+                    micMuteMidiNoteCh:   document.getElementById('mm-note-ch').value.trim()   || '1',
+                    micMuteMidiNoteNum:  document.getElementById('mm-note-num').value.trim()  || '{ch}',
+                    micMuteMidiVelOn:    parseInt(document.getElementById('mm-note-vel-on').value)  || 127,
+                    micMuteMidiVelOff:   parseInt(document.getElementById('mm-note-vel-off').value) || 0,
+                    micMuteMidiCcCh:     document.getElementById('mm-cc-ch').value.trim()     || '2',
+                    micMuteMidiCcNum:    document.getElementById('mm-cc-num').value.trim()    || '{ch}',
+                    micMuteMidiCcValOn:  parseInt(document.getElementById('mm-cc-val-on').value)  ?? 0,
+                    micMuteMidiCcValOff: parseInt(document.getElementById('mm-cc-val-off').value) ?? 127,
+                    micMuteMidiPcCh:     document.getElementById('mm-pc-ch').value.trim()    || '1',
+                    micMuteMidiPcOn:     parseInt(document.getElementById('mm-pc-on').value)  ?? 0,
+                    micMuteMidiPcOff:    parseInt(document.getElementById('mm-pc-off').value) ?? 1,
+                    micMuteOscOnPath:     document.getElementById('mic-mute-osc-on-path').value.trim()  || '/ch/{ch}/mix/on',
+                    micMuteOscOnArgType:  document.getElementById('mic-mute-osc-on-type').value,
+                    micMuteOscOnArg:      document.getElementById('mic-mute-osc-on-arg').value.trim(),
+                    micMuteOscOffPath:    document.getElementById('mic-mute-osc-off-path').value.trim() || '/ch/{ch}/mix/on',
+                    micMuteOscOffArgType: document.getElementById('mic-mute-osc-off-type').value,
+                    micMuteOscOffArg:     document.getElementById('mic-mute-osc-off-arg').value.trim(),
                 })
                 window.close()
             })

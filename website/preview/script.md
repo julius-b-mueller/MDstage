@@ -58,6 +58,8 @@ mic:
     - Annabel
     - Julie
     - Mathilda
+light: Day
+osc: light/day
 trigger_note:
     ch: 1
     note: 1
@@ -165,6 +167,8 @@ music:
     fadein: 2.513
     fadeout: 2.61
     loop: true
+light: Night
+osc: /light/night
 trigger_note:
     ch: 1
     note: 3
@@ -229,6 +233,7 @@ By clicking one of them, you choose which one will be played when you click "GO"
 ```yaml
 music: Abendabschlusslied tief.mp3
 note: John
+start_tc: '01:00:00:00'
 trigger_note:
     ch: 1
     note: 9
@@ -237,6 +242,7 @@ trigger_note:
 ```yaml
 music: Abendabschlusslied hoch.mp3
 note: Amy
+start_tc: '01:00:00:00'
 trigger_note:
     ch: 1
     note: 9
@@ -244,6 +250,16 @@ sibling: true
 ```
 
 # Start - Loop - Finish
+
+```yaml
+mic:
+    - Thomas
+    - Annabel
+    - Mathilda
+trigger_note:
+    ch: 1
+    note: 11
+```
 
 **Thomas**
 When we do musicals, we often need loops in the middle of a song for parts that sometimes take more time and sometimes less time on stage.
@@ -258,6 +274,7 @@ Let me just start the song.
 music:
     file: Abendabschlusslied start.wav
     volume: 0.8
+start_tc: '02:00:00:00'
 trigger_note:
     ch: 1
     note: 6
