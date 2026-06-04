@@ -308,6 +308,68 @@ footer a:hover{text-decoration:underline}
       </div>
     </div>
 
+    <!-- Feature: Back-Button -->
+    <div class="feat-block">
+      <div class="feat-graphic">
+        <svg viewBox="0 0 280 200" width="280" height="200" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- "Vorher"-Box (links) -->
+          <rect x="12" y="20" width="96" height="110" rx="8" fill="#21252b" stroke="#383c44"/>
+          <text x="60" y="38" text-anchor="middle" font-size="8" fill="#5c6370">Vorher</text>
+          <!-- Loop läuft -->
+          <rect x="22" y="44" width="76" height="22" rx="5" fill="#1e3a2a" stroke="#98c37966"/>
+          <circle cx="32" cy="55" r="4" fill="#98c379"/>
+          <text x="65" y="59" text-anchor="middle" font-size="8" fill="#98c379">Loop ▶</text>
+          <!-- Mikro offen -->
+          <rect x="22" y="72" width="76" height="22" rx="5" fill="#1e3a52" stroke="#61afef66"/>
+          <text x="60" y="87" text-anchor="middle" font-size="8" fill="#61afef">🎤 Anna</text>
+          <!-- Lichtszene -->
+          <rect x="22" y="100" width="76" height="22" rx="5" fill="#3a321e" stroke="#e5c07b66"/>
+          <text x="60" y="115" text-anchor="middle" font-size="8" fill="#e5c07b">✦ Szene A</text>
+
+          <!-- Back-Pfeil in der Mitte -->
+          <rect x="114" y="66" width="52" height="28" rx="8" fill="#383c44" stroke="#5c6370"/>
+          <text x="140" y="84" text-anchor="middle" font-size="11" fill="#abb2bf" font-weight="700">◀ Back</text>
+          <path d="M114 80 L100 80" stroke="#5c6370" stroke-width="1.5" marker-end="url(#arG)"/>
+
+          <!-- Versehentlich ausgelöster Cue (oben) -->
+          <rect x="172" y="20" width="96" height="46" rx="8" fill="#2a1e1e" stroke="#e06c7566"/>
+          <text x="220" y="36" text-anchor="middle" font-size="8" fill="#e06c75">Zu früh</text>
+          <text x="220" y="50" text-anchor="middle" font-size="8" fill="#5c6370">Cue 5 ausgelöst</text>
+          <!-- X on wrong cue -->
+          <line x1="245" y1="22" x2="255" y2="32" stroke="#e06c75" stroke-width="1.5"/>
+          <line x1="255" y1="22" x2="245" y2="32" stroke="#e06c75" stroke-width="1.5"/>
+
+          <!-- Wiederhergestellt (unten rechts) -->
+          <rect x="172" y="84" width="96" height="46" rx="8" fill="#1e3a2a" stroke="#98c37988"/>
+          <text x="220" y="100" text-anchor="middle" font-size="8" fill="#98c379">Wiederhergestellt</text>
+          <text x="220" y="114" text-anchor="middle" font-size="8" fill="#5c6370">Cue 4 aktiv</text>
+
+          <!-- Arrow Wiederhergestellt → Restore -->
+          <path d="M172 107 L166 90" stroke="#98c37966" stroke-width="1" stroke-dasharray="2,2"/>
+
+          <!-- Bottom restore indicators -->
+          <text x="28" y="148" font-size="7.5" fill="#98c379">↺ Loop</text>
+          <text x="68" y="148" font-size="7.5" fill="#61afef">↺ Mikro</text>
+          <text x="105" y="148" font-size="7.5" fill="#e5c07b">↺ Licht</text>
+
+          <defs>
+            <marker id="arG" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="#5c6370"/>
+            </marker>
+          </defs>
+        </svg>
+      </div>
+      <div class="feat-text">
+        <h3 data-de="Go zu früh? Back macht es rückgängig" data-en="Go too early? Back undoes it">Go zu früh? Back macht es rückgängig</h3>
+        <p data-de="Der Back-Button stellt den vollständigen Status des vorherigen Cues wieder her: Wurde ein Loop unterbrochen, startet er neu. Mikrofone, die im vorherigen Cue geöffnet waren, werden wieder geöffnet. Wurde eine Lichtszene durch den falschen Cue gewechselt, wird die vorherige Szene erneut getriggert." data-en="The Back button fully restores the state of the previous cue: if a loop was interrupted, it restarts. Microphones that were open in the previous cue are reopened. If a lighting scene was changed by the wrong cue, the previous scene is triggered again.">
+          Der Back-Button stellt den vollständigen Status des vorherigen Cues wieder her: Wurde ein Loop unterbrochen, startet er neu. Mikrofone, die im vorherigen Cue geöffnet waren, werden wieder geöffnet. Wurde eine Lichtszene durch den falschen Cue gewechselt, wird die vorherige Szene erneut getriggert.
+        </p>
+        <p data-de="Das gibt der Person am Pult Sicherheit: Ein versehentlicher Go-Druck ist kein Problem – einfach Back drücken und weiter." data-en="This gives the operator confidence: an accidental Go press is no problem – just press Back and continue.">
+          Das gibt der Person am Pult Sicherheit: Ein versehentlicher Go-Druck ist kein Problem – einfach Back drücken und weiter.
+        </p>
+      </div>
+    </div>
+
     <!-- Feature 3: Gapless Audio / S-L-F -->
     <div class="feat-block">
       <div class="feat-graphic">
