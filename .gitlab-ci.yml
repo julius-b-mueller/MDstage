@@ -1,0 +1,74 @@
+stages:
+  - build
+  - deploy
+
+# ── Linux & Windows (cross-compiled from Linux with Wine) ────────────
+build:linux-windows:
+  stage: build
+  # electronuserland/builder:wine has node, electron-builder and wine pre-installed
+  image: electronuserland/builder:wine
+  script:
+    - npm ci
+    - npx webpack --mode production
+    - node scripts/build-version.js
+    - npx electron-builder --linux AppImage deb rpm --win nsis --publish never
+    # Rename to consistent filenames for the website
+    - mkdir -p artifacts
+    - find release -name "*.AppImage" -exec cp {} artifacts/MainDesk-linux-x64.AppImage \; 2>/dev/null || true
+    - find release -name "*.deb"      -exec cp {} artifacts/MainDesk-linux-x64.deb \;      2>/dev/null || true
+    - find release -name "*.rpm"      -exec cp {} artifacts/MainDesk-linux-x64.rpm \;      2>/dev/null || true
+    - find release -name "*.exe"      -exec cp {} artifacts/MainDesk-windows-x64.exe \;    2>/dev/null || true
+    - ls -lh artifacts/
+  artifacts:
+    name: "maindesk-linux-windows"
+    paths:
+      - artifacts/
+    expire_in: 2 weeks
+  only:
+    - main
+    - tags
+
+# ── macOS (requires macOS runner) ────────────────────────────────────
+build:macos:
+  stage: build
+  tags:
+    - saas-macos-medium-m1    # GitLab SaaS shared macOS runner (Apple Silicon)
+  allow_failure: true         # Pipeline continues even without a macOS runner
+  script:
+    - npm ci
+    - npx webpack --mode production
+    - node scripts/build-version.js
+    - npx electron-builder --mac dmg --publish never
+    - mkdir -p artifacts
+    - find release -name "*arm64.dmg" -exec cp {} artifacts/MainDesk-macos-arm64.dmg \; 2>/dev/null || true
+    - find release -name "*x64.dmg"   -exec cp {} artifacts/MainDesk-macos-x64.dmg \;   2>/dev/null || true
+    - ls -lh artifacts/
+  artifacts:
+    name: "maindesk-macos"
+    paths:
+      - artifacts/
+    expire_in: 2 weeks
+  only:
+    - main
+    - tags
+
+# ── Deploy website to GitLab Pages ───────────────────────────────────
+pages:
+  stage: deploy
+  image: alpine:latest
+  needs:
+    - job: build:linux-windows
+    - job: build:macos
+      optional: true
+  script:
+    - cp -r website public
+    - mkdir -p public/downloads
+    # Copy all built artifacts into downloads/
+    - find artifacts -type f | xargs -I{} cp {} public/downloads/ 2>/dev/null || true
+    - echo "Contents of public/downloads/:"
+    - ls -lh public/downloads/ || echo "(empty)"
+  artifacts:
+    paths:
+      - public
+  only:
+    - main

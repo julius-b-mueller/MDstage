@@ -4,8 +4,9 @@
   "version": "1.0.0",
   "main": "electron/main.js",
   "scripts": {
-    "build": "webpack && electron-builder --publish never",
+    "build": "webpack && node scripts/build-version.js && electron-builder --publish never",
     "build:renderer": "webpack",
+    "build:version": "node scripts/build-version.js",
     "develop": "webpack --watch --progress",
     "start": "node scripts/patch-electron-macos.js && electron .",
     "postinstall": "node scripts/patch-electron-macos.js"
@@ -40,11 +41,23 @@
       "!**/*.map"
     ],
     "mac": {
-      "target": "dmg",
+      "target": [
+        { "target": "dmg", "arch": ["arm64", "x64"] }
+      ],
       "category": "public.app-category.utilities"
     },
     "win": {
-      "target": "nsis"
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ]
+    },
+    "linux": {
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] },
+        { "target": "deb",      "arch": ["x64"] },
+        { "target": "rpm",      "arch": ["x64"] }
+      ],
+      "category": "AudioVideo"
     }
   }
 }

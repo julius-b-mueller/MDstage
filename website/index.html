@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Main Desk – Stage Management Software</title>
+<meta name="description" content="Professionelle Regie-Software für Bühnenproduktionen. Audiowiedergabe, MIDI, OSC, Live-Ansicht und mehr – alles in einer Markdown-Datei.">
+<style>
+  :root {
+    --bg:        #282c34;
+    --bg2:       #21252b;
+    --bg3:       #2c313a;
+    --border:    #383c44;
+    --text:      #abb2bf;
+    --text-dim:  #5c6370;
+    --blue:      #61afef;
+    --green:     #98c379;
+    --yellow:    #e5c07b;
+    --purple:    #c678dd;
+    --red:       #e06c75;
+    --radius:    10px;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+  }
+
+  /* ── Nav ─────────────────────────────────────── */
+  nav {
+    position: sticky; top: 0; z-index: 100;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 0 2rem;
+    display: flex; align-items: center; gap: 2rem;
+    height: 56px;
+  }
+  .nav-logo {
+    font-size: 1.15rem; font-weight: 700; color: #fff;
+    text-decoration: none; letter-spacing: -0.02em;
+    display: flex; align-items: center; gap: 0.5rem;
+  }
+  .nav-logo svg { flex-shrink: 0; }
+  .nav-links { display: flex; gap: 0.25rem; flex: 1; }
+  .nav-links a {
+    color: var(--text-dim); text-decoration: none;
+    padding: 0.35rem 0.75rem; border-radius: 6px;
+    font-size: 0.9rem; transition: color .15s, background .15s;
+  }
+  .nav-links a:hover { color: var(--text); background: var(--bg3); }
+  .lang-toggle {
+    display: flex; gap: 2px;
+    background: var(--bg3); border-radius: 6px; padding: 3px;
+  }
+  .lang-btn {
+    background: none; border: none; cursor: pointer;
+    padding: 3px 10px; border-radius: 4px;
+    font-size: 0.82rem; font-weight: 600;
+    color: var(--text-dim); transition: all .15s;
+  }
+  .lang-btn.active { background: var(--border); color: #fff; }
+  .nav-cta {
+    background: var(--blue); color: #1e2127;
+    text-decoration: none; padding: 0.4rem 1rem;
+    border-radius: 6px; font-size: 0.88rem; font-weight: 600;
+    transition: background .15s; white-space: nowrap;
+  }
+  .nav-cta:hover { background: #71bfff; }
+
+  /* ── Hero ────────────────────────────────────── */
+  .hero {
+    text-align: center;
+    padding: 7rem 2rem 5rem;
+    background: radial-gradient(ellipse 80% 50% at 50% -10%, #1a3a5c44 0%, transparent 70%);
+  }
+  .hero-badge {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    background: #1e3a5244; border: 1px solid #61afef44;
+    color: var(--blue); padding: 0.3rem 0.8rem;
+    border-radius: 20px; font-size: 0.8rem; font-weight: 600;
+    letter-spacing: 0.04em; text-transform: uppercase;
+    margin-bottom: 1.5rem;
+  }
+  .hero h1 {
+    font-size: clamp(2.5rem, 6vw, 4rem);
+    font-weight: 800; letter-spacing: -0.03em;
+    color: #fff; line-height: 1.1;
+    margin-bottom: 1.2rem;
+  }
+  .hero h1 span { color: var(--blue); }
+  .hero-sub {
+    font-size: clamp(1rem, 2vw, 1.2rem);
+    color: var(--text-dim); max-width: 560px; margin: 0 auto 2.5rem;
+    line-height: 1.7;
+  }
+  .hero-actions { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+  .btn-primary {
+    background: var(--blue); color: #1e2127;
+    padding: 0.75rem 1.75rem; border-radius: var(--radius);
+    text-decoration: none; font-weight: 700; font-size: 1rem;
+    transition: background .15s, transform .1s;
+    display: inline-flex; align-items: center; gap: 0.5rem;
+  }
+  .btn-primary:hover { background: #71bfff; transform: translateY(-1px); }
+  .btn-secondary {
+    background: var(--bg3); color: var(--text);
+    border: 1px solid var(--border);
+    padding: 0.75rem 1.75rem; border-radius: var(--radius);
+    text-decoration: none; font-weight: 600; font-size: 1rem;
+    transition: background .15s, transform .1s;
+    display: inline-flex; align-items: center; gap: 0.5rem;
+  }
+  .btn-secondary:hover { background: var(--border); transform: translateY(-1px); }
+  .hero-note {
+    margin-top: 1.2rem;
+    font-size: 0.82rem; color: var(--text-dim);
+    display: flex; align-items: center; justify-content: center; gap: 0.4rem;
+  }
+
+  /* ── Window mockup ───────────────────────────── */
+  .mockup-wrap {
+    max-width: 860px; margin: 0 auto;
+    padding: 3rem 2rem 0;
+  }
+  .mockup {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 40px 80px #00000088, 0 0 0 1px #ffffff08;
+  }
+  .mockup-bar {
+    background: #1a1d23;
+    padding: 0.7rem 1rem;
+    display: flex; align-items: center; gap: 0.4rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .dot-r { background: #ff5f57; }
+  .dot-y { background: #febc2e; }
+  .dot-g { background: #28c840; }
+  .mockup-title {
+    flex: 1; text-align: center;
+    font-size: 0.78rem; color: var(--text-dim);
+  }
+  .mockup-body { padding: 1.2rem 1.5rem; }
+  .mock-row {
+    display: flex; align-items: center; gap: 1rem;
+    padding: 0.6rem 0.8rem; border-radius: 6px; margin-bottom: 0.5rem;
+  }
+  .mock-row.current { border-left: 4px solid var(--yellow); background: #2a2e38; }
+  .mock-row.next    { border: 2px solid rgba(255,255,255,.6); background: #1e2430; border-radius: 8px; }
+  .mock-row.plain   { border-left: 4px solid var(--border); }
+  .mock-cue-num {
+    font-size: 2rem; font-weight: 700; color: var(--text-dim);
+    min-width: 2.5rem;
+  }
+  .mock-info { flex: 1; }
+  .mock-label { font-size: 0.75rem; color: var(--text-dim); margin-bottom: 0.2rem; }
+  .mock-detail { font-size: 0.9rem; color: var(--text); }
+  .mock-note { font-size: 0.85rem; color: var(--text-dim); max-width: 40%; text-align: right; }
+  .mock-badge {
+    font-size: 0.7rem; font-weight: 700; padding: 2px 7px;
+    border-radius: 4px; text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .mock-badge.loop { background: #1e3a52; color: var(--blue); }
+  .mock-badge.mic  { background: #1e3a2a; color: var(--green); }
+  .mock-script-line {
+    padding: 0.3rem 0.8rem;
+    font-size: 0.9rem; color: var(--text-dim);
+    font-style: italic;
+  }
+
+  /* ── Sections ────────────────────────────────── */
+  section { padding: 5rem 2rem; }
+  .section-inner { max-width: 1000px; margin: 0 auto; }
+  .section-label {
+    font-size: 0.75rem; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--blue);
+    margin-bottom: 0.75rem;
+  }
+  .section-title {
+    font-size: clamp(1.6rem, 3vw, 2.2rem);
+    font-weight: 800; letter-spacing: -0.02em;
+    color: #fff; margin-bottom: 0.75rem;
+  }
+  .section-sub {
+    font-size: 1.05rem; color: var(--text-dim);
+    max-width: 520px; line-height: 1.7; margin-bottom: 3rem;
+  }
+
+  /* ── Feature grid ────────────────────────────── */
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1.25rem;
+  }
+  .feature-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    transition: border-color .2s, transform .2s;
+  }
+  .feature-card:hover { border-color: #4b5263; transform: translateY(-2px); }
+  .feature-icon {
+    width: 40px; height: 40px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 1rem; font-size: 1.25rem;
+  }
+  .feature-icon.blue   { background: #1e3a52; }
+  .feature-icon.green  { background: #1e3a2a; }
+  .feature-icon.yellow { background: #3a321e; }
+  .feature-icon.purple { background: #2e1e3a; }
+  .feature-icon.red    { background: #3a1e1e; }
+  .feature-icon.teal   { background: #1e3a38; }
+  .feature-card h3 { font-size: 1rem; font-weight: 700; color: #fff; margin-bottom: 0.4rem; }
+  .feature-card p  { font-size: 0.88rem; color: var(--text-dim); line-height: 1.6; }
+
+  /* ── Divider ─────────────────────────────────── */
+  .divider { border: none; border-top: 1px solid var(--border); margin: 0; }
+
+  /* ── Download section ────────────────────────── */
+  #download { background: var(--bg2); }
+  .download-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 1rem; margin-bottom: 2.5rem;
+  }
+  .dl-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.5rem 1.25rem;
+    display: flex; flex-direction: column; gap: 0.5rem;
+  }
+  .dl-card-icon { font-size: 2rem; margin-bottom: 0.25rem; }
+  .dl-card h3 { font-size: 0.95rem; font-weight: 700; color: #fff; }
+  .dl-card .dl-type { font-size: 0.78rem; color: var(--text-dim); }
+  .dl-card .dl-btn {
+    margin-top: auto; padding-top: 0.75rem;
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    background: var(--bg3); border: 1px solid var(--border);
+    color: var(--text); text-decoration: none;
+    padding: 0.5rem 0.9rem; border-radius: 6px;
+    font-size: 0.85rem; font-weight: 600;
+    transition: background .15s;
+  }
+  .dl-card .dl-btn:hover { background: var(--border); }
+  .dl-card .dl-btn.primary {
+    background: var(--blue); color: #1e2127; border-color: var(--blue);
+  }
+  .dl-card .dl-btn.primary:hover { background: #71bfff; }
+
+  /* ── Warning box ─────────────────────────────── */
+  .warning-box {
+    background: #2a221a;
+    border: 1px solid #e5c07b44;
+    border-left: 4px solid var(--yellow);
+    border-radius: var(--radius);
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  .warning-box h4 {
+    color: var(--yellow); font-size: 0.9rem; font-weight: 700;
+    margin-bottom: 0.5rem;
+    display: flex; align-items: center; gap: 0.5rem;
+  }
+  .warning-tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+  .warning-tab {
+    background: var(--bg2); border: 1px solid var(--border);
+    color: var(--text-dim); padding: 0.3rem 0.75rem;
+    border-radius: 6px; font-size: 0.82rem; font-weight: 600;
+    cursor: pointer; transition: all .15s;
+  }
+  .warning-tab.active { background: var(--border); color: #fff; }
+  .warning-content { font-size: 0.88rem; color: var(--text); line-height: 1.7; }
+  .warning-content .hidden { display: none; }
+  code {
+    background: var(--bg3); border: 1px solid var(--border);
+    padding: 1px 6px; border-radius: 4px;
+    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85em;
+    color: #e5c07b;
+  }
+  pre {
+    background: var(--bg3); border: 1px solid var(--border);
+    padding: 0.75rem 1rem; border-radius: 6px; margin: 0.5rem 0;
+    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85rem;
+    color: var(--green); overflow-x: auto;
+  }
+  .free-badge {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    background: #1e3a2a; border: 1px solid #98c37944;
+    color: var(--green); padding: 0.5rem 1rem;
+    border-radius: 20px; font-size: 0.85rem; font-weight: 600;
+    margin-bottom: 1.5rem;
+  }
+
+  /* ── Footer ──────────────────────────────────── */
+  footer {
+    background: var(--bg2);
+    border-top: 1px solid var(--border);
+    padding: 2.5rem 2rem;
+    text-align: center;
+  }
+  footer p { font-size: 0.85rem; color: var(--text-dim); margin-bottom: 0.4rem; }
+  footer a { color: var(--blue); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+
+  @media (max-width: 640px) {
+    nav { padding: 0 1rem; gap: 1rem; }
+    .nav-links { display: none; }
+    .hero { padding: 4rem 1.5rem 3rem; }
+    section { padding: 3.5rem 1.5rem; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Nav ─────────────────────────────────────────────────────────── -->
+<nav>
+  <a href="#" class="nav-logo">
+    <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+      <rect width="22" height="22" rx="5" fill="#61afef22"/>
+      <path d="M4 11h14M4 7h14M4 15h8" stroke="#61afef" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+    Main Desk
+  </a>
+  <div class="nav-links">
+    <a href="#features" data-de="Features" data-en="Features">Features</a>
+    <a href="#download" data-de="Download" data-en="Download">Download</a>
+  </div>
+  <div class="lang-toggle">
+    <button class="lang-btn active" onclick="setLang('de')">DE</button>
+    <button class="lang-btn"        onclick="setLang('en')">EN</button>
+  </div>
+  <a href="#download" class="nav-cta" data-de="Herunterladen" data-en="Download">Herunterladen</a>
+</nav>
+
+<!-- ── Hero ────────────────────────────────────────────────────────── -->
+<section class="hero">
+  <div class="hero-badge">
+    <svg width="10" height="10" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#98c379"/></svg>
+    <span data-de="Kostenlos &amp; Open Source" data-en="Free &amp; Open Source">Kostenlos &amp; Open Source</span>
+  </div>
+  <h1 data-de="Regie-Software für<br><span>Bühnenproduktionen</span>" data-en="Stage Management<br><span>Software</span>">
+    Regie-Software für<br><span>Bühnenproduktionen</span>
+  </h1>
+  <p class="hero-sub" data-de="Skript, Cues, Audio, MIDI und Live-Ansicht in einer einzigen Markdown-Datei. Designed für Theater, Konzerte und Events." data-en="Script, cues, audio, MIDI and live view in a single Markdown file. Designed for theatre, concerts and events.">
+    Skript, Cues, Audio, MIDI und Live-Ansicht in einer einzigen Markdown-Datei. Designed für Theater, Konzerte und Events.
+  </p>
+  <div class="hero-actions">
+    <a href="#download" class="btn-primary">
+      <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/><path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/></svg>
+      <span data-de="Herunterladen" data-en="Download">Herunterladen</span>
+    </a>
+    <a href="#features" class="btn-secondary" data-de="Features ansehen" data-en="See Features">Features ansehen</a>
+  </div>
+  <p class="hero-note">
+    <svg width="13" height="13" fill="#5c6370" viewBox="0 0 16 16"><path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm.93 9.412-1 4.705c-.07.34-.352.57-.683.57-.408 0-.683-.34-.607-.682l1-4.705c.07-.34.352-.57.683-.57.408 0 .683.34.607.682zm.117-2.412a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/></svg>
+    <span data-de="Kostenlos. Kein Account. Keine Cloud." data-en="Free. No account. No cloud.">Kostenlos. Kein Account. Keine Cloud.</span>
+  </p>
+</section>
+
+<!-- ── App Mockup ───────────────────────────────────────────────────── -->
+<div class="mockup-wrap">
+  <div class="mockup">
+    <div class="mockup-bar">
+      <div class="dot dot-r"></div>
+      <div class="dot dot-y"></div>
+      <div class="dot dot-g"></div>
+      <div class="mockup-title">Stück.md — Main Desk</div>
+    </div>
+    <div class="mockup-body">
+      <div class="mock-script-line" data-de="*Licht: Bühne dunkel. Musik setzt ein.*" data-en="*Light: Stage dark. Music begins.*">*Licht: Bühne dunkel. Musik setzt ein.*</div>
+      <div class="mock-row current">
+        <div class="mock-cue-num">3</div>
+        <div class="mock-info">
+          <div class="mock-label" data-de="Aktuell" data-en="Current">Aktuell</div>
+          <div class="mock-detail">
+            <span class="mock-badge loop">Loop</span>
+            &nbsp;Hauptthema.wav
+          </div>
+        </div>
+        <div class="mock-note" style="color:var(--green)">▶ 1:42</div>
+      </div>
+      <div class="mock-row next">
+        <div class="mock-cue-num">4</div>
+        <div class="mock-info">
+          <div class="mock-label" data-de="Nächster Cue" data-en="Next Cue">Nächster Cue</div>
+          <div class="mock-detail">
+            <span class="mock-badge mic">🎤 Anna, Ben</span>
+            &nbsp;<span data-de="Dialog Szene 2" data-en="Dialogue Scene 2">Dialog Szene 2</span>
+          </div>
+        </div>
+        <div class="mock-note" style="color:var(--text-dim)">→ GO</div>
+      </div>
+      <div class="mock-row plain">
+        <div class="mock-cue-num">5</div>
+        <div class="mock-info">
+          <div class="mock-detail" data-de="Finish: Abgang-Musik.wav" data-en="Finish: ExitMusic.wav">Finish: Abgang-Musik.wav</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr class="divider" style="margin-top: 4rem;">
+
+<!-- ── Features ────────────────────────────────────────────────────── -->
+<section id="features">
+  <div class="section-inner">
+    <p class="section-label" data-de="Was Main Desk kann" data-en="What Main Desk does">Was Main Desk kann</p>
+    <h2 class="section-title" data-de="Alles für die Regie,<br>nichts Überflüssiges" data-en="Everything for stage management,<br>nothing superfluous">Alles für die Regie,<br>nichts Überflüssiges</h2>
+    <p class="section-sub" data-de="Speziell entwickelt für den professionellen Bühneneinsatz. Kein Overhead, keine Ablenkung." data-en="Built specifically for professional stage use. No overhead, no distraction.">
+      Speziell entwickelt für den professionellen Bühneneinsatz. Kein Overhead, keine Ablenkung.
+    </p>
+    <div class="features-grid">
+
+      <div class="feature-card">
+        <div class="feature-icon blue">🎬</div>
+        <h3 data-de="Live-Ansicht" data-en="Live View">Live-Ansicht</h3>
+        <p data-de="Separates Fenster für Bühnen- oder Regiemonitor zeigt aktuellen und nächsten Cue, Go/Back-Tasten, Audio-Fortschritt und Varianten-Auswahl." data-en="Separate window for stage or director's monitor shows current and next cue, Go/Back buttons, audio progress and variant selection.">
+          Separates Fenster für Bühnen- oder Regiemonitor zeigt aktuellen und nächsten Cue, Go/Back-Tasten, Audio-Fortschritt und Varianten-Auswahl.
+        </p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon green">🎵</div>
+        <h3 data-de="Nahtlose Audio-Übergänge" data-en="Gapless Audio">Nahtlose Audio-Übergänge</h3>
+        <p data-de="S/L/F-System (Start / Loop / Finish) für samplegenaue Übergänge ohne Klick oder Stille — via WebAudio AudioBufferSourceNode." data-en="S/L/F system (Start / Loop / Finish) for sample-accurate transitions without click or silence — via WebAudio AudioBufferSourceNode.">
+          S/L/F-System (Start / Loop / Finish) für samplegenaue Übergänge ohne Klick oder Stille — via WebAudio AudioBufferSourceNode.
+        </p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon yellow">🎛</div>
+        <h3>MIDI &amp; OSC</h3>
+        <p data-de="X32-Mikrofon-Routing, Trigger-Noten, MIDI Timecode (MTC 25fps) und custom OSC-Nachrichten pro Cue. Go/Back via MIDI-Controller." data-en="X32 mic routing, trigger notes, MIDI Timecode (MTC 25fps) and custom OSC messages per cue. Go/Back via MIDI controller.">
+          X32-Mikrofon-Routing, Trigger-Noten, MIDI Timecode (MTC 25fps) und custom OSC-Nachrichten pro Cue. Go/Back via MIDI-Controller.
+        </p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon purple">📝</div>
+        <h3 data-de="Markdown-Workflow" data-en="Markdown Workflow">Markdown-Workflow</h3>
+        <p data-de="Skript und alle Cues leben in einer einzigen .md-Datei. Git-versionierbar, im Texteditor bearbeitbar, auf mehreren Rechnern nutzbar." data-en="Script and all cues live in a single .md file. Git-versionable, editable in any text editor, usable on multiple machines.">
+          Skript und alle Cues leben in einer einzigen .md-Datei. Git-versionierbar, im Texteditor bearbeitbar, auf mehreren Rechnern nutzbar.
+        </p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon red">📤</div>
+        <h3 data-de="Export" data-en="Export">Export</h3>
+        <p data-de="PDF und DOCX-Export mit Deckblatt, Inhaltsverzeichnis, Rollennamen in Farbe und allen Cue-Informationen — druckfertig für Probe und Aufführung." data-en="PDF and DOCX export with title page, table of contents, coloured role names and all cue info — print-ready for rehearsal and performance.">
+          PDF und DOCX-Export mit Deckblatt, Inhaltsverzeichnis, Rollennamen in Farbe und allen Cue-Informationen — druckfertig für Probe und Aufführung.
+        </p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon teal">🖥</div>
+        <h3 data-de="Dual-Audio-Ausgang" data-en="Dual Audio Output">Dual-Audio-Ausgang</h3>
+        <p data-de="Getrennte Kanäle für Haupt- und Monitor-Mix auf einem Aggregate Device. Pro Cue eigene Monitor-Datei (z.B. mit Klickspur)." data-en="Separate channels for main and monitor mix on one aggregate device. Per-cue monitor file (e.g. with click track).">
+          Getrennte Kanäle für Haupt- und Monitor-Mix auf einem Aggregate Device. Pro Cue eigene Monitor-Datei (z.B. mit Klickspur).
+        </p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<hr class="divider">
+
+<!-- ── Download ─────────────────────────────────────────────────────── -->
+<section id="download">
+  <div class="section-inner">
+    <p class="section-label">Download</p>
+    <h2 class="section-title" data-de="Kostenlos herunterladen" data-en="Download for Free">Kostenlos herunterladen</h2>
+    <p class="section-sub" data-de="Verfügbar für macOS, Windows und Linux. Keine Installation eines Accounts nötig." data-en="Available for macOS, Windows and Linux. No account required.">
+      Verfügbar für macOS, Windows und Linux. Keine Installation eines Accounts nötig.
+    </p>
+
+    <div class="free-badge">
+      ✦ <span data-de="Kostenlos · Open Source · Keine Telemetrie" data-en="Free · Open Source · No Telemetry">Kostenlos · Open Source · Keine Telemetrie</span>
+    </div>
+
+    <div class="download-grid">
+      <div class="dl-card">
+        <div class="dl-card-icon">🍎</div>
+        <h3>macOS</h3>
+        <div class="dl-type">Apple Silicon (M1/M2/M3/M4)</div>
+        <a href="downloads/MainDesk-macos-arm64.dmg" class="dl-btn primary">
+          ↓ <span data-de=".dmg herunterladen" data-en="Download .dmg">.dmg herunterladen</span>
+        </a>
+      </div>
+      <div class="dl-card">
+        <div class="dl-card-icon">🍎</div>
+        <h3>macOS</h3>
+        <div class="dl-type">Intel (x64)</div>
+        <a href="downloads/MainDesk-macos-x64.dmg" class="dl-btn">
+          ↓ <span data-de=".dmg herunterladen" data-en="Download .dmg">.dmg herunterladen</span>
+        </a>
+      </div>
+      <div class="dl-card">
+        <div class="dl-card-icon">🪟</div>
+        <h3>Windows</h3>
+        <div class="dl-type">64-bit Installer</div>
+        <a href="downloads/MainDesk-windows-x64.exe" class="dl-btn">
+          ↓ <span data-de=".exe herunterladen" data-en="Download .exe">.exe herunterladen</span>
+        </a>
+      </div>
+      <div class="dl-card">
+        <div class="dl-card-icon">🐧</div>
+        <h3>Linux</h3>
+        <div class="dl-type">AppImage (universell)</div>
+        <a href="downloads/MainDesk-linux-x64.AppImage" class="dl-btn">
+          ↓ AppImage
+        </a>
+      </div>
+      <div class="dl-card">
+        <div class="dl-card-icon">🐧</div>
+        <h3>Linux</h3>
+        <div class="dl-type">Debian / Ubuntu (.deb)</div>
+        <a href="downloads/MainDesk-linux-x64.deb" class="dl-btn">
+          ↓ .deb
+        </a>
+      </div>
+      <div class="dl-card">
+        <div class="dl-card-icon">🐧</div>
+        <h3>Linux</h3>
+        <div class="dl-type">Fedora / RHEL (.rpm)</div>
+        <a href="downloads/MainDesk-linux-x64.rpm" class="dl-btn">
+          ↓ .rpm
+        </a>
+      </div>
+    </div>
+
+    <!-- Warning box -->
+    <div class="warning-box">
+      <h4>
+        <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></svg>
+        <span data-de="Hinweis: Unsignierte Software" data-en="Note: Unsigned Software">Hinweis: Unsignierte Software</span>
+      </h4>
+      <div class="warning-tabs">
+        <button class="warning-tab active" onclick="showWarning('mac')" id="tab-mac">macOS</button>
+        <button class="warning-tab"        onclick="showWarning('win')" id="tab-win">Windows</button>
+        <button class="warning-tab"        onclick="showWarning('lin')" id="tab-lin">Linux</button>
+        <button class="warning-tab"        onclick="showWarning('why')" id="tab-why" data-de="Warum?" data-en="Why?">Warum?</button>
+      </div>
+      <div class="warning-content">
+        <div id="warn-mac">
+          <p data-de="macOS zeigt beim ersten Start eine Warnung von Gatekeeper. So öffnest du Main Desk trotzdem:" data-en="macOS shows a Gatekeeper warning on first launch. Here's how to open Main Desk anyway:">
+            macOS zeigt beim ersten Start eine Warnung von Gatekeeper. So öffnest du Main Desk trotzdem:
+          </p>
+          <p style="margin-top:.5rem"><strong data-de="Option 1 – Systemeinstellungen:" data-en="Option 1 – System Settings:">Option 1 – Systemeinstellungen:</strong></p>
+          <p data-de='Systemeinstellungen → Datenschutz &amp; Sicherheit → ganz nach unten scrollen → „Main Desk" → „Trotzdem öffnen"' data-en='System Settings → Privacy &amp; Security → scroll down → "Main Desk" → "Open Anyway"'>
+            Systemeinstellungen → Datenschutz &amp; Sicherheit → ganz nach unten scrollen → „Main Desk" → „Trotzdem öffnen"
+          </p>
+          <p style="margin-top:.5rem"><strong data-de="Option 2 – Terminal (einmalig):" data-en="Option 2 – Terminal (once):">Option 2 – Terminal (einmalig):</strong></p>
+          <pre>xattr -cr /Applications/Main\ Desk.app</pre>
+          <p style="margin-top:.5rem; font-size:.82rem; color:var(--text-dim)" data-de="Danach startet die App normal. Der Befehl muss nur einmal ausgeführt werden." data-en="After that the app starts normally. The command only needs to be run once.">
+            Danach startet die App normal. Der Befehl muss nur einmal ausgeführt werden.
+          </p>
+        </div>
+        <div id="warn-win" class="hidden">
+          <p data-de="Windows SmartScreen zeigt eine Warnung beim ersten Start. So gehst du vor:" data-en="Windows SmartScreen shows a warning on first launch. Here's what to do:">
+            Windows SmartScreen zeigt eine Warnung beim ersten Start. So gehst du vor:
+          </p>
+          <ol style="margin:.5rem 0 0 1.2rem; line-height:2">
+            <li data-de='Klicke auf „Weitere Informationen"' data-en='Click "More info"'>Klicke auf „Weitere Informationen"</li>
+            <li data-de='Klicke auf „Trotzdem ausführen"' data-en='Click "Run anyway"'>Klicke auf „Trotzdem ausführen"</li>
+          </ol>
+          <p style="margin-top:.5rem; font-size:.82rem; color:var(--text-dim)" data-de="Diese Warnung erscheint nur beim ersten Start, nicht danach." data-en="This warning only appears on the first launch.">
+            Diese Warnung erscheint nur beim ersten Start, nicht danach.
+          </p>
+        </div>
+        <div id="warn-lin" class="hidden">
+          <p data-de="Für AppImage: Datei ausführbar machen, dann starten:" data-en="For AppImage: make file executable, then run:">
+            Für AppImage: Datei ausführbar machen, dann starten:
+          </p>
+          <pre>chmod +x MainDesk-linux-x64.AppImage
+./MainDesk-linux-x64.AppImage</pre>
+          <p data-de="Für .deb (Debian/Ubuntu):" data-en="For .deb (Debian/Ubuntu):" style="margin-top:.5rem">Für .deb (Debian/Ubuntu):</p>
+          <pre>sudo dpkg -i MainDesk-linux-x64.deb</pre>
+        </div>
+        <div id="warn-why" class="hidden">
+          <p data-de="Das Apple Developer Program kostet 99 $/Jahr, das Microsoft-Zertifikat deutlich mehr. Da Main Desk kostenlos und open source ist, verzichten wir darauf." data-en="The Apple Developer Program costs $99/year, a Microsoft certificate significantly more. Since Main Desk is free and open source, we skip that.">
+            Das Apple Developer Program kostet 99 $/Jahr, das Microsoft-Zertifikat deutlich mehr. Da Main Desk kostenlos und open source ist, verzichten wir darauf.
+          </p>
+          <p style="margin-top:.5rem" data-de="Die Sicherheitswarnung bedeutet nicht, dass die Software schädlich ist — sie bedeutet nur, dass Apple und Microsoft keine Gebühr erhalten haben. Der Quellcode ist öffentlich einsehbar." data-en="The security warning does not mean the software is harmful — it just means Apple and Microsoft haven't received a fee. The source code is publicly available.">
+            Die Sicherheitswarnung bedeutet nicht, dass die Software schädlich ist — sie bedeutet nur, dass Apple und Microsoft keine Gebühr erhalten haben. Der Quellcode ist öffentlich einsehbar.
+          </p>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ── Footer ───────────────────────────────────────────────────────── -->
+<footer>
+  <p data-de="Main Desk ist freie Software, veröffentlicht unter der MIT-Lizenz." data-en="Main Desk is free software, released under the MIT License.">
+    Main Desk ist freie Software, veröffentlicht unter der MIT-Lizenz.
+  </p>
+  <p>
+    <a href="https://gitlab.com/your-namespace/evb-ai" id="gitlab-link">GitLab</a>
+    &nbsp;·&nbsp;
+    <span data-de="Gebaut für die Bühne." data-en="Built for the stage.">Gebaut für die Bühne.</span>
+  </p>
+</footer>
+
+<script>
+  // ── Language ────────────────────────────────────────────────────────
+  let currentLang = localStorage.getItem('md-lang') || 'de'
+
+  function setLang(lang) {
+    currentLang = lang
+    localStorage.setItem('md-lang', lang)
+    document.documentElement.lang = lang
+    document.querySelectorAll('.lang-btn').forEach((b, i) => {
+      b.classList.toggle('active', (i === 0 && lang === 'de') || (i === 1 && lang === 'en'))
+    })
+    document.querySelectorAll('[data-de]').forEach(el => {
+      const txt = el.getAttribute('data-' + lang)
+      if (txt === null) return
+      if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+        el.placeholder = txt
+      } else if (el.children.length === 0 || el.tagName === 'H1') {
+        el.innerHTML = txt
+      } else {
+        el.textContent = txt
+      }
+    })
+  }
+
+  setLang(currentLang)
+
+  // ── Warning tabs ────────────────────────────────────────────────────
+  function showWarning(id) {
+    ['mac','win','lin','why'].forEach(k => {
+      document.getElementById('warn-' + k).classList.toggle('hidden', k !== id)
+      document.getElementById('tab-'  + k).classList.toggle('active', k === id)
+    })
+  }
+</script>
+</body>
+</html>

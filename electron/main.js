@@ -11,6 +11,11 @@ const {
     PageBreak, BorderStyle, TabStopType, convertMillimetersToTwip,
 } = require('docx')
 
+let buildInfo = { commit: 'dev', date: '' }
+try {
+    buildInfo = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'dist', 'version.json'), 'utf8'))
+} catch {}
+
 function escapeRegex(s) {
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -278,7 +283,16 @@ function buildMenu() {
         ...(process.platform === 'darwin' ? [{
             label: app.getName(),
             submenu: [
-                { role: 'about' },
+                {
+                    label: 'Über Main Desk…',
+                    click: () => dialog.showMessageBox(mainWindow ?? null, {
+                        type: 'info',
+                        title: 'Main Desk',
+                        message: 'Main Desk',
+                        detail: `Version ${app.getVersion()}${buildInfo.date ? '  ·  ' + buildInfo.date : ''}\nCommit: ${buildInfo.commit}`,
+                        buttons: ['OK'],
+                    }),
+                },
                 { type: 'separator' },
                 {
                     label: 'Neue Datei…',
@@ -352,6 +366,18 @@ function buildMenu() {
                 accelerator: 'Ctrl+L',
                 click: createLiveWindow,
             }],
+        }, {
+            label: 'Hilfe',
+            submenu: [{
+                label: 'Über Main Desk…',
+                click: () => dialog.showMessageBox(mainWindow ?? null, {
+                    type: 'info',
+                    title: 'Main Desk',
+                    message: 'Main Desk',
+                    detail: `Version ${app.getVersion()}${buildInfo.date ? '  ·  ' + buildInfo.date : ''}\nCommit: ${buildInfo.commit}`,
+                    buttons: ['OK'],
+                }),
+            }],
         }]),
         {
             label: 'Bearbeiten',
@@ -365,7 +391,7 @@ function buildMenu() {
                 { role: 'selectAll' },
             ],
         },
-        {
+        ...(!app.isPackaged ? [{
             label: 'Entwickler',
             submenu: [
                 {
@@ -379,7 +405,7 @@ function buildMenu() {
                 },
                 { role: 'reload' },
             ],
-        },
+        }] : []),
     ]
     return Menu.buildFromTemplate(template)
 }
