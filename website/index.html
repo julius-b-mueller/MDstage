@@ -827,7 +827,7 @@ footer a:hover{text-decoration:underline}
     <span id="cb-text-en" style="display:none"><strong>No cookies. No data. No tracking.</strong> Main Desk doesn't phone home – so I have absolutely no idea if you're using it. If you'd like to let me know: drop me a quick email about where you're using it. I always appreciate hearing from people.</span>
   </p>
   <div class="cookie-actions">
-    <a class="cookie-mail" id="cb-mail" href="mailto:hello@example.com?subject=Main%20Desk%20Einsatz" data-subject-de="Main Desk Einsatz" data-subject-en="Using Main Desk">
+    <a class="cookie-mail" id="cb-mail" href="mailto:info@maindesk.org?subject=Main%20Desk%20Einsatz" data-subject-de="Main Desk Einsatz" data-subject-en="Using Main Desk">
       <span id="cb-mail-de">✉ Mail schreiben</span>
       <span id="cb-mail-en" style="display:none">✉ Send a mail</span>
     </a>
@@ -886,7 +886,7 @@ footer a:hover{text-decoration:underline}
     document.getElementById('cb-close-de').style.display = de ? '' : 'none'
     document.getElementById('cb-close-en').style.display = de ? 'none' : ''
     const sub = document.getElementById('cb-mail').getAttribute('data-subject-' + lang)
-    document.getElementById('cb-mail').href = 'mailto:hello@example.com?subject=' + encodeURIComponent(sub)
+    document.getElementById('cb-mail').href = 'mailto:info@maindesk.org?subject=' + encodeURIComponent(sub)
   }
   setLang(currentLang)
 </script>
