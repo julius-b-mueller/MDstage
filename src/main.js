@@ -5621,6 +5621,7 @@ window.__liveGo = goAction
 window.__liveBack = backAction
 window.__selectVariant = (idx) => { selectedVariant = idx; broadcastLiveState() }
 window.__stopAudio = (cueIdx) => { const ta = triggerAudio.get(cueIdx); if (ta) fadeAdjustAudio(ta, 0.5) }
+window.__rerender = () => { if (scriptText) rerender(scriptText) }
 window.__runExport = runExport
 
 window.electronAPI.onLiveWindowState((isOpen) => {
