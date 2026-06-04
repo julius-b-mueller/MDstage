@@ -2931,6 +2931,25 @@ function buildTrigger(codeblockYaml, index) {
         let activeSourceStartOffset = null   // buffer offset (seconds) where source began
         let suppressSeekRestart  = false
         let suppressPauseStop    = false  // prevents ws.on("pause") from killing a group source
+        let forceFullBuffer      = false  // play button: ignore trim region, use full buffer
+
+        // Copy [startSec, endSec] out of srcBuf into a fresh AudioBuffer.
+        // The result can be looped with loopStart=0/loopEnd=duration for gapless region looping.
+        // Returns true when the selected region covers the entire buffer — no slicing needed.
+        function isFullFile(buf, startSec, endSec) {
+            return (startSec ?? 0) <= 0 && endSec >= buf.duration - 0.001
+        }
+
+        function sliceBuffer(srcBuf, startSec, endSec, ctx) {
+            const sr = srcBuf.sampleRate
+            const s  = Math.round(startSec * sr)
+            const e  = Math.min(Math.round(endSec * sr), srcBuf.length)
+            const n  = Math.max(1, e - s)
+            const out = ctx.createBuffer(srcBuf.numberOfChannels, n, sr)
+            for (let ch = 0; ch < srcBuf.numberOfChannels; ch++)
+                out.getChannelData(ch).set(srcBuf.getChannelData(ch).subarray(s, s + n))
+            return out
+        }
 
         function startSource(offset, when) {
             const ta_ = triggerAudio.get(index)
@@ -2941,34 +2960,82 @@ function buildTrigger(codeblockYaml, index) {
             if (mainAudioCtxGain) mainAudioCtxGain.gain.value = 0
             stopSource()
             if (!ta_?.decodedBuffer) { if (mainAudioCtxGain) mainAudioCtxGain.gain.value = 1; return }
+            if (forceFullBuffer) {
+                forceFullBuffer = false
+                const src = sharedAudioCtx.createBufferSource()
+                src.buffer = ta_.decodedBuffer
+                src.connect(playbackGain)
+                const safeOff = Math.max(0, offset)
+                src.start(when, safeOff)
+                activeSource            = src
+                activeSourceStartedAt   = when
+                activeSourceStartOffset = safeOff
+                src.addEventListener('ended', () => { if (activeSource === src) activeSource = null })
+                return
+            }
             const src = sharedAudioCtx.createBufferSource()
-            src.buffer = ta_.decodedBuffer
-            // Ensure group is registered (cheap, idempotent)
             tryBuildLoopGroups()
-            const loopGroup   = loopGroups.get(index)
-            const isLoopTrigger = loopGroup || loopEnabled
-            if (isLoopTrigger) {
-                src.loop      = true
-                src.loopStart = mp.start ?? 0
-                src.loopEnd   = mp.end ?? ta_.decodedBuffer.duration
-            }
-            src.connect(playbackGain)
-            const safeOffset = Math.max(0, offset)
-            src.start(when, safeOffset)
-            activeSource = src
-            activeSourceStartedAt   = when
-            activeSourceStartOffset = safeOffset
-            if (loopGroup) {
-                loopGroup.loopVirtualStartTime = when - (safeOffset - (mp.start ?? 0))
-                // Don't set mainAudioEl.loop for group triggers — loop-back seeking would
-                // trigger ws.on("seeking") → startSource → second audio instance.
-                // Cursor is reset manually in fireLoopRestart instead.
-            }
-            if (loopEnabled) {
-                mainAudioEl.loop = true
+            const loopGroup = loopGroups.get(index)
+
+            if (loopEnabled && !loopGroup && mp.end != null && !isFullFile(ta_.decodedBuffer, mp.start, mp.end)) {
+                // Build a dedicated buffer for the selected region so the AudioBufferSourceNode
+                // loops sample-accurately with no loopStart/loopEnd rounding drift.
+                const regionStart = mp.start ?? 0
+                const loopBuf     = sliceBuffer(ta_.decodedBuffer, regionStart, mp.end, sharedAudioCtx)
+                src.buffer        = loopBuf
+                src.loop          = true
+                src.loopStart     = 0
+                src.loopEnd       = loopBuf.duration
+                src.connect(playbackGain)
+                const regionOff = Math.max(0, Math.min(offset - regionStart, loopBuf.duration))
+                src.start(when, regionOff)
+                activeSource            = src
+                activeSourceStartedAt   = when
+                activeSourceStartOffset = regionOff
+                mainAudioEl.loop        = true  // cursor managed by fireLoopRestart timer
+            } else {
+                const safeOffset  = Math.max(0, offset)
+                const regionStart = mp.start ?? 0
+                if (loopGroup && mp.end != null && !isFullFile(ta_.decodedBuffer, mp.start, mp.end)) {
+                    // SLF loop segment: slice the region into a dedicated buffer for
+                    // sample-accurate gapless looping (same technique as plain loopEnabled).
+                    // activeSourceStartOffset stays in original-file coords so armOutroTimer
+                    // and fireGaplessTransition timing calculations remain correct.
+                    const loopBuf  = sliceBuffer(ta_.decodedBuffer, regionStart, mp.end, sharedAudioCtx)
+                    src.buffer     = loopBuf
+                    src.loop       = true
+                    src.loopStart  = 0
+                    src.loopEnd    = loopBuf.duration
+                    src.connect(playbackGain)
+                    const regionOff = Math.max(0, Math.min(safeOffset - regionStart, loopBuf.duration))
+                    src.start(when, regionOff)
+                    activeSource            = src
+                    activeSourceStartedAt   = when
+                    activeSourceStartOffset = safeOffset  // original-file coords
+                    loopGroup.loopVirtualStartTime = when - (safeOffset - regionStart)
+                } else {
+                    src.buffer = ta_.decodedBuffer
+                    const isLoopTrigger = loopGroup || loopEnabled
+                    if (isLoopTrigger) {
+                        src.loop      = true
+                        src.loopStart = regionStart
+                        src.loopEnd   = mp.end ?? ta_.decodedBuffer.duration
+                    }
+                    src.connect(playbackGain)
+                    src.start(when, safeOffset)
+                    activeSource            = src
+                    activeSourceStartedAt   = when
+                    activeSourceStartOffset = safeOffset
+                    if (loopGroup) {
+                        loopGroup.loopVirtualStartTime = when - (safeOffset - regionStart)
+                        // Don't set mainAudioEl.loop for group triggers — loop-back seeking would
+                        // trigger ws.on("seeking") → startSource → second audio instance.
+                        // Cursor is reset manually in fireLoopRestart instead.
+                    }
+                    if (loopEnabled) mainAudioEl.loop = true
+                }
             }
             src.addEventListener('ended', () => { if (activeSource === src) activeSource = null })
-            // Monitor channels (2-3) are part of the merged 4-ch buffer — no separate source needed.
         }
 
         function stopSource(when) {
@@ -3047,20 +3114,13 @@ function buildTrigger(codeblockYaml, index) {
         }
 
         function updateSlfGrips() {
-            const slf = isSlfCue()
-            startBotGrip.style.display = slf ? 'none' : ''
-            endBotGrip.style.display   = slf ? 'none' : ''
-            startTopGrip.style.display = slf ? 'none' : ''
-            endTopGrip.style.display   = slf ? 'none' : ''
-            fadeinReg.style.display    = slf ? 'none' : ''
-            fadeoutReg.style.display   = slf ? 'none' : ''
+            // Grips are now always visible — SLF cues support start/end/fadein/fadeout too.
         }
         slfGripUpdaters.set(index, updateSlfGrips)
 
         function shiftDrag(el, onDrag) {
             el.addEventListener("mousedown", (e) => {
                 if (!shiftHeld) return
-                if (isSlfCue()) return  // start/end/fade not adjustable for SLF cues
                 e.stopPropagation(); e.preventDefault()
                 const move = (me) => {
                     const rect = waveformContainer.getBoundingClientRect()
@@ -3088,7 +3148,11 @@ function buildTrigger(codeblockYaml, index) {
         shiftDrag(startTopGrip, (t) => { mp.fadein  = Math.max(0, Math.min(t - mp.start, (mp.end ?? ws.getDuration()) - mp.start)) })
         shiftDrag(endTopGrip,   (t) => { const e = mp.end ?? ws.getDuration(); mp.fadeout = Math.max(0, Math.min(e - t, e - mp.start)) })
 
-        ws.on("ready",  () => { waveformContainer.appendChild(overlay); updateMarkers(); updateSlfGrips(); autoMarkerState.refresh?.(); preDecodeForGapless(index); updateDerivedTcBadges() })
+        ws.on("ready",  () => {
+            waveformContainer.appendChild(overlay); updateMarkers(); updateSlfGrips(); autoMarkerState.refresh?.(); preDecodeForGapless(index); updateDerivedTcBadges()
+            const s = mp.start ?? 0
+            if (s > 0) { mainAudioEl.currentTime = s; requestAnimationFrame(() => ws.setScrollTime(s)) }
+        })
         ws.on("scroll", () => { updateMarkers(); autoMarkerState.refresh?.() })
         ws.on("zoom",   () => { updateMarkers(); autoMarkerState.refresh?.() })
         ws.on("redraw", () => { updateMarkers(); autoMarkerState.refresh?.() })
@@ -3217,7 +3281,7 @@ function buildTrigger(codeblockYaml, index) {
                 // ③ Start outro audio source at the same instant — pure WebAudio, no media element
                 const nextPg = nextTa.getPlaybackGain?.()
                 cancelWsFade(nextTa.ws)
-                nextTa.setCurrentVolume(fadein > 0 ? 0 : vol)
+                nextTa.setCurrentVolume(vol)
                 if (nextPg) nextPg.gain.value = fadein > 0 ? 0 : vol
                 nextTa.startGaplessSource(ns, transitionTime)
 
@@ -3250,7 +3314,7 @@ function buildTrigger(codeblockYaml, index) {
                 // ② Start next audio source at transitionTime
                 const nextPg = nextTa.getPlaybackGain?.()
                 cancelWsFade(nextTa.ws)
-                nextTa.setCurrentVolume(fadein > 0 ? 0 : vol)
+                nextTa.setCurrentVolume(vol)
                 if (nextPg) nextPg.gain.value = fadein > 0 ? 0 : vol
                 nextTa.startGaplessSource(ns, transitionTime)
 
@@ -3270,7 +3334,7 @@ function buildTrigger(codeblockYaml, index) {
             } else {
                 // ── Fallback: buffer not decoded — use media element directly ──
                 cancelWsFade(nextTa.ws)
-                nextTa.setCurrentVolume(fadein > 0 ? 0 : vol)
+                nextTa.setCurrentVolume(vol)
                 nextTa.ws.setVolume(fadein > 0 ? 0 : vol)
                 nextTa.mainAudioEl.play().catch(() => {})
                 mainAudioEl.pause()
@@ -3322,7 +3386,18 @@ function buildTrigger(codeblockYaml, index) {
                 setTimeout(() => { suppressSeekRestart = false }, 50)
                 return
             }
-            if (activeSource && loopEnabled) return
+            if (activeSource && loopEnabled) {
+                // AudioBufferSourceNode loops the region sample-accurately via src.loop.
+                // Reset the media-element cursor to mp.start so the fadein/fadeout envelope
+                // stays in sync, and clear preSeekArmed so the pre-boundary timer is
+                // re-scheduled for the next iteration (without this it only fires once).
+                preSeekArmed = false
+                clearTimeout(loopJumpTimer); loopJumpTimer = null
+                suppressSeekRestart = true
+                mainAudioEl.currentTime = mp.start
+                setTimeout(() => { suppressSeekRestart = false }, 50)
+                return
+            }
 
             const ctx = sharedAudioCtx
             const ta  = triggerAudio.get(index)
@@ -3381,11 +3456,11 @@ function buildTrigger(codeblockYaml, index) {
                         if (nextIdx !== null) {
                             fireChainEnd(nextIdx)
                         } else {
-                            ws.stop()
+                            wsStopAndReset()
                             if (mtc && mtc.activeTcIndex === index) mtc.stopAndClear()
                         }
                     } else if (!chainEnd) {
-                        ws.stop()
+                        wsStopAndReset()
                         if (mtc && mtc.activeTcIndex === index) mtc.stopAndClear()
                     }
                 }
@@ -3566,6 +3641,7 @@ function buildTrigger(codeblockYaml, index) {
             stopSource()
             ws.setVolume(currentVolume)
             if (!mp.loop && mtc && mtc.activeTcIndex === index) mtc.stopAndClear()
+            wsStopAndReset()
         })
         ws.on("seeking", (t) => {
             if (suppressSeekRestart || mainAudioEl.paused) return
@@ -3574,6 +3650,9 @@ function buildTrigger(codeblockYaml, index) {
             if ((loopEnabled || loopGroups.has(index)) && activeSource && !scrubbingSet.has(index)) return
             if (sharedAudioCtx) startSource(t, sharedAudioCtx.currentTime)
         })
+
+        // ws.stop() is overridden above to reset to mp.start instead of file position 0.
+        function wsStopAndReset() { ws.stop() }
 
         // ── Controls ────────────────────────────────────────────────────
         volSlider.addEventListener("input", () => {
@@ -3592,10 +3671,52 @@ function buildTrigger(codeblockYaml, index) {
             updateLoopBtnWavWarning()
             debouncedSave()
         })
-        pauseBtn.addEventListener("click", () => ws.playPause())
-        stopBtn.addEventListener("click",  () => { ws.stop(); ws.setVolume(currentVolume); if (mtc && mtc.activeTcIndex === index) mtc.stopAndClear() })
-        zoomOutBtn.addEventListener("click", () => { state.zoom = Math.max(10,  state.zoom / 2); ws.zoom(state.zoom); updateMarkers() })
-        zoomInBtn.addEventListener("click",  () => { state.zoom = Math.min(400, state.zoom * 2); ws.zoom(state.zoom); updateMarkers() })
+        pauseBtn.addEventListener("click", () => {
+            if (ws.isPlaying()) {
+                ws.pause()
+            } else {
+                const cur = mainAudioEl.currentTime
+                // Play from mp.start only if cursor is still at position 0 (untouched).
+                // If the user moved the playhead anywhere else — inside or outside the
+                // start/end region — honour that position and use the full buffer.
+                if (cur >= 0.001) forceFullBuffer = true
+                ws.play(cur < 0.001 ? (mp.start ?? 0) : cur)
+            }
+        })
+        stopBtn.addEventListener("click",  () => {
+            wsStopAndReset()
+            ws.setVolume(currentVolume)
+            if (mtc && mtc.activeTcIndex === index) mtc.stopAndClear()
+        })
+        zoomOutBtn.addEventListener("click", () => {
+            const dur = ws.getDuration()
+            const cw  = waveformContainer.clientWidth
+            // Keep viewport center stable: compute center time before zoom
+            const centerSec = dur ? (ws.getScroll() + cw / 2) / totalWaveWidth() * dur : 0
+            // Don't go below the natural fit-to-width zoom so one press is always effective
+            const minZoom = dur ? Math.max(10, Math.ceil(cw / dur)) : 10
+            state.zoom = Math.max(minZoom, state.zoom / 2)
+            ws.zoom(state.zoom)
+            if (dur) requestAnimationFrame(() => {
+                ws.setScroll(Math.max(0, centerSec / dur * totalWaveWidth() - cw / 2))
+                updateMarkers()
+            })
+            else updateMarkers()
+        })
+        zoomInBtn.addEventListener("click", () => {
+            const dur = ws.getDuration()
+            const cw  = waveformContainer.clientWidth
+            const centerSec = dur ? (ws.getScroll() + cw / 2) / totalWaveWidth() * dur : 0
+            // First + press should always produce a visible change: start from actual px/s
+            const actualZoom = dur ? Math.max(state.zoom, totalWaveWidth() / dur) : state.zoom
+            state.zoom = Math.min(400, actualZoom * 2)
+            ws.zoom(state.zoom)
+            if (dur) requestAnimationFrame(() => {
+                ws.setScroll(Math.max(0, centerSec / dur * totalWaveWidth() - cw / 2))
+                updateMarkers()
+            })
+            else updateMarkers()
+        })
 
         waveformContainer.addEventListener("mousemove", (e) => {
             const dur = ws.getDuration()
@@ -3606,8 +3727,33 @@ function buildTrigger(codeblockYaml, index) {
         })
         waveformContainer.addEventListener("mouseleave", () => { waveformContainer.style.cursor = "" })
 
+        // l / r while paused: set start / end point to current cursor position
+        waveformContainer.setAttribute("tabindex", "-1")
+        waveformContainer.addEventListener("keydown", (e) => {
+            if (e.key !== "l" && e.key !== "r") return
+            if (ws.isPlaying()) return
+            const dur = ws.getDuration()
+            if (!dur) return
+            const ct = mainAudioEl.currentTime
+            const regionStart = mp.start ?? 0
+            const regionEnd   = mp.end   ?? dur
+            // Ignore if cursor is sitting exactly at start or end (nothing to do)
+            if (Math.abs(ct - regionStart) < 0.001 || Math.abs(ct - regionEnd) < 0.001) return
+            if (e.key === "l") {
+                mp.start = Math.min(Math.max(0, parseFloat(ct.toFixed(3))), regionEnd - 0.05)
+                mp.fadein = Math.max(0, Math.min(mp.fadein, (mp.end ?? dur) - mp.start))
+            } else {
+                const ne = parseFloat(ct.toFixed(3))
+                mp.end    = (dur - ne < 0.05) ? null : Math.max(mp.start + 0.05, ne)
+                mp.fadeout = Math.max(0, Math.min(mp.fadeout, (mp.end ?? dur) - mp.start))
+            }
+            updateMarkers()
+            debouncedSave()
+        })
+
         waveformContainer.addEventListener("mousedown", (e) => {
             e.stopPropagation()
+            waveformContainer.focus({ preventScroll: true })
             let dragging = false
             const startX = e.clientX
             const onMove = (me) => {
@@ -3661,11 +3807,15 @@ function buildTrigger(codeblockYaml, index) {
             const targetGain = ta_?.playbackGainOverride ?? playbackGain
             if (targetGain) targetGain.gain.value = v
         }
-        const _wsStop = ws.stop.bind(ws)
         ws.stop = () => {
             stopSource()
             mainAudioEl.loop = false
-            _wsStop()
+            // Never call the original ws.stop(): it calls setTime(0) → scrollIntoView(0).
+            // Instead, pause and reset to the user's startpoint.
+            const s = mp.start ?? 0
+            mainAudioEl.pause()
+            mainAudioEl.currentTime = s
+            requestAnimationFrame(() => ws.setScrollTime(s))
         }
 
         triggerAudio.set(index, {
@@ -3695,24 +3845,42 @@ function buildTrigger(codeblockYaml, index) {
                 tryBuildLoopGroups()
                 stopSource()
                 const src = sharedAudioCtx.createBufferSource()
-                src.buffer = ta_.decodedBuffer
-                const loopGroup     = loopGroups.get(index)
-                const isLoopTrigger = loopGroup || loopEnabled
-                const actualOffset  = Math.max(0, offset)
-                if (isLoopTrigger) {
-                    src.loop      = true
-                    src.loopStart = mp.start ?? 0
-                    src.loopEnd   = mp.end ?? ta_.decodedBuffer.duration
+                const loopGroup    = loopGroups.get(index)
+                const actualOffset = Math.max(0, offset)
+                const regionStart  = mp.start ?? 0
+
+                if (loopGroup && mp.end != null && !isFullFile(ta_.decodedBuffer, mp.start, mp.end)) {
+                    const loopBuf  = sliceBuffer(ta_.decodedBuffer, regionStart, mp.end, sharedAudioCtx)
+                    src.buffer     = loopBuf
+                    src.loop       = true
+                    src.loopStart  = 0
+                    src.loopEnd    = loopBuf.duration
+                    src.connect(playbackGain)
+                    const regionOff = Math.max(0, Math.min(actualOffset - regionStart, loopBuf.duration))
+                    src.start(when, regionOff)
+                    activeSource            = src
+                    activeSourceStartedAt   = when
+                    activeSourceStartOffset = actualOffset  // original-file coords for armOutroTimer
+                    loopGroup.loopVirtualStartTime = when - (actualOffset - regionStart)
+                    mainAudioEl.loop = true  // cursor managed by fireLoopRestart timer (matches original startGaplessSource behaviour)
+                } else {
+                    src.buffer = ta_.decodedBuffer
+                    const isLoopTrigger = loopGroup || loopEnabled
+                    if (isLoopTrigger) {
+                        src.loop      = true
+                        src.loopStart = regionStart
+                        src.loopEnd   = mp.end ?? ta_.decodedBuffer.duration
+                    }
+                    src.connect(playbackGain)
+                    src.start(when, actualOffset)
+                    activeSource            = src
+                    activeSourceStartedAt   = when
+                    activeSourceStartOffset = actualOffset
+                    if (loopGroup) {
+                        loopGroup.loopVirtualStartTime = when - (actualOffset - regionStart)
+                    }
+                    if (loopGroup || loopEnabled) mainAudioEl.loop = true
                 }
-                src.connect(playbackGain)
-                src.start(when, actualOffset)
-                activeSource = src
-                activeSourceStartedAt   = when
-                activeSourceStartOffset = actualOffset
-                if (loopGroup) {
-                    loopGroup.loopVirtualStartTime = when - (actualOffset - (mp.start ?? 0))
-                }
-                if (isLoopTrigger) mainAudioEl.loop = true
                 src.addEventListener('ended', () => { if (activeSource === src) activeSource = null })
 
                 return true
