@@ -130,6 +130,33 @@ footer a:hover{text-decoration:underline}
   .feat-section{padding:3rem 1.5rem}
   .flow-arrow{display:none}
 }
+
+/* ── Cookie banner ───────────────────────────────── */
+#cookie-banner {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 999;
+  background: var(--bg2); border-top: 1px solid var(--border);
+  padding: 1rem 2rem;
+  display: flex; align-items: center; gap: 1.2rem; flex-wrap: wrap;
+  box-shadow: 0 -4px 24px #00000044;
+  transition: transform .35s ease;
+}
+#cookie-banner.hidden { transform: translateY(110%); pointer-events: none; }
+.cookie-text { flex: 1; min-width: 260px; font-size: .88rem; color: var(--text); line-height: 1.6; }
+.cookie-text strong { color: #fff; }
+.cookie-actions { display: flex; gap: .6rem; align-items: center; flex-shrink: 0; }
+.cookie-mail {
+  background: var(--blue); color: #1e2127; border: none; cursor: pointer;
+  padding: .42rem 1rem; border-radius: 6px; font-size: .86rem; font-weight: 700;
+  font-family: inherit; text-decoration: none; display: inline-block;
+  transition: background .15s;
+}
+.cookie-mail:hover { background: #71bfff; }
+.cookie-close {
+  background: var(--bg3); color: var(--dim); border: 1px solid var(--border);
+  cursor: pointer; padding: .42rem .8rem; border-radius: 6px; font-size: .86rem;
+  font-family: inherit; transition: background .15s, color .15s;
+}
+.cookie-close:hover { background: var(--border); color: var(--text); }
 </style>
 </head>
 <body>
@@ -794,6 +821,23 @@ footer a:hover{text-decoration:underline}
   <p><a href="https://gitlab.com/your-namespace/evb-ai" id="gitlab-link">GitLab</a> &nbsp;·&nbsp; <span data-de="Für die Bühne gemacht." data-en="Made for the stage.">Für die Bühne gemacht.</span></p>
 </footer>
 
+<div id="cookie-banner">
+  <p class="cookie-text">
+    <span id="cb-text-de"><strong>Keine Cookies. Keine Daten. Kein Tracking.</strong> Main Desk funkt nicht nach Hause – ich habe also keinen blassen Schimmer, ob du es verwendest. Falls du möchtest: Schreib mir kurz, wo du es einsetzt. Ich freue mich immer über Rückmeldung.</span>
+    <span id="cb-text-en" style="display:none"><strong>No cookies. No data. No tracking.</strong> Main Desk doesn't phone home – so I have absolutely no idea if you're using it. If you'd like to let me know: drop me a quick email about where you're using it. I always appreciate hearing from people.</span>
+  </p>
+  <div class="cookie-actions">
+    <a class="cookie-mail" id="cb-mail" href="mailto:hello@example.com?subject=Main%20Desk%20Einsatz" data-subject-de="Main Desk Einsatz" data-subject-en="Using Main Desk">
+      <span id="cb-mail-de">✉ Mail schreiben</span>
+      <span id="cb-mail-en" style="display:none">✉ Send a mail</span>
+    </a>
+    <button class="cookie-close" id="cb-close">
+      <span id="cb-close-de">Schließen</span>
+      <span id="cb-close-en" style="display:none">Close</span>
+    </button>
+  </div>
+</div>
+
 <script>
   let currentLang = localStorage.getItem('md-lang') || 'de'
 
@@ -817,6 +861,34 @@ footer a:hover{text-decoration:underline}
       document.querySelector('[onclick="showWarn(\''+k+'\')"]').classList.toggle('active',k===id)
     })
   }
+
+  // ── Cookie banner ──────────────────────────────────────────
+  const banner = document.getElementById('cookie-banner')
+  if (localStorage.getItem('cb-closed')) banner.classList.add('hidden')
+
+  document.getElementById('cb-close').addEventListener('click', () => {
+    banner.classList.add('hidden')
+    localStorage.setItem('cb-closed', '1')
+  })
+  document.getElementById('cb-mail').addEventListener('click', () => {
+    localStorage.setItem('cb-closed', '1')
+    setTimeout(() => banner.classList.add('hidden'), 400)
+  })
+
+  const _origSetLang = setLang
+  setLang = function(lang) {
+    _origSetLang(lang)
+    const de = lang === 'de'
+    document.getElementById('cb-text-de').style.display = de ? '' : 'none'
+    document.getElementById('cb-text-en').style.display = de ? 'none' : ''
+    document.getElementById('cb-mail-de').style.display  = de ? '' : 'none'
+    document.getElementById('cb-mail-en').style.display  = de ? 'none' : ''
+    document.getElementById('cb-close-de').style.display = de ? '' : 'none'
+    document.getElementById('cb-close-en').style.display = de ? 'none' : ''
+    const sub = document.getElementById('cb-mail').getAttribute('data-subject-' + lang)
+    document.getElementById('cb-mail').href = 'mailto:hello@example.com?subject=' + encodeURIComponent(sub)
+  }
+  setLang(currentLang)
 </script>
 </body>
 </html>
