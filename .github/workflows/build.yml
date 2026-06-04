@@ -1,0 +1,119 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [main]
+  tags:
+    - 'v*'
+
+# Einmalig in den Repo-Einstellungen aktivieren:
+#   Settings → Pages → Source → "GitHub Actions"
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+
+  # ── Linux & Windows ───────────────────────────────────────────────────────
+  build-linux-windows:
+    runs-on: ubuntu-latest
+    container:
+      image: electronuserland/builder:wine
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: npx webpack --mode production
+      - run: node scripts/build-version.js
+      - run: npx electron-builder --linux AppImage deb rpm --win nsis --publish never
+      - run: |
+          mkdir -p artifacts
+          find release -name "*.AppImage" -exec cp {} artifacts/MainDesk-linux-x64.AppImage \; 2>/dev/null || true
+          find release -name "*.deb"      -exec cp {} artifacts/MainDesk-linux-x64.deb \;      2>/dev/null || true
+          find release -name "*.rpm"      -exec cp {} artifacts/MainDesk-linux-x64.rpm \;      2>/dev/null || true
+          find release -name "*.exe"      -exec cp {} artifacts/MainDesk-windows-x64.exe \;    2>/dev/null || true
+          ls -lh artifacts/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-windows
+          path: artifacts/
+          retention-days: 14
+
+  # ── macOS ─────────────────────────────────────────────────────────────────
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npx webpack --mode production
+      - run: node scripts/build-version.js
+      - run: npx electron-builder --mac dmg --publish never
+      - run: |
+          mkdir -p artifacts
+          find release -name "*arm64.dmg" -exec cp {} artifacts/MainDesk-macos-arm64.dmg \; 2>/dev/null || true
+          find release -name "*x64.dmg"   -exec cp {} artifacts/MainDesk-macos-x64.dmg \;   2>/dev/null || true
+          ls -lh artifacts/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: artifacts/
+          retention-days: 14
+
+  # ── Web-Bundle (für Browser-Vorschau) ─────────────────────────────────────
+  build-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npx webpack --mode production
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-bundle
+          path: dist/
+          retention-days: 14
+
+  # ── GitHub Pages ──────────────────────────────────────────────────────────
+  deploy-pages:
+    needs: [build-linux-windows, build-macos, build-web]
+    # Läuft auch wenn macOS fehlschlägt, solange Linux/Windows und Web erfolgreich waren
+    if: ${{ always() && needs.build-linux-windows.result == 'success' && needs.build-web.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-windows
+          path: artifacts/
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos
+          path: artifacts/
+        continue-on-error: true   # optional — kein Fehler wenn macOS-Build fehlschlug
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-bundle
+          path: dist/
+      - run: |
+          cp -r website public
+          mkdir -p public/downloads
+          find artifacts -type f | xargs -I{} cp {} public/downloads/ 2>/dev/null || true
+          cp -r dist public/app
+          echo "Downloads:"
+          ls -lh public/downloads/ || echo "(empty)"
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public/
+      - uses: actions/deploy-pages@v4
+        id: deployment

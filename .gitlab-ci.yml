@@ -82,6 +82,8 @@ pages:
     - mkdir -p public/downloads
     # Copy all built artifacts into downloads/
     - find artifacts -type f | xargs -I{} cp {} public/downloads/ 2>/dev/null || true
+    # macOS builds: lokal gebaut und per Git LFS committed
+    - find macos-builds -name "*.dmg" -exec cp {} public/downloads/ \; 2>/dev/null || true
     - echo "Contents of public/downloads/:"
     - ls -lh public/downloads/ || echo "(empty)"
     # Copy the web bundle so preview/index.html can load it as ../app/
