@@ -8,4 +8,5 @@ release/
 artifacts/
 public/
 website/app/
+**/.DS_Store
 
