@@ -3333,12 +3333,6 @@ function getMicForCue(triggerIndex) {
 // Renders mic roles/muteall into a .trigger-mic element, optionally marking it as auto.
 function renderMicIntoEl(el, mic, isAuto) {
     el.innerHTML = MIC_SVG
-    if (isAuto) {
-        const autoTag = document.createElement('span')
-        autoTag.className = 'trigger-mic-auto-tag'
-        autoTag.textContent = 'auto'
-        el.appendChild(autoTag)
-    }
     if (mic === 'muteall') {
         el.appendChild(document.createTextNode(' alle aus'))
     } else {
@@ -4806,11 +4800,8 @@ function buildTrigger(codeblockYaml, index) {
     autoMicBtn.addEventListener('click', e => {
         e.stopPropagation()
         const isActive = triggerYamls[index]?.auto_mic
-        if (shiftHeld || isActive) {
-            updateAutoMicInScript(index, false)
-        } else {
-            updateAutoMicInScript(index, true)
-        }
+        if (isActive && !shiftHeld) return   // deactivate only via Shift+Click
+        updateAutoMicInScript(index, !isActive)
     })
     triggerDiv.querySelector('.trigger-actions').appendChild(autoMicBtn)
 
