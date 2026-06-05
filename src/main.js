@@ -3353,7 +3353,7 @@ function renderMicIntoEl(el, mic, isAuto) {
     }
 }
 
-// Saves or removes auto_mic: true on a cue in scriptText.
+// Saves or removes auto_mic: true on a cue in scriptText, then refreshes all mic displays.
 function updateAutoMicInScript(triggerIndex, enabled) {
     let blockIdx = 0
     const updated = scriptText.replace(/```yaml\n([\s\S]*?)```/g, (match, content) => {
@@ -3369,8 +3369,30 @@ function updateAutoMicInScript(triggerIndex, enabled) {
         if (enabled) triggerYamls[triggerIndex].auto_mic = true
         else delete triggerYamls[triggerIndex].auto_mic
     }
-    // Rebuild all triggers so mic displays refresh
-    reloadScript(scriptText)
+    // Refresh mic header displays and button states for all triggers
+    for (let i = 1; i < triggerYamls.length; i++) {
+        const triggerEl = triggers[i]
+        if (!triggerEl) continue
+        const triggerInfo = triggerEl.querySelector('.trigger-info')
+        if (!triggerInfo) continue
+        // Remove old mic display
+        triggerInfo.querySelector('.trigger-mic')?.remove()
+        // Re-render if this is an auto-mic cue or has a manual mic
+        const ty = triggerYamls[i]
+        const micValue = ty?.auto_mic ? computeAutoMicRoles(i) : ty?.mic
+        if (micValue) {
+            const micEl = document.createElement('div')
+            micEl.classList.add('trigger-mic')
+            renderMicIntoEl(micEl, micValue, !!ty?.auto_mic)
+            triggerInfo.insertBefore(micEl, triggerInfo.firstChild)
+        }
+        // Update auto-mic button state
+        const btn = triggerEl.querySelector('.trigger-action-btn-automic')
+        if (btn) {
+            btn.classList.toggle('trigger-action-btn-active', !!ty?.auto_mic)
+            btn.title = ty?.auto_mic ? t('btn.automic.title.active') : t('btn.automic.title.set')
+        }
+    }
 }
 
 function blockIdxForTrigger(triggerIndex) {
@@ -4776,14 +4798,15 @@ function buildTrigger(codeblockYaml, index) {
 
     // ── Auto-Mic button ──────────────────────────────────────────────────
     const autoMicBtn = document.createElement('button')
-    autoMicBtn.classList.add('trigger-action-btn')
+    autoMicBtn.classList.add('trigger-action-btn', 'trigger-action-btn-automic')
     if (codeblockYaml.auto_mic) autoMicBtn.classList.add('trigger-action-btn-active')
-    autoMicBtn.textContent = t('btn.automic')
+    autoMicBtn.innerHTML = MIC_SVG + ' Auto-Mic'
     autoMicBtn.title = codeblockYaml.auto_mic ? t('btn.automic.title.active') : t('btn.automic.title.set')
     autoMicBtn.addEventListener('mousedown', e => e.stopPropagation())
     autoMicBtn.addEventListener('click', e => {
         e.stopPropagation()
-        if (shiftHeld || codeblockYaml.auto_mic) {
+        const isActive = triggerYamls[index]?.auto_mic
+        if (shiftHeld || isActive) {
             updateAutoMicInScript(index, false)
         } else {
             updateAutoMicInScript(index, true)
