@@ -340,15 +340,54 @@
             if (hasMic) {
                 const cell = document.createElement('div')
                 cell.className = 'live-info-cell'
-                let micsHtml = `<span class="live-info-label">${MIC_SVG}</span><div class="live-info-mics">`
+                const label = document.createElement('span')
+                label.className = 'live-info-label'
+                label.innerHTML = MIC_SVG
+                const micsDiv = document.createElement('div')
+                micsDiv.className = 'live-info-mics'
                 if (effectiveMuteall) {
-                    micsHtml += `<span class="mic-all-off">alle aus</span>`
+                    const s = document.createElement('span')
+                    s.className = 'mic-all-off'
+                    s.textContent = 'alle aus'
+                    micsDiv.appendChild(s)
                 } else if (effectiveMicColors && effectiveMicColors.length) {
-                    for (const { name, color } of effectiveMicColors)
-                        micsHtml += `<span class="mic-chip${color ? ' color-' + color : ''}">${esc(name)}</span>`
+                    for (const item of effectiveMicColors) {
+                        if (item.isGroup) {
+                            // Group chip + member chips inside a group container
+                            const grpEl = document.createElement('span')
+                            grpEl.className = 'mic-group'
+                            const grpName = document.createElement('span')
+                            grpName.className = 'mic-group-name' + (item.color ? ' color-' + item.color : '')
+                            grpName.textContent = item.name
+                            grpEl.appendChild(grpName)
+                            if (item.members && item.members.length) {
+                                const sep = document.createElement('span')
+                                sep.className = 'mic-group-sep'
+                                sep.textContent = ': '
+                                grpEl.appendChild(sep)
+                                for (let i = 0; i < item.members.length; i++) {
+                                    if (i > 0) {
+                                        const comma = document.createElement('span')
+                                        comma.className = 'mic-group-sep'
+                                        comma.textContent = ', '
+                                        grpEl.appendChild(comma)
+                                    }
+                                    const m = document.createElement('span')
+                                    m.className = 'mic-chip' + (item.members[i].color ? ' color-' + item.members[i].color : '')
+                                    m.textContent = item.members[i].name
+                                    grpEl.appendChild(m)
+                                }
+                            }
+                            micsDiv.appendChild(grpEl)
+                        } else {
+                            const s = document.createElement('span')
+                            s.className = 'mic-chip' + (item.color ? ' color-' + item.color : '')
+                            s.textContent = item.name
+                            micsDiv.appendChild(s)
+                        }
+                    }
                 }
-                micsHtml += '</div>'
-                cell.innerHTML = micsHtml
+                cell.append(label, micsDiv)
                 infoBarEl.appendChild(cell)
             }
         }

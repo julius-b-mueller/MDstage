@@ -793,16 +793,26 @@ app.whenReady().then(async () => {
     ipcMain.handle('get-roles', () => {
         try {
             const { parsed } = readConfigBlock()
-            return parsed?.config?.roles || {}
-        } catch { return {} }
+            return {
+                roles:  parsed?.config?.roles  || {},
+                groups: parsed?.config?.groups || {},
+            }
+        } catch { return { roles: {}, groups: {} } }
     })
 
-    ipcMain.handle('save-roles', (_, { roles, renames }) => {
+    ipcMain.handle('save-roles', (_, { roles, renames, groups }) => {
         let text = fs.readFileSync(scriptMdPath, 'utf8')
         for (const { from, to } of (renames || [])) {
             if (!from || !to || from === to) continue
             const re = new RegExp(`\\*\\*${escapeRegex(from)}\\*\\*`, 'g')
             text = text.replace(re, `**${to}**`)
+            // Update group memberships for renamed roles
+            for (const grp of Object.values(groups || {})) {
+                if (Array.isArray(grp.roles)) {
+                    const idx = grp.roles.indexOf(from)
+                    if (idx !== -1) grp.roles[idx] = to
+                }
+            }
         }
         const m = text.match(/```yaml\n([\s\S]*?)\n```/)
         if (m) {
@@ -810,6 +820,11 @@ app.whenReady().then(async () => {
                 const parsed = yaml.load(m[1])
                 if (parsed?.config) {
                     parsed.config.roles = roles
+                    if (groups && Object.keys(groups).length > 0) {
+                        parsed.config.groups = groups
+                    } else {
+                        delete parsed.config.groups
+                    }
                     const newYaml = yaml.dump(parsed, { indent: 4, lineWidth: -1, noRefs: true })
                     const newBlock = '```yaml\n' + newYaml.trimEnd() + '\n```'
                     text = text.replace(m[0], newBlock)

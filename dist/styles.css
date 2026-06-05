@@ -761,6 +761,40 @@ body.shift-held .insert-hotspot:hover .insert-btn { background: #61afef; }
 .dialog-check-group label:hover { background: #4b5263; }
 .dialog-check-group input[type="checkbox"] { cursor: pointer; }
 
+.dialog-chip-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    align-items: center;
+}
+.mic-chip-sep {
+    width: 100%;
+    font-size: 0.72rem;
+    color: #5c6370;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 0.35rem 0 0.05rem;
+}
+.mic-select-chip {
+    --chip-col: #abb2bf;
+    background: #2c313a;
+    border: 1px solid #4b5263;
+    color: #5c6370;
+    padding: 0.22rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.88rem;
+    font-family: inherit;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.1s, border-color 0.1s, color 0.1s;
+}
+.mic-select-chip:hover { background: #383c44; color: #abb2bf; }
+.mic-select-chip.active {
+    background: #383c44;
+    border-color: var(--chip-col);
+    color: var(--chip-col);
+}
+
 .dialog-loop-label {
     display: flex;
     align-items: center;

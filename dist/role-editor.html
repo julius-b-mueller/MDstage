@@ -88,6 +88,69 @@
             flex-shrink: 0;
         }
         .remove-btn:hover { color: #e06c75; background: rgba(224,108,117,0.12); }
+        .group-row {
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+            margin-bottom: 0.6rem;
+            padding: 0.5rem 0.6rem;
+            background: #21252b;
+            border: 1px solid #383c44;
+            border-radius: 5px;
+        }
+        .group-row-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .group-name {
+            flex: 1;
+            background: #383c44;
+            color: #abb2bf;
+            border: 1px solid #4b5263;
+            padding: 0.4rem 0.6rem;
+            border-radius: 4px;
+            font-size: 0.95rem;
+            font-family: inherit;
+            min-width: 0;
+        }
+        .group-name:focus { outline: none; border-color: #61afef; }
+        .group-color {
+            background: #383c44;
+            color: #abb2bf;
+            border: 1px solid #4b5263;
+            padding: 0.35rem 0.4rem;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            font-family: inherit;
+            cursor: pointer;
+            width: 130px;
+        }
+        .group-color:focus { outline: none; border-color: #61afef; }
+        .group-members {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.3rem;
+            align-items: center;
+        }
+        .member-chip {
+            padding: 0.2rem 0.55rem;
+            border-radius: 3px;
+            font-size: 0.82rem;
+            cursor: pointer;
+            border: 1px solid #4b5263;
+            background: #2c313a;
+            color: #7c8898;
+            user-select: none;
+            transition: background 0.1s;
+        }
+        .member-chip.active {
+            background: #383c44;
+            color: #abb2bf;
+            border-color: #61afef;
+        }
+        .member-chip:hover { background: #383c44; }
+        .name-conflict { border-color: #e06c75 !important; box-shadow: 0 0 0 2px rgba(224,108,117,0.22) !important; }
         .add-btn {
             background: #2c313a;
             color: #98c379;
@@ -161,6 +224,12 @@
     </div>
     <div id="role-list"></div>
     <button class="add-btn" id="add-btn">+ Rolle hinzufügen</button>
+
+    <div class="section-title" style="margin-top:1.2rem">Gruppen</div>
+    <p style="font-size:0.78rem;color:#5c6370;margin:0 0 0.6rem">Die Gruppe <strong style="color:#abb2bf">Alle</strong> ist immer vorhanden und enthält automatisch alle Rollen.</p>
+    <div id="group-list"></div>
+    <button class="add-btn" id="add-group-btn">+ Gruppe hinzufügen</button>
+
     <div class="actions">
         <button class="btn" id="cancel-btn">Abbrechen</button>
         <button class="btn btn-primary" id="save-btn">Speichern</button>

@@ -560,12 +560,14 @@ function parseBlockToHTML(content, div) {
             const ns = document.createElement('span')
             ns.className = 'editor-role-name'
             ns.textContent = roleNames[i]
-            const roleColor = ROLE_COLORS[config.roles?.[roleNames[i]]?.color] || ''
+            const roleColor = ROLE_COLORS[config.roles?.[roleNames[i]]?.color]
+                           || ROLE_COLORS[getGroupColor(roleNames[i])] || ''
             if (roleColor) ns.style.color = roleColor
             div.appendChild(ns)
         }
         if (dialogue) {
-            const primaryColor = ROLE_COLORS[config.roles?.[roleNames[0]]?.color] || ''
+            const primaryColor = ROLE_COLORS[config.roles?.[roleNames[0]]?.color]
+                              || ROLE_COLORS[getGroupColor(roleNames[0])] || ''
             appendDialogueParsed(div, dialogue, primaryColor)
         }
         return
@@ -580,7 +582,8 @@ function updateEditorParens(div) {
     const nameSpans = div.querySelectorAll('.editor-role-name')
     const nameSpan = nameSpans[nameSpans.length - 1]  // last name span — dialogue follows it
     if (!nameSpan) return
-    const roleColor = ROLE_COLORS[config.roles?.[nameSpans[0].textContent]?.color] || ''
+    const roleColor = ROLE_COLORS[config.roles?.[nameSpans[0].textContent]?.color]
+                   || ROLE_COLORS[getGroupColor(nameSpans[0].textContent)] || ''
 
     const caretOffset = getCaretOffset(div)
     const afterName = []
@@ -795,14 +798,16 @@ function openRoleChangeDropdown(nameSpan, editorEl, opts = {}) {
 
     let roleSelected = false
     const allRoles = Object.keys(config.roles || {})
-    // Exclude roles already in the block (except the one currently on this span)
+    const allGroups = [...Object.keys(config.groups || {}), 'Alle']
+    // Exclude names already in the block (except the one currently on this span)
     const takenNames = new Set(
         [...editorEl.querySelectorAll('.editor-role-name')]
             .map(n => n.textContent)
             .filter(name => name !== nameSpan.textContent && name !== '?')
     )
-    const roles = allRoles.filter(r => !takenNames.has(r))
-    if (!roles.length) return
+    const roles  = allRoles.filter(r => !takenNames.has(r))
+    const groups = allGroups.filter(g => !takenNames.has(g))
+    if (!roles.length && !groups.length) return
 
     const dropdown = document.createElement('div')
     dropdown.id = 'role-change-dropdown'
@@ -934,30 +939,23 @@ function openRoleChangeDropdown(nameSpan, editorEl, opts = {}) {
         dropdown.appendChild(actionRow)
     }
 
-    for (const roleName of roles) {
-        const color = ROLE_COLORS[config.roles[roleName]?.color] || '#abb2bf'
+    function makeDropdownItem(name, color) {
         const item = document.createElement('div')
-        item.style.cssText = `
-            padding: 0.4rem 1rem;
-            cursor: pointer;
-            color: ${color};
-            white-space: nowrap;
-        `
-        item.textContent = roleName
+        item.style.cssText = `padding: 0.4rem 1rem; cursor: pointer; color: ${color || '#abb2bf'}; white-space: nowrap;`
+        item.textContent = name
         item.addEventListener('mouseenter', () => { item.style.background = '#2c313a' })
         item.addEventListener('mouseleave', () => { item.style.background = '' })
         item.addEventListener('mousedown', (e) => {
             e.preventDefault()
             roleSelected = true
             dropdown.remove()
-            opts.onSelect?.(roleName)
-            // Update role name in editor
-            const newColor = ROLE_COLORS[config.roles[roleName]?.color] || ''
-            nameSpan.textContent = roleName
+            opts.onSelect?.(name)
+            const newColor = ROLE_COLORS[config.roles?.[name]?.color] || ROLE_COLORS[getGroupColor(name)] || ''
+            nameSpan.textContent = name
             nameSpan.style.color = newColor || ''
-            // Re-color dialogue using the FIRST role's color (not the changed span)
             const allNameSpans = editorEl.querySelectorAll('.editor-role-name')
-            const firstColor = ROLE_COLORS[config.roles?.[allNameSpans[0]?.textContent]?.color] || ''
+            const firstColor = ROLE_COLORS[config.roles?.[allNameSpans[0]?.textContent]?.color]
+                            || ROLE_COLORS[getGroupColor(allNameSpans[0]?.textContent)] || ''
             const lastNameSpan = allNameSpans[allNameSpans.length - 1]
             let afterLast = false
             for (const node of editorEl.childNodes) {
@@ -966,13 +964,30 @@ function openRoleChangeDropdown(nameSpan, editorEl, opts = {}) {
                     node.style.color = firstColor
                 }
             }
-            // Move caret to start of dialogue (after the name span)
-            requestAnimationFrame(() => {
-                editorEl.focus()
-                placeCaretAfterRoleName(editorEl)
-            })
+            requestAnimationFrame(() => { editorEl.focus(); placeCaretAfterRoleName(editorEl) })
         })
-        dropdown.appendChild(item)
+        return item
+    }
+
+    for (const roleName of roles) {
+        dropdown.appendChild(makeDropdownItem(roleName, ROLE_COLORS[config.roles[roleName]?.color]))
+    }
+
+    if (groups.length > 0) {
+        if (roles.length > 0) {
+            const sep = document.createElement('div')
+            sep.style.cssText = 'height:1px;background:#4b5263;margin:0.2rem 0;'
+            dropdown.appendChild(sep)
+        }
+        for (const gName of groups) {
+            const gColor = ROLE_COLORS[getGroupColor(gName)] || '#abb2bf'
+            const item = makeDropdownItem(gName, gColor)
+            const badge = document.createElement('span')
+            badge.textContent = ' ↗'
+            badge.style.cssText = 'font-size:0.7em;opacity:0.6;'
+            item.appendChild(badge)
+            dropdown.appendChild(item)
+        }
     }
 
     document.body.appendChild(dropdown)
@@ -1638,16 +1653,21 @@ function updateInlineAc(typed) {
     if (!el) return
     el.querySelector('.ac-ghost')?.remove()
     if (!typed) { acState = null; return }
-    const roles = Object.keys(config.roles || {})
-    const match = roles.find(r => r.toLowerCase().startsWith(typed.toLowerCase()))
+    const existing = new Set([...(inlineEditor?.confirmedRoles || []), inlineEditor?.confirmedRole].filter(Boolean))
+    const allNames = [
+        ...Object.keys(config.roles || {}),
+        ...Object.keys(config.groups || {}),
+        'Alle',
+    ].filter(r => !existing.has(r))
+    const match = allNames.find(r => r.toLowerCase().startsWith(typed.toLowerCase()))
     if (!match || match.toLowerCase() === typed.toLowerCase()) { acState = null; return }
     acState = { typed, match }
     const ghost = document.createElement('span')
     ghost.className = 'ac-ghost'
     ghost.contentEditable = 'false'
     ghost.textContent = match.slice(typed.length)
-    const roleColor = ROLE_COLORS[config.roles?.[match]?.color]
-    if (roleColor) ghost.style.color = roleColor
+    const color = ROLE_COLORS[config.roles?.[match]?.color] || ROLE_COLORS[getGroupColor(match)] || ''
+    if (color) ghost.style.color = color
     const br = el.querySelector('br')
     if (br) el.insertBefore(ghost, br); else el.appendChild(ghost)
 }
@@ -1822,7 +1842,7 @@ function createRoleChipElement(roleName) {
     roleSpan.contentEditable = 'false'
     roleSpan.dataset.roleName = roleName
     roleSpan.textContent = roleName
-    const roleColor = ROLE_COLORS[config.roles?.[roleName]?.color]
+    const roleColor = ROLE_COLORS[config.roles?.[roleName]?.color] || ROLE_COLORS[getGroupColor(roleName)]
     if (roleColor) roleSpan.style.color = roleColor
     roleSpan.addEventListener('click', (e) => {
         e.preventDefault()
@@ -3260,6 +3280,40 @@ function updateAutoTriggerInScript(targetIndex, autoYaml) {
     setupAutoTriggers()
 }
 
+// ── Role-group helpers ─────────────────────────────────────────────────────────
+
+function isGroup(name) {
+    if (name === 'Alle') return true
+    return !!(config.groups?.[name])
+}
+
+function getGroupRoles(name) {
+    if (name === 'Alle') return Object.keys(config.roles || {})
+    return config.groups?.[name]?.roles || []
+}
+
+function getGroupColor(name) {
+    if (name === 'Alle') return null
+    return config.groups?.[name]?.color || null
+}
+
+// Expands group names in a mic value to individual role names (for MIDI/OSC routing)
+function expandMicForRouting(mic) {
+    if (!mic || mic === 'muteall') return mic
+    const arr = Array.isArray(mic) ? mic : [mic]
+    const result = []
+    for (const name of arr) {
+        if (isGroup(name)) {
+            for (const r of getGroupRoles(name)) {
+                if (!result.includes(r)) result.push(r)
+            }
+        } else {
+            if (!result.includes(name)) result.push(name)
+        }
+    }
+    return result.length === 0 ? undefined : result.length === 1 ? result[0] : result
+}
+
 // ── Auto-Mic helpers ───────────────────────────────────────────────────────────
 
 // Returns true if any cue has auto_mic: true
@@ -3309,7 +3363,13 @@ function computeAutoMicRoles(triggerIndex) {
         const m = blocks[i].content.match(/^\*\*([^*]+)\*\*\n([\s\S]+)/)
         if (m && m[2].trim()) {
             for (const r of m[1].split('/').map(s => s.trim()).filter(Boolean)) {
-                if (!seen.has(r) && config.roles?.[r]) { seen.add(r); roles.push(r) }
+                if (isGroup(r)) {
+                    for (const member of getGroupRoles(r)) {
+                        if (!seen.has(member) && config.roles?.[member]) { seen.add(member); roles.push(member) }
+                    }
+                } else if (!seen.has(r) && config.roles?.[r]) {
+                    seen.add(r); roles.push(r)
+                }
             }
         }
     }
@@ -3338,7 +3398,12 @@ function renderMicIntoEl(el, mic, isAuto) {
         for (const r of roles) {
             const sp = document.createElement('span')
             sp.innerText = r
-            if (config.roles?.[r]?.color) sp.classList.add('color-' + config.roles[r].color)
+            if (isGroup(r)) {
+                const gc = getGroupColor(r)
+                if (gc) sp.classList.add('color-' + gc)
+            } else if (config.roles?.[r]?.color) {
+                sp.classList.add('color-' + config.roles[r].color)
+            }
             el.appendChild(sp)
         }
     }
@@ -5282,50 +5347,99 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     const micTopLabel = document.createElement('label')
     micTopLabel.textContent = t('dlg.trigger.mic')
 
-    let muteallCb, roleCheckboxes = {}
+    let muteallCb = { checked: false }, roleCheckboxes = {}, groupCheckboxes = {}
 
     if (hasAnyAutoMic()) {
-        // Auto-Mic is active: show info text, no manual selection possible
         const autoNote = document.createElement('p')
         autoNote.style.cssText = 'font-size:0.8rem;color:#636d83;margin:0.2rem 0 0;font-style:italic'
         autoNote.textContent = t('dlg.trigger.mic.auto')
         micWrap.append(micTopLabel, autoNote)
-        muteallCb = { checked: false }   // dummy so save logic below doesn't crash
     } else {
         const micGroup = document.createElement('div')
-        micGroup.classList.add('dialog-check-group')
+        micGroup.className = 'dialog-chip-group'
 
-        const muteallLbl = document.createElement('label')
-        muteallCb = document.createElement('input')
-        muteallCb.type = 'checkbox'
-        muteallLbl.append(muteallCb, t('dlg.trigger.mic.muteall'))
-        micGroup.appendChild(muteallLbl)
+        // Muteall chip
+        const muteallBtn = document.createElement('button')
+        muteallBtn.type = 'button'
+        muteallBtn.className = 'mic-select-chip'
+        muteallBtn.textContent = t('dlg.trigger.mic.muteall')
+        muteallBtn.style.setProperty('--chip-col', '#e06c75')
+        muteallBtn.addEventListener('click', () => {
+            muteallCb.checked = !muteallCb.checked
+            muteallBtn.classList.toggle('active', muteallCb.checked)
+            if (muteallCb.checked) {
+                for (const obj of [...Object.values(groupCheckboxes), ...Object.values(roleCheckboxes)]) {
+                    obj.checked = false
+                    obj._btn.classList.remove('active')
+                }
+            }
+        })
+        micGroup.appendChild(muteallBtn)
+
+        // Groups (Alle + custom groups) — shown before individual roles
+        const groupEntries = [
+            ['Alle', null],
+            ...Object.entries(config.groups || {}).map(([n, g]) => [n, g.color])
+        ]
+        if (groupEntries.length > 0) {
+            const groupSep = document.createElement('div')
+            groupSep.className = 'mic-chip-sep'
+            groupSep.textContent = 'Gruppen'
+            micGroup.appendChild(groupSep)
+            for (const [gName, gColor] of groupEntries) {
+                const btn = document.createElement('button')
+                btn.type = 'button'
+                btn.className = 'mic-select-chip'
+                btn.textContent = gName
+                btn.style.setProperty('--chip-col', gColor ? (ROLE_COLORS[gColor] || '#abb2bf') : '#abb2bf')
+                const obj = { checked: false, _btn: btn }
+                btn.addEventListener('click', () => {
+                    obj.checked = !obj.checked
+                    btn.classList.toggle('active', obj.checked)
+                    if (obj.checked) { muteallCb.checked = false; muteallBtn.classList.remove('active') }
+                })
+                micGroup.appendChild(btn)
+                groupCheckboxes[gName] = obj
+            }
+            const roleSep = document.createElement('div')
+            roleSep.className = 'mic-chip-sep'
+            roleSep.textContent = 'Einzelrollen'
+            micGroup.appendChild(roleSep)
+        }
 
         for (const [roleName, roleCfg] of Object.entries(config.roles)) {
-            const lbl = document.createElement('label')
-            const cb = document.createElement('input')
-            cb.type = 'checkbox'
-            const span = document.createElement('span')
-            span.textContent = roleName
-            span.classList.add('color-' + roleCfg.color)
-            lbl.append(cb, span)
-            micGroup.appendChild(lbl)
-            roleCheckboxes[roleName] = cb
+            const btn = document.createElement('button')
+            btn.type = 'button'
+            btn.className = 'mic-select-chip'
+            btn.textContent = roleName
+            btn.style.setProperty('--chip-col', ROLE_COLORS[roleCfg.color] || '#abb2bf')
+            const obj = { checked: false, _btn: btn }
+            btn.addEventListener('click', () => {
+                obj.checked = !obj.checked
+                btn.classList.toggle('active', obj.checked)
+                if (obj.checked) { muteallCb.checked = false; muteallBtn.classList.remove('active') }
+            })
+            micGroup.appendChild(btn)
+            roleCheckboxes[roleName] = obj
         }
-        muteallCb.addEventListener('change', () => {
-            if (muteallCb.checked) for (const cb of Object.values(roleCheckboxes)) cb.checked = false
-        })
-        for (const cb of Object.values(roleCheckboxes)) {
-            cb.addEventListener('change', () => { if (cb.checked) muteallCb.checked = false })
-        }
+
         micWrap.append(micTopLabel, micGroup)
 
         if ((isEdit || isCopy) && existingYaml?.mic) {
             if (existingYaml.mic === 'muteall') {
                 muteallCb.checked = true
+                muteallBtn.classList.add('active')
             } else {
-                const roles = Array.isArray(existingYaml.mic) ? existingYaml.mic : [existingYaml.mic]
-                for (const r of roles) { if (roleCheckboxes[r]) roleCheckboxes[r].checked = true }
+                const sel = Array.isArray(existingYaml.mic) ? existingYaml.mic : [existingYaml.mic]
+                for (const r of sel) {
+                    if (groupCheckboxes[r]) {
+                        groupCheckboxes[r].checked = true
+                        groupCheckboxes[r]._btn.classList.add('active')
+                    } else if (roleCheckboxes[r]) {
+                        roleCheckboxes[r].checked = true
+                        roleCheckboxes[r]._btn.classList.add('active')
+                    }
+                }
             }
         }
     }
@@ -5600,7 +5714,10 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
             if (muteallCb.checked) {
                 newYaml.mic = 'muteall'
             } else {
-                const sel = Object.entries(roleCheckboxes).filter(([, cb]) => cb.checked).map(([n]) => n)
+                const sel = [
+                    ...Object.entries(groupCheckboxes).filter(([, cb]) => cb.checked).map(([n]) => n),
+                    ...Object.entries(roleCheckboxes).filter(([, cb]) => cb.checked).map(([n]) => n),
+                ]
                 if (sel.length === 1) newYaml.mic = sel[0]
                 else if (sel.length > 1) newYaml.mic = sel
             }
@@ -6146,8 +6263,10 @@ function applyRoleColorsToHtml(html) {
         const names = strong.textContent.split('/').map(s => s.trim()).filter(Boolean)
         const roles = names.map(n => config.roles?.[n])
         const firstRole = roles.find(Boolean)
-        if (!firstRole) continue
-        p.classList.add('color-' + firstRole.color)
+        const firstGroupIdx = !firstRole ? names.findIndex(n => isGroup(n)) : -1
+        if (!firstRole && firstGroupIdx < 0) continue
+        const primaryColor = firstRole ? firstRole.color : getGroupColor(names[firstGroupIdx])
+        if (primaryColor) p.classList.add('color-' + primaryColor)
         if (names.length > 1) {
             strong.innerHTML = ''
             for (let i = 0; i < names.length; i++) {
@@ -6160,7 +6279,8 @@ function applyRoleColorsToHtml(html) {
                 const span = document.createElement('span')
                 span.textContent = names[i]
                 const role = config.roles?.[names[i]]
-                if (role) span.className = 'color-' + role.color
+                const color = role ? role.color : (isGroup(names[i]) ? getGroupColor(names[i]) : null)
+                if (color) span.className = 'color-' + color
                 strong.appendChild(span)
             }
         }
@@ -6347,12 +6467,22 @@ function broadcastLiveState() {
     // Build effective mic display from effectiveMics
     let effectiveMicColors = null
     if (effectiveMics === 'muteall') {
-        effectiveMicColors = null  // null = muteall
+        effectiveMicColors = null
     } else if (effectiveMics) {
         const micArr = typeof effectiveMics === 'string' ? [effectiveMics] : effectiveMics
-        effectiveMicColors = micArr.map(name => ({
-            name, color: config.roles?.[name]?.color || null
-        }))
+        effectiveMicColors = micArr.map(name => {
+            if (isGroup(name)) {
+                return {
+                    name,
+                    color: getGroupColor(name),
+                    isGroup: true,
+                    members: getGroupRoles(name)
+                        .filter(r => config.roles?.[r])
+                        .map(r => ({ name: r, color: config.roles[r]?.color || null }))
+                }
+            }
+            return { name, color: config.roles?.[name]?.color || null }
+        })
     }
 
     window.electronAPI.sendLiveState({
@@ -6711,6 +6841,15 @@ function convertCodeblocks() {
         config = { roles: {}, settings: {} }
         parseErrors.unshift({ blockNum: 1, line: 1, message: 'Config-Block: ' + e.message })
     }
+    // Check for name conflicts between roles and groups
+    const _roleNames = new Set(Object.keys(config.roles || {}))
+    for (const gName of Object.keys(config.groups || {})) {
+        if (gName === 'Alle') {
+            parseErrors.push({ blockNum: 1, line: null, message: `"Alle" ist ein reservierter Gruppenname und kann nicht als Gruppe definiert werden` })
+        } else if (_roleNames.has(gName)) {
+            parseErrors.push({ blockNum: 1, line: null, message: `Name-Konflikt: "${gName}" ist sowohl als Rolle als auch als Gruppe definiert` })
+        }
+    }
     codeblocks[0].remove()
     for (let index = 1; index < codeblocks.length; index++) {
         const codeblock = codeblocks[index]
@@ -6739,15 +6878,16 @@ function colorText() {
         const names = rawName.split('/').map(s => s.trim()).filter(Boolean)
         const roles = names.map(n => config.roles?.[n])
         const firstRole = roles.find(Boolean)
-        if (!firstRole) {
+        const firstGroupIdx = !firstRole ? names.findIndex(n => isGroup(n)) : -1
+        if (!firstRole && firstGroupIdx < 0) {
             if (!parseErrors.some(e => e.message === `Unbekannte Rolle: "${rawName}"`))
                 parseErrors.push({ blockNum: null, line: null, message: `Unbekannte Rolle: "${rawName}"` })
             continue
         }
-        // Paragraph color = first role (used for dialogue text / left-border accent)
-        paragraph.classList.add('color-' + firstRole.color)
+        // Paragraph color = first role or group color
+        const primaryColor = firstRole ? firstRole.color : getGroupColor(names[firstGroupIdx])
+        if (primaryColor) paragraph.classList.add('color-' + primaryColor)
         if (names.length > 1) {
-            // Replace strong content with individually-colored name spans
             strong.innerHTML = ''
             for (let i = 0; i < names.length; i++) {
                 if (i > 0) {
@@ -6759,7 +6899,8 @@ function colorText() {
                 const span = document.createElement('span')
                 span.textContent = names[i]
                 const role = config.roles?.[names[i]]
-                if (role) span.className = 'color-' + role.color
+                const color = role ? role.color : (isGroup(names[i]) ? getGroupColor(names[i]) : null)
+                if (color) span.className = 'color-' + color
                 strong.appendChild(span)
             }
         }
@@ -6836,7 +6977,9 @@ function _migrateMicDevices(s) {
 
 function x32UnmuteChannels(mic) {
     if (!mic) return
-    const unmutedRoles = mic === 'muteall' ? [] : (Array.isArray(mic) ? mic : [mic])
+    const expanded = expandMicForRouting(mic)
+    if (!expanded) return
+    const unmutedRoles = expanded === 'muteall' ? [] : (Array.isArray(expanded) ? expanded : [expanded])
 
     for (let devIdx = 0; devIdx < micDevices.length; devIdx++) {
         const dev = micDevices[devIdx]
