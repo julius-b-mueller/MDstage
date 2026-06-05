@@ -115,6 +115,17 @@ p {
     display: inline-block;
 }
 
+.trigger-mic-auto-tag {
+    font-size: 0.65rem;
+    color: #636d83;
+    border: 1px solid #4b5263;
+    border-radius: 3px;
+    padding: 0 0.25rem;
+    margin-right: 0.35rem !important;
+    vertical-align: middle;
+    letter-spacing: 0.03em;
+}
+
 .trigger-light {
     font-size: 0.82rem;
     margin-top: 0.1rem;

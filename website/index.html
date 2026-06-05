@@ -652,6 +652,53 @@ footer a:hover{text-decoration:underline}
       </div>
     </div>
 
+    <!-- Feature: Auto-Mic -->
+    <div class="feat-block">
+      <div class="feat-graphic">
+        <svg viewBox="0 0 280 200" width="280" height="200" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Script excerpt -->
+          <rect x="20" y="15" width="240" height="170" rx="8" fill="#21252b" stroke="#4b5263" stroke-width="1"/>
+          <!-- Auto-Mic cue box -->
+          <rect x="30" y="25" width="220" height="28" rx="5" fill="#1e3a2a" stroke="#98c37988"/>
+          <text x="42" y="38" font-size="7.5" fill="#98c379" font-weight="700" data-de="🎙 Auto-Mic Cue" data-en="🎙 Auto-Mic Cue">🎙 Auto-Mic Cue</text>
+          <text x="42" y="48" font-size="7" fill="#5c6370" data-de="Mikrofone: berechnet aus Rollentext" data-en="Mics: computed from script text">Mikrofone: berechnet aus Rollentext</text>
+          <!-- Role lines -->
+          <rect x="30" y="62" width="220" height="14" rx="3" fill="#2c313a"/>
+          <text x="38" y="73" font-size="8" fill="#61afef" font-weight="700">Anna</text>
+          <text x="72" y="73" font-size="7.5" fill="#636d83">Ich bin bereit für die Bühne.</text>
+          <!-- mic indicator Anna -->
+          <circle cx="248" cy="69" r="5" fill="#1e3a52" stroke="#61afef" stroke-width="1"/>
+          <text x="248" y="73" text-anchor="middle" font-size="7" fill="#61afef">🎙</text>
+          <rect x="30" y="82" width="220" height="14" rx="3" fill="#2c313a"/>
+          <text x="38" y="93" font-size="8" fill="#98c379" font-weight="700">Ben</text>
+          <text x="60" y="93" font-size="7.5" fill="#636d83">Das wird ein guter Abend.</text>
+          <!-- mic indicator Ben -->
+          <circle cx="248" cy="89" r="5" fill="#1e3a2a" stroke="#98c379" stroke-width="1"/>
+          <text x="248" y="93" text-anchor="middle" font-size="7" fill="#98c379">🎙</text>
+          <rect x="30" y="102" width="220" height="14" rx="3" fill="#21252b"/>
+          <text x="38" y="113" font-size="7.5" fill="#5c6370" font-style="italic" data-de="(Regieanweisung)" data-en="(Stage direction)">(Regieanweisung)</text>
+          <rect x="30" y="122" width="220" height="14" rx="3" fill="#2c313a"/>
+          <text x="38" y="133" font-size="8" fill="#e5c07b" font-weight="700">Clara</text>
+          <text x="66" y="133" font-size="7.5" fill="#636d83">Warte kurz!</text>
+          <circle cx="248" cy="129" r="5" fill="#3a3218" stroke="#e5c07b" stroke-width="1"/>
+          <text x="248" y="133" text-anchor="middle" font-size="7" fill="#e5c07b">🎙</text>
+          <!-- Next auto-mic cue box -->
+          <rect x="30" y="146" width="220" height="28" rx="5" fill="#1e3a2a" stroke="#98c37988"/>
+          <text x="42" y="159" font-size="7.5" fill="#98c379" font-weight="700" data-de="🎙 Auto-Mic Cue" data-en="🎙 Auto-Mic Cue">🎙 Auto-Mic Cue</text>
+          <text x="42" y="169" font-size="7" fill="#5c6370" data-de="→ andere Rollen ab hier" data-en="→ different roles from here">→ andere Rollen ab hier</text>
+        </svg>
+      </div>
+      <div class="feat-text">
+        <h3 data-de="Mikrofone automatisch aus dem Rollentext" data-en="Microphones automatic from the script text">Mikrofone automatisch aus dem Rollentext</h3>
+        <p data-de="Mit dem Auto-Mic-Button markiert ein Cue den Beginn einer Sektion. MainDesk scannt den Rollentext bis zum nächsten Auto-Mic-Cue und öffnet automatisch genau die Mikrofone, deren Rollen in diesem Abschnitt sprechen." data-en="With the Auto-Mic button, a cue marks the start of a section. MainDesk scans the script up to the next Auto-Mic cue and automatically opens exactly the microphones whose roles have dialogue in that section.">
+          Mit dem Auto-Mic-Button markiert ein Cue den Beginn einer Sektion. MainDesk scannt den Rollentext bis zum nächsten Auto-Mic-Cue und öffnet automatisch genau die Mikrofone, deren Rollen in diesem Abschnitt sprechen.
+        </p>
+        <p data-de="Die Mikrofon-Liste wird zur Laufzeit aus dem Skripttext berechnet – nichts wird im YAML gespeichert. Ändert sich der Rollentext, passen sich die Mikrofone sofort an." data-en="The microphone list is computed at runtime from the script text – nothing is stored in the YAML. Change the script text, and the microphones update immediately.">
+          Die Mikrofon-Liste wird zur Laufzeit aus dem Skripttext berechnet – nichts wird im YAML gespeichert. Ändert sich der Rollentext, passen sich die Mikrofone sofort an.
+        </p>
+      </div>
+    </div>
+
     <!-- Feature 4: Show Control -->
     <div class="feat-block">
       <div class="feat-graphic">

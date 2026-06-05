@@ -9,7 +9,8 @@ Electron-based stage manager app for live shows and theatre productions. The scr
 1. [Script Format](#script-format)
 2. [Inline Editor](#inline-editor)
 3. [Cue System (Triggers)](#cue-system-triggers)
-4. [Audio Playback](#audio-playback)
+4. [Auto-Mic](#auto-mic)
+5. [Audio Playback](#audio-playback)
 5. [S/L/F – Start / Loop / Finish](#slf--start--loop--finish)
 6. [Auto-Cue](#auto-cue)
 7. [Adjust (Cross-Fade / Volume)](#adjust-cross-fade--volume)
@@ -132,7 +133,8 @@ Every YAML block (except the config block) is a **cue** (trigger). It is display
 | Field | Description |
 |---|---|
 | `trigger_note: {ch: 1, note: 42}` | MIDI note sent when the cue fires. Assigned automatically if not set. |
-| `mic: "Anna"` | Role name(s) whose microphone channel on the X32 is opened. All others are muted. `muteall` mutes everyone. |
+| `mic: "Anna"` | Role name(s) whose microphone channel on the X32 is opened. All others are muted. `muteall` mutes everyone. Not used when Auto-Mic is active. |
+| `auto_mic: true` | Enables Auto-Mic for this cue (see [Auto-Mic](#auto-mic)). |
 | `music: file.wav` | Audio file from the `audio/` subfolder. Short form or object (see below). |
 | `light: "Scene A"` | Free-text note for the lighting operator (documentation only). |
 | `note: "Note"` | Internal note displayed on the trigger panel. |
@@ -161,6 +163,28 @@ Every trigger has an **✎ Edit** button that opens a dialog. New cues are added
 ### Variants
 
 **⊕ Variant** duplicates a cue as a `sibling`. Variants are shown as a group. In live operation, a variant can be selected before Go; if none is selected, the first variant always fires.
+
+---
+
+## Auto-Mic
+
+The **🎙 Auto-Mic** button in the cue action row enables automatic microphone assignment. Instead of selecting microphone channels manually, the app scans the script text and opens exactly the microphones whose roles have dialogue in the section that follows.
+
+### How it works
+
+- Click **🎙 Auto-Mic** on a cue to make it an Auto-Mic cue (`auto_mic: true` is saved in the YAML block).
+- **Shift+Click** (or click again when already active) removes the Auto-Mic flag.
+- When an Auto-Mic cue fires, the app looks at all role blocks with dialogue between that cue and the **next** Auto-Mic cue in the script. All matching microphone channels are opened; everything else is muted.
+- The **last** Auto-Mic cue (no further Auto-Mic cue after it) mutes all channels.
+- The computed microphone list is shown in the cue header with a small **auto** badge.
+
+### Manual selection is disabled when Auto-Mic is in use
+
+Once any Auto-Mic cue exists in the script, manual microphone selection is disabled on **all** cues (the edit dialog shows an informational note instead of checkboxes). This prevents conflicts between auto and manual assignments.
+
+### Live updates
+
+The microphone list is calculated at runtime from `scriptText` — nothing is stored in the YAML. Editing the script text (adding or removing role dialogue) updates the computed mic list automatically.
 
 ---
 

@@ -3263,6 +3263,116 @@ function updateAutoTriggerInScript(targetIndex, autoYaml) {
     setupAutoTriggers()
 }
 
+// ── Auto-Mic helpers ───────────────────────────────────────────────────────────
+
+// Returns true if any cue has auto_mic: true
+function hasAnyAutoMic() {
+    return triggerYamls.some(ty => ty?.auto_mic === true)
+}
+
+// Computes the effective mic value for a cue that has auto_mic: true.
+// Reads scriptText directly (no dependency on triggerYamls being fully populated).
+// Returns: string role name | string[] | 'muteall' | null
+function computeAutoMicRoles(triggerIndex) {
+    const blocks = tokenizeScript(scriptText)
+    let yamlCount = 0
+    let myBlockIdx = -1
+    let nextAutoMicBlockIdx = null
+
+    for (let i = 0; i < blocks.length; i++) {
+        if (blocks[i].type !== 'yaml') continue
+        yamlCount++
+        // yamlCount=1 is config (triggerIndex=0), yamlCount=2 is first cue (triggerIndex=1), etc.
+        if (yamlCount === triggerIndex) {
+            // blockIdxForTrigger uses yamlCount === triggerIndex+1, so this is actually one before.
+            // Let me use the same arithmetic: triggerIndex corresponds to yamlCount = triggerIndex
+            // No wait - blockIdxForTrigger: ++yamlCount === triggerIndex+1 → yamlCount = triggerIndex+1
+            // So at myBlockIdx, yamlCount will be triggerIndex+1 AFTER the increment.
+        }
+        if (yamlCount === triggerIndex + 1) {
+            myBlockIdx = i
+        } else if (myBlockIdx !== -1) {
+            // Check if this yaml block has auto_mic: true via regex (avoids relying on triggerYamls)
+            const rawContent = blocks[i].content.replace(/^```yaml\n?/, '').replace(/\n?```$/, '')
+            if (/^\s*auto_mic\s*:\s*true/m.test(rawContent)) {
+                nextAutoMicBlockIdx = i
+                break
+            }
+        }
+    }
+
+    if (myBlockIdx === -1) return null
+
+    // Collect roles with dialogue in text blocks between this cue and the next auto-mic cue
+    const seen = new Set()
+    const roles = []
+    for (let i = myBlockIdx + 1; i < blocks.length; i++) {
+        if (nextAutoMicBlockIdx !== null && i >= nextAutoMicBlockIdx) break
+        if (blocks[i].type !== 'text') continue
+        const m = blocks[i].content.match(/^\*\*([^*]+)\*\*\n([\s\S]+)/)
+        if (m && m[2].trim()) {
+            for (const r of m[1].split('/').map(s => s.trim()).filter(Boolean)) {
+                if (!seen.has(r) && config.roles?.[r]) { seen.add(r); roles.push(r) }
+            }
+        }
+    }
+
+    if (nextAutoMicBlockIdx === null) return 'muteall'
+    if (roles.length === 0) return null
+    return roles.length === 1 ? roles[0] : roles
+}
+
+// Returns the mic value to use when firing a cue: computed (auto_mic) or stored (mic).
+function getMicForCue(triggerIndex) {
+    const ty = triggerYamls[triggerIndex]
+    if (!ty) return undefined
+    if (ty.auto_mic) return computeAutoMicRoles(triggerIndex)
+    return ty.mic
+}
+
+// Renders mic roles/muteall into a .trigger-mic element, optionally marking it as auto.
+function renderMicIntoEl(el, mic, isAuto) {
+    el.innerHTML = MIC_SVG
+    if (isAuto) {
+        const autoTag = document.createElement('span')
+        autoTag.className = 'trigger-mic-auto-tag'
+        autoTag.textContent = 'auto'
+        el.appendChild(autoTag)
+    }
+    if (mic === 'muteall') {
+        el.appendChild(document.createTextNode(' alle aus'))
+    } else {
+        el.appendChild(document.createTextNode(' '))
+        const roles = typeof mic === 'string' ? [mic] : mic
+        for (const r of roles) {
+            const sp = document.createElement('span')
+            sp.innerText = r
+            if (config.roles?.[r]?.color) sp.classList.add('color-' + config.roles[r].color)
+            el.appendChild(sp)
+        }
+    }
+}
+
+// Saves or removes auto_mic: true on a cue in scriptText.
+function updateAutoMicInScript(triggerIndex, enabled) {
+    let blockIdx = 0
+    const updated = scriptText.replace(/```yaml\n([\s\S]*?)```/g, (match, content) => {
+        blockIdx++
+        if (blockIdx !== triggerIndex + 1) return match
+        let c = content.replace(/^\s*auto_mic\s*:.*\n?/m, '')
+        if (enabled) c = c.trimEnd() + '\nauto_mic: true\n'
+        return `\`\`\`yaml\n${c}\`\`\``
+    })
+    scriptText = updated
+    window.electronAPI.writeScriptMd(updated)
+    if (triggerYamls[triggerIndex]) {
+        if (enabled) triggerYamls[triggerIndex].auto_mic = true
+        else delete triggerYamls[triggerIndex].auto_mic
+    }
+    // Rebuild all triggers so mic displays refresh
+    reloadScript(scriptText)
+}
+
 function blockIdxForTrigger(triggerIndex) {
     const blocks = tokenizeScript(scriptText)
     let yamlCount = 0
@@ -3356,22 +3466,10 @@ function buildTrigger(codeblockYaml, index) {
 
     triggers[index] = triggerDiv
 
-    // mic info — only show row when mic is configured
-    if (codeblockYaml.mic) {
-        triggerMic.innerHTML = MIC_SVG
-        let roles = codeblockYaml.mic
-        if (roles === "muteall") {
-            triggerMic.appendChild(document.createTextNode(" alle aus"))
-        } else {
-            triggerMic.appendChild(document.createTextNode(" "))
-            if (typeof roles === "string") roles = [roles]
-            for (let i = 0; i < roles.length; i++) {
-                const roleSpan = document.createElement("span")
-                roleSpan.innerText = roles[i]
-                roleSpan.classList.add("color-" + config.roles[roles[i]].color)
-                triggerMic.appendChild(roleSpan)
-            }
-        }
+    // mic info — show for manual mic or auto_mic cue
+    const micValue = codeblockYaml.auto_mic ? computeAutoMicRoles(index) : codeblockYaml.mic
+    if (micValue) {
+        renderMicIntoEl(triggerMic, micValue, codeblockYaml.auto_mic)
         triggerInfo.insertBefore(triggerMic, triggerInfo.firstChild)
     }
 
@@ -3785,8 +3883,9 @@ function buildTrigger(codeblockYaml, index) {
         function _nonAudioActions(nextIdx, nextTa) {
             const ty = triggerYamls[nextIdx]
             if (ty?.light) effectiveLightScene = ty.light
-            if (ty?.mic !== undefined && ty?.mic !== null) effectiveMics = ty.mic
-            x32UnmuteChannels(ty?.mic)
+            const _mic = getMicForCue(nextIdx)
+            if (_mic !== undefined && _mic !== null) effectiveMics = _mic
+            x32UnmuteChannels(_mic)
             sendTriggerNote(nextIdx)
             const startTc = ty?.start_tc
             if (startTc && mtc) {
@@ -3819,12 +3918,13 @@ function buildTrigger(codeblockYaml, index) {
             const nextTa = triggerAudio.get(nextIdx)
             const ty = triggerYamls[nextIdx]
             if (ty?.light) effectiveLightScene = ty.light
-            if (ty?.mic !== undefined && ty?.mic !== null) effectiveMics = ty.mic
+            const _micGap = getMicForCue(nextIdx)
+            if (_micGap !== undefined && _micGap !== null) effectiveMics = _micGap
             if (!nextTa || !ty?.music) {
                 // Audio-less outro: execute non-audio actions directly instead of going
                 // through triggerAction, which would re-queue the outro via outro-interception
                 // while the loop source is still playing.
-                x32UnmuteChannels(ty?.mic)
+                x32UnmuteChannels(_micGap)
                 sendTriggerNote(nextIdx)
                 sendOscMessage(nextIdx)
                 cueHistory.push(nextIdx); cueHistoryAuto.push(false)
@@ -4674,6 +4774,23 @@ function buildTrigger(codeblockYaml, index) {
     })
     triggerDiv.querySelector('.trigger-actions').appendChild(loopGrpBtn)
 
+    // ── Auto-Mic button ──────────────────────────────────────────────────
+    const autoMicBtn = document.createElement('button')
+    autoMicBtn.classList.add('trigger-action-btn')
+    if (codeblockYaml.auto_mic) autoMicBtn.classList.add('trigger-action-btn-active')
+    autoMicBtn.textContent = t('btn.automic')
+    autoMicBtn.title = codeblockYaml.auto_mic ? t('btn.automic.title.active') : t('btn.automic.title.set')
+    autoMicBtn.addEventListener('mousedown', e => e.stopPropagation())
+    autoMicBtn.addEventListener('click', e => {
+        e.stopPropagation()
+        if (shiftHeld || codeblockYaml.auto_mic) {
+            updateAutoMicInScript(index, false)
+        } else {
+            updateAutoMicInScript(index, true)
+        }
+    })
+    triggerDiv.querySelector('.trigger-actions').appendChild(autoMicBtn)
+
     // ── Variante button ──────────────────────────────────────────────────
     const copyBtn = document.createElement("button")
     copyBtn.classList.add("trigger-action-btn")
@@ -5151,44 +5268,55 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     micWrap.classList.add('dialog-field')
     const micTopLabel = document.createElement('label')
     micTopLabel.textContent = t('dlg.trigger.mic')
-    const micGroup = document.createElement('div')
-    micGroup.classList.add('dialog-check-group')
 
-    const muteallLbl = document.createElement('label')
-    const muteallCb = document.createElement('input')
-    muteallCb.type = 'checkbox'
-    muteallLbl.append(muteallCb, t('dlg.trigger.mic.muteall'))
-    micGroup.appendChild(muteallLbl)
+    let muteallCb, roleCheckboxes = {}
 
-    const roleCheckboxes = {}
-    for (const [roleName, roleCfg] of Object.entries(config.roles)) {
-        const lbl = document.createElement('label')
-        const cb = document.createElement('input')
-        cb.type = 'checkbox'
-        const span = document.createElement('span')
-        span.textContent = roleName
-        span.classList.add('color-' + roleCfg.color)
-        lbl.append(cb, span)
-        micGroup.appendChild(lbl)
-        roleCheckboxes[roleName] = cb
-    }
-    muteallCb.addEventListener('change', () => {
-        if (muteallCb.checked) for (const cb of Object.values(roleCheckboxes)) cb.checked = false
-    })
-    for (const cb of Object.values(roleCheckboxes)) {
-        cb.addEventListener('change', () => { if (cb.checked) muteallCb.checked = false })
-    }
-    micWrap.append(micTopLabel, micGroup)
-    box.appendChild(micWrap)
+    if (hasAnyAutoMic()) {
+        // Auto-Mic is active: show info text, no manual selection possible
+        const autoNote = document.createElement('p')
+        autoNote.style.cssText = 'font-size:0.8rem;color:#636d83;margin:0.2rem 0 0;font-style:italic'
+        autoNote.textContent = t('dlg.trigger.mic.auto')
+        micWrap.append(micTopLabel, autoNote)
+        muteallCb = { checked: false }   // dummy so save logic below doesn't crash
+    } else {
+        const micGroup = document.createElement('div')
+        micGroup.classList.add('dialog-check-group')
 
-    if ((isEdit || isCopy) && existingYaml?.mic) {
-        if (existingYaml.mic === 'muteall') {
-            muteallCb.checked = true
-        } else {
-            const roles = Array.isArray(existingYaml.mic) ? existingYaml.mic : [existingYaml.mic]
-            for (const r of roles) { if (roleCheckboxes[r]) roleCheckboxes[r].checked = true }
+        const muteallLbl = document.createElement('label')
+        muteallCb = document.createElement('input')
+        muteallCb.type = 'checkbox'
+        muteallLbl.append(muteallCb, t('dlg.trigger.mic.muteall'))
+        micGroup.appendChild(muteallLbl)
+
+        for (const [roleName, roleCfg] of Object.entries(config.roles)) {
+            const lbl = document.createElement('label')
+            const cb = document.createElement('input')
+            cb.type = 'checkbox'
+            const span = document.createElement('span')
+            span.textContent = roleName
+            span.classList.add('color-' + roleCfg.color)
+            lbl.append(cb, span)
+            micGroup.appendChild(lbl)
+            roleCheckboxes[roleName] = cb
+        }
+        muteallCb.addEventListener('change', () => {
+            if (muteallCb.checked) for (const cb of Object.values(roleCheckboxes)) cb.checked = false
+        })
+        for (const cb of Object.values(roleCheckboxes)) {
+            cb.addEventListener('change', () => { if (cb.checked) muteallCb.checked = false })
+        }
+        micWrap.append(micTopLabel, micGroup)
+
+        if ((isEdit || isCopy) && existingYaml?.mic) {
+            if (existingYaml.mic === 'muteall') {
+                muteallCb.checked = true
+            } else {
+                const roles = Array.isArray(existingYaml.mic) ? existingYaml.mic : [existingYaml.mic]
+                for (const r of roles) { if (roleCheckboxes[r]) roleCheckboxes[r].checked = true }
+            }
         }
     }
+    box.appendChild(micWrap)
 
     // ── Musik-Datei ─────────────────────────────────────────────────
     const mfWrap = document.createElement('div')
@@ -5454,13 +5582,15 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     confirmBtn.addEventListener('click', () => {
         const newYaml = {}
 
-        // mic
-        if (muteallCb.checked) {
-            newYaml.mic = 'muteall'
-        } else {
-            const sel = Object.entries(roleCheckboxes).filter(([, cb]) => cb.checked).map(([n]) => n)
-            if (sel.length === 1) newYaml.mic = sel[0]
-            else if (sel.length > 1) newYaml.mic = sel
+        // mic — skip when auto-mic is active globally
+        if (!hasAnyAutoMic()) {
+            if (muteallCb.checked) {
+                newYaml.mic = 'muteall'
+            } else {
+                const sel = Object.entries(roleCheckboxes).filter(([, cb]) => cb.checked).map(([n]) => n)
+                if (sel.length === 1) newYaml.mic = sel[0]
+                else if (sel.length > 1) newYaml.mic = sel
+            }
         }
 
         // music (preserve existing object props like volume/start/end when editing or copying)
@@ -5946,9 +6076,10 @@ function triggerAction(cue) {
 
     const _ty = triggerYamls[cue]
     if (_ty?.light)  effectiveLightScene = _ty.light
-    if (_ty?.mic !== undefined && _ty?.mic !== null) effectiveMics = _ty.mic
+    const _micFire = getMicForCue(cue)
+    if (_micFire !== undefined && _micFire !== null) effectiveMics = _micFire
 
-    x32UnmuteChannels(_ty.mic)
+    x32UnmuteChannels(_micFire)
 
     const startTc = triggerYamls[cue].start_tc
     if (startTc && mtc && mtc.activeTcIndex !== null && mtc.activeTcIndex !== cue) {
@@ -6320,7 +6451,7 @@ function backAction() {
     const prev = cueHistory.length > 0 ? cueHistory[cueHistory.length - 1] : null
 
     if (prev !== null) {
-        x32UnmuteChannels(triggerYamls[prev]?.mic)
+        x32UnmuteChannels(getMicForCue(prev))
         if (popped.some(p => triggerYamls[p]?.light)) sendTriggerNote(prev)
         // Restart prev's audio if it was a loop (simple mp.loop or managed loop_outro)
         const prevTa = triggerAudio.get(prev)
@@ -6339,9 +6470,13 @@ function backAction() {
     effectiveLightScene = null
     effectiveMics       = null
     for (let i = cueHistory.length - 1; i >= 0; i--) {
-        const ty = triggerYamls[cueHistory[i]]
+        const idx = cueHistory[i]
+        const ty  = triggerYamls[idx]
         if (effectiveLightScene === null && ty?.light) effectiveLightScene = ty.light
-        if (effectiveMics === null && ty?.mic !== undefined && ty?.mic !== null) effectiveMics = ty.mic
+        if (effectiveMics === null) {
+            const m = getMicForCue(idx)
+            if (m !== undefined && m !== null) effectiveMics = m
+        }
         if (effectiveLightScene !== null && effectiveMics !== null) break
     }
 
