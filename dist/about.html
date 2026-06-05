@@ -2,6 +2,7 @@
 <html lang="de">
 <head>
     <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:;">
     <title>Über Main Desk</title>
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -187,20 +188,6 @@
     </div>
 
 </div>
-
-<script>
-    async function init() {
-        const version   = await window.electronAPI.getAppVersion()
-        const buildInfo = await window.electronAPI.getBuildInfo()
-
-        document.getElementById('ver').textContent = 'Version ' + version
-
-        const parts = []
-        if (buildInfo.date)                       parts.push(buildInfo.date)
-        if (buildInfo.commit && buildInfo.commit !== 'dev') parts.push('Commit ' + buildInfo.commit)
-        document.getElementById('bld').textContent = parts.join('  ·  ')
-    }
-    init().catch(() => {})
-</script>
+<script src="about.js"></script>
 </body>
 </html>

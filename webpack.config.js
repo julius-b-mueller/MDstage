@@ -1,6 +1,6 @@
 const path = require('path')
 
-module.exports = {
+module.exports = (env, argv) => ({
     entry: {
         index: './src/main.js'
     },
@@ -8,5 +8,5 @@ module.exports = {
         filename: 'bundle.js',
         path: path.resolve(__dirname, 'dist')
     },
-    devtool: "source-map"
-}
+    devtool: argv.mode === 'production' ? false : 'source-map'
+})

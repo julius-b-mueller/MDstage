@@ -20,11 +20,11 @@
   },
   "dependencies": {
     "docx": "^9.7.1",
+    "dompurify": "^3.4.8",
     "js-yaml": "^4.1.0",
     "marked": "^18.0.5"
   },
   "devDependencies": {
-    "dompurify": "^3.4.8",
     "electron": "^41.7.1",
     "electron-builder": "^26.8.1",
     "wavesurfer.js": "^7.12.7",

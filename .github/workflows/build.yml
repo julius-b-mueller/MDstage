@@ -97,6 +97,7 @@ jobs:
           node-version: 24
       - run: npm ci
       - run: npx webpack --mode production
+      - run: rm -f dist/*.map
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: web-bundle

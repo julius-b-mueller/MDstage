@@ -2317,7 +2317,12 @@ function showParseErrors() {
     const banner = document.createElement('div')
     banner.id = 'parse-error-banner'
     banner.className = 'parse-error-banner'
-    let html = `<button class="parse-error-close" onclick="this.parentElement.remove()">×</button>`
+    const closeBtn = document.createElement('button')
+    closeBtn.className = 'parse-error-close'
+    closeBtn.textContent = '×'
+    closeBtn.addEventListener('click', () => banner.remove())
+    banner.appendChild(closeBtn)
+    let html = ''
     if (parseErrors.length) {
         const items = parseErrors.map(({ blockNum, line, message }) => {
             const loc = blockNum != null
@@ -2339,7 +2344,9 @@ function showParseErrors() {
         ).join('')
         html += `<strong>${noteConflicts.length} doppelte MIDI-Note${noteConflicts.length > 1 ? 'n' : ''}</strong><ul>${items}</ul>`
     }
-    banner.innerHTML = html
+    const content = document.createElement('div')
+    content.innerHTML = html
+    banner.appendChild(content)
     document.body.prepend(banner)
 }
 

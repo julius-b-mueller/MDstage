@@ -488,6 +488,8 @@ async function exportToPdf(win, html, title) {
     fs.writeFileSync(tempPath, html, 'utf8')
 
     const pdfWin = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: false, contextIsolation: true } })
+    pdfWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    pdfWin.webContents.on('will-navigate', (e) => e.preventDefault())
     await pdfWin.loadFile(tempPath)
     const pdfBuffer = await pdfWin.webContents.printToPDF({
         pageSize: 'A4',
