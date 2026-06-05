@@ -74,6 +74,7 @@
             'editor.ph.stage':            'Regieanweisung oder Rolle…',
             'editor.ph.dialogue':         'Dialogue…',
             'editor.ph.text':             'Text…',
+            'editor.ph.nextrole':         'Weitere Rolle oder Text…',
             // ── Warnungen ────────────────────────────────────────────
             'warn.wav':                   '⚠ Kein nahtloser Übergang – MP3/AAC haben Encoder-Padding. WAV verwenden.',
             // ── Suche ────────────────────────────────────────────────
@@ -240,6 +241,7 @@
             'editor.ph.stage':            'Stage direction or role…',
             'editor.ph.dialogue':         'Dialogue…',
             'editor.ph.text':             'Text…',
+            'editor.ph.nextrole':         'Add another role or type dialogue…',
             // ── Warnungen ────────────────────────────────────────────
             'warn.wav':                   '⚠ No gapless transition – MP3/AAC have encoder padding. Use WAV.',
             // ── Suche ────────────────────────────────────────────────

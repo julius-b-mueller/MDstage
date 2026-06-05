@@ -512,7 +512,7 @@ function serializeRoleNode(n) {
 function appendDialogueParsed(parent, text, roleColor) {
     // Strip soft sentence-wrap newlines (added by wrapSentences for markdown readability).
     // Hard line breaks are represented as the literal string "<br>" and handled below.
-    text = text.replace(/\n/g, ' ').replace(/ {2,}/g, ' ')
+    text = text.replace(/\n/g, ' ')
 
     const re = /\*\(([^)]+)\)\*|\(([^)]+)\)|<br>/g
     let last = 0, m
@@ -563,21 +563,30 @@ function parseBlockToHTML(content, div) {
         div.appendChild(s)
         return
     }
-    // Role block: **Name** with optional \nDialogue
+    // Role block: **Name** or **Name1/Name2/…** with optional \nDialogue
     const roleM = content.match(/^\*\*([^*]+)\*\*(?:\n([\s\S]*))?$/)
     if (roleM) {
         div.dataset.editorType = 'role'
-        const roleName = roleM[1]
+        const roleNames = roleM[1].split('/').map(s => s.trim()).filter(Boolean)
         const dialogue = (roleM[2] || '').trimEnd()
-        const roleColor = ROLE_COLORS[config.roles?.[roleName]?.color] || ''
-        const ns = document.createElement('span')
-        ns.className = 'editor-role-name'
-        ns.textContent = roleName
-        if (roleColor) ns.style.color = roleColor
-        div.appendChild(ns)
+        for (let i = 0; i < roleNames.length; i++) {
+            if (i > 0) {
+                const sep = document.createElement('span')
+                sep.className = 'editor-role-separator'
+                sep.contentEditable = 'false'
+                sep.textContent = ' / '
+                div.appendChild(sep)
+            }
+            const ns = document.createElement('span')
+            ns.className = 'editor-role-name'
+            ns.textContent = roleNames[i]
+            const roleColor = ROLE_COLORS[config.roles?.[roleNames[i]]?.color] || ''
+            if (roleColor) ns.style.color = roleColor
+            div.appendChild(ns)
+        }
         if (dialogue) {
-            // No <br> — role name and dialogue on one visual line (separator via CSS ::after)
-            appendDialogueParsed(div, dialogue, roleColor)
+            const primaryColor = ROLE_COLORS[config.roles?.[roleNames[0]]?.color] || ''
+            appendDialogueParsed(div, dialogue, primaryColor)
         }
         return
     }
@@ -588,9 +597,10 @@ function parseBlockToHTML(content, div) {
 // Re-color parenthetical text in the dialogue portion after each keystroke
 function updateEditorParens(div) {
     if (div.dataset.editorType !== 'role') return
-    const nameSpan = div.querySelector('.editor-role-name')
+    const nameSpans = div.querySelectorAll('.editor-role-name')
+    const nameSpan = nameSpans[nameSpans.length - 1]  // last name span — dialogue follows it
     if (!nameSpan) return
-    const roleColor = ROLE_COLORS[config.roles?.[nameSpan.textContent]?.color] || ''
+    const roleColor = ROLE_COLORS[config.roles?.[nameSpans[0].textContent]?.color] || ''
 
     const caretOffset = getCaretOffset(div)
     const afterName = []
@@ -607,9 +617,24 @@ function updateEditorParens(div) {
     setCaretOffset(div, caretOffset)
 }
 
-// Split dialogue text at sentence boundaries so each sentence starts on its own line
+// Common abbreviations and single capital letters (e.g. "H." in "H. Grönemeyer") that must
+// not trigger a sentence break even though they are followed by a capital letter.
+const SENTENCE_ABBREVS_RE = /^(?:Mr|Mrs|Ms|Dr|Prof|St|Jr|Sr|Inc|Ltd|Co|Gen|Sgt|Lt|Cpt|Nr|Str|bzw|usw|etc|ggf|bzgl|ca|vs|vgl|Abb|Bd)$/i
+
+function _isAbbrevBefore(str, dotOffset) {
+    const m = str.slice(0, dotOffset).match(/(\S+)$/)
+    if (!m) return false
+    const word = m[1]
+    return /^[A-Za-zÄÖÜäöüß]$/.test(word) || SENTENCE_ABBREVS_RE.test(word)
+}
+
+// Split dialogue text at sentence boundaries so each sentence starts on its own line.
+// Does NOT split after abbreviations like Mr., Dr., H., etc.
 function wrapSentences(text) {
-    return text.replace(/([.!?])[ \t]+(?=[A-ZÄÖÜ"])/g, '$1\n')
+    return text.replace(/([.!?])[ \t]+(?=[A-ZÄÖÜ"])/g, (match, punct, offset, str) => {
+        if (punct === '.' && _isAbbrevBefore(str, offset)) return match
+        return punct + '\n'
+    })
 }
 
 // Custom confirm dialog — returns a Promise<boolean>.
@@ -657,8 +682,12 @@ function showConfirmDialog({ title, body, confirmLabel = 'Ja', cancelLabel = 'Ab
 }
 
 // Sentence splitter for the formatter — also handles closing quotes/parens before the space.
+// Does NOT split after abbreviations like Mr., Dr., H., etc.
 function wrapSentencesFormat(text) {
-    return text.replace(/([.!?][“”"»)]*)\s+(?=[A-ZÄÖÜ„"(])/g, '$1\n')
+    return text.replace(/([.!?][“””»)]*)\s+(?=[A-ZÄÖÜ„”(])/g, (match, punct, offset, str) => {
+        if (punct.startsWith('.') && _isAbbrevBefore(str, offset)) return match
+        return punct + '\n'
+    })
 }
 
 // Format a script text to canonical style:
@@ -752,21 +781,24 @@ function serializeEditorMarkdown(div) {
         }
         return t
     }
-    if (div.dataset.editorType === 'stage') return '*' + textOf(div).trim() + '*'
+    if (div.dataset.editorType === 'stage') {
+        const stageText = textOf(div).trim()
+        return stageText ? '*' + stageText + '*' : ''
+    }
     if (div.dataset.editorType === 'text') {
         const raw = textOf(div).trim()
         // Re-append space so "# " or "## " stays valid ATX-heading markdown after trim
         return /^#{1,6}$/.test(raw) ? raw + ' ' : raw
     }
     if (div.dataset.editorType === 'role') {
-        let roleName = ''
+        const nameSpans = [...div.querySelectorAll('.editor-role-name')]
+        const roleName = nameSpans.map(s => s.textContent).join('/')
+        const lastNameSpan = nameSpans[nameSpans.length - 1]
         let dialogueParts = []
         let afterName = false
         for (const node of div.childNodes) {
-            if (node.classList?.contains('editor-role-name')) {
-                roleName = node.textContent
-                afterName = true
-            } else if (afterName) {
+            if (node === lastNameSpan) { afterName = true; continue }
+            if (afterName && !node.classList?.contains('editor-role-separator')) {
                 dialogueParts.push(serializeRoleNode(node))
             }
         }
@@ -778,10 +810,18 @@ function serializeEditorMarkdown(div) {
 
 // ── Role-change dropdown ───────────────────────────────────────────────────────
 
-function openRoleChangeDropdown(nameSpan, editorEl) {
+function openRoleChangeDropdown(nameSpan, editorEl, opts = {}) {
     document.getElementById('role-change-dropdown')?.remove()
 
-    const roles = Object.keys(config.roles || {})
+    let roleSelected = false
+    const allRoles = Object.keys(config.roles || {})
+    // Exclude roles already in the block (except the one currently on this span)
+    const takenNames = new Set(
+        [...editorEl.querySelectorAll('.editor-role-name')]
+            .map(n => n.textContent)
+            .filter(name => name !== nameSpan.textContent && name !== '?')
+    )
+    const roles = allRoles.filter(r => !takenNames.has(r))
     if (!roles.length) return
 
     const dropdown = document.createElement('div')
@@ -796,11 +836,123 @@ function openRoleChangeDropdown(nameSpan, editorEl) {
         min-width: 10rem;
         padding: 0.3rem 0;
         font-size: 0.95rem;
+        max-height: 60vh;
+        overflow-y: auto;
+        overscroll-behavior: contain;
     `
 
     const rect = nameSpan.getBoundingClientRect()
     dropdown.style.left = rect.left + 'px'
-    dropdown.style.top  = (rect.bottom + 4) + 'px'
+    const spaceBelow = window.innerHeight - rect.bottom - 8
+    const spaceAbove = rect.top - 8
+    if (spaceBelow >= 80 || spaceBelow >= spaceAbove) {
+        dropdown.style.top = (rect.bottom + 4) + 'px'
+    } else {
+        dropdown.style.bottom = (window.innerHeight - rect.top + 4) + 'px'
+        dropdown.style.top = 'auto'
+    }
+
+    // ── Action row: two halves (−  |  +) ──────────────────────────────────────
+    if (!opts.noActionRow) {
+        const allNameSpansNow = () => [...editorEl.querySelectorAll('.editor-role-name')]
+        const canRemove = allNameSpansNow().length > 1
+
+        const actionRow = document.createElement('div')
+        actionRow.style.cssText = `
+            display: flex;
+            border-bottom: 1px solid #4b5263;
+            margin-bottom: 0.2rem;
+        `
+
+        const halfStyle = (dimmed) => `
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.35rem 0;
+            cursor: ${dimmed ? 'default' : 'pointer'};
+            color: ${dimmed ? '#5c6370' : '#abb2bf'};
+            font-size: 1.1rem;
+            user-select: none;
+        `
+
+        const removeHalf = document.createElement('div')
+        removeHalf.textContent = '−'
+        removeHalf.title = 'Rolle entfernen'
+        removeHalf.style.cssText = halfStyle(!canRemove)
+        if (canRemove) {
+            removeHalf.addEventListener('mouseenter', () => { removeHalf.style.background = '#2c313a' })
+            removeHalf.addEventListener('mouseleave', () => { removeHalf.style.background = '' })
+            removeHalf.addEventListener('mousedown', (e) => {
+                e.preventDefault()
+                dropdown.remove()
+                const prev = nameSpan.previousSibling
+                const next = nameSpan.nextSibling
+                if (prev?.classList?.contains('editor-role-separator')) prev.remove()
+                else if (next?.classList?.contains('editor-role-separator')) next.remove()
+                nameSpan.remove()
+                const remaining = editorEl.querySelectorAll('.editor-role-name')
+                const firstColor = ROLE_COLORS[config.roles?.[remaining[0]?.textContent]?.color] || ''
+                const lastRemaining = remaining[remaining.length - 1]
+                let after = false
+                for (const node of editorEl.childNodes) {
+                    if (node === lastRemaining) { after = true; continue }
+                    if (after && node.nodeType === Node.ELEMENT_NODE && node.classList.contains('editor-role-text')) {
+                        node.style.color = firstColor
+                    }
+                }
+            })
+        }
+
+        const divider = document.createElement('div')
+        divider.style.cssText = 'width: 1px; background: #4b5263; flex-shrink: 0;'
+
+        const addHalf = document.createElement('div')
+        addHalf.textContent = '+'
+        addHalf.title = 'Weitere Rolle hinzufügen'
+        addHalf.style.cssText = halfStyle(false)
+        addHalf.addEventListener('mouseenter', () => { addHalf.style.background = '#2c313a' })
+        addHalf.addEventListener('mouseleave', () => { addHalf.style.background = '' })
+        addHalf.addEventListener('mousedown', (e) => {
+            e.preventDefault()
+            dropdown.remove()
+            const currentSpans = allNameSpansNow()
+            const lastNs = currentSpans[currentSpans.length - 1]
+
+            const sep = document.createElement('span')
+            sep.className = 'editor-role-separator'
+            sep.contentEditable = 'false'
+            sep.textContent = ' / '
+            lastNs.after(sep)
+
+            const newNs = document.createElement('span')
+            newNs.className = 'editor-role-name'
+            newNs.contentEditable = 'false'
+            newNs.textContent = '?'
+            newNs.style.cssText = 'color: #5c6370; font-style: italic;'
+            sep.after(newNs)
+
+            newNs.addEventListener('mousedown', (ev) => {
+                ev.preventDefault()
+                openRoleChangeDropdown(newNs, editorEl)
+            })
+
+            requestAnimationFrame(() => openRoleChangeDropdown(newNs, editorEl, {
+                noActionRow: true,
+                onCancel: () => { sep.remove(); newNs.remove() },
+                onSelect: (roleName) => {
+                    newNs.style.cssText = ''
+                    const c = ROLE_COLORS[config.roles?.[roleName]?.color] || ''
+                    if (c) newNs.style.color = c
+                }
+            }))
+        })
+
+        actionRow.appendChild(removeHalf)
+        actionRow.appendChild(divider)
+        actionRow.appendChild(addHalf)
+        dropdown.appendChild(actionRow)
+    }
 
     for (const roleName of roles) {
         const color = ROLE_COLORS[config.roles[roleName]?.color] || '#abb2bf'
@@ -816,16 +968,22 @@ function openRoleChangeDropdown(nameSpan, editorEl) {
         item.addEventListener('mouseleave', () => { item.style.background = '' })
         item.addEventListener('mousedown', (e) => {
             e.preventDefault()
+            roleSelected = true
             dropdown.remove()
+            opts.onSelect?.(roleName)
             // Update role name in editor
             const newColor = ROLE_COLORS[config.roles[roleName]?.color] || ''
             nameSpan.textContent = roleName
             nameSpan.style.color = newColor || ''
-            // Re-color all dialogue text spans
+            // Re-color dialogue using the FIRST role's color (not the changed span)
+            const allNameSpans = editorEl.querySelectorAll('.editor-role-name')
+            const firstColor = ROLE_COLORS[config.roles?.[allNameSpans[0]?.textContent]?.color] || ''
+            const lastNameSpan = allNameSpans[allNameSpans.length - 1]
+            let afterLast = false
             for (const node of editorEl.childNodes) {
-                if (node === nameSpan) continue
-                if (node.nodeType === Node.ELEMENT_NODE && (node.classList.contains('editor-role-text'))) {
-                    node.style.color = newColor || ''
+                if (node === lastNameSpan) { afterLast = true; continue }
+                if (afterLast && node.nodeType === Node.ELEMENT_NODE && node.classList.contains('editor-role-text')) {
+                    node.style.color = firstColor
                 }
             }
             // Move caret to start of dialogue (after the name span)
@@ -839,11 +997,27 @@ function openRoleChangeDropdown(nameSpan, editorEl) {
 
     document.body.appendChild(dropdown)
 
-    // Close on outside click
-    function onOutside(e) {
-        if (!dropdown.contains(e.target)) { dropdown.remove(); document.removeEventListener('mousedown', onOutside, true) }
+    function closeDropdown() {
+        dropdown.remove()
+        document.removeEventListener('mousedown', onOutside, true)
+        document.removeEventListener('keydown',   onEsc,     true)
+        window.removeEventListener('scroll',      onScroll,  true)
     }
+    function onOutside(e) {
+        if (dropdown.contains(e.target)) return
+        if (!roleSelected) opts.onCancel?.()
+        closeDropdown()
+    }
+    function onEsc(e) {
+        if (e.key !== 'Escape') return
+        if (!roleSelected) opts.onCancel?.()
+        closeDropdown()
+    }
+    // Only close on scroll if it's the page scrolling, not the dropdown itself
+    function onScroll(e)  { if (!dropdown.contains(e.target) && e.target !== dropdown) closeDropdown() }
     document.addEventListener('mousedown', onOutside, true)
+    document.addEventListener('keydown',   onEsc,     true)
+    window.addEventListener('scroll',      onScroll,  true)
 }
 
 // ── Existing block editor ──────────────────────────────────────────────────────
@@ -904,16 +1078,17 @@ const btnDel  = document.createElement('button')
         if (inlineEditor?.el === el) closeEditor(true)
     }, 180))
 
-    // Role name: make non-editable, prevent cursor from entering, click opens dropdown
+    // Role name(s): make non-editable, prevent cursor from entering, click opens dropdown
     if (el.dataset.editorType === 'role') {
-        const nameSpan = el.querySelector('.editor-role-name')
-        if (nameSpan) {
-            nameSpan.contentEditable = 'false'
+        el.querySelectorAll('.editor-role-name, .editor-role-separator').forEach(span => {
+            span.contentEditable = 'false'
+        })
+        el.querySelectorAll('.editor-role-name').forEach(nameSpan => {
             nameSpan.addEventListener('mousedown', (e) => {
                 e.preventDefault()
                 openRoleChangeDropdown(nameSpan, el)
             })
-        }
+        })
         // Clamp cursor on selectionchange (catches mouse clicks, triple-click, drag-select, etc.)
         function clampRoleCaret() {
             if (!inlineEditor?.el) return
@@ -948,10 +1123,10 @@ function syncEditorHeight() {
     if (wrapper) inlineEditor.blockEl.style.minHeight = wrapper.offsetHeight + 'px'
 }
 
-// Places the cursor right AFTER the role name span (start of dialogue).
-// Using setStartAfter avoids placing it inside the span's text node.
+// Places the cursor right AFTER the last role name span (start of dialogue).
 function placeCaretAfterRoleName(el) {
-    const ns = el?.querySelector('.editor-role-name')
+    const spans = el?.querySelectorAll('.editor-role-name')
+    const ns = spans?.[spans.length - 1]
     if (!ns) return
     const sel = window.getSelection()
     const r = document.createRange()
@@ -961,16 +1136,17 @@ function placeCaretAfterRoleName(el) {
     sel.addRange(r)
 }
 
-// Returns true if the cursor (or anchor) is inside or at the end of the role name span.
+// Returns true if the cursor is inside any role name span or before the first one.
 function caretIsInRoleName(el) {
-    const ns = el?.querySelector('.editor-role-name')
-    if (!ns) return false
+    const nameSpans = el?.querySelectorAll('.editor-role-name')
+    if (!nameSpans?.length) return false
     const sel = window.getSelection()
     if (!sel?.rangeCount) return false
     const range = sel.getRangeAt(0)
-    // Inside the span itself
-    if (ns.contains(range.startContainer)) return true
-    // Edge case: cursor at el offset 0 (before the span) when no text before name
+    for (const ns of nameSpans) {
+        if (ns.contains(range.startContainer)) return true
+    }
+    // Edge case: cursor at el offset 0 (before all spans)
     if (range.startContainer === el && range.startOffset === 0) return true
     return false
 }
@@ -1003,25 +1179,23 @@ function nodeBeforeCaret(range) {
 function onEditorKey(e) {
     if (e.key === 'Escape') { e.preventDefault(); closeEditor(true); return }
 
-    // Clamp cursor: don't let it move into the role name
+    // Clamp cursor: don't let it move into any role name span
     if (inlineEditor?.el?.dataset.editorType === 'role') {
         const el = inlineEditor.el
-        const ns = el.querySelector('.editor-role-name')
-        if (ns) {
+        const nameSpans = el.querySelectorAll('.editor-role-name')
+        const lastNs = nameSpans[nameSpans.length - 1]
+        if (lastNs) {
             if (e.key === 'ArrowLeft' || e.key === 'Home' || e.key === 'Backspace') {
-                // Check if cursor is at the very start of dialogue (right after name span)
+                // Check if cursor is at the very start of dialogue (right after last name span)
                 const sel = window.getSelection()
                 const range = sel?.rangeCount ? sel.getRangeAt(0) : null
                 if (!range) { e.preventDefault(); return }
                 const atDialogueStart =
-                    // cursor container is the parent el right after the name span
-                    (range.startContainer === el && range.startOffset <= 1) ||
-                    // cursor is inside the name span
-                    ns.contains(range.startContainer) ||
-                    // cursor is at offset 0 of a text node whose parent's previous sibling is the name span
+                    (range.startContainer === el && range.startOffset <= nameSpans.length) ||
+                    caretIsInRoleName(el) ||
                     (range.startOffset === 0 &&
                      range.startContainer.nodeType === Node.TEXT_NODE &&
-                     range.startContainer.parentNode?.previousSibling === ns)
+                     range.startContainer.parentNode?.previousSibling === lastNs)
                 if (atDialogueStart) {
                     e.preventDefault()
                     if (caretIsInRoleName(el)) placeCaretAfterRoleName(el)
@@ -1208,15 +1382,30 @@ function onEditorKey(e) {
 
 function onEditorInput() {
     clearTimeout(this._st)
-    this._st = setTimeout(saveCurrentEdit, 600)
+    this._st = setTimeout(saveCurrentEdit, 5000)
     updateEditorParens(this)
     syncEditorHeight()
 }
 
-function saveCurrentEdit() {
+function saveCurrentEdit(isClosing = false) {
     if (!inlineEditor || inlineEditor.isNew) return
     const { el, lineStart, lineEnd } = inlineEditor
     const newContent = serializeEditorMarkdown(el)
+
+    if (!newContent) {
+        if (isClosing && !inlineEditor.deleted) {
+            // Empty stage direction on close — remove block and its preceding blank lines
+            const lines = scriptText.split('\n')
+            let removeFrom = lineStart
+            while (removeFrom > 0 && lines[removeFrom - 1].trim() === '') removeFrom--
+            lines.splice(removeFrom, lineEnd - removeFrom + 1)
+            scriptText = lines.join('\n')
+            window.electronAPI.writeScriptMd(scriptText)
+            inlineEditor.deleted = true
+        }
+        return
+    }
+
     const newLines = newContent.split('\n')
     const lines = scriptText.split('\n')
     lines.splice(lineStart, lineEnd - lineStart + 1, ...newLines)
@@ -1233,10 +1422,18 @@ function closeEditor(save) {
     if (inlineEditor._caretClampHandler) {
         document.removeEventListener('selectionchange', inlineEditor._caretClampHandler)
     }
-    if (save) saveCurrentEdit()
+    if (save) saveCurrentEdit(true)
     ;(inlineEditor.el.closest('.editor-wrapper') ?? inlineEditor.el).remove()
-    if (inlineEditor.blockEl) inlineEditor.blockEl.style.visibility = ''
+    if (inlineEditor.blockEl && !inlineEditor.deleted) inlineEditor.blockEl.style.visibility = ''
+    const wasDeleted = inlineEditor.deleted
     inlineEditor = null
+    if (!wasDeleted) {
+        const formatted = formatScriptText(scriptText)
+        if (formatted !== scriptText) {
+            scriptText = formatted
+            window.electronAPI.writeScriptMd(scriptText)
+        }
+    }
     rerender(scriptText)
 }
 
@@ -1414,15 +1611,20 @@ function openEmptyScriptEditor() {
     div.addEventListener('keydown', onNewBlockKey)
     div.addEventListener('beforeinput', onNewBlockBeforeInput)
     div.addEventListener('input', onNewBlockInput)
+
     div.addEventListener('blur', () => setTimeout(() => {
         if (inlineEditor?.el !== div) return
-        if (inlineEditor.isPersistent && !getTyped(div).trim() && !inlineEditor.confirmedRole) return
+        if (document.getElementById('chip-dropdown') || document.getElementById('role-add-dropdown')) {
+            div.focus()
+            return
+        }
+        if (inlineEditor.isPersistent && !getTyped(div).trim() && !inlineEditor.confirmedRole && !inlineEditor.confirmedRoles?.length) return
         commitNewBlock()
     }, 180))
 
     btnDel.addEventListener('mousedown', (e) => {
         e.preventDefault()
-        if (getTyped(div).trim() || inlineEditor?.confirmedRole) {
+        if (getTyped(div).trim() || inlineEditor?.confirmedRole || inlineEditor?.confirmedRoles?.length) {
             clearGhost(); wrapper.remove(); inlineEditor = null
         }
     })
@@ -1430,18 +1632,19 @@ function openEmptyScriptEditor() {
 
 function getTyped(el) {
     return [...el.childNodes]
-        .filter(n => !(n.nodeType === Node.ELEMENT_NODE && (n.classList.contains('ac-ghost') || n.classList.contains('role-confirmed'))))
+        .filter(n => !(n.nodeType === Node.ELEMENT_NODE && (n.classList.contains('ac-ghost') || n.classList.contains('role-confirmed') || n.classList.contains('role-separator'))))
         .map(n => n.textContent).join('')
 }
 
 function getDialogue(el) {
-    const roleSpan = el.querySelector('.role-confirmed')
-    if (!roleSpan) return ''
+    const roleSpans = el.querySelectorAll('.role-confirmed')
+    const lastRoleSpan = roleSpans[roleSpans.length - 1]
+    if (!lastRoleSpan) return ''
     let after = false
     let text = ''
     for (const node of el.childNodes) {
-        if (node === roleSpan) { after = true; continue }
-        if (after && !(node.nodeType === Node.ELEMENT_NODE && node.classList.contains('ac-ghost'))) {
+        if (node === lastRoleSpan) { after = true; continue }
+        if (after && !(node.nodeType === Node.ELEMENT_NODE && (node.classList.contains('ac-ghost') || node.classList.contains('role-separator')))) {
             if (node.tagName === 'BR') text += '<br>'
             else if (node.classList?.contains('br-marker')) { /* skip visual indicator */ }
             else text += node.textContent
@@ -1477,10 +1680,11 @@ function clearGhost() {
 function onNewBlockKey(e) {
     if (e.key === 'Escape') {
         e.preventDefault()
-        if (inlineEditor?.isPersistent && !getTyped(e.currentTarget).trim() && !inlineEditor?.confirmedRole) {
+        const hasConfirmed = inlineEditor?.confirmedRole || inlineEditor?.confirmedRoles?.length
+        if (inlineEditor?.isPersistent && !getTyped(e.currentTarget).trim() && !hasConfirmed) {
             return
         }
-        if (inlineEditor?.confirmedRole) {
+        if (hasConfirmed) {
             if (inlineEditor?.el === e.currentTarget) commitNewBlock()
         } else {
             clearGhost()
@@ -1493,7 +1697,7 @@ function onNewBlockKey(e) {
         e.preventDefault()
         const { afterBlockEl, wrapper, el } = inlineEditor ?? {}
         const afterIdx = afterBlockEl ? parseInt(afterBlockEl.dataset.blockIdx) : -1
-        const hasContent = !!(el && getTyped(el).trim()) || !!inlineEditor?.confirmedRole
+        const hasContent = !!(el && getTyped(el).trim()) || !!(inlineEditor?.confirmedRole || inlineEditor?.confirmedRoles?.length)
         if (hasContent) {
             commitNewBlock(undefined, true)
             // afterBlockEl index is unchanged (insertion was after it)
@@ -1514,7 +1718,7 @@ function onNewBlockKey(e) {
         let next = container?.nextElementSibling
         while (next && (isTriggerEl(next) || !next.dataset?.blockIdx)) next = next.nextElementSibling
         const nextIdx = next ? parseInt(next.dataset.blockIdx) : -1
-        const hasContent = !!(el && getTyped(el).trim()) || !!inlineEditor?.confirmedRole
+        const hasContent = !!(el && getTyped(el).trim()) || !!(inlineEditor?.confirmedRole || inlineEditor?.confirmedRoles?.length)
         if (hasContent) {
             const textBlocksBefore = tokenizeScript(scriptText).filter(b => b.type === 'text').length
             commitNewBlock(undefined, true)
@@ -1535,6 +1739,17 @@ function onNewBlockKey(e) {
         e.preventDefault()  // must be in keydown to prevent focus movement
         if (inlineEditor?.el === e.currentTarget) acceptGhostInline()
         return
+    }
+    // Backspace at position 0 with confirmed roles: remove the last role chip
+    if (e.key === 'Backspace' && inlineEditor?.confirmedRoles?.length && !inlineEditor?.confirmedRole) {
+        const el = e.currentTarget
+        if (!getTyped(el).trim()) {
+            e.preventDefault()
+            const chips = el.querySelectorAll('.role-confirmed')
+            const lastChip = chips[chips.length - 1]
+            if (lastChip) removeRoleChip(lastChip)
+            return
+        }
     }
     // Backspace at start of a post-br line in a confirmed-role block: remove br-marker + <br>
     if (e.key === 'Backspace' && inlineEditor?.confirmedRole) {
@@ -1586,21 +1801,31 @@ function acceptGhostInline() {
     const { match } = acState
     acState = null
 
-    // Replace editor content with a styled role name + space for dialogue input
-    el.innerHTML = ''
-    const roleSpan = document.createElement('span')
-    roleSpan.className = 'role-confirmed'
-    roleSpan.contentEditable = 'false'
-    roleSpan.textContent = match
-    const roleColor = ROLE_COLORS[config.roles?.[match]?.color]
-    if (roleColor) roleSpan.style.color = roleColor
+    // Remove only the typed text and ghost — keep existing role chips + separators
+    ;[...el.childNodes].forEach(n => {
+        if (n.nodeType === Node.TEXT_NODE) n.remove()
+        else if (n.classList?.contains('ac-ghost')) n.remove()
+    })
+
+    // Add separator if there are already role chips
+    if (el.querySelectorAll('.role-confirmed').length > 0) {
+        const sep = document.createElement('span')
+        sep.className = 'role-separator'
+        sep.contentEditable = 'false'
+        sep.textContent = ' / '
+        el.appendChild(sep)
+    }
+
+    const roleSpan = createRoleChipElement(match)
     el.appendChild(roleSpan)
-    const space = document.createTextNode(' ')
+
+    const space = document.createTextNode(' ')
     el.appendChild(space)
 
-    inlineEditor.confirmedRole = match
-    el.dataset.placeholder = t('editor.ph.text')
-    if (roleColor) el.style.color = roleColor
+    if (!inlineEditor.confirmedRoles) inlineEditor.confirmedRoles = []
+    inlineEditor.confirmedRoles.push(match)
+    el.dataset.placeholder = t('editor.ph.nextrole')
+    el.style.color = ''
 
     el.focus()
     const range = document.createRange()
@@ -1611,11 +1836,271 @@ function acceptGhostInline() {
     sel.addRange(range)
 }
 
+function createRoleChipElement(roleName) {
+    const roleSpan = document.createElement('span')
+    roleSpan.className = 'role-confirmed'
+    roleSpan.contentEditable = 'false'
+    roleSpan.dataset.roleName = roleName
+    roleSpan.textContent = roleName
+    const roleColor = ROLE_COLORS[config.roles?.[roleName]?.color]
+    if (roleColor) roleSpan.style.color = roleColor
+    roleSpan.addEventListener('click', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        openChipDropdown(roleSpan)
+    })
+    return roleSpan
+}
+
+function openChipDropdown(chip) {
+    document.getElementById('chip-dropdown')?.remove()
+    const roleName = chip.dataset.roleName
+    const existingRoles = inlineEditor?.confirmedRoles ?? []
+
+    const dropdown = document.createElement('div')
+    dropdown.id = 'chip-dropdown'
+    dropdown.style.cssText = `
+        position: fixed;
+        background: #21252b;
+        border: 1px solid #4b5263;
+        border-radius: 5px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+        z-index: 300;
+        min-width: 10rem;
+        font-size: 0.9rem;
+        max-height: 60vh;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+    `
+    const rect = chip.getBoundingClientRect()
+    dropdown.style.left = rect.left + 'px'
+    const spaceBelow = window.innerHeight - rect.bottom - 8
+    const spaceAbove = rect.top - 8
+    if (spaceBelow >= 80 || spaceBelow >= spaceAbove) {
+        dropdown.style.top = (rect.bottom + 4) + 'px'
+    } else {
+        dropdown.style.bottom = (window.innerHeight - rect.top + 4) + 'px'
+        dropdown.style.top = 'auto'
+    }
+
+    // Action row: [\u2212 Entfernen | + Hinzuf\u00fcgen]
+    const actionRow = document.createElement('div')
+    actionRow.style.cssText = `display: flex; border-bottom: 1px solid #4b5263;`
+
+    const btnRemove = document.createElement('button')
+    btnRemove.type = 'button'
+    btnRemove.textContent = '\u2212'
+    btnRemove.style.cssText = `flex: 1; padding: 0.35rem 0; background: none; border: none; border-right: 1px solid #4b5263; color: #e06c75; cursor: pointer; font-size: 1rem; transition: background 0.1s;`
+    btnRemove.addEventListener('mouseenter', () => { btnRemove.style.background = '#2c313a' })
+    btnRemove.addEventListener('mouseleave', () => { btnRemove.style.background = '' })
+    btnRemove.addEventListener('mousedown', (e) => {
+        e.preventDefault()
+        closeChipDropdown()
+        removeRoleChip(chip)
+    })
+
+    const btnAdd = document.createElement('button')
+    btnAdd.type = 'button'
+    btnAdd.textContent = '+'
+    btnAdd.style.cssText = `flex: 1; padding: 0.35rem 0; background: none; border: none; color: #98c379; cursor: pointer; font-size: 1rem; transition: background 0.1s;`
+    btnAdd.addEventListener('mouseenter', () => { btnAdd.style.background = '#2c313a' })
+    btnAdd.addEventListener('mouseleave', () => { btnAdd.style.background = '' })
+    btnAdd.addEventListener('mousedown', (e) => {
+        e.preventDefault()
+        closeChipDropdown()
+        openAddRoleDropdown(chip)
+    })
+
+    actionRow.append(btnRemove, btnAdd)
+    dropdown.appendChild(actionRow)
+
+    // Role list: change this chip to a different role
+    const otherRoles = Object.keys(config.roles || {}).filter(r => r !== roleName && !existingRoles.includes(r))
+    for (const r of otherRoles) {
+        const color = ROLE_COLORS[config.roles[r]?.color] || '#abb2bf'
+        const item = document.createElement('div')
+        item.style.cssText = `padding: 0.4rem 1rem; cursor: pointer; color: ${color}; white-space: nowrap;`
+        item.textContent = r
+        item.addEventListener('mouseenter', () => { item.style.background = '#2c313a' })
+        item.addEventListener('mouseleave', () => { item.style.background = '' })
+        item.addEventListener('mousedown', (e) => {
+            e.preventDefault()
+            closeChipDropdown()
+            changeRoleChip(chip, r)
+        })
+        dropdown.appendChild(item)
+    }
+
+    document.body.appendChild(dropdown)
+
+    function closeChipDropdown() {
+        dropdown.remove()
+        document.removeEventListener('mousedown', onOutside, true)
+        document.removeEventListener('keydown',   onEsc,     true)
+        window.removeEventListener('scroll',      onScroll,  true)
+        inlineEditor?.el?.focus()
+    }
+    function onOutside(e) { if (!dropdown.contains(e.target)) closeChipDropdown() }
+    function onEsc(e)     { if (e.key === 'Escape') closeChipDropdown() }
+    function onScroll()   { closeChipDropdown() }
+    document.addEventListener('mousedown', onOutside, true)
+    document.addEventListener('keydown',   onEsc,     true)
+    window.addEventListener('scroll',      onScroll,  true)
+}
+
+function changeRoleChip(chip, newRoleName) {
+    const el = inlineEditor?.el
+    if (!el) return
+    const chips = [...el.querySelectorAll('.role-confirmed')]
+    const idx = chips.indexOf(chip)
+    if (idx < 0) return
+    if (inlineEditor.confirmedRoles) inlineEditor.confirmedRoles[idx] = newRoleName
+    chip.dataset.roleName = newRoleName
+    chip.textContent = newRoleName
+    const newColor = ROLE_COLORS[config.roles?.[newRoleName]?.color]
+    chip.style.color = newColor || ''
+    el.focus()
+}
+
+function openAddRoleDropdown(referenceChip) {
+    document.getElementById('role-add-dropdown')?.remove()
+    const existingRoles = inlineEditor?.confirmedRoles ?? []
+    const roles = Object.keys(config.roles || {}).filter(r => !existingRoles.includes(r))
+    if (!roles.length) return
+
+    const dropdown = document.createElement('div')
+    dropdown.id = 'role-add-dropdown'
+    dropdown.style.cssText = `
+        position: fixed;
+        background: #21252b;
+        border: 1px solid #4b5263;
+        border-radius: 5px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+        z-index: 300;
+        min-width: 10rem;
+        padding: 0.3rem 0;
+        font-size: 0.9rem;
+        max-height: 60vh;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+    `
+    const rect = referenceChip.getBoundingClientRect()
+    dropdown.style.left = rect.left + 'px'
+    const spaceBelow = window.innerHeight - rect.bottom - 8
+    const spaceAbove = rect.top - 8
+    if (spaceBelow >= 80 || spaceBelow >= spaceAbove) {
+        dropdown.style.top = (rect.bottom + 4) + 'px'
+    } else {
+        dropdown.style.bottom = (window.innerHeight - rect.top + 4) + 'px'
+        dropdown.style.top = 'auto'
+    }
+
+    for (const roleName of roles) {
+        const color = ROLE_COLORS[config.roles[roleName]?.color] || '#abb2bf'
+        const item = document.createElement('div')
+        item.style.cssText = `padding: 0.4rem 1rem; cursor: pointer; color: ${color}; white-space: nowrap;`
+        item.textContent = roleName
+        item.addEventListener('mouseenter', () => { item.style.background = '#2c313a' })
+        item.addEventListener('mouseleave', () => { item.style.background = '' })
+        item.addEventListener('mousedown', (e) => {
+            e.preventDefault()
+            closeAddDropdown()
+            addRoleChipAtEnd(roleName)
+        })
+        dropdown.appendChild(item)
+    }
+
+    document.body.appendChild(dropdown)
+
+    function closeAddDropdown() {
+        dropdown.remove()
+        document.removeEventListener('mousedown', onOutside, true)
+        document.removeEventListener('keydown',   onEsc,     true)
+        window.removeEventListener('scroll',      onScroll,  true)
+        inlineEditor?.el?.focus()
+    }
+    function onOutside(e) { if (!dropdown.contains(e.target)) closeAddDropdown() }
+    function onEsc(e)     { if (e.key === 'Escape') closeAddDropdown() }
+    function onScroll()   { closeAddDropdown() }
+    document.addEventListener('mousedown', onOutside, true)
+    document.addEventListener('keydown',   onEsc,     true)
+    window.addEventListener('scroll',      onScroll,  true)
+}
+
+function addRoleChipAtEnd(roleName) {
+    const el = inlineEditor?.el
+    if (!el) return
+    if (!inlineEditor.confirmedRoles) inlineEditor.confirmedRoles = []
+    inlineEditor.confirmedRoles.push(roleName)
+
+    // Remove trailing text nodes and ghost
+    ;[...el.childNodes].forEach(n => {
+        if (n.nodeType === Node.TEXT_NODE) n.remove()
+        else if (n.classList?.contains('ac-ghost')) n.remove()
+    })
+
+    const sep = document.createElement('span')
+    sep.className = 'role-separator'
+    sep.contentEditable = 'false'
+    sep.textContent = ' / '
+    el.appendChild(sep)
+
+    const newChip = createRoleChipElement(roleName)
+    el.appendChild(newChip)
+
+    const space = document.createTextNode(' ')
+    el.appendChild(space)
+
+    el.focus()
+    const range = document.createRange()
+    range.setStartAfter(space)
+    range.collapse(true)
+    const sel = window.getSelection()
+    sel.removeAllRanges()
+    sel.addRange(range)
+    updateInlineAc('')
+}
+
+function removeRoleChip(roleSpan) {
+    const el = inlineEditor?.el
+    if (!el) return
+    const chips = [...el.querySelectorAll('.role-confirmed')]
+    const idx = chips.indexOf(roleSpan)
+    if (idx < 0) return
+    inlineEditor.confirmedRoles?.splice(idx, 1)
+    const nextSib = roleSpan.nextSibling
+    const prevSib = roleSpan.previousSibling
+    if (nextSib?.classList?.contains('role-separator')) nextSib.remove()
+    else if (prevSib?.classList?.contains('role-separator')) prevSib.remove()
+    roleSpan.remove()
+    if (!inlineEditor.confirmedRoles?.length) el.dataset.placeholder = t('editor.ph.stage')
+    focusForNewRole()
+}
+
+function focusForNewRole() {
+    const el = inlineEditor?.el
+    if (!el) return
+    ;[...el.childNodes].forEach(n => {
+        if (n.nodeType === Node.TEXT_NODE) n.remove()
+        else if (n.classList?.contains('ac-ghost')) n.remove()
+    })
+    const space = document.createTextNode('')
+    el.appendChild(space)
+    el.focus()
+    const range = document.createRange()
+    range.setStartAfter(space)
+    range.collapse(true)
+    const sel = window.getSelection()
+    sel.removeAllRanges()
+    sel.addRange(range)
+    updateInlineAc('')
+}
+
 function onNewBlockBeforeInput(e) {
     if (e.inputType === 'insertParagraph' || e.inputType === 'insertLineBreak') {
         e.preventDefault()
         // Shift+Enter (insertLineBreak) while typing dialogue → insert <br> instead of committing
-        if (e.inputType === 'insertLineBreak' && inlineEditor?.confirmedRole && inlineEditor?.el === this) {
+        if (e.inputType === 'insertLineBreak' && (inlineEditor?.confirmedRole || inlineEditor?.confirmedRoles?.length) && inlineEditor?.el === this) {
             insertRoleLineBreak()
             return
         }
@@ -1652,24 +2137,39 @@ function onNewBlockInput() {
 
 function commitNewBlock(asRole, skipNavigate = false) {
     if (!inlineEditor) return
-    const { el, wrapper, lineStart, isAfterRole, confirmedRole } = inlineEditor
+    const { el, wrapper, lineStart, isAfterRole, confirmedRole, confirmedRoles } = inlineEditor
 
     let insertLines, _target, _afterRole
 
-    if (confirmedRole) {
-        // Phase 2: role name was confirmed via Tab; extract any dialogue typed after the space
+    if (confirmedRoles?.length > 0) {
+        // Multi-role (or single role via the new Tab flow): collect roles as "R1/R2/…"
+        const dialogue = getDialogue(el).replace(/(<br>)+$/, '').trim()
+        clearGhost()
+        ;(wrapper ?? el).remove()
+        inlineEditor = null
+        const rolesStr = confirmedRoles.join('/')
+        if (dialogue) {
+            insertLines = ['', `**${rolesStr}**`, wrapSentences(dialogue.replace(/\(([^)]+)\)/g, '*($1)*'))]
+            _target = lineStart + 1
+            _afterRole = false
+        } else {
+            insertLines = ['', `**${rolesStr}**`]
+            _target = lineStart + 1
+            _afterRole = true
+        }
+    } else if (confirmedRole) {
+        // Legacy single-role path (kept for safety)
         const dialogue = getDialogue(el).replace(/(<br>)+$/, '').trim()
         clearGhost()
         ;(wrapper ?? el).remove()
         inlineEditor = null
         if (dialogue) {
-            // Role and dialogue on consecutive lines (no blank line) → one block, styled together
             insertLines = ['', `**${confirmedRole}**`, wrapSentences(dialogue.replace(/\(([^)]+)\)/g, '*($1)*'))]
-            _target = lineStart + 1   // start of the combined role+dialogue block
+            _target = lineStart + 1
             _afterRole = false
         } else {
             insertLines = ['', `**${confirmedRole}**`]
-            _target = lineStart + 1   // role line — next editor is for dialogue
+            _target = lineStart + 1
             _afterRole = true
         }
     } else {
@@ -4935,7 +5435,14 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     } else {
         actions.append(cancelBtn, confirmBtn)
     }
+    // Wrap all content except the button bar in a scrollable area so the buttons
+    // remain visible at the bottom without scrolling the dialog.
+    const scrollContent = document.createElement('div')
+    scrollContent.classList.add('dialog-scroll-content')
+    while (box.firstChild) scrollContent.appendChild(box.firstChild)
+    box.appendChild(scrollContent)
     box.appendChild(actions)
+    box.classList.add('dialog-box-scrollable')
 
     overlay.appendChild(box)
     document.body.appendChild(overlay)
@@ -5489,8 +5996,28 @@ function applyRoleColorsToHtml(html) {
     div.innerHTML = html
     for (const p of div.querySelectorAll('p')) {
         if (p.firstChild?.tagName !== 'STRONG') continue
-        const role = config.roles?.[p.firstChild.textContent]
-        if (role) p.classList.add('color-' + role.color)
+        const strong = p.firstChild
+        const names = strong.textContent.split('/').map(s => s.trim()).filter(Boolean)
+        const roles = names.map(n => config.roles?.[n])
+        const firstRole = roles.find(Boolean)
+        if (!firstRole) continue
+        p.classList.add('color-' + firstRole.color)
+        if (names.length > 1) {
+            strong.innerHTML = ''
+            for (let i = 0; i < names.length; i++) {
+                if (i > 0) {
+                    const sep = document.createElement('span')
+                    sep.className = 'role-name-sep'
+                    sep.textContent = ' / '
+                    strong.appendChild(sep)
+                }
+                const span = document.createElement('span')
+                span.textContent = names[i]
+                const role = config.roles?.[names[i]]
+                if (role) span.className = 'color-' + role.color
+                strong.appendChild(span)
+            }
+        }
     }
     return div.innerHTML
 }
@@ -6061,14 +6588,35 @@ function colorText() {
     const paragraphs = document.querySelectorAll("p")
     for (const paragraph of paragraphs) {
         if (paragraph.firstChild?.tagName !== 'STRONG') continue
-        const roleName = paragraph.firstChild.textContent
-        const role = config.roles?.[roleName]
-        if (!role) {
-            if (!parseErrors.some(e => e.message === `Unbekannte Rolle: "${roleName}"`))
-                parseErrors.push({ blockNum: null, line: null, message: `Unbekannte Rolle: "${roleName}"` })
+        const strong = paragraph.firstChild
+        const rawName = strong.textContent
+        const names = rawName.split('/').map(s => s.trim()).filter(Boolean)
+        const roles = names.map(n => config.roles?.[n])
+        const firstRole = roles.find(Boolean)
+        if (!firstRole) {
+            if (!parseErrors.some(e => e.message === `Unbekannte Rolle: "${rawName}"`))
+                parseErrors.push({ blockNum: null, line: null, message: `Unbekannte Rolle: "${rawName}"` })
             continue
         }
-        paragraph.classList.add('color-' + role.color)
+        // Paragraph color = first role (used for dialogue text / left-border accent)
+        paragraph.classList.add('color-' + firstRole.color)
+        if (names.length > 1) {
+            // Replace strong content with individually-colored name spans
+            strong.innerHTML = ''
+            for (let i = 0; i < names.length; i++) {
+                if (i > 0) {
+                    const sep = document.createElement('span')
+                    sep.className = 'role-name-sep'
+                    sep.textContent = ' / '
+                    strong.appendChild(sep)
+                }
+                const span = document.createElement('span')
+                span.textContent = names[i]
+                const role = config.roles?.[names[i]]
+                if (role) span.className = 'color-' + role.color
+                strong.appendChild(span)
+            }
+        }
     }
 }
 

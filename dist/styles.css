@@ -614,6 +614,27 @@ body.shift-held .insert-hotspot:hover .insert-btn { background: #61afef; }
     overflow-y: auto;
 }
 
+.dialog-box.dialog-box-scrollable {
+    padding: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.dialog-scroll-content {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 1.5rem 1.5rem 0.75rem;
+}
+
+.dialog-box-scrollable .dialog-actions {
+    margin-top: 0;
+    padding: 0.85rem 1.5rem;
+    border-top: 1px solid #383c44;
+    flex-shrink: 0;
+}
+
 .dialog-box h3 {
     margin: 0 0 1.2rem;
     font-size: 1.1rem;
@@ -1148,6 +1169,27 @@ body.shift-held #script-content [data-block-idx]:not(.trigger):not(.trigger-grou
 }
 .role-confirmed {
     font-weight: bold;
-    pointer-events: none;
     user-select: none;
+    cursor: pointer;
+    border-radius: 2px;
+    padding: 0 1px;
+    transition: background 0.1s;
+}
+.role-confirmed:hover {
+    background: rgba(255,255,255,0.1);
+}
+.role-separator {
+    color: #5c6370;
+    user-select: none;
+    pointer-events: none;
+}
+/* Separator in the existing-block editor */
+.editor-role-separator {
+    color: #5c6370;
+    user-select: none;
+    pointer-events: none;
+}
+/* "/" separator between role names in the rendered script view */
+.role-name-sep {
+    color: #5c6370;
 }

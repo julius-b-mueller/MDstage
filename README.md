@@ -40,6 +40,7 @@ The script is a plain `.md` file. On startup the app reopens the last used file,
 | `*Stage direction*` | Italic stage direction (shown in grey) |
 | `**Role name**` | A role name (coloured according to the role editor) |
 | `**Role name**\nText` | Role with dialogue (displayed directly below) |
+| `**Role1/Role2**\nText` | Multiple roles speaking the same line (slash-separated) |
 | ` ```yaml … ``` ` | Cue block (trigger) |
 
 The first YAML block is always the **config block** (`config:`). All subsequent YAML blocks are cues.
@@ -85,6 +86,40 @@ The script can be edited directly inside the app — no external editor required
 - **✕** button deletes the block
 
 Right-clicking a block (if an editor is configured) opens the corresponding line in the external editor (VS Code, Zed, or a custom command).
+
+### Multiple Roles per Line (Chor / Ensemble)
+
+Several roles can share the same line of dialogue. In the script file this is stored as `**Role1/Role2/Role3**` followed by the dialogue text.
+
+**Creating a multi-role block:**
+
+1. Start a new block as usual (e.g. by pressing **Enter** below an existing block).
+2. Type the first few letters of a role name — the autocomplete ghost appears.
+3. Press **Tab** to confirm the first role. The chip is shown; the placeholder now reads *"Weitere Rolle oder Text…"*.
+4. Without typing any dialogue, start typing the next role name and press **Tab** again. Repeat for as many roles as needed.
+5. Once all roles are added, type the dialogue text and press **Enter** to commit.
+
+**Backspace** at the start (no typed text) removes the last confirmed role chip.
+
+**Editing confirmed role chips (Shift+hover):**
+
+While the new-block editor is open, hold **Shift** and hover over a role chip to reveal two buttons:
+
+| Button | Action |
+|--------|--------|
+| **×** | Remove this role from the group |
+| **+** | Place the cursor at the end of the chip row so you can type and confirm an additional role |
+
+### Editing Role Names in Existing Blocks
+
+When an existing block is open for editing (via **Shift+Click**), clicking on any role name opens a dropdown:
+
+- The **first row** is split into two halves by a vertical line:
+  - **−** (left): removes this role from the block. Disabled if it is the only role.
+  - **+** (right): adds another role. A `?` placeholder appears, and a sub-dropdown opens immediately to choose the new role. Only roles not already in the block are listed. Clicking outside without selecting cancels the addition.
+- The rows below list all roles not already assigned to the block. Clicking one replaces the current role name with the selection.
+
+The dialogue text always keeps the colour of the **first** role in the block, regardless of which role is changed or added.
 
 ---
 
