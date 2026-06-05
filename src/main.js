@@ -27,6 +27,7 @@ const slfDerivedTcBadges = new Map()  // triggerIndex → span element for deriv
 const fileToTriggers = new Map()
 // targetIdx → <button> element for auto-cue progress bar updates
 const autoTriggerBtns = new Map()
+const autoMicBtns = new Map()
 // sourceIdx → { links, unPlay, unTime, unPause, unFin, markFired, getUnfiredPast }
 const autoTriggerSetup = new Map()
 // sourceIdx currently being scrubbed (drag on waveform while playing)
@@ -2275,6 +2276,7 @@ document.addEventListener('keydown', (e) => {
         document.querySelectorAll('.trigger-action-btn-auto').forEach(btn => {
             updateAutoBtnAppearance(btn, parseInt(btn._triggerIndex))
         })
+        for (const [idx, btn] of autoMicBtns) updateAutoMicBtnAppearance(btn, idx)
         return
     }
     // Cmd+L → open live view (fallback in case menu accelerator is swallowed by Chromium)
@@ -2318,6 +2320,7 @@ document.addEventListener('keyup', (e) => {
         document.querySelectorAll('.trigger-action-btn-auto').forEach(btn => {
             updateAutoBtnAppearance(btn, parseInt(btn._triggerIndex))
         })
+        for (const [idx, btn] of autoMicBtns) updateAutoMicBtnAppearance(btn, idx)
     }
 }, { capture: true })
 window.addEventListener('blur', () => { shiftHeld = false; document.body.classList.remove('shift-held') })
@@ -2684,6 +2687,7 @@ function rerender(newText) {
     }
     autoTriggerSetup.clear()
     autoTriggerBtns.clear()
+    autoMicBtns.clear()
 
     for (const { ws } of triggerAudio.values()) {
         try { ws.destroy() } catch (e) {}
@@ -2929,6 +2933,21 @@ function updateAutoBtnAppearance(btn, idx) {
         btn.classList.remove('trigger-action-btn-danger')
         btn.classList.toggle('trigger-action-btn-active', !!aty)
         btn.title = aty ? t('btn.autocue.title.edit') : t('btn.autocue.title.set')
+    }
+}
+
+function updateAutoMicBtnAppearance(btn, idx) {
+    const isActive = triggerYamls[idx]?.auto_mic
+    if (shiftHeld && isActive) {
+        btn.textContent = '✕ Auto-Mic'
+        btn.classList.remove('trigger-action-btn-active')
+        btn.classList.add('trigger-action-btn-danger')
+        btn.title = t('btn.automic.title.active')
+    } else {
+        btn.innerHTML = MIC_SVG + ' Auto-Mic'
+        btn.classList.remove('trigger-action-btn-danger')
+        btn.classList.toggle('trigger-action-btn-active', !!isActive)
+        btn.title = isActive ? t('btn.automic.title.active') : t('btn.automic.title.set')
     }
 }
 
@@ -3381,11 +3400,8 @@ function updateAutoMicInScript(triggerIndex, enabled) {
             triggerInfo.insertBefore(micEl, triggerInfo.firstChild)
         }
         // Update auto-mic button state
-        const btn = triggerEl.querySelector('.trigger-action-btn-automic')
-        if (btn) {
-            btn.classList.toggle('trigger-action-btn-active', !!ty?.auto_mic)
-            btn.title = ty?.auto_mic ? t('btn.automic.title.active') : t('btn.automic.title.set')
-        }
+        const btn = autoMicBtns.get(i)
+        if (btn) updateAutoMicBtnAppearance(btn, i)
     }
 }
 
@@ -4793,9 +4809,11 @@ function buildTrigger(codeblockYaml, index) {
     // ── Auto-Mic button ──────────────────────────────────────────────────
     const autoMicBtn = document.createElement('button')
     autoMicBtn.classList.add('trigger-action-btn', 'trigger-action-btn-automic')
-    if (codeblockYaml.auto_mic) autoMicBtn.classList.add('trigger-action-btn-active')
-    autoMicBtn.innerHTML = MIC_SVG + ' Auto-Mic'
-    autoMicBtn.title = codeblockYaml.auto_mic ? t('btn.automic.title.active') : t('btn.automic.title.set')
+    autoMicBtn._triggerIndex = index
+    autoMicBtns.set(index, autoMicBtn)
+    updateAutoMicBtnAppearance(autoMicBtn, index)
+    autoMicBtn.addEventListener('mouseenter', () => updateAutoMicBtnAppearance(autoMicBtn, index))
+    autoMicBtn.addEventListener('mouseleave', () => updateAutoMicBtnAppearance(autoMicBtn, index))
     autoMicBtn.addEventListener('mousedown', e => e.stopPropagation())
     autoMicBtn.addEventListener('click', e => {
         e.stopPropagation()
