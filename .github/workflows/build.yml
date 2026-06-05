@@ -29,7 +29,7 @@ jobs:
       - run: npm ci
       - run: npx webpack --mode production
       - run: rm -f dist/*.map
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: web-bundle
           path: dist/
@@ -59,7 +59,7 @@ jobs:
           find release -name "*.deb"      -exec cp {} artifacts/MainDesk-linux-x64.deb \;      2>/dev/null || true
           find release -name "*.rpm"      -exec cp {} artifacts/MainDesk-linux-x64.rpm \;      2>/dev/null || true
           ls -lh artifacts/
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: linux
           path: artifacts/
@@ -88,7 +88,7 @@ jobs:
           Get-ChildItem -Recurse release -Filter "*Setup*.exe" | Select-Object -First 1 | Copy-Item -Destination artifacts/MainDesk-windows-x64.exe
           Get-ChildItem artifacts/
         shell: pwsh
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: windows
           path: artifacts/
@@ -117,7 +117,7 @@ jobs:
           find release -name "*arm64.dmg" -exec cp {} artifacts/MainDesk-macos-arm64.dmg \; 2>/dev/null || true
           find release -name "*x64.dmg"   -exec cp {} artifacts/MainDesk-macos-x64.dmg \;   2>/dev/null || true
           ls -lh artifacts/
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: macos
           path: artifacts/
@@ -141,22 +141,22 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: linux
           path: artifacts/
         continue-on-error: true
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: windows
           path: artifacts/
         continue-on-error: true
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: macos
           path: artifacts/
         continue-on-error: true
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: web-bundle
           path: dist/
@@ -184,15 +184,15 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: linux
           path: release-assets/
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: windows
           path: release-assets/
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: macos
           path: release-assets/
