@@ -11,8 +11,9 @@
         }
         const COLOR_CYCLE = ['blue', 'red', 'green', 'yellow', 'purple', 'cyan', 'darkblue', 'darkred', 'darkgreen', 'darkyellow', 'darkpurple', 'darkcyan']
 
-        // rows: [{ originalName, nameInput, colorSelect, colorDot, chInput }]
+        // rows: [{ originalName, nameInput, colorSelect, colorDot, chInput, deviceSelect }]
         const rows = []
+        let deviceNames = ['Gerät 1']
 
         function nextAutoColor() {
             const usedColors = rows.map(r => r.colorSelect.value)
@@ -32,7 +33,20 @@
             return sel
         }
 
-        function addRow(name, color, ch, isNew) {
+        function buildDeviceSelect(selectedDevice) {
+            const sel = document.createElement('select')
+            sel.className = 'role-device'
+            for (let i = 0; i < deviceNames.length; i++) {
+                const opt = document.createElement('option')
+                opt.value = String(i)
+                opt.textContent = deviceNames[i]
+                if (i === selectedDevice) opt.selected = true
+                sel.appendChild(opt)
+            }
+            return sel
+        }
+
+        function addRow(name, color, ch, device, isNew) {
             const row = document.createElement('div')
             row.className = 'role-row'
 
@@ -50,6 +64,9 @@
             colorSel.addEventListener('change', () => {
                 colorDot.style.background = ROLE_COLORS[colorSel.value] || ''
             })
+
+            const deviceSel = buildDeviceSelect(device ?? 0)
+            if (deviceNames.length <= 1) deviceSel.style.display = 'none'
 
             const chInput = document.createElement('input')
             chInput.type = 'number'
@@ -69,15 +86,15 @@
                 row.remove()
             })
 
-            row.append(nameInput, colorDot, colorSel, chInput, removeBtn)
+            row.append(nameInput, colorDot, colorSel, deviceSel, chInput, removeBtn)
             document.getElementById('role-list').appendChild(row)
 
-            rows.push({ originalName: isNew ? null : name, nameInput, colorSelect: colorSel, colorDot, chInput, row })
+            rows.push({ originalName: isNew ? null : name, nameInput, colorSelect: colorSel, colorDot, deviceSelect: deviceSel, chInput, row })
         }
 
         document.getElementById('add-btn').addEventListener('click', () => {
             const color = nextAutoColor()
-            addRow('', color, '', true)
+            addRow('', color, '', 0, true)
             rows[rows.length - 1].nameInput.focus()
         })
 
@@ -96,6 +113,7 @@
                 roles[name] = {
                     color: r.colorSelect.value,
                     ch: parseInt(r.chInput.value) || null,
+                    device: parseInt(r.deviceSelect.value) || 0,
                 }
                 if (r.originalName && r.originalName !== name) {
                     renames.push({ from: r.originalName, to: name })
@@ -108,10 +126,24 @@
         })
 
         async function init() {
-            const rolesData = await window.electronAPI.getRoles()
+            const [rolesData, settingsData] = await Promise.all([
+                window.electronAPI.getRoles(),
+                window.electronAPI.getSettings(),
+            ])
+            const micDevices = settingsData.micDevices && settingsData.micDevices.length > 0
+                ? settingsData.micDevices
+                : [{ name: 'Gerät 1' }]
+            deviceNames = micDevices.map((d, i) => d.name || `Gerät ${i + 1}`)
+
+            // Hide device column header when only one device configured
+            if (deviceNames.length <= 1) {
+                const hdr = document.getElementById('col-device-header')
+                if (hdr) hdr.style.display = 'none'
+            }
+
             for (const [name, cfg] of Object.entries(rolesData)) {
-                addRow(name, cfg.color || 'blue', cfg.ch, false)
+                addRow(name, cfg.color || 'blue', cfg.ch, cfg.device ?? 0, false)
             }
         }
         init()
-    
+

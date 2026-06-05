@@ -47,6 +47,18 @@
             width: 130px;
         }
         .role-color:focus { outline: none; border-color: #61afef; }
+        .role-device {
+            background: #383c44;
+            color: #abb2bf;
+            border: 1px solid #4b5263;
+            padding: 0.35rem 0.4rem;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            font-family: inherit;
+            cursor: pointer;
+            width: 130px;
+        }
+        .role-device:focus { outline: none; border-color: #61afef; }
         .role-ch {
             width: 64px;
             background: #383c44;
@@ -135,6 +147,7 @@
         }
         .col-name { flex: 1; }
         .col-color { width: calc(18px + 130px + 0.5rem); }
+        .col-device { width: 130px; }
         .col-ch { width: 64px; text-align: center; }
     </style>
 </head>
@@ -143,6 +156,7 @@
     <div class="col-headers">
         <div class="col-name">Name</div>
         <div class="col-color">Farbe</div>
+        <div class="col-device" id="col-device-header">Gerät</div>
         <div class="col-ch">Kanal</div>
     </div>
     <div id="role-list"></div>

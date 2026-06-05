@@ -6,7 +6,6 @@ const WaveSurfer = require('wavesurfer.js')
 const createDOMPurify = require('dompurify')
 
 let config = {}
-let usedChs = []
 let triggers = []
 let triggerYamls = []
 let parseErrors    = []   // {blockNum, line, message}
@@ -163,7 +162,7 @@ let midiBackLongPressTimer = null
 let midiBackLongPressed    = false
 let pickModeCallback = null
 let midiAccess = null
-let midiX32 = null
+let micDeviceOutputs = []   // MIDI output per micDevices entry (null = not connected / OSC)
 let midiTrigger = null
 let midiTC = null
 let midiLiveDevice = null
@@ -174,27 +173,7 @@ let oscPort = 8000
 let appLanguage = 'de'
 let effectiveLightScene = null  // light: value of last fired cue that had one
 let effectiveMics       = null  // mic: value of last fired cue that had one
-let micMuteMethod        = 'x32'
-let micMuteMidiType      = 'sysex'
-let micMuteMidiUnmute    = 'B1 {ch} 00'
-let micMuteMidiMute      = 'B1 {ch} 7F'
-let micMuteMidiNoteCh    = '1'
-let micMuteMidiNoteNum   = '{ch}'
-let micMuteMidiVelOn     = 127
-let micMuteMidiVelOff    = 0
-let micMuteMidiCcCh      = '2'
-let micMuteMidiCcNum     = '{ch}'
-let micMuteMidiCcValOn   = 0
-let micMuteMidiCcValOff  = 127
-let micMuteMidiPcCh      = '1'
-let micMuteMidiPcOn      = 0
-let micMuteMidiPcOff     = 1
-let micMuteOscOnPath     = '/ch/{ch}/mix/on'
-let micMuteOscOnArgType  = 'float'
-let micMuteOscOnArg      = '1'
-let micMuteOscOffPath    = '/ch/{ch}/mix/on'
-let micMuteOscOffArgType = 'float'
-let micMuteOscOffArg     = '0'
+let micDevices = []   // array of device config objects (from settings.micDevices)
 
 // t() is defined by dist/i18n.js which is loaded before bundle.js in index.html.
 // Fallback for unit-test contexts where window.t may not exist.
@@ -2698,7 +2677,6 @@ function rerender(newText) {
     triggerAudio.clear()
     slfDerivedTcBadges.clear()
     fileToTriggers.clear()
-    usedChs = []
     config = {}
     effectiveLightScene = null
     effectiveMics       = null
@@ -4814,11 +4792,14 @@ function buildTrigger(codeblockYaml, index) {
     updateAutoMicBtnAppearance(autoMicBtn, index)
     autoMicBtn.addEventListener('mouseenter', () => updateAutoMicBtnAppearance(autoMicBtn, index))
     autoMicBtn.addEventListener('mouseleave', () => updateAutoMicBtnAppearance(autoMicBtn, index))
-    autoMicBtn.addEventListener('mousedown', e => e.stopPropagation())
+    autoMicBtn.addEventListener('mousedown', e => {
+        e.stopPropagation()
+        autoMicBtn._shiftAtMousedown = shiftHeld
+    })
     autoMicBtn.addEventListener('click', e => {
         e.stopPropagation()
         const isActive = triggerYamls[index]?.auto_mic
-        if (isActive && !shiftHeld) return   // deactivate only via Shift+Click
+        if (isActive && !autoMicBtn._shiftAtMousedown) return   // deactivate only via Shift+Click
         updateAutoMicInScript(index, !isActive)
     })
     triggerDiv.querySelector('.trigger-actions').appendChild(autoMicBtn)
@@ -5614,7 +5595,7 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     confirmBtn.addEventListener('click', () => {
         const newYaml = {}
 
-        // mic — skip when auto-mic is active globally
+        // mic — when auto-mic is active globally, preserve any existing manual value; else use checkboxes
         if (!hasAnyAutoMic()) {
             if (muteallCb.checked) {
                 newYaml.mic = 'muteall'
@@ -5623,6 +5604,8 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
                 if (sel.length === 1) newYaml.mic = sel[0]
                 else if (sel.length > 1) newYaml.mic = sel
             }
+        } else if (existingYaml?.mic !== undefined) {
+            newYaml.mic = existingYaml.mic
         }
 
         // music (preserve existing object props like volume/start/end when editing or copying)
@@ -6745,10 +6728,6 @@ function convertCodeblocks() {
         }
         codeblock.replaceWith(buildTrigger(codeblockYaml, index))
     }
-    for (const roleName of Object.keys(config.roles ?? {})) {
-        const ch = config.roles[roleName].ch
-        if (!usedChs.includes(ch)) usedChs.push(ch)
-    }
 }
 
 function colorText() {
@@ -6823,84 +6802,125 @@ function initButtons() {
     document.getElementById('search-close').addEventListener('click', closeSearch)
 }
 
+// Migrate flat settings to micDevices array (backwards compat)
+function _migrateMicDevices(s) {
+    if (s.micDevices && s.micDevices.length > 0) return s.micDevices
+    return [{
+        name:                'Gerät 1',
+        micMuteMethod:       s.micMuteMethod        || 'x32',
+        midiX32Device:       s.midiX32Device         || null,
+        x32OscHost:          s.x32OscHost             || '192.168.1.1',
+        x32OscPort:          s.x32OscPort             ?? 10023,
+        micMuteMidiType:     s.micMuteMidiType        || 'sysex',
+        micMuteMidiUnmute:   s.micMuteMidiUnmute       || 'B1 {ch} 00',
+        micMuteMidiMute:     s.micMuteMidiMute         || 'B1 {ch} 7F',
+        micMuteMidiNoteCh:   s.micMuteMidiNoteCh       || '1',
+        micMuteMidiNoteNum:  s.micMuteMidiNoteNum      || '{ch}',
+        micMuteMidiVelOn:    s.micMuteMidiVelOn        ?? 127,
+        micMuteMidiVelOff:   s.micMuteMidiVelOff       ?? 0,
+        micMuteMidiCcCh:     s.micMuteMidiCcCh         || '2',
+        micMuteMidiCcNum:    s.micMuteMidiCcNum        || '{ch}',
+        micMuteMidiCcValOn:  s.micMuteMidiCcValOn      ?? 0,
+        micMuteMidiCcValOff: s.micMuteMidiCcValOff     ?? 127,
+        micMuteMidiPcCh:     s.micMuteMidiPcCh         || '1',
+        micMuteMidiPcOn:     s.micMuteMidiPcOn         ?? 0,
+        micMuteMidiPcOff:    s.micMuteMidiPcOff        ?? 1,
+        micMuteOscOnPath:    s.micMuteOscOnPath  || s.micMuteOscPath || '/ch/{ch}/mix/on',
+        micMuteOscOnArgType: s.micMuteOscOnArgType  || 'float',
+        micMuteOscOnArg:     s.micMuteOscOnArg  !== undefined ? String(s.micMuteOscOnArg)  : (s.micMuteOscUnmute !== undefined ? String(s.micMuteOscUnmute) : '1'),
+        micMuteOscOffPath:   s.micMuteOscOffPath || s.micMuteOscPath || '/ch/{ch}/mix/on',
+        micMuteOscOffArgType:s.micMuteOscOffArgType || 'float',
+        micMuteOscOffArg:    s.micMuteOscOffArg !== undefined ? String(s.micMuteOscOffArg) : (s.micMuteOscMute !== undefined ? String(s.micMuteOscMute) : '0'),
+    }]
+}
+
 function x32UnmuteChannels(mic) {
     if (!mic) return
-    let channels = []
-    if (typeof mic === "string") {
-        if (mic !== "muteall") channels.push(config.roles[mic]?.ch)
-    } else {
-        for (const m of mic) channels.push(config.roles[m]?.ch)
-    }
-    channels = channels.filter(Boolean)
+    const unmutedRoles = mic === 'muteall' ? [] : (Array.isArray(mic) ? mic : [mic])
 
-    if (micMuteMethod === 'x32') {
-        if (!midiX32) return
-        for (const used of usedChs) {
-            const value = channels.includes(used) ? 0 : 127
-            midiX32.send([0xB1, used - 1, value])
+    for (let devIdx = 0; devIdx < micDevices.length; devIdx++) {
+        const dev = micDevices[devIdx]
+        // Collect all channels for this device + which ones to unmute
+        const devChs = [], unmuteChs = []
+        for (const [roleName, roleCfg] of Object.entries(config.roles || {})) {
+            if ((roleCfg.device ?? 0) !== devIdx) continue
+            const ch = roleCfg.ch
+            if (!ch) continue
+            if (!devChs.includes(ch)) devChs.push(ch)
+            if (unmutedRoles.includes(roleName) && !unmuteChs.includes(ch)) unmuteChs.push(ch)
         }
-    } else if (micMuteMethod === 'custom-midi') {
-        if (!midiX32) return
+        if (devChs.length === 0) continue
+        _sendMicToDevice(dev, devIdx, devChs, unmuteChs)
+    }
+}
+
+function _sendMicToDevice(dev, devIdx, allChs, unmuteChs) {
+    if (dev.micMuteMethod === 'x32') {
+        const out = micDeviceOutputs[devIdx]
+        if (!out) return
+        for (const ch of allChs) out.send([0xB1, ch - 1, unmuteChs.includes(ch) ? 0 : 127])
+    } else if (dev.micMuteMethod === 'custom-midi') {
+        const out = micDeviceOutputs[devIdx]
+        if (!out) return
         function resolveCh(tmpl, used0) { return parseInt(String(tmpl).replace('{ch}', used0)) }
-        if (micMuteMidiType === 'sysex') {
+        if (dev.micMuteMidiType === 'sysex') {
             function parseMidiTemplate(tmpl, ch, val) {
-                return tmpl.trim().split(/\s+/).map(byte => {
-                    const s = byte.replace('{ch}', ch).replace('{val}', val)
+                return tmpl.trim().split(/\s+/).map(b => {
+                    const s = b.replace('{ch}', ch).replace('{val}', val)
                     return parseInt(s, 16)
                 }).filter(n => !isNaN(n))
             }
-            for (const used of usedChs) {
-                const isUnmuted = channels.includes(used)
-                const tmpl = isUnmuted ? micMuteMidiUnmute : micMuteMidiMute
-                const bytes = parseMidiTemplate(tmpl, used - 1, isUnmuted ? 0x00 : 0x7F)
-                if (bytes.length) midiX32.send(bytes)
+            for (const ch of allChs) {
+                const isUnmuted = unmuteChs.includes(ch)
+                const bytes = parseMidiTemplate(isUnmuted ? dev.micMuteMidiUnmute : dev.micMuteMidiMute, ch - 1, isUnmuted ? 0x00 : 0x7F)
+                if (bytes.length) out.send(bytes)
             }
-        } else if (micMuteMidiType === 'note') {
-            for (const used of usedChs) {
-                const isUnmuted = channels.includes(used)
-                const ch   = (resolveCh(micMuteMidiNoteCh, used - 1) - 1) & 0xF
-                const note = resolveCh(micMuteMidiNoteNum, used - 1) & 0x7F
-                const vel  = (isUnmuted ? micMuteMidiVelOn : micMuteMidiVelOff) & 0x7F
-                midiX32.send([0x90 | ch, note, vel])
-                if (vel > 0) setTimeout(() => midiX32?.send([0x80 | ch, note, 0]), 100)
+        } else if (dev.micMuteMidiType === 'note') {
+            for (const ch of allChs) {
+                const isUnmuted = unmuteChs.includes(ch)
+                const mCh  = (resolveCh(dev.micMuteMidiNoteCh, ch - 1) - 1) & 0xF
+                const note = resolveCh(dev.micMuteMidiNoteNum, ch - 1) & 0x7F
+                const vel  = (isUnmuted ? dev.micMuteMidiVelOn : dev.micMuteMidiVelOff) & 0x7F
+                out.send([0x90 | mCh, note, vel])
+                if (vel > 0) setTimeout(() => out?.send([0x80 | mCh, note, 0]), 100)
             }
-        } else if (micMuteMidiType === 'cc') {
-            for (const used of usedChs) {
-                const isUnmuted = channels.includes(used)
-                const ch  = (resolveCh(micMuteMidiCcCh, used - 1) - 1) & 0xF
-                const cc  = resolveCh(micMuteMidiCcNum, used - 1) & 0x7F
-                const val = (isUnmuted ? micMuteMidiCcValOn : micMuteMidiCcValOff) & 0x7F
-                midiX32.send([0xB0 | ch, cc, val])
+        } else if (dev.micMuteMidiType === 'cc') {
+            for (const ch of allChs) {
+                const isUnmuted = unmuteChs.includes(ch)
+                const mCh = (resolveCh(dev.micMuteMidiCcCh, ch - 1) - 1) & 0xF
+                const cc  = resolveCh(dev.micMuteMidiCcNum, ch - 1) & 0x7F
+                out.send([0xB0 | mCh, cc, (isUnmuted ? dev.micMuteMidiCcValOn : dev.micMuteMidiCcValOff) & 0x7F])
             }
-        } else if (micMuteMidiType === 'pc') {
-            for (const used of usedChs) {
-                const isUnmuted = channels.includes(used)
-                const ch   = (resolveCh(micMuteMidiPcCh, used - 1) - 1) & 0xF
-                const prog = (isUnmuted ? micMuteMidiPcOn : micMuteMidiPcOff) & 0x7F
-                midiX32.send([0xC0 | ch, prog])
+        } else if (dev.micMuteMidiType === 'pc') {
+            for (const ch of allChs) {
+                const isUnmuted = unmuteChs.includes(ch)
+                const mCh  = (resolveCh(dev.micMuteMidiPcCh, ch - 1) - 1) & 0xF
+                out.send([0xC0 | mCh, (isUnmuted ? dev.micMuteMidiPcOn : dev.micMuteMidiPcOff) & 0x7F])
             }
         }
-    } else if (micMuteMethod === 'custom-osc') {
-        if (!oscEnabled || !window.electronAPI?.sendOsc) return
+    } else if (dev.micMuteMethod === 'custom-osc') {
+        if (!window.electronAPI?.sendOsc) return
         function padCh(n) { return String(n).padStart(2, '0') }
-        for (const used of usedChs) {
-            const isUnmuted  = channels.includes(used)
-            const oscPath    = (isUnmuted ? micMuteOscOnPath    : micMuteOscOffPath).replace('{ch}', padCh(used))
-            const oscArgType = isUnmuted  ? micMuteOscOnArgType : micMuteOscOffArgType
-            const oscArg     = isUnmuted  ? micMuteOscOnArg     : micMuteOscOffArg
+        const host = dev.x32OscHost || '192.168.1.1'
+        const port = dev.x32OscPort || 10023
+        for (const ch of allChs) {
+            const isUnmuted = unmuteChs.includes(ch)
+            const path    = (isUnmuted ? dev.micMuteOscOnPath    : dev.micMuteOscOffPath).replace('{ch}', padCh(ch))
+            const argType = isUnmuted  ? dev.micMuteOscOnArgType : dev.micMuteOscOffArgType
+            const argVal  = isUnmuted  ? dev.micMuteOscOnArg     : dev.micMuteOscOffArg
             const args = []
-            if (oscArgType !== 'none' && oscArg !== '') {
-                if (oscArgType === 'int')        args.push(parseInt(oscArg) || 0)
-                else if (oscArgType === 'float') args.push(parseFloat(oscArg) || 0)
-                else                             args.push(String(oscArg))
+            if (argType !== 'none' && argVal !== '') {
+                if (argType === 'int')        args.push(parseInt(argVal) || 0)
+                else if (argType === 'float') args.push(parseFloat(argVal) || 0)
+                else                         args.push(String(argVal))
             }
-            window.electronAPI.sendOsc({ path: oscPath, args, host: oscHost, port: oscPort })
+            window.electronAPI.sendOsc({ path, args, host, port })
         }
     }
 }
 
 function refreshMidiDevices(settings) {
-    midiX32 = null
+    micDeviceOutputs = micDevices.map(() => null)
     midiTrigger = null
     midiTC = null
     midiGoNote    = settings.midiGoNote    || null
@@ -6908,7 +6928,12 @@ function refreshMidiDevices(settings) {
     midiLiveDevice = settings.midiLiveDevice || null
     if (!midiAccess) return
     for (const output of midiAccess.outputs.values()) {
-        if (settings.midiX32Device && output.name === settings.midiX32Device) midiX32 = output
+        for (let i = 0; i < micDevices.length; i++) {
+            const dev = micDevices[i]
+            if ((dev.micMuteMethod === 'x32' || dev.micMuteMethod === 'custom-midi') &&
+                dev.midiX32Device && output.name === dev.midiX32Device)
+                micDeviceOutputs[i] = output
+        }
         if (settings.midiTriggerDevice && output.name === settings.midiTriggerDevice) midiTrigger = output
         if (settings.midiTCDevice && output.name === settings.midiTCDevice) midiTC = output
     }
@@ -7001,27 +7026,8 @@ async function initApp() {
     oscEnabled      = savedSettings.oscEnabled ?? false
     oscHost         = savedSettings.oscHost    || '127.0.0.1'
     oscPort         = savedSettings.oscPort    ?? 8000
-    micMuteMethod       = savedSettings.micMuteMethod   || 'x32'
-    micMuteMidiType     = savedSettings.micMuteMidiType || 'sysex'
-    micMuteMidiUnmute   = savedSettings.micMuteMidiUnmute || 'B1 {ch} 00'
-    micMuteMidiMute     = savedSettings.micMuteMidiMute   || 'B1 {ch} 7F'
-    micMuteMidiNoteCh   = savedSettings.micMuteMidiNoteCh   || '1'
-    micMuteMidiNoteNum  = savedSettings.micMuteMidiNoteNum  || '{ch}'
-    micMuteMidiVelOn    = savedSettings.micMuteMidiVelOn    ?? 127
-    micMuteMidiVelOff   = savedSettings.micMuteMidiVelOff   ?? 0
-    micMuteMidiCcCh     = savedSettings.micMuteMidiCcCh    || '2'
-    micMuteMidiCcNum    = savedSettings.micMuteMidiCcNum   || '{ch}'
-    micMuteMidiCcValOn  = savedSettings.micMuteMidiCcValOn  ?? 0
-    micMuteMidiCcValOff = savedSettings.micMuteMidiCcValOff ?? 127
-    micMuteMidiPcCh     = savedSettings.micMuteMidiPcCh    || '1'
-    micMuteMidiPcOn     = savedSettings.micMuteMidiPcOn     ?? 0
-    micMuteMidiPcOff    = savedSettings.micMuteMidiPcOff    ?? 1
-    micMuteOscOnPath     = savedSettings.micMuteOscOnPath  || savedSettings.micMuteOscPath || '/ch/{ch}/mix/on'
-    micMuteOscOnArgType  = savedSettings.micMuteOscOnArgType  || 'float'
-    micMuteOscOnArg      = savedSettings.micMuteOscOnArg  !== undefined ? String(savedSettings.micMuteOscOnArg)  : (savedSettings.micMuteOscUnmute !== undefined ? String(savedSettings.micMuteOscUnmute) : '1')
-    micMuteOscOffPath    = savedSettings.micMuteOscOffPath || savedSettings.micMuteOscPath || '/ch/{ch}/mix/on'
-    micMuteOscOffArgType = savedSettings.micMuteOscOffArgType || 'float'
-    micMuteOscOffArg     = savedSettings.micMuteOscOffArg !== undefined ? String(savedSettings.micMuteOscOffArg) : (savedSettings.micMuteOscMute   !== undefined ? String(savedSettings.micMuteOscMute)   : '0')
+    micDevices       = _migrateMicDevices(savedSettings)
+    micDeviceOutputs = micDevices.map(() => null)
 
     let text = await window.electronAPI.getScriptMd()
 
@@ -7133,27 +7139,8 @@ async function initApp() {
             oscEnabled      = newSettings.oscEnabled ?? false
             oscHost         = newSettings.oscHost    || '127.0.0.1'
             oscPort         = newSettings.oscPort    ?? 8000
-            micMuteMethod       = newSettings.micMuteMethod   || 'x32'
-            micMuteMidiType     = newSettings.micMuteMidiType || 'sysex'
-            micMuteMidiUnmute   = newSettings.micMuteMidiUnmute || 'B1 {ch} 00'
-            micMuteMidiMute     = newSettings.micMuteMidiMute   || 'B1 {ch} 7F'
-            micMuteMidiNoteCh   = newSettings.micMuteMidiNoteCh   || '1'
-            micMuteMidiNoteNum  = newSettings.micMuteMidiNoteNum  || '{ch}'
-            micMuteMidiVelOn    = newSettings.micMuteMidiVelOn    ?? 127
-            micMuteMidiVelOff   = newSettings.micMuteMidiVelOff   ?? 0
-            micMuteMidiCcCh     = newSettings.micMuteMidiCcCh    || '2'
-            micMuteMidiCcNum    = newSettings.micMuteMidiCcNum   || '{ch}'
-            micMuteMidiCcValOn  = newSettings.micMuteMidiCcValOn  ?? 0
-            micMuteMidiCcValOff = newSettings.micMuteMidiCcValOff ?? 127
-            micMuteMidiPcCh     = newSettings.micMuteMidiPcCh    || '1'
-            micMuteMidiPcOn     = newSettings.micMuteMidiPcOn     ?? 0
-            micMuteMidiPcOff    = newSettings.micMuteMidiPcOff    ?? 1
-            micMuteOscOnPath     = newSettings.micMuteOscOnPath  || newSettings.micMuteOscPath || '/ch/{ch}/mix/on'
-            micMuteOscOnArgType  = newSettings.micMuteOscOnArgType  || 'float'
-            micMuteOscOnArg      = newSettings.micMuteOscOnArg  !== undefined ? String(newSettings.micMuteOscOnArg)  : (newSettings.micMuteOscUnmute !== undefined ? String(newSettings.micMuteOscUnmute) : '1')
-            micMuteOscOffPath    = newSettings.micMuteOscOffPath || newSettings.micMuteOscPath || '/ch/{ch}/mix/on'
-            micMuteOscOffArgType = newSettings.micMuteOscOffArgType || 'float'
-            micMuteOscOffArg     = newSettings.micMuteOscOffArg !== undefined ? String(newSettings.micMuteOscOffArg) : (newSettings.micMuteOscMute   !== undefined ? String(newSettings.micMuteOscMute)   : '0')
+            micDevices       = _migrateMicDevices(newSettings)
+            micDeviceOutputs = micDevices.map(() => null)
             const newLang   = newSettings.appLanguage || 'de'
             if (newLang !== appLanguage) {
                 appLanguage = newLang
@@ -7252,7 +7239,16 @@ function buildExportData(withCues, withColors) {
                 cue.trigger = `${tn.ch}.${tn.note}`
             }
             if (parsed.note)    cue.note = String(parsed.note)
-            if (parsed.mic) {
+            if (parsed.auto_mic) {
+                const computed = computeAutoMicRoles(cueNumber)
+                if (computed === 'muteall') {
+                    cue.mic = 'muteall'
+                } else if (computed) {
+                    const roles = Array.isArray(computed) ? computed : [computed]
+                    cue.micRoles = roles
+                    cue.mic = roles.join(', ')
+                }
+            } else if (parsed.mic) {
                 const roles = Array.isArray(parsed.mic) ? parsed.mic : [parsed.mic]
                 cue.micRoles = roles  // keep array for coloring
                 cue.mic = roles.join(', ')

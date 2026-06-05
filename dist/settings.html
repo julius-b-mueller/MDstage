@@ -90,6 +90,21 @@
         .midi-learn-row span.assigned { color: #abb2bf; }
         input.invalid, select.invalid { border-color: #e06c75 !important; box-shadow: 0 0 0 2px rgba(224,108,117,0.22) !important; }
         .save-block-hint { color: #e06c75; font-size: 0.82rem; align-self: center; margin-right: auto; }
+        .mic-device-card {
+            border: 1px solid #383c44;
+            border-radius: 6px;
+            padding: 0.7rem 0.75rem 0.5rem;
+            margin-bottom: 0.7rem;
+            background: #21252b;
+        }
+        .mic-device-header { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.7rem; }
+        .mic-device-header input { flex: 1; }
+        .mic-device-remove { background: none; border: 1px solid #4b5263; color: #e06c75; border-radius: 4px;
+            padding: 0.3rem 0.7rem; cursor: pointer; font-size: 1rem; line-height: 1; flex-shrink: 0; }
+        .mic-device-remove:hover { background: rgba(224,108,117,0.12); }
+        .add-device-btn { width: 100%; background: #21252b; color: #98c379; border: 1px dashed #4b5263;
+            padding: 0.5rem; border-radius: 5px; cursor: pointer; font-size: 0.9rem; font-family: inherit; margin-top: 0.2rem; }
+        .add-device-btn:hover { border-color: #98c379; background: #252930; }
     </style>
 </head>
 <body>
@@ -155,112 +170,8 @@
     </div>
 
     <div class="section-title" data-i18n="s.mischpult">Mischpult Fernbedienung</div>
-    <div class="field">
-        <label>Mikrofon-Stummschaltung</label>
-        <select id="mic-mute-method">
-            <option value="x32">x32 Midi (CC-Kanal 2)</option>
-            <option value="custom-midi">Custom MIDI</option>
-            <option value="custom-osc">Custom OSC</option>
-        </select>
-    </div>
-    <div id="x32-midi-fields">
-        <div class="field">
-            <label>MIDI-Ausgang</label>
-            <select id="x32-device">
-                <option value="" data-i18n="s.no.device">— kein Gerät —</option>
-            </select>
-        </div>
-    </div>
-    <div id="x32-osc-fields" style="display:none">
-        <div class="field">
-            <label>Adresse</label>
-            <input type="text" id="x32-osc-host" placeholder="192.168.1.1">
-        </div>
-        <div class="field">
-            <label>Port</label>
-            <input type="number" id="x32-osc-port" min="1" max="65535" placeholder="10023">
-        </div>
-    </div>
-    <div id="mic-mute-custom-midi" style="display:none">
-        <div class="field">
-            <label>Typ</label>
-            <select id="mic-mute-midi-type">
-                <option value="sysex">SysEx / Hex-Bytes</option>
-                <option value="note">Note On/Off</option>
-                <option value="cc">Control Change (CC)</option>
-                <option value="pc">Program Change (PC)</option>
-            </select>
-        </div>
-        <div id="mm-sysex">
-            <div class="field">
-                <label>ON-Befehl (Hex-Bytes)</label>
-                <input type="text" id="mic-mute-midi-unmute" placeholder="B1 {ch} 00">
-                <p class="hint"><code>{ch}</code> = Kanalindex (0-basiert). Bytes als Hex, Leerzeichen-getrennt.</p>
-            </div>
-            <div class="field">
-                <label>OFF-Befehl (Hex-Bytes)</label>
-                <input type="text" id="mic-mute-midi-mute" placeholder="B1 {ch} 7F">
-            </div>
-        </div>
-        <div id="mm-note" style="display:none">
-            <div class="field" style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
-                <div><label>MIDI-Kanal (1–16)</label><input type="text" id="mm-note-ch" placeholder="1"></div>
-                <div><label>Note (0–127 oder {ch})</label><input type="text" id="mm-note-num" placeholder="{ch}"></div>
-            </div>
-            <div class="field" style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
-                <div><label>Velocity ON</label><input type="number" id="mm-note-vel-on" min="0" max="127" placeholder="127"></div>
-                <div><label>Velocity OFF</label><input type="number" id="mm-note-vel-off" min="0" max="127" placeholder="0"></div>
-            </div>
-            <p class="hint"><code>{ch}</code> = Kanalindex (0-basiert)</p>
-        </div>
-        <div id="mm-cc" style="display:none">
-            <div class="field" style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
-                <div><label>MIDI-Kanal (1–16)</label><input type="text" id="mm-cc-ch" placeholder="2"></div>
-                <div><label>CC-Nummer (0–127 oder {ch})</label><input type="text" id="mm-cc-num" placeholder="{ch}"></div>
-            </div>
-            <div class="field" style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
-                <div><label>Wert ON</label><input type="number" id="mm-cc-val-on" min="0" max="127" placeholder="0"></div>
-                <div><label>Wert OFF</label><input type="number" id="mm-cc-val-off" min="0" max="127" placeholder="127"></div>
-            </div>
-            <p class="hint"><code>{ch}</code> = Kanalindex (0-basiert)</p>
-        </div>
-        <div id="mm-pc" style="display:none">
-            <div class="field" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.5rem">
-                <div><label>MIDI-Kanal (1–16)</label><input type="text" id="mm-pc-ch" placeholder="1"></div>
-                <div><label>Programm ON (0–127)</label><input type="number" id="mm-pc-on" min="0" max="127" placeholder="0"></div>
-                <div><label>Programm OFF (0–127)</label><input type="number" id="mm-pc-off" min="0" max="127" placeholder="1"></div>
-            </div>
-        </div>
-    </div>
-    <div id="mic-mute-custom-osc" style="display:none">
-        <div class="field">
-            <label style="color:#98c379">ON (Unmute)</label>
-            <input type="text" id="mic-mute-osc-on-path" placeholder="/ch/{ch}/mix/on">
-            <div style="display:flex;gap:.5rem;margin-top:.4rem">
-                <select id="mic-mute-osc-on-type" style="width:auto;flex-shrink:0">
-                    <option value="none">— kein Argument —</option>
-                    <option value="string">string</option>
-                    <option value="int">int</option>
-                    <option value="float">float</option>
-                </select>
-                <input type="text" id="mic-mute-osc-on-arg" placeholder="Wert" style="flex:1">
-            </div>
-        </div>
-        <div class="field">
-            <label style="color:#e06c75">OFF (Mute)</label>
-            <input type="text" id="mic-mute-osc-off-path" placeholder="/ch/{ch}/mix/on">
-            <div style="display:flex;gap:.5rem;margin-top:.4rem">
-                <select id="mic-mute-osc-off-type" style="width:auto;flex-shrink:0">
-                    <option value="none">— kein Argument —</option>
-                    <option value="string">string</option>
-                    <option value="int">int</option>
-                    <option value="float">float</option>
-                </select>
-                <input type="text" id="mic-mute-osc-off-arg" placeholder="Wert" style="flex:1">
-            </div>
-        </div>
-        <p class="hint"><code>{ch}</code> = Kanalindex (1-basiert, 2-stellig)</p>
-    </div>
+    <div id="mic-devices-list"></div>
+    <button class="add-device-btn" id="add-mic-device-btn">+ Gerät hinzufügen</button>
 
     <div class="section-title" data-i18n="s.midi.live">Live-Tasten (MIDI-Eingang)</div>
     <div class="field">

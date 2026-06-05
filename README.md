@@ -173,10 +173,10 @@ The **🎙 Auto-Mic** button in the cue action row enables automatic microphone 
 ### How it works
 
 - Click **🎙 Auto-Mic** on a cue to make it an Auto-Mic cue (`auto_mic: true` is saved in the YAML block).
-- **Shift+Click** (or click again when already active) removes the Auto-Mic flag.
+- **Shift+Click** removes the Auto-Mic flag.
 - When an Auto-Mic cue fires, the app looks at all role blocks with dialogue between that cue and the **next** Auto-Mic cue in the script. All matching microphone channels are opened; everything else is muted.
 - The **last** Auto-Mic cue (no further Auto-Mic cue after it) mutes all channels.
-- The computed microphone list is shown in the cue header with a small **auto** badge.
+- The computed microphone list is shown in the cue header.
 
 ### Manual selection is disabled when Auto-Mic is in use
 
@@ -184,7 +184,7 @@ Once any Auto-Mic cue exists in the script, manual microphone selection is disab
 
 ### Live updates
 
-The microphone list is calculated at runtime from `scriptText` — nothing is stored in the YAML. Editing the script text (adding or removing role dialogue) updates the computed mic list automatically.
+The computed microphone list is derived at runtime from the script text — editing role dialogue updates the mic list automatically. The `auto_mic: true` flag itself is stored in the YAML block, but the resulting channel list is not. Existing manual `mic` entries are preserved in their YAML blocks even while Auto-Mic is active.
 
 ---
 
