@@ -59,7 +59,7 @@ mic:
     - Julie
     - Mathilda
 light: Day
-osc: light/day
+osc: /light/day
 trigger_note:
     ch: 1
     note: 1
