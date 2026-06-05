@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     tags:
-      - '[0-9]*'
+      - '[0-9]+.[0-9]+.[0-9]+'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -17,80 +17,7 @@ concurrency:
 
 jobs:
 
-  # ── Linux ─────────────────────────────────────────────────────────────────
-  build-linux:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: 24
-          cache: 'npm'
-      - run: npm ci
-      - run: npx webpack --mode production
-      - run: node scripts/build-version.js
-      - run: npx electron-builder --linux AppImage deb rpm --publish never
-      - run: |
-          mkdir -p artifacts
-          find release -name "*.AppImage" -exec cp {} artifacts/MainDesk-linux-x64.AppImage \; 2>/dev/null || true
-          find release -name "*.deb"      -exec cp {} artifacts/MainDesk-linux-x64.deb \;      2>/dev/null || true
-          find release -name "*.rpm"      -exec cp {} artifacts/MainDesk-linux-x64.rpm \;      2>/dev/null || true
-          ls -lh artifacts/
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        with:
-          name: linux
-          path: artifacts/
-          retention-days: 14
-
-  # ── Windows ───────────────────────────────────────────────────────────────
-  build-windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: 24
-          cache: 'npm'
-      - run: npm ci
-      - run: npx webpack --mode production
-      - run: node scripts/build-version.js
-      - run: npx electron-builder --win nsis --publish never
-      - run: |
-          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-          Get-ChildItem -Recurse release -Filter "*.exe" | Copy-Item -Destination artifacts/MainDesk-windows-x64.exe
-          Get-ChildItem artifacts/
-        shell: pwsh
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        with:
-          name: windows
-          path: artifacts/
-          retention-days: 14
-
-  # ── macOS ─────────────────────────────────────────────────────────────────
-  build-macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: 24
-          cache: 'npm'
-      - run: npm ci
-      - run: npx webpack --mode production
-      - run: node scripts/build-version.js
-      - run: npx electron-builder --mac dmg --publish never
-      - run: |
-          mkdir -p artifacts
-          find release -name "*arm64.dmg" -exec cp {} artifacts/MainDesk-macos-arm64.dmg \; 2>/dev/null || true
-          find release -name "*x64.dmg"   -exec cp {} artifacts/MainDesk-macos-x64.dmg \;   2>/dev/null || true
-          ls -lh artifacts/
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        with:
-          name: macos
-          path: artifacts/
-          retention-days: 14
-
-  # ── Web-Bundle (für Browser-Vorschau) ─────────────────────────────────────
+  # ── Web-Bundle (immer) ────────────────────────────────────────────────────
   build-web:
     runs-on: ubuntu-latest
     steps:
@@ -108,10 +35,102 @@ jobs:
           path: dist/
           retention-days: 14
 
+  # ── Linux (nur bei Tags) ──────────────────────────────────────────────────
+  build-linux:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          cache: 'npm'
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/electron
+          key: linux-electron-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+      - run: npx webpack --mode production
+      - run: node scripts/build-version.js
+      - run: npx electron-builder --linux AppImage deb rpm --publish never
+      - run: |
+          mkdir -p artifacts
+          find release -name "*.AppImage" -exec cp {} artifacts/MainDesk-linux-x64.AppImage \; 2>/dev/null || true
+          find release -name "*.deb"      -exec cp {} artifacts/MainDesk-linux-x64.deb \;      2>/dev/null || true
+          find release -name "*.rpm"      -exec cp {} artifacts/MainDesk-linux-x64.rpm \;      2>/dev/null || true
+          ls -lh artifacts/
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: linux
+          path: artifacts/
+          retention-days: 14
+
+  # ── Windows (nur bei Tags) ────────────────────────────────────────────────
+  build-windows:
+    if: github.ref_type == 'tag'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          cache: 'npm'
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~\AppData\Local\electron\Cache
+          key: windows-electron-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+      - run: npx webpack --mode production
+      - run: node scripts/build-version.js
+      - run: npx electron-builder --win nsis --publish never
+      - run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          Get-ChildItem -Recurse release -Filter "*Setup*.exe" | Select-Object -First 1 | Copy-Item -Destination artifacts/MainDesk-windows-x64.exe
+          Get-ChildItem artifacts/
+        shell: pwsh
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: windows
+          path: artifacts/
+          retention-days: 14
+
+  # ── macOS (nur bei Tags) ──────────────────────────────────────────────────
+  build-macos:
+    if: github.ref_type == 'tag'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          cache: 'npm'
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/Library/Caches/electron
+          key: macos-electron-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+      - run: npx webpack --mode production
+      - run: node scripts/build-version.js
+      - run: npx electron-builder --mac dmg --publish never
+      - run: |
+          mkdir -p artifacts
+          find release -name "*arm64.dmg" -exec cp {} artifacts/MainDesk-macos-arm64.dmg \; 2>/dev/null || true
+          find release -name "*x64.dmg"   -exec cp {} artifacts/MainDesk-macos-x64.dmg \;   2>/dev/null || true
+          ls -lh artifacts/
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: macos
+          path: artifacts/
+          retention-days: 14
+
   # ── GitHub Pages ──────────────────────────────────────────────────────────
   deploy-pages:
-    needs: [build-linux, build-windows, build-macos, build-web]
-    if: ${{ always() && needs.build-linux.result == 'success' && needs.build-windows.result == 'success' && needs.build-web.result == 'success' }}
+    needs: [build-web, build-linux, build-windows, build-macos]
+    if: |
+      always() &&
+      needs.build-web.result == 'success' &&
+      (needs.build-linux.result == 'success' || needs.build-linux.result == 'skipped') &&
+      (needs.build-windows.result == 'success' || needs.build-windows.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -125,10 +144,12 @@ jobs:
         with:
           name: linux
           path: artifacts/
+        continue-on-error: true
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: windows
           path: artifacts/
+        continue-on-error: true
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: macos
@@ -150,3 +171,36 @@ jobs:
           path: public/
       - uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5
         id: deployment
+
+  # ── GitHub Release (nur bei Tags) ─────────────────────────────────────────
+  release:
+    needs: [build-linux, build-windows, build-macos]
+    if: |
+      github.ref_type == 'tag' &&
+      needs.build-linux.result == 'success' &&
+      needs.build-windows.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: linux
+          path: release-assets/
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: windows
+          path: release-assets/
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: macos
+          path: release-assets/
+        continue-on-error: true
+      - run: |
+          gh release create "${{ github.ref_name }}" \
+            release-assets/* \
+            --repo "${{ github.repository }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
