@@ -125,13 +125,8 @@ jobs:
 
   # ── GitHub Pages ──────────────────────────────────────────────────────────
   deploy-pages:
-    needs: [build-web, build-linux, build-windows, build-macos]
-    if: |
-      always() &&
-      github.ref_type == 'branch' &&
-      needs.build-web.result == 'success' &&
-      (needs.build-linux.result == 'success' || needs.build-linux.result == 'skipped') &&
-      (needs.build-windows.result == 'success' || needs.build-windows.result == 'skipped')
+    needs: [build-web]
+    if: github.ref_type == 'branch' && needs.build-web.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -143,30 +138,11 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: linux
-          path: artifacts/
-        continue-on-error: true
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: windows
-          path: artifacts/
-        continue-on-error: true
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: macos
-          path: artifacts/
-        continue-on-error: true
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
           name: web-bundle
           path: dist/
       - run: |
           cp -r website public
-          mkdir -p public/downloads
-          find artifacts -type f | xargs -I{} cp {} public/downloads/ 2>/dev/null || true
           cp -r dist public/app
-          echo "Downloads:"
-          ls -lh public/downloads/ || echo "(empty)"
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: public/
