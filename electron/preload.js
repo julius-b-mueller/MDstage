@@ -28,30 +28,46 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveRoles: (data) => ipcRenderer.invoke('save-roles', data),
     newFile: () => ipcRenderer.invoke('new-file'),
     onSettingsChanged: (callback) => {
-        ipcRenderer.on('settings-changed', (_, settings) => callback(settings))
+        const handler = (_, settings) => callback(settings)
+        ipcRenderer.on('settings-changed', handler)
+        return () => ipcRenderer.removeListener('settings-changed', handler)
     },
     onScriptChanged: (callback) => {
-        ipcRenderer.on('script-changed', () => callback())
+        const handler = () => callback()
+        ipcRenderer.on('script-changed', handler)
+        return () => ipcRenderer.removeListener('script-changed', handler)
     },
     showEditorContextMenu: (line) => ipcRenderer.invoke('show-editor-context-menu', line),
     sendLiveState: (state) => ipcRenderer.invoke('send-live-state', state),
     sendLiveVolumes: (volumes) => ipcRenderer.send('send-live-volumes', volumes),
-    onLiveVolumes: (callback) => { ipcRenderer.on('live-volumes', (_, v) => callback(v)) },
+    onLiveVolumes: (callback) => {
+        const handler = (_, v) => callback(v)
+        ipcRenderer.on('live-volumes', handler)
+        return () => ipcRenderer.removeListener('live-volumes', handler)
+    },
     liveGo: () => ipcRenderer.send('live-go'),
     liveBack: () => ipcRenderer.send('live-back'),
     selectVariant: (idx) => ipcRenderer.send('live-select-variant', idx),
     stopAudio: (cueIdx) => ipcRenderer.send('live-stop-audio', cueIdx),
     onLiveState: (callback) => {
-        ipcRenderer.on('live-state', (_, state) => callback(state))
+        const handler = (_, state) => callback(state)
+        ipcRenderer.on('live-state', handler)
+        return () => ipcRenderer.removeListener('live-state', handler)
     },
     onLiveGo: (callback) => {
-        ipcRenderer.on('live-go', () => callback())
+        const handler = () => callback()
+        ipcRenderer.on('live-go', handler)
+        return () => ipcRenderer.removeListener('live-go', handler)
     },
     onLiveBack: (callback) => {
-        ipcRenderer.on('live-back', () => callback())
+        const handler = () => callback()
+        ipcRenderer.on('live-back', handler)
+        return () => ipcRenderer.removeListener('live-back', handler)
     },
     onLiveWindowState: (callback) => {
-        ipcRenderer.on('live-window-state', (_, isOpen) => callback(isOpen))
+        const handler = (_, isOpen) => callback(isOpen)
+        ipcRenderer.on('live-window-state', handler)
+        return () => ipcRenderer.removeListener('live-window-state', handler)
     },
     openLiveWindow: () => ipcRenderer.send('open-live-window'),
     exportPdf: (data) => ipcRenderer.invoke('export-pdf', data),

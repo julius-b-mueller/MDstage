@@ -6630,7 +6630,7 @@ h3{font-size:1.1rem;font-weight:bold;font-style:italic;margin-top:1.2rem;margin-
 .narr{margin:.3rem 0;color:#222}`
 
     return `<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><style>${css}</style></head><body>
+<html><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';"><style>${css}</style></head><body>
 <div class="title-page"><h1>${_esc(title)}</h1><div class="title-meta">Regiebuch &mdash; ${_esc(date)}</div></div>
 ${tocHtml}
 ${contentLines.join('\n')}

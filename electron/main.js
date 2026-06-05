@@ -750,6 +750,8 @@ app.whenReady().then(async () => {
     ipcMain.handle('get-script-md', () => fs.readFileSync(scriptMdPath, 'utf8'))
 
     ipcMain.handle('write-script-md', (_, content) => {
+        if (typeof content !== 'string') throw new Error('Invalid content')
+        if (content.length > 10 * 1024 * 1024) throw new Error('File too large')
         fs.writeFileSync(scriptMdPath, content, 'utf8')
     })
 
@@ -868,10 +870,14 @@ app.whenReady().then(async () => {
         if (mainWindow) mainWindow.webContents.executeJavaScript('window.__liveBack && window.__liveBack()').catch(() => {})
     })
     ipcMain.on('live-select-variant', (_, idx) => {
-        if (mainWindow) mainWindow.webContents.executeJavaScript(`window.__selectVariant && window.__selectVariant(${parseInt(idx)})`).catch(() => {})
+        const n = parseInt(idx)
+        if (!Number.isFinite(n)) return
+        if (mainWindow) mainWindow.webContents.executeJavaScript(`window.__selectVariant && window.__selectVariant(${n})`).catch(() => {})
     })
     ipcMain.on('live-stop-audio', (_, cueIdx) => {
-        if (mainWindow) mainWindow.webContents.executeJavaScript(`window.__stopAudio && window.__stopAudio(${parseInt(cueIdx)})`).catch(() => {})
+        const n = parseInt(cueIdx)
+        if (!Number.isFinite(n)) return
+        if (mainWindow) mainWindow.webContents.executeJavaScript(`window.__stopAudio && window.__stopAudio(${n})`).catch(() => {})
     })
 
     Menu.setApplicationMenu(buildMenu())
