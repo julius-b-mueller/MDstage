@@ -122,18 +122,61 @@
 
     <div class="section-title" data-i18n="s.midi">MIDI</div>
     <div class="field">
-        <label data-i18n="s.midi.x32">X32 / Mischpult MIDI-Ausgang</label>
-        <select id="x32-device">
+        <label data-i18n="s.midi.trigger">Trigger-Noten</label>
+        <select id="trigger-device">
             <option value="" data-i18n="s.no.device">— kein Gerät —</option>
         </select>
     </div>
     <div class="field">
+        <label data-i18n="s.midi.tc">MIDI-Timecode</label>
+        <select id="tc-device">
+            <option value="" data-i18n="s.no.device">— kein Gerät —</option>
+        </select>
+    </div>
+    <div class="section-title" data-i18n="s.osc">OSC</div>
+    <div class="field">
+        <label style="display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf">
+            <input type="checkbox" id="osc-enabled" style="width:auto">
+            <span data-i18n="s.osc.enabled">OSC aktiviert</span>
+        </label>
+    </div>
+    <div id="osc-fields">
+        <div class="field">
+            <label data-i18n="s.osc.host">Ziel-Adresse</label>
+            <input type="text" id="osc-host" placeholder="127.0.0.1">
+        </div>
+        <div class="field">
+            <label data-i18n="s.osc.port">Port</label>
+            <input type="number" id="osc-port" min="1" max="65535" placeholder="8000">
+        </div>
+    </div>
+
+    <div class="section-title" data-i18n="s.mischpult">Mischpult Fernbedienung</div>
+    <div class="field">
         <label>Mikrofon-Stummschaltung</label>
         <select id="mic-mute-method">
-            <option value="x32">X32 (CC-Kanal 2)</option>
+            <option value="x32">x32 Midi (CC-Kanal 2)</option>
             <option value="custom-midi">Custom MIDI</option>
             <option value="custom-osc">Custom OSC</option>
         </select>
+    </div>
+    <div id="x32-midi-fields">
+        <div class="field">
+            <label>MIDI-Ausgang</label>
+            <select id="x32-device">
+                <option value="" data-i18n="s.no.device">— kein Gerät —</option>
+            </select>
+        </div>
+    </div>
+    <div id="x32-osc-fields" style="display:none">
+        <div class="field">
+            <label>Adresse</label>
+            <input type="text" id="x32-osc-host" placeholder="192.168.1.1">
+        </div>
+        <div class="field">
+            <label>Port</label>
+            <input type="number" id="x32-osc-port" min="1" max="65535" placeholder="10023">
+        </div>
     </div>
     <div id="mic-mute-custom-midi" style="display:none">
         <div class="field">
@@ -214,35 +257,6 @@
             </div>
         </div>
         <p class="hint"><code>{ch}</code> = Kanalindex (1-basiert, 2-stellig)</p>
-    </div>
-    <div class="field">
-        <label data-i18n="s.midi.trigger">Trigger-Noten</label>
-        <select id="trigger-device">
-            <option value="" data-i18n="s.no.device">— kein Gerät —</option>
-        </select>
-    </div>
-    <div class="field">
-        <label data-i18n="s.midi.tc">MIDI-Timecode</label>
-        <select id="tc-device">
-            <option value="" data-i18n="s.no.device">— kein Gerät —</option>
-        </select>
-    </div>
-    <div class="section-title" data-i18n="s.osc">OSC</div>
-    <div class="field">
-        <label style="display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf">
-            <input type="checkbox" id="osc-enabled" style="width:auto">
-            <span data-i18n="s.osc.enabled">OSC aktiviert</span>
-        </label>
-    </div>
-    <div id="osc-fields">
-        <div class="field">
-            <label data-i18n="s.osc.host">Ziel-Adresse</label>
-            <input type="text" id="osc-host" placeholder="127.0.0.1">
-        </div>
-        <div class="field">
-            <label data-i18n="s.osc.port">Port</label>
-            <input type="number" id="osc-port" min="1" max="65535" placeholder="8000">
-        </div>
     </div>
 
     <div class="section-title" data-i18n="s.midi.live">Live-Tasten (MIDI-Eingang)</div>
@@ -508,10 +522,12 @@
 
             await refreshRoutingTable()
 
-            // ── Mic mute method ───────────────────────────────────────
+            // ── Mischpult Fernbedienung ───────────────────────────────
             const micMuteMethodSel     = document.getElementById('mic-mute-method')
             const micMuteCustomMidiDiv = document.getElementById('mic-mute-custom-midi')
             const micMuteCustomOscDiv  = document.getElementById('mic-mute-custom-osc')
+            const x32MidiFields        = document.getElementById('x32-midi-fields')
+            const x32OscFields         = document.getElementById('x32-osc-fields')
             const micMuteMidiUnmuteEl  = document.getElementById('mic-mute-midi-unmute')
             const micMuteMidiMuteEl    = document.getElementById('mic-mute-midi-mute')
             const micMuteMidiTypeSel   = document.getElementById('mic-mute-midi-type')
@@ -541,6 +557,8 @@
 
             function updateMicMuteVisibility() {
                 const m = micMuteMethodSel.value
+                x32MidiFields.style.display        = (m === 'x32' || m === 'custom-midi') ? '' : 'none'
+                x32OscFields.style.display         = m === 'custom-osc' ? '' : 'none'
                 micMuteCustomMidiDiv.style.display = m === 'custom-midi' ? '' : 'none'
                 micMuteCustomOscDiv.style.display  = m === 'custom-osc'  ? '' : 'none'
             }
@@ -561,6 +579,9 @@
             const triggerSelect   = document.getElementById('trigger-device')
             const tcSelect        = document.getElementById('tc-device')
             const liveInputSelect = document.getElementById('live-input-device')
+
+            document.getElementById('x32-osc-host').value = settings.x32OscHost || '192.168.1.1'
+            document.getElementById('x32-osc-port').value = settings.x32OscPort ?? 10023
 
             try {
                 const midiAccess = await navigator.requestMIDIAccess({ sysex: true })
@@ -713,6 +734,8 @@
                 await window.electronAPI.saveSettings({
                     mainAudioDevice: mainAudioSel.value || null,
                     ...getRouting(),
+                    x32OscHost:      document.getElementById('x32-osc-host').value.trim() || '192.168.1.1',
+                    x32OscPort:      parseInt(document.getElementById('x32-osc-port').value) || 10023,
                     midiX32Device:   x32Select.value    || null,
                     midiTriggerDevice: triggerSelect.value || null,
                     midiTCDevice:     tcSelect.value     || null,

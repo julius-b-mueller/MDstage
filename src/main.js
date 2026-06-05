@@ -4603,6 +4603,12 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     mfLabel.textContent = t('dlg.trigger.music')
     const mfComp = createAudioSelect(audioFiles, t('dlg.trigger.music.none'))
     mfWrap.append(mfLabel, mfComp.element)
+    if (!window.__webPreview) {
+        const mfHint = document.createElement('p')
+        mfHint.style.cssText = 'font-size:0.72rem;color:#4a505a;margin:0.2rem 0 0'
+        mfHint.textContent = 'Aus vorhandenen auswählen oder neue Datei per Drag & Drop hinzufügen'
+        mfWrap.appendChild(mfHint)
+    }
     box.appendChild(mfWrap)
 
     if ((isEdit || isCopy) && existingYaml?.music) {
@@ -4619,6 +4625,12 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     const monWarning = document.createElement('div')
     monWarning.style.cssText = 'color:#e5c07b;font-size:0.82rem;margin-top:0.3rem;display:none'
     monWrap.append(monLabel, monComp.element, monWarning)
+    if (!window.__webPreview) {
+        const monHint = document.createElement('p')
+        monHint.style.cssText = 'font-size:0.72rem;color:#4a505a;margin:0.2rem 0 0'
+        monHint.textContent = 'Aus vorhandenen auswählen oder neue Datei per Drag & Drop hinzufügen'
+        monWrap.appendChild(monHint)
+    }
     box.appendChild(monWrap)
 
     if ((isEdit || isCopy) && existingYaml?.music && typeof existingYaml.music === 'object' && existingYaml.music.monitor) {

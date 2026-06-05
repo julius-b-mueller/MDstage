@@ -1,6 +1,6 @@
 body {
     background-color: #282c34;
-    font-family: 'Gill Sans', 'Gill Sans MT', Calibri, 'Trebuchet MS', sans-serif;
+    font-family: 'Gill Sans', 'Gill Sans MT', Calibri, 'Trebuchet MS', 'Apple Symbols', 'Segoe UI Symbol', 'Segoe UI Emoji', 'Noto Sans Symbols', 'Noto Sans Symbols 2', sans-serif;
     color: #abb2bf;
     margin: 0;
     padding: 0;
@@ -1022,7 +1022,7 @@ body.shift-held #script-content [data-block-idx]:not(.trigger):not(.trigger-grou
 /* Shared text/font base for both editor types */
 .inline-editor {
     color: #abb2bf;
-    font-family: 'Gill Sans', 'Gill Sans MT', Calibri, 'Trebuchet MS', sans-serif;
+    font-family: 'Gill Sans', 'Gill Sans MT', Calibri, 'Trebuchet MS', 'Apple Symbols', 'Segoe UI Symbol', 'Segoe UI Emoji', 'Noto Sans Symbols', 'Noto Sans Symbols 2', sans-serif;
     font-size: 1rem;
     line-height: 1.5;
     outline: none;

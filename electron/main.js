@@ -52,6 +52,7 @@ const hostname = os.hostname().split('.')[0]
 const defaultSettings = {
     mainAudioDevice: null, mainChannelL: 0, mainChannelR: 1, monitorChannelL: 2, monitorChannelR: 3,
     midiX32Device: null, midiTriggerDevice: null, midiTCDevice: null,
+    x32Protocol: 'x32midi', x32OscHost: '192.168.1.1', x32OscPort: 10023,
     editorApp: null, editorCustomCmd: '',
     midiGoNote: null, midiBackNote: null, midiLiveDevice: null,
     oscEnabled: false, oscHost: '127.0.0.1', oscPort: 8000,
@@ -740,7 +741,7 @@ app.whenReady().then(async () => {
     ipcMain.handle('list-audio-files', () => {
         const audioDir = path.join(path.dirname(scriptMdPath), 'audio')
         try {
-            if (!fs.existsSync(audioDir)) fs.mkdirSync(audioDir)
+            if (!fs.existsSync(audioDir)) return []
             return fs.readdirSync(audioDir).filter(f => /\.(mp3|wav|aiff|flac|ogg|aac|m4a)$/i.test(f)).sort()
         } catch {
             return []

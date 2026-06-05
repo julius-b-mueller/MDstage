@@ -1,7 +1,7 @@
 {
-  "name": "evb-ai",
-  "productName": "Main Desk",
-  "version": "1.1.0",
+  "name": "maindeskapp",
+  "productName": "MainDesk",
+  "version": "1.1.1",
   "description": "Das interaktive Inspizientenbuch",
   "author": {
     "name": "Julius Müller",
@@ -34,7 +34,7 @@
   },
   "build": {
     "appId": "de.maindesk.app",
-    "productName": "Main Desk",
+    "productName": "MainDesk",
     "icon": "dist/assets/icon.png",
     "asar": true,
     "npmRebuild": false,
