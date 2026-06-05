@@ -1,5 +1,5 @@
 const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron')
-const { exec } = require('child_process')
+const { execFile } = require('child_process')
 app.setName('Main Desk')
 const path = require('path')
 const fs = require('fs')
@@ -53,7 +53,7 @@ const defaultSettings = {
     mainAudioDevice: null, mainChannelL: 0, mainChannelR: 1, monitorChannelL: 2, monitorChannelR: 3,
     midiX32Device: null, midiTriggerDevice: null, midiTCDevice: null,
     x32Protocol: 'x32midi', x32OscHost: '192.168.1.1', x32OscPort: 10023,
-    editorApp: null, editorCustomCmd: '',
+    editorApp: null,
     midiGoNote: null, midiBackNote: null, midiLiveDevice: null,
     oscEnabled: false, oscHost: '127.0.0.1', oscPort: 8000,
     monitorEnabled: false,
@@ -82,7 +82,7 @@ function encodeOscMessage(address, args = []) {
 }
 
 // Keys that are personal/per-user and must not be stored in the shared markdown file
-const EDITOR_PREF_KEYS = ['editorApp', 'editorCustomCmd']
+const EDITOR_PREF_KEYS = ['editorApp']
 
 function editorPrefsPath() {
     return path.join(app.getPath('userData'), 'editor-prefs.json')
@@ -102,18 +102,13 @@ function saveEditorPrefs(settings) {
 const AUGMENTED_PATH = ['/usr/local/bin', '/opt/homebrew/bin', '/opt/homebrew/sbin', process.env.PATH || ''].join(':')
 
 function openLineInEditor(settings, line) {
-    const p = scriptMdPath.replace(/"/g, '\\"')
-    let cmd
+    const safeLine = Math.max(1, parseInt(line, 10) || 1)
+    const env = { ...process.env, PATH: AUGMENTED_PATH }
     if (settings.editorApp === 'vscode') {
-        cmd = `code --goto "${p}:${line}"`
+        execFile('code', ['--goto', `${scriptMdPath}:${safeLine}`], { env })
     } else if (settings.editorApp === 'zed') {
-        cmd = `zed "${p}:${line}"`
-    } else if (settings.editorApp === 'custom' && settings.editorCustomCmd) {
-        cmd = settings.editorCustomCmd
-            .replace('{file}', `"${p}"`)
-            .replace('{line}', String(line))
+        execFile('zed', [`${scriptMdPath}:${safeLine}`], { env })
     }
-    if (cmd) exec(cmd, { env: { ...process.env, PATH: AUGMENTED_PATH } })
 }
 
 function readConfigBlock() {
@@ -183,10 +178,16 @@ function createMainWindow() {
         },
     })
 
-    mainWindow.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => {
-        callback(true)
+    const ALLOWED_PERMISSIONS = new Set(['midi', 'midiSysex', 'media'])
+    mainWindow.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => {
+        callback(ALLOWED_PERMISSIONS.has(permission))
     })
-    mainWindow.webContents.session.setPermissionCheckHandler(() => true)
+    mainWindow.webContents.session.setPermissionCheckHandler((_wc, permission) => ALLOWED_PERMISSIONS.has(permission))
+
+    mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    mainWindow.webContents.on('will-navigate', (e, url) => {
+        if (!url.startsWith('file://')) e.preventDefault()
+    })
 
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
     mainWindow.webContents.on('did-finish-load', () => {
@@ -218,6 +219,10 @@ function createSettingsWindow() {
             preload: path.join(__dirname, 'preload.js'),
         },
     })
+    settingsWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    settingsWindow.webContents.on('will-navigate', (e, url) => {
+        if (!url.startsWith('file://')) e.preventDefault()
+    })
     settingsWindow.loadFile(path.join(__dirname, '../dist/settings.html'))
     settingsWindow.on('closed', () => { settingsWindow = null })
 }
@@ -233,6 +238,10 @@ function createRoleEditorWindow() {
             contextIsolation: true,
             preload: path.join(__dirname, 'preload.js'),
         },
+    })
+    roleEditorWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    roleEditorWindow.webContents.on('will-navigate', (e, url) => {
+        if (!url.startsWith('file://')) e.preventDefault()
     })
     roleEditorWindow.loadFile(path.join(__dirname, '../dist/role-editor.html'))
     roleEditorWindow.on('closed', () => { roleEditorWindow = null })
@@ -250,6 +259,10 @@ function createLiveWindow() {
             contextIsolation: true,
             preload: path.join(__dirname, 'preload.js'),
         },
+    })
+    liveWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    liveWindow.webContents.on('will-navigate', (e, url) => {
+        if (!url.startsWith('file://')) e.preventDefault()
     })
     liveWindow.loadFile(path.join(__dirname, '../dist/live.html'))
     liveWindow.webContents.on('before-input-event', (event, input) => {
@@ -280,6 +293,10 @@ function createAboutWindow() {
         },
     })
     aboutWindow.setMenu(null)
+    aboutWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    aboutWindow.webContents.on('will-navigate', (e, url) => {
+        if (!url.startsWith('file://')) e.preventDefault()
+    })
     aboutWindow.loadFile(path.join(__dirname, '../dist/about.html'))
     aboutWindow.on('closed', () => { aboutWindow = null })
 }
@@ -701,10 +718,14 @@ app.whenReady().then(async () => {
     }
 
     ipcMain.on('send-osc', (_, { path: oscPath, args = [], host = '127.0.0.1', port = 8000 }) => {
+        const safePort = parseInt(port, 10)
+        if (!Number.isInteger(safePort) || safePort < 1 || safePort > 65535) return
+        if (typeof host !== 'string' || !/^(\d{1,3}\.){3}\d{1,3}$/.test(host) || host.split('.').some(o => +o > 255)) return
+        if (typeof oscPath !== 'string' || !/^\/[\x20-\x7e]*$/.test(oscPath)) return
         try {
             const msg = encodeOscMessage(oscPath, args)
             const sock = dgram.createSocket('udp4')
-            sock.send(msg, port, host, () => sock.close())
+            sock.send(msg, safePort, host, () => sock.close())
         } catch (e) {
             console.error('OSC send error:', e.message)
         }
@@ -749,6 +770,8 @@ app.whenReady().then(async () => {
     })
 
     ipcMain.handle('handle-audio-drop', (_, srcPath) => {
+        if (typeof srcPath !== 'string') return null
+        if (!/\.(mp3|wav|aiff|flac|ogg|aac|m4a)$/i.test(srcPath)) return null
         const audioDir = path.join(path.dirname(scriptMdPath), 'audio')
         if (!fs.existsSync(audioDir)) fs.mkdirSync(audioDir, { recursive: true })
         const fileName = path.basename(srcPath)
@@ -848,17 +871,6 @@ app.whenReady().then(async () => {
     ipcMain.on('live-stop-audio', (_, cueIdx) => {
         if (mainWindow) mainWindow.webContents.executeJavaScript(`window.__stopAudio && window.__stopAudio(${parseInt(cueIdx)})`).catch(() => {})
     })
-
-    if (process.argv.includes('--test-gapless')) {
-        const testWin = new BrowserWindow({
-            width: 720, height: 540,
-            title: 'Gapless Audio Test',
-            webPreferences: { nodeIntegration: true, contextIsolation: false },
-        })
-        testWin.loadFile(path.join(__dirname, '../test-gapless/index.html'))
-        testWin.webContents.openDevTools({ mode: 'bottom' })
-        return
-    }
 
     Menu.setApplicationMenu(buildMenu())
     createMainWindow()

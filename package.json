@@ -20,17 +20,16 @@
   },
   "dependencies": {
     "docx": "^9.7.1",
-    "js-yaml": "^4.1.0"
+    "js-yaml": "^4.1.0",
+    "marked": "^18.0.5"
   },
   "devDependencies": {
-    "dompurify": "^3.4.7",
-    "electron": "^36.0.0",
+    "dompurify": "^3.4.8",
+    "electron": "^41.7.1",
     "electron-builder": "^26.8.1",
-    "showdown": "^2.1.0",
     "wavesurfer.js": "^7.12.7",
     "webpack": "^5.88.2",
-    "webpack-cli": "^5.1.4",
-    "webmidi": "^3.0.21"
+    "webpack-cli": "^7.0.3"
   },
   "build": {
     "appId": "de.maindesk.app",
@@ -49,20 +48,46 @@
     ],
     "mac": {
       "target": [
-        { "target": "dmg", "arch": ["arm64", "x64"] }
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
       ],
       "category": "public.app-category.utilities"
     },
     "win": {
       "target": [
-        { "target": "nsis", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
       ]
     },
     "linux": {
       "target": [
-        { "target": "AppImage", "arch": ["x64"] },
-        { "target": "deb",      "arch": ["x64"] },
-        { "target": "rpm",      "arch": ["x64"] }
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "rpm",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "category": "AudioVideo"
     }

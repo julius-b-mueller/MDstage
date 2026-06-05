@@ -1,148 +1,354 @@
 <!DOCTYPE html>
 <html lang="de">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Über – MainDesk</title>
-<link rel="icon" type="image/png" href="assets/icon.png">
-<style>
-:root {
-  --bg:#282c34;--bg2:#21252b;--bg3:#2c313a;--border:#383c44;
-  --text:#abb2bf;--dim:#5c6370;--blue:#61afef;--green:#98c379;--r:10px;
-}
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;font-size:16px;line-height:1.7}
-nav{position:sticky;top:0;z-index:100;background:var(--bg2);border-bottom:1px solid var(--border);padding:0 2rem;display:flex;align-items:center;gap:2rem;height:56px}
-.nav-logo{font-size:1.1rem;font-weight:700;color:#fff;text-decoration:none;letter-spacing:-.02em;display:flex;align-items:center;gap:.45rem}
-.nav-links{display:flex;gap:.2rem;flex:1}
-.nav-links a{color:var(--dim);text-decoration:none;padding:.35rem .7rem;border-radius:6px;font-size:.88rem;transition:color .15s,background .15s}
-.nav-links a:hover{color:var(--text);background:var(--bg3)}
-.lang-toggle{display:flex;gap:2px;background:var(--bg3);border-radius:6px;padding:3px}
-.lang-btn{background:none;border:none;cursor:pointer;padding:3px 9px;border-radius:4px;font-size:.8rem;font-weight:600;color:var(--dim);transition:all .15s}
-.lang-btn.active{background:var(--border);color:#fff}
-main{max-width:700px;margin:0 auto;padding:5rem 2rem 6rem}
-.about-header{margin-bottom:3.5rem}
-.about-header h1{font-size:2.2rem;font-weight:800;color:#fff;letter-spacing:-.03em;margin-bottom:.6rem}
-.about-header p{font-size:1.05rem;color:var(--dim);line-height:1.75;max-width:560px}
-.placeholder{background:var(--bg3);border:1px dashed var(--border);border-radius:var(--r);padding:1.4rem 1.6rem;color:var(--dim);font-size:.92rem;margin-bottom:2rem;line-height:1.8}
-.placeholder strong{color:var(--text)}
-.section{margin-bottom:2.5rem}
-.section h2{font-size:1.05rem;font-weight:700;color:#fff;margin-bottom:.6rem;padding-bottom:.35rem;border-bottom:1px solid var(--border)}
-p{margin-bottom:.8rem;font-size:.95rem}
-a{color:var(--blue);text-decoration:none}
-a:hover{text-decoration:underline}
-.contact-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:1.2rem 1.4rem;display:flex;align-items:center;gap:1rem;margin-top:1.2rem}
-.contact-card a{font-weight:600;font-size:1rem}
-footer{text-align:center;padding:2rem;color:var(--dim);font-size:.82rem;border-top:1px solid var(--border)}
-@media(max-width:640px){nav{padding:0 1rem}main{padding:3rem 1.2rem 4rem}}
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Über – MainDesk</title>
+  <link rel="icon" type="image/png" href="assets/icon.png">
+  <style>
+    :root {
+      --bg: #282c34;
+      --bg2: #21252b;
+      --bg3: #2c313a;
+      --border: #383c44;
+      --text: #abb2bf;
+      --dim: #5c6370;
+      --blue: #61afef;
+      --green: #98c379;
+      --r: 10px;
+    }
+
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      font-size: 16px;
+      line-height: 1.7
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+      padding: 0 2rem;
+      display: flex;
+      align-items: center;
+      gap: 2rem;
+      height: 56px
+    }
+
+    .nav-logo {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: #fff;
+      text-decoration: none;
+      letter-spacing: -.02em;
+      display: flex;
+      align-items: center;
+      gap: .45rem
+    }
+
+    .nav-links {
+      display: flex;
+      gap: .2rem;
+      flex: 1
+    }
+
+    .nav-links a {
+      color: var(--dim);
+      text-decoration: none;
+      padding: .35rem .7rem;
+      border-radius: 6px;
+      font-size: .88rem;
+      transition: color .15s, background .15s
+    }
+
+    .nav-links a:hover {
+      color: var(--text);
+      background: var(--bg3)
+    }
+
+    .lang-toggle {
+      display: flex;
+      gap: 2px;
+      background: var(--bg3);
+      border-radius: 6px;
+      padding: 3px
+    }
+
+    .lang-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 3px 9px;
+      border-radius: 4px;
+      font-size: .8rem;
+      font-weight: 600;
+      color: var(--dim);
+      transition: all .15s
+    }
+
+    .lang-btn.active {
+      background: var(--border);
+      color: #fff
+    }
+
+    main {
+      max-width: 700px;
+      margin: 0 auto;
+      padding: 5rem 2rem 6rem
+    }
+
+    .about-header {
+      margin-bottom: 3.5rem
+    }
+
+    .about-header h1 {
+      font-size: 2.2rem;
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: -.03em;
+      margin-bottom: .6rem
+    }
+
+    .about-header p {
+      font-size: 1.05rem;
+      color: var(--dim);
+      line-height: 1.75;
+      max-width: 560px
+    }
+
+    .placeholder {
+      background: var(--bg3);
+      border: 1px dashed var(--border);
+      border-radius: var(--r);
+      padding: 1.4rem 1.6rem;
+      color: var(--dim);
+      font-size: .92rem;
+      margin-bottom: 2rem;
+      line-height: 1.8
+    }
+
+    .placeholder strong {
+      color: var(--text)
+    }
+
+    .section {
+      margin-bottom: 2.5rem
+    }
+
+    .section h2 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: .6rem;
+      padding-bottom: .35rem;
+      border-bottom: 1px solid var(--border)
+    }
+
+    p {
+      margin-bottom: .8rem;
+      font-size: .95rem
+    }
+
+    a {
+      color: var(--blue);
+      text-decoration: none
+    }
+
+    a:hover {
+      text-decoration: underline
+    }
+
+    .contact-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 1.2rem 1.4rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-top: 1.2rem
+    }
+
+    .contact-card a {
+      font-weight: 600;
+      font-size: 1rem
+    }
+
+    footer {
+      text-align: center;
+      padding: 2rem;
+      color: var(--dim);
+      font-size: .82rem;
+      border-top: 1px solid var(--border)
+    }
+
+    @media(max-width:640px) {
+      nav {
+        padding: 0 1rem
+      }
+
+      main {
+        padding: 3rem 1.2rem 4rem
+      }
+    }
+  </style>
 </head>
+
 <body>
-<nav>
-  <a href="index.html" class="nav-logo">
-    <img src="assets/icon.png" width="24" height="24" alt="MainDesk" style="border-radius:5px;flex-shrink:0">
-    MainDesk
-  </a>
-  <div class="nav-links">
-    <a href="index.html" data-de="Zurück" data-en="Back">Zurück</a>
-    <a href="impressum.html" data-de="Impressum" data-en="Legal">Impressum</a>
-  </div>
-  <div class="lang-toggle">
-    <button class="lang-btn active" onclick="setLang('de')">DE</button>
-    <button class="lang-btn"        onclick="setLang('en')">EN</button>
-  </div>
-</nav>
-
-<main>
-
-  <!-- ── DE ──────────────────────────────────────────────────── -->
-  <div id="content-de">
-    <div class="about-header">
-      <h1>Über MainDesk</h1>
-      <p>Eine Software für alle, die Shows fahren.</p>
+  <nav>
+    <a href="index.html" class="nav-logo">
+      <img src="assets/icon.png" width="24" height="24" alt="MainDesk" style="border-radius:5px;flex-shrink:0">
+      MainDesk
+    </a>
+    <div class="nav-links">
+      <a href="index.html" data-de="Zurück" data-en="Back">Zurück</a>
+      <a href="impressum.html" data-de="Impressum" data-en="Legal">Impressum</a>
     </div>
+    <div class="lang-toggle">
+      <button class="lang-btn active" onclick="setLang('de')">DE</button>
+      <button class="lang-btn" onclick="setLang('en')">EN</button>
+    </div>
+  </nav>
 
-    <div class="section">
-      <h2>Über das Projekt</h2>
-      <div class="placeholder">
-        ✏ <strong>Hier deinen eigenen Text einfügen.</strong><br>
-        Zum Beispiel: Wie ist MainDesk entstanden? In welchem Kontext hast du es entwickelt?
-        Was hat dich motiviert? Für welche Art von Produktionen setzt du es selbst ein?
+  <main>
+
+    <!-- ── DE ──────────────────────────────────────────────────── -->
+    <div id="content-de">
+      <div class="about-header">
+        <h1>Über MainDesk</h1>
+        <p>Eine Software für alle, die Shows fahren.</p>
+      </div>
+
+      <div class="section">
+        <h2>Über das Projekt</h2>
+        <p>2020 bin ich zur <a href="https://essener-volksbuehne.de">Essener Volksbühne</a> gekommen und direkt in die
+          Technik eingestiegen. Schnell entstand der Wunsch, eine ganze Show mit nur einem einzigen Button zu fahren: In
+          einem digitalen Textbuch gibt es Schaltflächen, die alles auslösen, was die Show braucht – Ton, Licht,
+          Mikrofone. Man sieht dabei immer die aktuellen Stichworte, und auch jemand, der eine Show noch nicht auswendig
+          kennt, kann problemlos einspringen. Kein ständiges Hin- und Herschauen zwischen Textbuch und Bildschirm mehr.
+        </p>
+        <p>Die erste Version von MainDesk habe ich von Hand programmiert. Auch wenn die Einrichtung über
+          Markdown-Dateien übersichtlich und flexibel ist, wird das händische Bearbeiten der YAML-Blöcke auf Dauer
+          unpraktisch – besonders wenn die Automationen komplexer werden. Für eine wirklich alltagstaugliche Software,
+          die auch von Menschen ohne Programmierkenntnisse intuitiv bedient werden kann, muss alles über eine
+          aufgeräumte Oberfläche steuerbar sein.</p>
+        <p>Möglich wurde das durch Claude Code, das mittlerweile so leistungsfähig ist, dass ich den Großteil der
+          Implementierung nicht mehr selbst schreiben musste. Ja, MainDesk ist im Wesentlichen vibe-coded – und das ist
+          ein klarer Vorteil: In einem Bruchteil der Zeit lassen sich Funktionen realisieren, die ich sonst aufgeschoben
+          hätte. So konnte ich alles einbauen, was ich in der Praxis bei der Essener Volksbühne tatsächlich gebraucht
+          habe.</p>
+        <p>Wenn dir eine Funktion fehlt oder du einen Bug findest, schreib mir gerne an <a
+            href="mailto:hello@maindesk.org">hello@maindesk.org</a> – ich schaue mir das gerne an.</p>
+      </div>
+
+      <div class="section">
+        <h2>Über mich</h2>
+        <p>Ich bin Julius B. Müller, Ingenieur der Mechatronik und begeisterter Tüftler an allem, was mit Technik zu tun
+          hat. Gleichzeitig habe ich eine kreative Seite: Ich komponiere und produziere Musik, am liebsten für's
+          Theater. Hör gerne mal auf <a
+            href="https://open.spotify.com/intl-de/artist/38unO5ffnxIQy3Nvuh2qfV?si=o3VAzyTeQsGNDFWxpjpjBg">Spotify</a>
+          rein.</p>
+        <p>Am meisten begeistert mich die Verbindung von Technik und Kunst. Deshalb habe ich die Firma <a
+            href="https://plaxite.de">plaxite</a> gegründet, bei der wir Gestaltung mit digitalen Techniken verbinden.
+        </p>
+        <p>Wenn du ein Projekt hast, zu dem du meine Meinung hören möchtest, oder ein Projekt hast, für das ich Musik
+          schreiben kann – ich freue mich über eine Nachricht an <a
+            href="mailto:hello@maindesk.org">hello@maindesk.org</a>.</p>
+      </div>
+
+      <div class="section">
+        <h2>Kontakt &amp; Feedback</h2>
+        <p>Rückmeldungen, Bugreports und Fragen sind herzlich willkommen. Am liebsten per Mail – und besonders freue ich
+          mich zu hören, wo du MainDesk einsetzt.</p>
+        <div class="contact-card">
+          <span style="font-size:1.4rem">✉</span>
+          <a href="mailto:hello@maindesk.org">hello@maindesk.org</a>
+        </div>
       </div>
     </div>
 
-    <div class="section">
-      <h2>Über mich</h2>
-      <div class="placeholder">
-        ✏ <strong>Wer steckt dahinter?</strong><br>
-        Ein paar Sätze über dich – Beruf, Hintergrund, wo du arbeitest oder tätig bist.
-        So viel oder so wenig, wie du möchtest.
+    <!-- ── EN ──────────────────────────────────────────────────── -->
+    <div id="content-en" style="display:none">
+      <div class="about-header">
+        <h1>About MainDesk</h1>
+        <p>Software for everyone who runs shows.</p>
+      </div>
+
+      <div class="section">
+        <h2>About the project</h2>
+        <p>I joined the <a href="https://essener-volksbuehne.de">Essener Volksbühne</a> in 2020 and immediately got
+          involved in the technical side of things. A wish quickly took shape: to run an entire show with just one
+          button. The idea is simple – a digital script with cue buttons that trigger everything a show needs: sound,
+          lights, microphones. You always see the current lines on screen, so anyone can step in even without knowing
+          the show by heart. No more looking back and forth between script and screen.</p>
+        <p>The first version of MainDesk I coded by hand. While the Markdown-based setup is clear and flexible, editing
+          YAML blocks manually becomes cumbersome over time – especially as automations grow more complex. For a truly
+          practical tool that people without any programming background can use intuitively, everything needs to be
+          controllable through a clean UI.</p>
+        <p>That became possible thanks to Claude Code, which has grown powerful enough that I no longer needed to write
+          most of the implementation myself. Yes, MainDesk is essentially vibe-coded – and that's a genuine advantage:
+          features I would otherwise have postponed get built in a fraction of the time. It's how I was able to include
+          everything I've actually needed in practice at the Essener Volksbühne.</p>
+        <p>If a feature is missing or you find a bug, feel free to drop me a line at <a
+            href="mailto:hello@maindesk.org">hello@maindesk.org</a> – I'm happy to take a look.</p>
+      </div>
+
+      <div class="section">
+        <h2>About me</h2>
+        <p>I'm Julius B. Müller – a mechatronics engineer with a passion for everything technical. At the same time, I
+          have a creative side: I compose and produce music, with a particular love for theatre. Feel free to check out
+          my work on <a
+            href="https://open.spotify.com/intl-de/artist/38unO5ffnxIQy3Nvuh2qfV?si=o3VAzyTeQsGNDFWxpjpjBg">Spotify</a>.
+        </p>
+        <p>What excites me most is the intersection of technology and art. That's why I founded <a
+            href="https://plaxite.de">plaxite</a>, where we combine design with digital techniques.</p>
+        <p>If you have a project you'd like my input on, or a project I can write music for, I'd love to hear from you
+          at <a href="mailto:hello@maindesk.org">hello@maindesk.org</a>.</p>
+      </div>
+
+      <div class="section">
+        <h2>Contact &amp; feedback</h2>
+        <p>Feedback, bug reports and questions are very welcome. Email is best – and I'm especially happy to hear where
+          you're using MainDesk.</p>
+        <div class="contact-card">
+          <span style="font-size:1.4rem">✉</span>
+          <a href="mailto:hello@maindesk.org">hello@maindesk.org</a>
+        </div>
       </div>
     </div>
 
-    <div class="section">
-      <h2>Kontakt &amp; Feedback</h2>
-      <p>Rückmeldungen, Bugreports und Fragen sind herzlich willkommen. Am liebsten per Mail – und besonders freue ich mich zu hören, wo du MainDesk einsetzt.</p>
-      <div class="contact-card">
-        <span style="font-size:1.4rem">✉</span>
-        <a href="mailto:info@maindesk.org">info@maindesk.org</a>
-      </div>
-    </div>
-  </div>
+  </main>
 
-  <!-- ── EN ──────────────────────────────────────────────────── -->
-  <div id="content-en" style="display:none">
-    <div class="about-header">
-      <h1>About MainDesk</h1>
-      <p>Software for everyone who runs shows.</p>
-    </div>
+  <footer>
+    <span data-de="Für die Bühne gemacht." data-en="Made for the stage.">Für die Bühne gemacht.</span>
+  </footer>
 
-    <div class="section">
-      <h2>About the project</h2>
-      <div class="placeholder">
-        ✏ <strong>Add your own text here.</strong><br>
-        For example: How did MainDesk come about? In what context did you develop it?
-        What motivated you? What kind of productions do you use it for yourself?
-      </div>
-    </div>
-
-    <div class="section">
-      <h2>About me</h2>
-      <div class="placeholder">
-        ✏ <strong>Who's behind it?</strong><br>
-        A few sentences about yourself – your background, where you work or are active.
-        As much or as little as you like.
-      </div>
-    </div>
-
-    <div class="section">
-      <h2>Contact &amp; feedback</h2>
-      <p>Feedback, bug reports and questions are very welcome. Email is best – and I'm especially happy to hear where you're using MainDesk.</p>
-      <div class="contact-card">
-        <span style="font-size:1.4rem">✉</span>
-        <a href="mailto:info@maindesk.org">info@maindesk.org</a>
-      </div>
-    </div>
-  </div>
-
-</main>
-
-<footer>
-  <span data-de="Für die Bühne gemacht." data-en="Made for the stage.">Für die Bühne gemacht.</span>
-</footer>
-
-<script>
-  let currentLang = localStorage.getItem('md-lang') || 'de'
-  function setLang(lang) {
-    currentLang = lang
-    localStorage.setItem('md-lang', lang)
-    document.documentElement.lang = lang
-    document.querySelectorAll('.lang-btn').forEach((b,i) => b.classList.toggle('active',(i===0&&lang==='de')||(i===1&&lang==='en')))
-    document.getElementById('content-de').style.display = lang === 'de' ? '' : 'none'
-    document.getElementById('content-en').style.display = lang === 'en' ? '' : 'none'
-    document.querySelectorAll('[data-de]').forEach(el => { const t = el.getAttribute('data-'+lang); if (t) el.innerHTML = t })
-  }
-  setLang(currentLang)
-</script>
+  <script>
+    let currentLang = localStorage.getItem('md-lang') || 'de'
+    function setLang(lang) {
+      currentLang = lang
+      localStorage.setItem('md-lang', lang)
+      document.documentElement.lang = lang
+      document.querySelectorAll('.lang-btn').forEach((b, i) => b.classList.toggle('active', (i === 0 && lang === 'de') || (i === 1 && lang === 'en')))
+      document.getElementById('content-de').style.display = lang === 'de' ? '' : 'none'
+      document.getElementById('content-en').style.display = lang === 'en' ? '' : 'none'
+      document.querySelectorAll('[data-de]').forEach(el => { const t = el.getAttribute('data-' + lang); if (t) el.innerHTML = t })
+    }
+    setLang(currentLang)
+  </script>
 </body>
+
 </html>

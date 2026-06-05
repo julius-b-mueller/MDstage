@@ -1,6 +1,6 @@
 "use strict"
 
-const showdown = require('showdown')
+const { marked } = require('marked')
 const yaml = require('js-yaml')
 const WaveSurfer = require('wavesurfer.js')
 const createDOMPurify = require('dompurify')
@@ -628,7 +628,7 @@ function showConfirmDialog({ title, body, confirmLabel = 'Ja', cancelLabel = 'Ab
 
         const bodyEl = document.createElement('p')
         bodyEl.style.cssText = 'color:#abb2bf;font-size:0.9rem;margin:0 0 1.5rem;line-height:1.6'
-        bodyEl.innerHTML = body
+        bodyEl.innerHTML = DOMPurify.sanitize(body, { ALLOWED_TAGS: ['strong', 'br'], ALLOWED_ATTR: [] })
 
         const actions = document.createElement('div')
         actions.className = 'dialog-actions'
@@ -1858,10 +1858,7 @@ document.addEventListener('contextmenu', (e) => {
 })
 
 
-const converter = new showdown.Converter
-
 // DOMPurify is initialised here (module level, runs in Electron renderer where window exists).
-// Allowlist covers everything showdown legitimately produces from this app's Markdown format.
 // script/onerror/javascript: and all other XSS vectors are stripped.
 const DOMPurify = createDOMPurify(window)
 const _purifyConfig = {
@@ -1870,7 +1867,7 @@ const _purifyConfig = {
     ALLOW_DATA_ATTR: false,
 }
 function makeHtmlSafe(mdText) {
-    return DOMPurify.sanitize(converter.makeHtml(mdText), _purifyConfig)
+    return DOMPurify.sanitize(marked.parse(mdText), _purifyConfig)
 }
 
 class MTCTransmitter {
@@ -2233,6 +2230,45 @@ function escapeHtml(s) {
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
+function validateCueFields(y, blockNum, lineNum) {
+    if (!y || typeof y !== 'object') return
+
+    if (y.start_tc != null) {
+        const tc = String(y.start_tc)
+        const m = tc.match(/^(\d{2}):(\d{2}):(\d{2}):(\d{2})$/)
+        if (!m || +m[1] > 23 || +m[2] > 59 || +m[3] > 59 || +m[4] > 24)
+            parseErrors.push({ blockNum, line: lineNum, message: `Ungültiger Timecode: "${tc}" (Format HH:MM:SS:FF, Stunden 0–23)` })
+    }
+
+    if (y.osc != null) {
+        const normalized = String(y.osc).replace(/\{ch\}/g, '00')
+        if (!/^\/[\x20-\x7e]*$/.test(normalized))
+            parseErrors.push({ blockNum, line: lineNum, message: `Ungültiger OSC-Pfad: "${y.osc}"` })
+    }
+
+    if (y.trigger_note != null) {
+        const { ch, note } = y.trigger_note || {}
+        if (!Number.isInteger(ch) || ch < 1 || ch > 16 || !Number.isInteger(note) || note < 0 || note > 127)
+            parseErrors.push({ blockNum, line: lineNum, message: `trigger_note ungültig: ch=${ch} (1–16), note=${note} (0–127)` })
+    }
+
+    if (y.music && typeof y.music === 'object') {
+        const { volume, start, end, fadein, fadeout } = y.music
+        if (volume != null && (typeof volume !== 'number' || !isFinite(volume) || volume < 0 || volume > 1))
+            parseErrors.push({ blockNum, line: lineNum, message: `music.volume ungültig: ${volume} (erwartet 0.0–1.0)` })
+        for (const [k, v] of [['start', start], ['end', end], ['fadein', fadein], ['fadeout', fadeout]]) {
+            if (v != null && (typeof v !== 'number' || !isFinite(v) || v < 0))
+                parseErrors.push({ blockNum, line: lineNum, message: `music.${k} ungültig: ${v} (nicht-negative Zahl erwartet)` })
+        }
+    }
+
+    if (y.auto_trigger && typeof y.auto_trigger === 'object' && y.auto_trigger.at != null) {
+        const { at } = y.auto_trigger
+        if (typeof at !== 'number' || !isFinite(at) || at < 0)
+            parseErrors.push({ blockNum, line: lineNum, message: `auto_trigger.at ungültig: ${at} (nicht-negative Zahl erwartet)` })
+    }
+}
+
 function validateYamlBlocks(text) {
     parseErrors   = []
     audioWarnings = []
@@ -2248,6 +2284,7 @@ function validateYamlBlocks(text) {
         } catch (e) {
             parseErrors.push({ blockNum, line, message: e.message })
         }
+        if (parsed && blockNum > 1) validateCueFields(parsed, blockNum, line)
         parsedBlocks.push({ blockNum, line, yaml: parsed })
     }
     // Assign variant-group IDs: each non-sibling trigger starts a new group
