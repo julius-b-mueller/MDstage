@@ -2668,7 +2668,7 @@ function insertTriggerInScript(insertAfterBlockIdx, newYaml) {
     if (!scriptText) return
     const blocks = tokenizeScript(scriptText)
     if (insertAfterBlockIdx < 0 || insertAfterBlockIdx >= blocks.length) return
-    const newBlock = { type: 'yaml', content: '```yaml\n' + yaml.dump(newYaml, { indent: 4 }).trimEnd() + '\n```' }
+    const newBlock = { type: 'yaml', content: '```yaml\n' + inlineNoteObjects(yaml.dump(newYaml, { indent: 4 }).trimEnd()) + '\n```' }
     blocks.splice(insertAfterBlockIdx + 1, 0, newBlock)
     let updated = blocks.map(b => b.content).join('\n\n') + '\n'
     const { text: assigned, changed } = assignTriggerNotes(updated)
@@ -2681,7 +2681,7 @@ function insertTriggerInScript(insertAfterBlockIdx, newYaml) {
 // Splits the text block at blockIdx into two halves and inserts a trigger between them.
 function splitBlockAndInsertTrigger(blockIdx, mdBefore, mdAfter, newYaml) {
     const blocks = tokenizeScript(scriptText)
-    const newYamlBlock = { type: 'yaml', content: '```yaml\n' + yaml.dump(newYaml, { indent: 4 }).trimEnd() + '\n```' }
+    const newYamlBlock = { type: 'yaml', content: '```yaml\n' + inlineNoteObjects(yaml.dump(newYaml, { indent: 4 }).trimEnd()) + '\n```' }
     const replacements = []
     if (mdBefore.trim()) replacements.push({ type: 'text', content: mdBefore.trim() })
     replacements.push(newYamlBlock)
@@ -4440,7 +4440,53 @@ function buildInsertZones() {
     }
 }
 
-function editTriggerInScript(triggerIndex, newYaml) {
+// Converts block-style {ch, note} objects produced by yaml.dump back to inline format.
+// Only targets known note-reference keys to avoid accidentally inlining unrelated objects.
+function inlineNoteObjects(yamlStr) {
+    return yamlStr.replace(
+        /^([ \t]*)(trigger_note|chain_end|loop_outro):\n\1    ch: (\d+)\n\1    note: (\d+)/gm,
+        '$1$2: {ch: $3, note: $4}'
+    )
+}
+
+// Updates cross-references in all YAML blocks except skipYamlIdx when a trigger_note
+// is renamed from oldTn to newTn. Uses YAML parse so it handles both inline and block style.
+function rewriteTriggerNoteRefsInBlocks(blocks, skipYamlIdx, oldTn, newTn) {
+    const tnMatches = (tn) => tn && typeof tn === 'object' && tn.ch === oldTn.ch && tn.note === oldTn.note
+    let yamlIdx = 0
+    for (let i = 0; i < blocks.length; i++) {
+        if (blocks[i].type !== 'yaml') continue
+        if (yamlIdx === skipYamlIdx) { yamlIdx++; continue }
+        const m = blocks[i].content.match(/^```yaml\n([\s\S]*?)\n```$/)
+        if (!m) { yamlIdx++; continue }
+        let parsed
+        try { parsed = yaml.load(m[1]) } catch { yamlIdx++; continue }
+        if (!parsed || typeof parsed !== 'object') { yamlIdx++; continue }
+
+        let changed = false
+        if (tnMatches(parsed.chain_end)) {
+            parsed.chain_end = { ch: newTn.ch, note: newTn.note }; changed = true
+        }
+        if (tnMatches(parsed.loop_outro)) {
+            parsed.loop_outro = { ch: newTn.ch, note: newTn.note }; changed = true
+        }
+        if (tnMatches(parsed.auto_trigger?.trigger_note)) {
+            parsed.auto_trigger = { ...parsed.auto_trigger, trigger_note: { ch: newTn.ch, note: newTn.note } }
+            changed = true
+        }
+        if (typeof parsed.music === 'object' && tnMatches(parsed.music?.adjust?.trigger_note)) {
+            parsed.music = { ...parsed.music, adjust: { ...parsed.music.adjust, trigger_note: { ch: newTn.ch, note: newTn.note } } }
+            changed = true
+        }
+        if (changed) {
+            const raw = yaml.dump(parsed, { indent: 4, lineWidth: -1, noRefs: true }).trimEnd()
+            blocks[i] = { type: 'yaml', content: `\`\`\`yaml\n${inlineNoteObjects(raw)}\n\`\`\`` }
+        }
+        yamlIdx++
+    }
+}
+
+function editTriggerInScript(triggerIndex, newYaml, oldTriggerNote = null) {
     if (!scriptText) return
     const blocks = tokenizeScript(scriptText)
     let yamlCount = 0
@@ -4448,10 +4494,14 @@ function editTriggerInScript(triggerIndex, newYaml) {
         if (blocks[i].type === 'yaml') {
             yamlCount++
             if (yamlCount === triggerIndex + 1) {
-                blocks[i] = { type: 'yaml', content: '```yaml\n' + yaml.dump(newYaml, { indent: 4 }).trimEnd() + '\n```' }
+                blocks[i] = { type: 'yaml', content: '```yaml\n' + inlineNoteObjects(yaml.dump(newYaml, { indent: 4 }).trimEnd()) + '\n```' }
                 break
             }
         }
+    }
+    const newTn = newYaml.trigger_note ?? null
+    if (oldTriggerNote && newTn && (oldTriggerNote.ch !== newTn.ch || oldTriggerNote.note !== newTn.note)) {
+        rewriteTriggerNoteRefsInBlocks(blocks, triggerIndex, oldTriggerNote, newTn)
     }
     let updated = blocks.map(b => b.content).join('\n\n') + '\n'
     const { text: assigned, changed } = assignTriggerNotes(updated)
@@ -4487,7 +4537,7 @@ function deleteTriggerInScript(triggerIndex) {
                     const parsed = yaml.load(m[1])
                     if (parsed?.sibling) {
                         delete parsed.sibling
-                        blocks[deletedIdx] = { type: 'yaml', content: '```yaml\n' + yaml.dump(parsed, { indent: 4, lineWidth: -1, noRefs: true }).trimEnd() + '\n```' }
+                        blocks[deletedIdx] = { type: 'yaml', content: '```yaml\n' + inlineNoteObjects(yaml.dump(parsed, { indent: 4, lineWidth: -1, noRefs: true }).trimEnd()) + '\n```' }
                     }
                 } catch {}
             }
@@ -4819,12 +4869,20 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         tnInput.classList.add('tc-input')
         tnInput.placeholder = `${existingYaml.trigger_note.ch}.${existingYaml.trigger_note.note}`
         tnInput.value = `${existingYaml.trigger_note.ch}.${existingYaml.trigger_note.note}`
-        // Validate uniqueness on input (exclude same variant group)
+        // Validate format, range, and uniqueness on input
         const myGroupRoot = groupRootOf(triggerIndex)
         tnInput.addEventListener('input', () => {
-            const parts = tnInput.value.trim().split('.')
+            const raw = tnInput.value.trim()
+            if (!raw) { tnInput.classList.remove('tc-input-invalid'); tnInput.title = ''; return }
+            const parts = raw.split('.')
             const c = parseInt(parts[0]), n = parseInt(parts[1])
-            if (isNaN(c) || isNaN(n)) { tnInput.classList.remove('tc-input-invalid'); return }
+            const isValid = parts.length === 2 && !isNaN(c) && !isNaN(n)
+                && c >= 1 && c <= 16 && n >= 0 && n <= 127
+            if (!isValid) {
+                tnInput.classList.add('tc-input-invalid')
+                tnInput.title = 'Ungültige MIDI-Note – Format: Kanal.Note (z.B. 1.42)'
+                return
+            }
             const inUse = triggerYamls.some((ty, i) =>
                 i > 0 && i !== triggerIndex && groupRootOf(i) !== myGroupRoot
                 && ty?.trigger_note?.ch === c && ty?.trigger_note?.note === n)
@@ -4914,6 +4972,10 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
             } else if (typeof newYaml.music === 'object') {
                 delete newYaml.music.monitor
             }
+        } else if (isEdit && existingYaml?.music && typeof existingYaml.music === 'object' && existingYaml.music.adjust) {
+            // No audio file selected but an adjust reference exists — preserve it
+            const { file, monitor, ...rest } = existingYaml.music
+            newYaml.music = rest
         }
 
         // note
@@ -4939,31 +5001,51 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         const tcVal = tcInput?.value.trim() ?? ''
         if (/^\d{2}:\d{2}:\d{2}:\d{2}$/.test(tcVal)) newYaml.start_tc = tcVal
 
-        // trigger_note: apply manual override from tnInput if valid and not in use
+        // trigger_note: apply manual override from tnInput with validation
+        const oldTriggerNote = existingYaml?.trigger_note
+            ? { ch: existingYaml.trigger_note.ch, note: existingYaml.trigger_note.note }
+            : null
         if (tnInput) {
-            const parts = tnInput.value.trim().split('.')
-            const c = parseInt(parts[0]), n = parseInt(parts[1])
-            if (!isNaN(c) && !isNaN(n) && c >= 1 && c <= 16 && n >= 0 && n <= 127) {
+            const raw = tnInput.value.trim()
+            if (raw) {
+                const parts = raw.split('.')
+                const c = parseInt(parts[0]), n = parseInt(parts[1])
+                const isValid = parts.length === 2 && !isNaN(c) && !isNaN(n)
+                    && c >= 1 && c <= 16 && n >= 0 && n <= 127
+                if (!isValid) {
+                    tnInput.classList.add('tc-input-invalid')
+                    tnInput.title = 'Ungültige MIDI-Note – Format: Kanal.Note (z.B. 1.42)'
+                    tnInput.focus()
+                    return
+                }
                 const myGroupRoot = groupRootOf(triggerIndex)
                 const inUse = triggerYamls.some((ty, i) =>
                     i > 0 && i !== triggerIndex && groupRootOf(i) !== myGroupRoot
                     && ty?.trigger_note?.ch === c && ty?.trigger_note?.note === n)
-                if (!inUse) newYaml.trigger_note = { ch: c, note: n }
+                if (inUse) {
+                    tnInput.classList.add('tc-input-invalid')
+                    tnInput.title = `Note ${c}.${n} wird bereits von einem anderen Cue verwendet`
+                    tnInput.focus()
+                    return
+                }
+                tnInput.classList.remove('tc-input-invalid')
+                tnInput.title = ''
+                newYaml.trigger_note = { ch: c, note: n }
             }
+            // empty → fall through to preserve existing below
         }
 
         // trigger_note: preserve when editing non-sibling; handle checkbox for siblings/copies
-        if (sameTnCheckbox) {
-            if (sameTnCheckbox.checked && parentTriggerNote) {
-                newYaml.trigger_note = parentTriggerNote
-            } else if (isEdit && existingYaml?.trigger_note) {
-                // unchecked edit: keep existing only if it differs from parent (otherwise let assignTriggerNotes re-assign)
-                const ptn = parentTriggerNote
-                const wasSame = ptn && existingYaml.trigger_note.ch === ptn.ch && existingYaml.trigger_note.note === ptn.note
-                if (!wasSame) newYaml.trigger_note = existingYaml.trigger_note
-            }
+        // sameTnCheckbox.checked takes priority over tnInput (user explicitly chose parent note)
+        if (sameTnCheckbox?.checked && parentTriggerNote) {
+            newYaml.trigger_note = parentTriggerNote
+        } else if (sameTnCheckbox && !sameTnCheckbox.checked && isEdit && existingYaml?.trigger_note && !newYaml.trigger_note) {
+            // unchecked edit: keep existing only if it differs from parent (otherwise let assignTriggerNotes re-assign)
+            const ptn = parentTriggerNote
+            const wasSame = ptn && existingYaml.trigger_note.ch === ptn.ch && existingYaml.trigger_note.note === ptn.note
+            if (!wasSame) newYaml.trigger_note = existingYaml.trigger_note
             // isCopy + unchecked: no trigger_note set → assignTriggerNotes assigns new one
-        } else if (isEdit && existingYaml?.trigger_note) {
+        } else if (!sameTnCheckbox && isEdit && existingYaml?.trigger_note && !newYaml.trigger_note) {
             newYaml.trigger_note = existingYaml.trigger_note
         }
         // preserve sibling flag when editing; add it when copying
@@ -4971,10 +5053,13 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         if (isCopy) newYaml.sibling = true
         // preserve auto_trigger when editing or copying (variants share the same auto-cue point)
         if (existingYaml?.auto_trigger) newYaml.auto_trigger = existingYaml.auto_trigger
+        // preserve S/L/F links — managed by the S/L/F button, not the edit dialog
+        if (isEdit && existingYaml?.chain_end)  newYaml.chain_end  = existingYaml.chain_end
+        if (isEdit && existingYaml?.loop_outro) newYaml.loop_outro = existingYaml.loop_outro
 
         close()
         if (isEdit) {
-            editTriggerInScript(triggerIndex, newYaml)
+            editTriggerInScript(triggerIndex, newYaml, oldTriggerNote)
         } else {
             insertTriggerInScript(insertAfterBlockIdx, newYaml)
         }
@@ -5935,7 +6020,7 @@ function assignTriggerNotes(text) {
         const withNote = (base && typeof base === 'object')
             ? { ...base, trigger_note: { ch: assignment.ch, note: assignment.note } }
             : { trigger_note: { ch: assignment.ch, note: assignment.note } }
-        return `\`\`\`yaml\n${yaml.dump(withNote, { indent: 4, lineWidth: -1, noRefs: true }).trimEnd()}\n\`\`\``
+        return `\`\`\`yaml\n${inlineNoteObjects(yaml.dump(withNote, { indent: 4, lineWidth: -1, noRefs: true }).trimEnd())}\n\`\`\``
     })
 
     return { text: result, changed }

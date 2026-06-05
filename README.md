@@ -1,49 +1,50 @@
 # Main Desk
 
-Electron-basierte Regiebuch-App für Bühnenshows und Theaterproduktionen. Das Skript wird als Markdown-Datei gespeichert; Cues sind direkt als YAML-Blöcke eingebettet. Die App ermöglicht Audiowiedergabe, MIDI-Steuerung, Timecode-Output und Live-Ansicht — alles aus einer einzigen Datei heraus.
+Electron-based stage manager app for live shows and theatre productions. The script is stored as a Markdown file; cues are embedded directly as YAML blocks. The app provides audio playback, MIDI control, timecode output, OSC output, and a live view — all from a single file.
 
 ---
 
-## Inhaltsverzeichnis
+## Table of Contents
 
-1. [Skript-Format](#skript-format)
-2. [Inline-Editor](#inline-editor)
-3. [Cue-System (Trigger)](#cue-system-trigger)
-4. [Audiowiedergabe](#audiowiedergabe)
+1. [Script Format](#script-format)
+2. [Inline Editor](#inline-editor)
+3. [Cue System (Triggers)](#cue-system-triggers)
+4. [Audio Playback](#audio-playback)
 5. [S/L/F – Start / Loop / Finish](#slf--start--loop--finish)
 6. [Auto-Cue](#auto-cue)
-7. [Bezug (Cross-Fade / Lautstärke-Anpassung)](#bezug-cross-fade--lautstärke-anpassung)
+7. [Adjust (Cross-Fade / Volume)](#adjust-cross-fade--volume)
 8. [MIDI](#midi)
-9. [Timecode (MTC)](#timecode-mtc)
-10. [Live-Ansicht](#live-ansicht)
-11. [Notfall-Steuerung](#notfall-steuerung)
-12. [Cue-Navigation](#cue-navigation)
-13. [Rolleneditor](#rolleneditor)
-14. [Einstellungen](#einstellungen)
-15. [Export (PDF / DOCX)](#export-pdf--docx)
-16. [Szenen-Sidebar & Suche](#szenen-sidebar--suche)
-17. [Skript-Formatierung](#skript-formatierung)
-18. [Tastenkürzel](#tastenkürzel)
+9. [OSC Output](#osc-output)
+10. [Timecode (MTC)](#timecode-mtc)
+11. [Live View](#live-view)
+12. [Emergency Controls](#emergency-controls)
+13. [Cue Navigation](#cue-navigation)
+14. [Role Editor](#role-editor)
+15. [Settings](#settings)
+16. [Export (PDF / DOCX)](#export-pdf--docx)
+17. [Scene Sidebar & Search](#scene-sidebar--search)
+18. [Script Formatting](#script-formatting)
+19. [Keyboard Shortcuts](#keyboard-shortcuts)
 
 ---
 
-## Skript-Format
+## Script Format
 
-Das Skript ist eine einfache `.md`-Datei. Die App öffnet beim Start die zuletzt verwendete Datei oder fragt nach einer Datei. Mit **Datei → Neue Datei…** (`Cmd/Ctrl+N`) wird eine Vorlage angelegt.
+The script is a plain `.md` file. On startup the app reopens the last used file, or prompts for one. **File → New File…** (`Cmd/Ctrl+N`) creates a template.
 
-### Markdown-Elemente
+### Markdown Elements
 
-| Syntax | Bedeutung |
+| Syntax | Meaning |
 |---|---|
-| `# Szene`, `## Unterszene` | Gliederungsüberschriften, erscheinen in der Sidebar |
-| `*Regieanweisung*` | Kursive Bühnenanweisung (grau dargestellt) |
-| `**Rollenname**` | Name einer Rolle (farbig gem. Rolleneditor) |
-| `**Rollenname**\nText` | Rolle mit Dialog (wird direkt darunter angezeigt) |
-| ` ```yaml … ``` ` | Cue-Block (Trigger) |
+| `# Scene`, `## Subscene` | Section headings, appear in the sidebar |
+| `*Stage direction*` | Italic stage direction (shown in grey) |
+| `**Role name**` | A role name (coloured according to the role editor) |
+| `**Role name**\nText` | Role with dialogue (displayed directly below) |
+| ` ```yaml … ``` ` | Cue block (trigger) |
 
-Der erste YAML-Block ist immer der **Konfigurations-Block** (`config:`). Alle weiteren YAML-Blöcke sind Cues.
+The first YAML block is always the **config block** (`config:`). All subsequent YAML blocks are cues.
 
-### Konfigurations-Block (Beispiel)
+### Config Block (Example)
 
 ```yaml
 config:
@@ -70,40 +71,41 @@ config:
 
 ---
 
-## Inline-Editor
+## Inline Editor
 
-Das Skript kann direkt in der App bearbeitet werden — kein externer Editor nötig.
+The script can be edited directly inside the app — no external editor required.
 
-- **Shift+Klick** auf einen Textblock öffnet ihn zum Bearbeiten
-- **Enter** schließt den Block und öffnet darunter einen neuen Block
-- **Tab** akzeptiert den vorgeschlagenen Rollennamen (Autocomplete)
-- **Shift+Enter** fügt in einem Rollenblock einen Zeilenumbruch ein
-- **Pfeil oben / unten** wechselt zum vorherigen / nächsten Block
-- **Escape** schließt den Editor ohne Änderung
-- Schaltflächen **▲ / ▼** verschieben den Block nach oben/unten
-- Schaltfläche **✕** löscht den Block
+- **Shift+Click** on a text block opens it for editing
+- **Enter** closes the block and opens a new one below
+- **Tab** accepts the suggested role name (autocomplete)
+- **Shift+Enter** inserts a line break inside a role block
+- **Arrow up / down** moves to the previous / next block
+- **Escape** closes the editor without saving
+- **▲ / ▼** buttons move the block up or down
+- **✕** button deletes the block
 
-Auf Wunsch öffnet ein Rechtsklick auf einen Block die betreffende Zeile im konfigurierten Editor (VS Code, Zed oder benutzerdefiniert).
+Right-clicking a block (if an editor is configured) opens the corresponding line in the external editor (VS Code, Zed, or a custom command).
 
 ---
 
-## Cue-System (Trigger)
+## Cue System (Triggers)
 
-Jeder YAML-Block (außer dem Konfig-Block) ist ein **Cue** (Trigger). Er wird als nummeriertes Bedienfeld im Skript angezeigt.
+Every YAML block (except the config block) is a **cue** (trigger). It is displayed as a numbered control panel in the script.
 
-### Cue-Felder
+### Cue Fields
 
-| Feld | Beschreibung |
+| Field | Description |
 |---|---|
-| `trigger_note: {ch: 1, note: 42}` | MIDI-Note, die beim Auslösen gesendet wird. Wird automatisch vergeben, wenn nicht gesetzt. |
-| `mic: "Anna"` | Rollenname(n), deren Mikrofon-Kanal am X32 aufgemacht wird. Alle anderen werden gemutet. `muteall` mutet alle. |
-| `music: datei.wav` | Audiodatei aus dem `audio/`-Unterordner. Kurzform oder Objekt (s. u.). |
-| `light: "Szene A"` | Freitext für Lichttechniker (nur Dokumentation). |
-| `note: "Hinweis"` | Interner Hinweis, der auf dem Trigger angezeigt wird. |
-| `start_tc: "01:00:00:00"` | Startzeitcode (HH:MM:SS:FF, 25 fps), der beim Auslösen als MTC gesendet wird. |
-| `sibling: true` | Markiert den Cue als **Variante** des vorherigen Cues (alternative Audio/Mic-Belegung). |
+| `trigger_note: {ch: 1, note: 42}` | MIDI note sent when the cue fires. Assigned automatically if not set. |
+| `mic: "Anna"` | Role name(s) whose microphone channel on the X32 is opened. All others are muted. `muteall` mutes everyone. |
+| `music: file.wav` | Audio file from the `audio/` subfolder. Short form or object (see below). |
+| `light: "Scene A"` | Free-text note for the lighting operator (documentation only). |
+| `note: "Note"` | Internal note displayed on the trigger panel. |
+| `start_tc: "01:00:00:00"` | Start timecode (HH:MM:SS:FF, 25 fps) sent as MTC when the cue fires. |
+| `osc: "/path/{ch}"` | OSC message path sent when the cue fires (see [OSC Output](#osc-output)). |
+| `sibling: true` | Marks the cue as a **variant** of the preceding cue (alternative audio/mic assignment). |
 
-### Audio-Objekt (erweitertes Format)
+### Audio Object (Extended Format)
 
 ```yaml
 music:
@@ -117,111 +119,117 @@ music:
     monitor: loop-monitor.wav
 ```
 
-### Cue bearbeiten
+### Editing a Cue
 
-Jeder Trigger hat eine **✎ Bearbeiten**-Schaltfläche, die einen Dialog öffnet. Neue Cues werden über den **+**-Button zwischen zwei Blöcken hinzugefügt.
+Every trigger has an **✎ Edit** button that opens a dialog. New cues are added via the **+** button between two blocks.
 
-### Varianten
+### Variants
 
-**⊕ Variante** dupliziert einen Cue als `sibling`. Varianten werden als Gruppe dargestellt. Im Live-Betrieb kann vor dem Go eine Variante ausgewählt werden; wird keine ausgewählt, feuert immer die erste Variante.
+**⊕ Variant** duplicates a cue as a `sibling`. Variants are shown as a group. In live operation, a variant can be selected before Go; if none is selected, the first variant always fires.
 
 ---
 
-## Audiowiedergabe
+## Audio Playback
 
-Die Audiodateien (MP3 oder WAV) liegen im `audio/`-Unterordner neben der `.md`-Datei.
+Audio files (MP3 or WAV) are located in the `audio/` subfolder next to the `.md` file.
 
-### Waveform-Ansicht
+### Waveform View
 
-Jeder Cue mit Audiodatei zeigt eine interaktive Wellenform:
+Every cue with an audio file shows an interactive waveform:
 
-- **▶ / ⏸** – Wiedergabe / Pause
-- **⏹** – Stopp und zurück zum Startpunkt
+- **▶ / ⏸** – Play / Pause
+- **⏹** – Stop and return to start point
 - **+ / −** – Zoom (10–400 px/s)
-- **⟳** – Loop-Modus ein/aus
-- **Lautstärke-Regler** – Volume 0–100 %
+- **⟳** – Toggle loop mode
+- **Volume slider** – Volume 0–100 %
 
-**Shift+Ziehen** auf den Wellenform-Markierungen:
+**Shift+Drag** on the waveform markers:
 
-| Marker | Funktion |
+| Marker | Function |
 |---|---|
-| Unterer Startmarker | Wiedergabe-Startpunkt verschieben |
-| Unterer Endmarker | Wiedergabe-Endpunkt verschieben |
-| Oberer Startmarker | Fade-in-Ende verschieben |
-| Oberer Endmarker | Fade-out-Beginn verschieben |
+| Lower start marker | Move playback start point |
+| Lower end marker | Move playback end point |
+| Upper start marker | Move fade-in end point |
+| Upper end marker | Move fade-out start point |
 
-Alle Änderungen (Volume, Start/Ende, Fades, Loop) werden automatisch in der YAML-Datei gespeichert.
+All changes (volume, start/end, fades, loop) are saved automatically to the YAML file.
 
-### Dual-Output (Haupt + Monitor)
+### Dual Output (Main + Monitor)
 
-In den Einstellungen können zwei verschiedene Audioausgabegeräte konfiguriert werden:
+Two different audio output devices can be configured in settings:
 
-- **Haupt-Audio** – geht an die Beschallungsanlage
-- **Monitor-Audio** – geht an den Regiemonitor (z. B. Kopfhörer)
+- **Main audio** – goes to the front-of-house system
+- **Monitor audio** – goes to the stage manager monitor (e.g. headphones)
 
-Ist kein separates Monitor-Gerät eingestellt, wird kein Monitor-Signal erzeugt. Über `monitor: datei.wav` kann pro Cue eine eigene Monitor-Mixdatei (z. B. mit Klickspur) angegeben werden. Ein konfigurierbarer **Monitor-Offset** (ms) verschiebt den Monitor zeitlich gegenüber dem Hauptsignal.
+If no separate monitor device is set, no monitor signal is generated. A per-cue `monitor: file.wav` can specify a separate monitor mix file (e.g. with a click track). A configurable **Monitor Offset** (ms) shifts the monitor signal in time relative to the main signal.
 
-### Warnhinweis: WAV für nahtlose Übergänge
+### Audio Channel Routing
 
-MP3- und AAC-Dateien enthalten Encoder-Padding (stille Frames am Anfang/Ende), das nahtlose Übergänge verhindert. Für alle S/L/F-Strukturen und Loop-Übergänge **WAV-Dateien verwenden**.
+When using a multi-channel audio interface or an **Aggregate Device** (macOS Audio MIDI Setup), the settings panel shows a routing table. Each audio source (main L/R, monitor L/R) can be freely assigned to any output channel of the device. This allows sending main and monitor to separate physical outputs without needing two separate audio interfaces.
+
+To test each channel assignment directly from the settings window, use the **▶** button in the test column.
+
+### Note: Use WAV for Seamless Transitions
+
+MP3 and AAC files contain encoder padding (silent frames at the beginning/end) that prevents seamless transitions. **Use WAV files** for all S/L/F structures and loop transitions.
 
 ---
 
 ## S/L/F – Start / Loop / Finish
 
-Nahtlose Übergänge zwischen Audioclips ohne Stille oder Klick, realisiert über `AudioBufferSourceNode` (samplegenau).
+Seamless transitions between audio clips without silence or clicks, using `AudioBufferSourceNode` (sample-accurate).
 
-### Übergang am Ende (`chain_end`)
+### Transition at End (`chain_end`)
 
 ```yaml
-# Start-Cue
+# Start cue
 music: intro.wav
-chain_end: {ch: 1, note: 5}   # Note des Folge-Cues
+chain_end: {ch: 1, note: 5}   # note of the follow-on cue
 
 ---
 
-# Folge-Cue (wird automatisch gestartet)
+# Follow-on cue (started automatically)
 trigger_note: {ch: 1, note: 5}
 music: loop.wav
 loop: true
 ```
 
-Der Start-Cue spielt durch und startet am Ende automatisch und nahtlos den Folge-Cue.
+The start cue plays through and at the end automatically and seamlessly starts the follow-on cue.
 
-### Managed Loop mit Outro (`loop_outro`)
+### Managed Loop with Outro (`loop_outro`)
 
 ```yaml
-# Loop-Cue
+# Loop cue
 music: loop.wav
-loop_outro: {ch: 1, note: 6}   # Note des Outro-Cues
+loop_outro: {ch: 1, note: 6}   # note of the outro cue
 
 ---
 
-# Outro-Cue
+# Outro cue
 trigger_note: {ch: 1, note: 6}
 music: outro.wav
 ```
 
-Der Loop-Cue loopt endlos. Beim Klick auf den Outro-Cue wird dieser **gequeut** — er startet dann exakt am nächsten Schleifen-Ende nahtlos. Ein zweiter Klick cancelt die Warteschlange.
+The loop cue loops indefinitely. Clicking the outro cue **queues** it — it then starts exactly at the next loop end, seamlessly. A second click cancels the queue.
 
-### S/L/F-Button
+### S/L/F Button
 
-Die Schaltfläche **S/L/F** am Trigger öffnet ein Menü zum Einrichten von `chain_end` oder `loop_outro`. Shift+Klick entfernt eine bestehende Verbindung. Der Button zeigt den Typ (`Start`, `Loop`, `Finish`, `Bridge`) an.
+The **S/L/F** button on a trigger opens a menu to configure `chain_end` or `loop_outro`. Shift+Click removes an existing connection. The button shows the type (`Start`, `Loop`, `Finish`, `Bridge`).
 
 ---
 
 ## Auto-Cue
 
-Ein Cue kann automatisch ausgelöst werden, wenn eine Audiowiedergabe eine bestimmte Position erreicht.
+A cue can be triggered automatically when audio playback reaches a specific position.
 
-**Einrichten:**
-1. Audio des Quell-Cues auf die gewünschte Position scrubben und pausieren
-2. Am Ziel-Cue **⏱ Auto-Cue** klicken
-3. Den Quell-Cue anklicken (Pick-Mode)
+**Setup:**
+1. Scrub the source cue's audio to the desired position and pause
+2. Click **⏱ Auto-Cue** on the target cue
+3. Click the source cue (pick mode)
 
-Der Auto-Cue-Marker erscheint auf der Wellenform des Quell-Cues. Mit **Shift+Ziehen** kann der Marker repositioniert werden. **Shift+Klick** auf den Auto-Cue-Button löscht den Auto-Cue.
+The auto-cue marker appears on the source cue's waveform. **Shift+Drag** repositions the marker. **Shift+Click** on the Auto-Cue button deletes the auto-cue.
 
-### YAML-Repräsentation
+### YAML Representation
 
 ```yaml
 auto_trigger:
@@ -231,17 +239,17 @@ auto_trigger:
 
 ---
 
-## Bezug (Cross-Fade / Lautstärke-Anpassung)
+## Adjust (Cross-Fade / Volume)
 
-Ein Cue kann beim Auslösen einen anderen Cue beeinflussen (z. B. Musik ausfaden, wenn Dialog beginnt).
+A cue can affect another cue when it fires (e.g. fade out music when dialogue starts).
 
-**Einrichten:** Schaltfläche **⇢ Bezug** am Trigger → Ziel-Trigger anklicken → Aktion wählen:
+**Setup:** **⇢ Adjust** button on the trigger → click the target trigger → choose action:
 
-- **Fadeout (stoppen):** Faded das Ziel-Audio aus und stoppt es
-- **Lautstärke auf X:** Faded das Ziel-Audio auf einen Wert (bleibt spielend)
-- **Fadezeit:** Dauer des Fades in Sekunden
+- **Fade out (stop):** Fades the target audio out and stops it
+- **Volume to X:** Fades the target audio to a value (keeps playing)
+- **Fade time:** Duration of the fade in seconds
 
-### YAML-Repräsentation
+### YAML Representation
 
 ```yaml
 music:
@@ -256,193 +264,257 @@ music:
 
 ## MIDI
 
-Drei konfigurierbare MIDI-Ausgabegeräte:
+Three configurable MIDI output devices:
 
-| Gerät | Funktion |
+| Device | Function |
 |---|---|
-| **X32** | Mikrofon-Muting: sendet CC auf Kanal 2 für jeden Rollenkanal (0 = aktiv, 127 = gemutet) |
-| **Trigger** | Sendet Note On / Off beim Auslösen eines Cues (gem. `trigger_note`) |
-| **TC** | MIDI Timecode Output (MTC, 25 fps) |
+| **X32** | Microphone muting: sends CC on channel 2 for each role channel (0 = active, 127 = muted) |
+| **Trigger** | Sends Note On / Off when a cue fires (according to `trigger_note`) |
+| **TC** | MIDI Timecode output (MTC, 25 fps) |
 
-### MIDI-Eingang
+### MIDI Input
 
-Zwei konfigurierbare MIDI-Noten für **Go** und **Back** — empfangen auf allen MIDI-Eingängen.
+Two configurable MIDI notes for **Go** and **Back** — received on all MIDI inputs. Notes can be assigned using **MIDI Learn** mode in the settings window.
+
+---
+
+## OSC Output
+
+The app can send OSC (Open Sound Control) messages over UDP when a cue fires.
+
+### Enabling OSC
+
+In **Settings**, enable the **OSC** toggle and configure the target **host** and **port**.
+
+### Per-Cue OSC
+
+Add the `osc` field to a cue to send an OSC message when it fires:
+
+```yaml
+trigger_note: {ch: 1, note: 10}
+osc: /show/cue/go
+```
+
+An optional argument can be attached:
+
+```yaml
+osc: /show/volume/set
+osc_arg: 0.8
+osc_arg_type: float   # int | float | string
+```
+
+The `{ch}` placeholder in the OSC path is replaced with the role's channel number (two digits, 1-based).
+
+The OSC badge `⌁ /path …` is shown on the trigger panel.
 
 ---
 
 ## Timecode (MTC)
 
-Die App erzeugt MIDI Timecode (25 fps) synchron zur Audiowiedergabe.
+The app generates MIDI Timecode (25 fps) synchronised to audio playback.
 
-- Beim Auslösen eines Cues mit `start_tc` beginnt der MTC ab diesem Offset
-- Bei S/L/F-Ketten wird der TC lückenlos weitergezählt
-- Scrubben auf der Wellenform aktualisiert den TC per Full-Frame-Message
-- Das aktuelle TC wird in der Kopfzeile der App angezeigt
-- Abgeleitete Timecodes für Folge-Cues in einer S/L/F-Kette werden automatisch berechnet und angezeigt
-
----
-
-## Live-Ansicht
-
-Ein separates Fenster (`Cmd/Ctrl+L`) für den Bühnen- oder Regie-Monitor.
-
-**Inhalt:**
-- Aktueller Cue (groß hervorgehoben) mit allen Cue-Details
-- Nächster Cue mit Vorschau
-- **Go / Back** Schaltflächen
-- Timecode-Anzeige
-- Fortschrittsanzeige für laufende Audios und Auto-Cues
-- Varianten-Auswahl: Der nächste Cue kann vor dem Go auf eine Variante umgestellt werden
-- Stop-Schaltfläche pro Cue zum sofortigen Stoppen
-
-Die Live-Ansicht kommuniziert bidirektional mit dem Hauptfenster. Go/Back im Live-Fenster wirken genauso wie im Hauptfenster.
+- When a cue with `start_tc` fires, MTC starts from that offset
+- In S/L/F chains, timecode counts on without gaps
+- Scrubbing on the waveform updates the TC via a Full Frame message
+- The current TC is shown in the app header
+- Derived timecodes for follow-on cues in an S/L/F chain are calculated and displayed automatically
 
 ---
 
-## Notfall-Steuerung
+## Live View
 
-Drei Notfall-Schaltflächen in der Kopfzeile:
+A separate window (`Cmd/Ctrl+L`) for the stage or operator monitor.
 
-| Schaltfläche | Funktion |
+**Contents:**
+- Current cue (prominently highlighted) with all cue details
+- Next cue with preview
+- **Go / Back** buttons
+- Timecode display
+- Progress indicator for running audio and auto-cues
+- Variant selection: the next cue can be switched to a variant before Go
+- Per-cue Stop button for immediate stop
+
+The live view communicates bidirectionally with the main window. Go/Back in the live window works exactly like in the main window.
+
+---
+
+## Emergency Controls
+
+Three emergency buttons in the header:
+
+| Button | Function |
 |---|---|
-| **Notfall-Licht** | Sendet die in `emLightNote` konfigurierte MIDI-Note (z. B. Notbeleuchtung) |
-| **Musik stopp** | Faded alle laufenden Audios in 500 ms aus und stoppt sie; stoppt MTC |
-| **Mics aus** | Mutet alle konfigurierten Mikrofon-Kanäle am X32 |
+| **Emergency Light** | Sends the MIDI note configured in `emLightNote` (e.g. emergency lighting) |
+| **Music Stop** | Fades all running audio out over 500 ms and stops it; stops MTC |
+| **Mics Off** | Mutes all configured microphone channels on the mixer |
 
 ---
 
-## Cue-Navigation
+## Cue Navigation
 
-### Hauptfenster
+### Main Window
 
-| Aktion | Ergebnis |
+| Action | Result |
 |---|---|
-| Klick auf Trigger | Cue sofort auslösen |
-| Klick bei offener Live-Ansicht | Cue als nächsten Cue vorauswählen (Arm) |
-| **Go** (Space, wenn Live-Ansicht offen) | Nächsten Cue auslösen |
-| **Back** (Backspace, wenn Live-Ansicht offen) | Letzten Cue rückgängig (Fade-out + Undo) |
-| MIDI Go/Back | Konfigurierbare MIDI-Noten |
-| Aktuellen Cue anzeigen | Scrollt zur aktuellen Position |
+| Click on trigger | Fire cue immediately |
+| Click with live view open | Pre-select cue as next (arm) |
+| **Go** (Space, when live view is open) | Fire next cue |
+| **Back** (Backspace, when live view is open) | Undo last cue (fade-out + undo) |
+| MIDI Go/Back | Configurable MIDI notes |
+| Show current cue | Scrolls to current position |
 
-Zweifacher Klick auf einen spielenden Cue **stoppt** ihn sofort (Undo-Funktion).
+Double-clicking a playing cue **stops** it immediately (undo function).
 
-### Cue-Verlauf (Back)
+### Cue History (Back)
 
-Back faded das zuletzt ausgelöste Audio in 500 ms aus, restoriert den vorherigen Cue-Status und macht Mic-Änderungen rückgängig.
-
----
-
-## Rolleneditor
-
-Menü **Rolleneditor…** öffnet ein eigenes Fenster zum Verwalten der Rollen.
-
-- **Name** der Rolle
-- **Farbe** (red, green, blue, purple, cyan, yellow, darkred, …) — bestimmt die Textfarbe im Skript und im Export
-- **MIDI-Kanal** (ch) — der Mikrofon-Kanal am X32
-
-Rollen können umbenannt werden; alle `**Rollenname**`-Vorkommen im Skript werden automatisch angepasst.
+Back fades the last-fired audio out over 500 ms, restores the previous cue state, and undoes mic changes.
 
 ---
 
-## Einstellungen
+## Role Editor
 
-Menü **Einstellungen…** (`Cmd/Ctrl+,`) öffnet:
+The **Role Editor…** menu opens a dedicated window for managing roles.
 
-| Einstellung | Beschreibung |
+- **Name** of the role
+- **Color** (red, green, blue, purple, cyan, yellow, darkred, …) — determines the text colour in the script and in exports
+- **MIDI channel** (ch) — the microphone channel on the mixer
+
+Roles can be renamed; all `**Role name**` occurrences in the script are updated automatically.
+
+---
+
+## Settings
+
+**Settings…** (`Cmd/Ctrl+,`) opens:
+
+### Audio
+
+| Setting | Description |
 |---|---|
-| Haupt-Audiogerät | Ausgabe für Hauptsignal |
-| Monitor-Audiogerät | Ausgabe für Monitor |
-| Monitor-Offset (ms) | Zeitversatz Monitor gegenüber Hauptsignal |
-| X32-MIDI-Gerät | MIDI-Ausgang für Mikrofon-Steuerung |
-| Trigger-MIDI-Gerät | MIDI-Ausgang für Cue-Noten |
-| TC-MIDI-Gerät | MIDI-Ausgang für MTC |
-| Go-Note / Back-Note | MIDI-Noten für Go und Back (Pick-Mode) |
-| Editor | VS Code, Zed oder benutzerdefinierter Befehl |
+| Audio device | Output device for main and monitor signal |
+| Monitor Mix enabled | Activates the monitor mix |
+| Channel routing table | Assigns main L/R and monitor L/R to specific output channels of the device (for multi-channel interfaces or Aggregate Devices) |
+| Monitor Offset (ms) | Time offset of the monitor signal relative to the main signal |
 
-Einstellungen werden **pro Hostname** im Config-Block der Skript-Datei gespeichert, sodass dieselbe Datei auf mehreren Rechnern unterschiedliche Geräte verwenden kann.
+### MIDI
+
+| Setting | Description |
+|---|---|
+| Trigger MIDI device | MIDI output for cue notes |
+| MIDI Timecode device | MIDI output for MTC |
+| Input device (Go / Back) | Filter MIDI input to a specific device, or receive from all |
+| Go note / Back note | MIDI notes for Go and Back — can be assigned via **MIDI Learn** |
+
+### OSC
+
+| Setting | Description |
+|---|---|
+| OSC enabled | Activates OSC output |
+| Target address | IP address of the OSC receiver |
+| Port | UDP port of the OSC receiver |
+
+### Mixer Remote Control
+
+The microphone muting method can be configured independently of the MIDI trigger output:
+
+| Method | Description |
+|---|---|
+| **X32 MIDI (CC channel 2)** | Default: sends CC on MIDI channel 2; value 0 = active, 127 = muted |
+| **Custom MIDI** | Freely configurable MIDI messages (Note On/Off, CC, Program Change, or SysEx/hex bytes). `{ch}` is replaced by the role's channel index (0-based). |
+| **Custom OSC** | Sends separate OSC paths for mute (OFF) and unmute (ON). `{ch}` is replaced by the role's channel number (1-based, two digits). |
+
+### Other
+
+| Setting | Description |
+|---|---|
+| Emergency Light note | MIDI note for the emergency light button (channel + note number) |
+| Language | App interface language (German / English) |
+| Open in editor (right-click) | VS Code, Zed, or disabled |
+
+Settings are stored **per hostname** in the config block of the script file, so the same file can use different devices on multiple computers.
 
 ---
 
 ## Export (PDF / DOCX)
 
-`Cmd/Ctrl+E` öffnet den Export-Dialog:
+`Cmd/Ctrl+E` opens the export dialog:
 
-- **Cues einschließen:** Ob Trigger-Blöcke (Mic, Musik, Licht usw.) im Export erscheinen
-- **Rollenfarben:** Ob Rollennamen farbig dargestellt werden
+- **Include cues:** Whether trigger blocks (mic, music, light, etc.) appear in the export
+- **Role colours:** Whether role names are shown in colour
 
-**Ausgabeformate:**
+**Output formats:**
 
-- **PDF** – druckoptimiertes A4-Dokument mit Deckblatt, Inhaltsverzeichnis und Seitenzahlen
-- **DOCX** – Word-Dokument mit identischer Struktur (Times New Roman, korrekte Hierarchie)
+- **PDF** – print-optimised A4 document with title page, table of contents, and page numbers
+- **DOCX** – Word document with identical structure (Times New Roman, correct heading hierarchy)
 
-Jede S/L/F-Gruppe erhält eine Kennzeichnung (`Start`, `Loop`, `Finish`, `Bridge`).
-
----
-
-## Szenen-Sidebar & Suche
-
-### Szenen-Sidebar
-
-- **`Cmd/Ctrl+B`** oder Sidebar-Schaltfläche öffnet/schließt die Sidebar
-- Listet alle `#`-, `##`- und `###`-Überschriften
-- Klick scrollt zur Szene; die aktive Szene wird beim Scrollen hervorgehoben
-
-### Volltextsuche
-
-- **`Cmd/Ctrl+F`** öffnet die Suchleiste
-- Alle Treffer werden markiert; **Enter** / **Shift+Enter** navigiert vorwärts/rückwärts
-- **Escape** schließt die Suche
+Each S/L/F group receives a label (`Start`, `Loop`, `Finish`, `Bridge`).
 
 ---
 
-## Skript-Formatierung
+## Scene Sidebar & Search
 
-Beim Öffnen prüft die App, ob das Skript dem Formatierungsstandard entspricht:
+### Scene Sidebar
 
-- Leerzeile nach jeder Überschrift
-- Leerzeile vor/nach jeder Bühnenanweisung
-- Leerzeile vor jedem Rollennamen
-- Lange Dialogzeilen werden an Satzgrenzen umgebrochen
-- Mehrfache Leerzeilen werden zu einer zusammengefasst
+- **`Cmd/Ctrl+B`** or the sidebar button opens/closes the sidebar
+- Lists all `#`, `##`, and `###` headings
+- Clicking scrolls to the scene; the active scene is highlighted while scrolling
 
-Ist eine Formatierung nötig, wird eine Sicherungskopie (`*~unformatted.md`) angelegt und dann formatiert.
+### Full-Text Search
+
+- **`Cmd/Ctrl+F`** opens the search bar
+- All matches are highlighted; **Enter** / **Shift+Enter** navigates forwards/backwards
+- **Escape** closes the search
 
 ---
 
-## Tastenkürzel
+## Script Formatting
 
-| Kürzel | Funktion |
+When a file is opened, the app checks whether the script meets the formatting standard:
+
+- Blank line after every heading
+- Blank line before/after every stage direction
+- Blank line before every role name
+- Long dialogue lines are wrapped at sentence boundaries
+- Multiple consecutive blank lines are collapsed to one
+
+If formatting is needed, a backup copy (`*~unformatted.md`) is created before the file is reformatted.
+
+---
+
+## Keyboard Shortcuts
+
+| Shortcut | Function |
 |---|---|
-| `Cmd/Ctrl+N` | Neue Datei |
-| `Cmd/Ctrl+O` | Datei öffnen |
-| `Cmd/Ctrl+,` | Einstellungen |
-| `Cmd/Ctrl+L` | Live-Ansicht öffnen |
-| `Cmd/Ctrl+E` | Exportieren |
-| `Cmd/Ctrl+B` | Sidebar ein/aus |
-| `Cmd/Ctrl+F` | Suche |
-| `Space` | Go (wenn Live-Ansicht offen, kein Editor aktiv) |
-| `Backspace` | Back (wenn Live-Ansicht offen, kein Editor aktiv) |
-| `Shift+Klick` | Block bearbeiten |
-| `Tab` | Rollennamen-Autocomplete akzeptieren |
-| `Shift+Enter` | Zeilenumbruch im Rollenblock |
-| `Escape` | Editor / Suche / Sidebar schließen |
+| `Cmd/Ctrl+N` | New file |
+| `Cmd/Ctrl+O` | Open file |
+| `Cmd/Ctrl+,` | Settings |
+| `Cmd/Ctrl+L` | Open live view |
+| `Cmd/Ctrl+E` | Export |
+| `Cmd/Ctrl+B` | Toggle sidebar |
+| `Cmd/Ctrl+F` | Search |
+| `Space` | Go (when live view is open, no editor active) |
+| `Backspace` | Back (when live view is open, no editor active) |
+| `Shift+Click` | Edit block |
+| `Tab` | Accept role name autocomplete |
+| `Shift+Enter` | Line break inside a role block |
+| `Escape` | Close editor / search / sidebar |
 
 ---
 
-## Entwicklung & Build
+## Development & Build
 
 ```bash
-# Abhängigkeiten installieren
+# Install dependencies
 npm install
 
-# Webpack im Watch-Modus starten
+# Start Webpack in watch mode
 npm run develop
 
-# Electron starten
+# Start Electron
 npm start
 
-# Produktions-Build (macOS .dmg / Windows .exe)
+# Production build (macOS .dmg / Windows .exe)
 npm run build
 ```
 
-Audiodateien liegen im `audio/`-Unterordner neben der `.md`-Datei. Für nahtlose S/L/F-Übergänge WAV-Format verwenden.
+Audio files go in the `audio/` subfolder next to the `.md` file. Use WAV format for seamless S/L/F transitions.

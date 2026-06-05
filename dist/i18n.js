@@ -57,6 +57,8 @@
             'dlg.adjust.volume':          ' Lautstärke auf ',
             'dlg.adjust.fadetime':        'Fadezeit (Sekunden)',
             'dlg.adjust.remove':          'Bezug entfernen',
+            'adj.display.fadeout':        'ausfaden',
+            'adj.display.volume.pre':     'Lautstärke →',
             // ── Loop-Gruppen-Dialog ──────────────────────────────────
             'dlg.loop.title':             'Loop-Struktur einrichten',
             // ── Allgemeine Buttons ───────────────────────────────────
@@ -221,6 +223,8 @@
             'dlg.adjust.volume':          ' Volume to ',
             'dlg.adjust.fadetime':        'Fade time (seconds)',
             'dlg.adjust.remove':          'Remove adjust',
+            'adj.display.fadeout':        'fade out',
+            'adj.display.volume.pre':     'volume →',
             // ── Loop-Gruppen-Dialog ──────────────────────────────────
             'dlg.loop.title':             'Set Up Loop Structure',
             // ── Allgemeine Buttons ───────────────────────────────────
