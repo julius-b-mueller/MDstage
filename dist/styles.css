@@ -79,7 +79,7 @@ p {
 }
 
 .trigger-info {
-    max-width: 60%;
+    max-width: 75%;
 }
 
 .trigger-note {
@@ -110,10 +110,32 @@ p {
     background-color: #383c44;
 }
 
+.trigger-mic { display: flex; align-items: center; flex-wrap: wrap; gap: 0.25rem; }
+
 .trigger-mic span {
     margin-right: 0.4rem;
     display: inline-block;
 }
+
+.trigger-mic .mic-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 0;
+    border: 1px solid #4b5263;
+    border-radius: 4px;
+    padding: 0 0.3rem 0 0;
+    overflow: hidden;
+    margin-right: 0;
+}
+.trigger-mic .mic-group-name {
+    font-weight: 700;
+    padding: 0.05rem 0.4rem;
+    font-size: inherit;
+    background: rgba(255,255,255,0.06);
+}
+.trigger-mic .mic-group-sep { color: #5c6370; font-size: 0.85em; }
+.trigger-mic .mic-chip { border-radius: 3px; padding: 0.05rem 0.35rem; font-size: inherit; font-weight: 500; margin-right: 0 !important; }
+.trigger-mic .mic-all-off { color: #e06c75; font-style: italic; }
 
 .trigger-mic-auto-tag {
     font-size: 0.65rem;
@@ -409,6 +431,17 @@ body.trigger-pick-mode .trigger {
 body.trigger-pick-mode .trigger:hover { background-color: #3e422c; }
 body.trigger-pick-mode .trigger-actions { pointer-events: none; }
 body.trigger-pick-mode .waveform-wrapper { pointer-events: none; }
+
+/* ── Show-Lock mode ────────────────────────────────────────────────── */
+.button.lock-button.active {
+    background-color: rgba(229,192,123,0.15);
+    border-color: #e5c07b;
+    color: #e5c07b;
+}
+body.show-locked .trigger-actions  { pointer-events: none !important; }
+body.show-locked .trigger-move-btns { pointer-events: none !important; }
+body.show-locked .insert-zone      { pointer-events: none !important; }
+body.show-locked .trigger          { cursor: pointer; user-select: none; }
 
 /* ── Filtered pick mode (Auto-Cue: only eligible triggers highlight) ── */
 body.trigger-pick-mode-filtered .trigger-pick-eligible {

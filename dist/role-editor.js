@@ -16,6 +16,42 @@
         // groupRows: [{ nameInput, colorSelect, colorDot, getMemberRoles, row }]
         const groupRows = []
         let deviceNames = ['Gerät 1']
+
+        // ── Drag-to-reorder ──────────────────────────────────────────────
+        let _dragSrc = null
+
+        function _makeDraggable(rowEl, handleEl, arr) {
+            handleEl.addEventListener('mousedown', () => rowEl.setAttribute('draggable', 'true'))
+            rowEl.addEventListener('dragstart', e => {
+                _dragSrc = { el: rowEl, arr }
+                rowEl.classList.add('dragging')
+                e.dataTransfer.effectAllowed = 'move'
+                e.dataTransfer.setData('text/plain', '')
+            })
+            rowEl.addEventListener('dragend', () => {
+                rowEl.removeAttribute('draggable')
+                rowEl.classList.remove('dragging')
+                document.querySelectorAll('.drag-over-top, .drag-over-bottom')
+                    .forEach(el => el.classList.remove('drag-over-top', 'drag-over-bottom'))
+                _dragSrc = null
+            })
+            rowEl.addEventListener('dragover', e => {
+                if (!_dragSrc || _dragSrc.arr !== arr || _dragSrc.el === rowEl) return
+                e.preventDefault()
+                document.querySelectorAll('.drag-over-top, .drag-over-bottom')
+                    .forEach(el => el.classList.remove('drag-over-top', 'drag-over-bottom'))
+                const rect = rowEl.getBoundingClientRect()
+                rowEl.classList.add(e.clientY < rect.top + rect.height / 2 ? 'drag-over-top' : 'drag-over-bottom')
+            })
+            rowEl.addEventListener('drop', e => {
+                e.preventDefault()
+                if (!_dragSrc || _dragSrc.el === rowEl || _dragSrc.arr !== arr) return
+                const rect = rowEl.getBoundingClientRect()
+                rowEl.parentNode.insertBefore(_dragSrc.el, e.clientY < rect.top + rect.height / 2 ? rowEl : rowEl.nextSibling)
+                const list = rowEl.parentNode
+                arr.sort((a, b) => [...list.children].indexOf(a.row) - [...list.children].indexOf(b.row))
+            })
+        }
         let currentRoleNames = []  // kept in sync as roles are built, used by groups
 
         function nextAutoColor() {
@@ -120,10 +156,15 @@
                 validateAllNames()
             })
 
-            row.append(nameInput, colorDot, colorSel, deviceSel, chInput, removeBtn)
+            const handle = document.createElement('span')
+            handle.className = 'drag-handle'
+            handle.textContent = '⠿'
+            handle.title = 'Reihenfolge ändern'
+            row.append(handle, nameInput, colorDot, colorSel, deviceSel, chInput, removeBtn)
             document.getElementById('role-list').appendChild(row)
 
             rows.push({ originalName: isNew ? null : name, nameInput, colorSelect: colorSel, colorDot, deviceSelect: deviceSel, chInput, row })
+            _makeDraggable(row, handle, rows)
         }
 
         function addGroupRow(name, color, memberRoles, isNew) {
@@ -155,11 +196,12 @@
 
             function rebuildChips() {
                 membersDiv.innerHTML = ''
-                const names = rows.map(r => r.nameInput.value.trim()).filter(Boolean)
-                for (const rName of names) {
+                const roleObjs = rows.map(r => ({ name: r.nameInput.value.trim(), color: r.colorSelect.value })).filter(r => r.name)
+                for (const { name: rName, color } of roleObjs) {
                     const chip = document.createElement('span')
                     chip.className = 'member-chip' + (memberSet.has(rName) ? ' active' : '')
                     chip.textContent = rName
+                    chip.style.setProperty('--chip-col', ROLE_COLORS[color] || '#abb2bf')
                     chip.addEventListener('click', () => {
                         if (memberSet.has(rName)) memberSet.delete(rName)
                         else memberSet.add(rName)
@@ -167,7 +209,7 @@
                     })
                     membersDiv.appendChild(chip)
                 }
-                if (names.length === 0) {
+                if (roleObjs.length === 0) {
                     const hint = document.createElement('span')
                     hint.style.cssText = 'font-size:0.78rem;color:#5c6370;font-style:italic;'
                     hint.textContent = 'Noch keine Rollen vorhanden'
@@ -188,9 +230,14 @@
                 validateAllNames()
             })
 
+            const groupHandle = document.createElement('span')
+            groupHandle.className = 'drag-handle'
+            groupHandle.textContent = '⠿'
+            groupHandle.title = 'Reihenfolge ändern'
+
             const header = document.createElement('div')
             header.className = 'group-row-header'
-            header.append(nameInput, colorDot, colorSel, removeBtn)
+            header.append(groupHandle, nameInput, colorDot, colorSel, removeBtn)
             row.append(header, membersDiv)
             document.getElementById('group-list').appendChild(row)
 
@@ -201,6 +248,7 @@
             }
 
             groupRows.push({ originalName: isNew ? null : name, nameInput, colorSelect: colorSel, colorDot, getMemberRoles, rebuildChips, row })
+            _makeDraggable(row, groupHandle, groupRows)
         }
 
         document.getElementById('add-btn').addEventListener('click', () => {

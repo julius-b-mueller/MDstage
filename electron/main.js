@@ -589,7 +589,19 @@ function buildDocx(data) {
             // Collect info rows first so we know total count for border logic
             const cueInfoRows = []
             if (item.mic) {
-                const micStr = (item.micRoles || [item.mic]).join(', ')
+                let micStr
+                if (item.mic === 'muteall') {
+                    micStr = 'alle aus'
+                } else if (item.micItems) {
+                    const parts = []
+                    for (const mi of item.micItems) {
+                        if (mi.isGroup) parts.push(`${mi.name} ${(mi.members || []).map(m => m.name).join(' ')}`)
+                        else parts.push(mi.name)
+                    }
+                    micStr = parts.join(' ')
+                } else {
+                    micStr = ''
+                }
                 cueInfoRows.push({ label: 'Mic', value: micStr })
             }
             if (item.music) {

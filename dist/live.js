@@ -62,12 +62,21 @@
         function buildTriggerHtml(b) {
             let micRow = ''
             if (b.muteall) {
-                micRow = `<div class="trigger-mic">${MIC_SVG} alle aus</div>`
+                micRow = `<div class="trigger-mic">${MIC_SVG} <span class="mic-all-off">${window.t ? window.t('mic.muteall') : 'alle aus'}</span></div>`
             } else if (b.micColors && b.micColors.length) {
-                let spans = ''
-                for (const { name, color } of b.micColors)
-                    spans += `<span${color ? ` class="color-${color}"` : ''}>${esc(name)}</span> `
-                micRow = `<div class="trigger-mic">${MIC_SVG} ${spans}</div>`
+                let inner = ''
+                for (const item of b.micColors) {
+                    if (item.isGroup) {
+                        const nameHtml = `<span class="mic-group-name${item.color ? ' color-' + item.color : ''}">${esc(item.name)}</span>`
+                        const membersHtml = (item.members || []).map(m =>
+                            `<span class="mic-chip${m.color ? ' color-' + m.color : ''}">${esc(m.name)}</span>`
+                        ).join('')
+                        inner += `<span class="mic-group">${nameHtml}${membersHtml}</span> `
+                    } else {
+                        inner += `<span class="${'mic-chip' + (item.color ? ' color-' + item.color : '')}">${esc(item.name)}</span> `
+                    }
+                }
+                micRow = `<div class="trigger-mic">${MIC_SVG} ${inner}</div>`
             }
             let musicRow = ''
             if (b.musicLabel || b.musicAdjust) {
@@ -276,7 +285,16 @@
 
                     const label = document.createElement('div')
                     label.className = 'audio-label'
-                    label.innerHTML = esc(item.label) + (item.isLoop ? '<span class="audio-loop-badge">⟳ Loop</span>' : '')
+                    const labelText = document.createElement('span')
+                    labelText.className = 'audio-label-text'
+                    labelText.textContent = item.label
+                    label.appendChild(labelText)
+                    if (item.isLoop) {
+                        const badge = document.createElement('span')
+                        badge.className = 'audio-loop-badge'
+                        badge.textContent = '⟳ Loop'
+                        label.appendChild(badge)
+                    }
 
                     const barWrap = document.createElement('div')
                     barWrap.className = 'audio-bar-wrap'
@@ -348,35 +366,22 @@
                 if (effectiveMuteall) {
                     const s = document.createElement('span')
                     s.className = 'mic-all-off'
-                    s.textContent = 'alle aus'
+                    s.textContent = window.t ? window.t('mic.muteall') : 'alle aus'
                     micsDiv.appendChild(s)
                 } else if (effectiveMicColors && effectiveMicColors.length) {
                     for (const item of effectiveMicColors) {
                         if (item.isGroup) {
-                            // Group chip + member chips inside a group container
                             const grpEl = document.createElement('span')
                             grpEl.className = 'mic-group'
                             const grpName = document.createElement('span')
                             grpName.className = 'mic-group-name' + (item.color ? ' color-' + item.color : '')
                             grpName.textContent = item.name
                             grpEl.appendChild(grpName)
-                            if (item.members && item.members.length) {
-                                const sep = document.createElement('span')
-                                sep.className = 'mic-group-sep'
-                                sep.textContent = ': '
-                                grpEl.appendChild(sep)
-                                for (let i = 0; i < item.members.length; i++) {
-                                    if (i > 0) {
-                                        const comma = document.createElement('span')
-                                        comma.className = 'mic-group-sep'
-                                        comma.textContent = ', '
-                                        grpEl.appendChild(comma)
-                                    }
-                                    const m = document.createElement('span')
-                                    m.className = 'mic-chip' + (item.members[i].color ? ' color-' + item.members[i].color : '')
-                                    m.textContent = item.members[i].name
-                                    grpEl.appendChild(m)
-                                }
+                            for (const member of (item.members || [])) {
+                                const m = document.createElement('span')
+                                m.className = 'mic-chip' + (member.color ? ' color-' + member.color : '')
+                                m.textContent = member.name
+                                grpEl.appendChild(m)
                             }
                             micsDiv.appendChild(grpEl)
                         } else {
@@ -389,6 +394,94 @@
                 }
                 cell.append(label, micsDiv)
                 infoBarEl.appendChild(cell)
+            }
+        }
+
+        // ── Show progress bar ────────────────────────────────────────────
+        const progressBarEl = document.getElementById('show-progress-bar')
+        let _pbSegCount = -1
+        let _pbPrevCurrent = 0
+
+        function updateProgressBar(data) {
+            if (!data || !data.segments || data.segments.length === 0) {
+                progressBarEl.classList.add('pb-hidden')
+                return
+            }
+            progressBarEl.classList.remove('pb-hidden')
+
+            // Find active segment (last one where startCue <= current)
+            let activeIdx = -1
+            for (let i = data.segments.length - 1; i >= 0; i--) {
+                if (data.current >= data.segments[i].startCue) { activeIdx = i; break }
+            }
+
+            // Determine chapter / sub-chapter label
+            let chapterLabel = null, subLabel = null
+            if (activeIdx >= 0) {
+                const seg = data.segments[activeIdx]
+                if (seg.level === 2) {
+                    subLabel = seg.label
+                    for (let i = activeIdx - 1; i >= 0; i--) {
+                        if (data.segments[i].level === 1) { chapterLabel = data.segments[i].label; break }
+                    }
+                } else {
+                    chapterLabel = seg.label
+                }
+            }
+
+            // Rebuild DOM when segment count changes
+            if (_pbSegCount !== data.segments.length) {
+                _pbSegCount = data.segments.length
+                progressBarEl.innerHTML = ''
+
+                const labelEl = document.createElement('div')
+                labelEl.className = 'progress-chapter-text'
+                progressBarEl.appendChild(labelEl)
+
+                const segsWrap = document.createElement('div')
+                segsWrap.className = 'progress-segs-wrap'
+                for (const seg of data.segments) {
+                    const segEl = document.createElement('div')
+                    segEl.className = 'progress-seg'
+                    segEl.style.flex = seg.cueCount
+                    if (seg.label) segEl.title = seg.label
+                    const fill = document.createElement('div')
+                    fill.className = 'progress-fill'
+                    segEl.appendChild(fill)
+                    segsWrap.appendChild(segEl)
+                }
+                progressBarEl.appendChild(segsWrap)
+            }
+
+            // Update label text
+            const labelEl = progressBarEl.querySelector('.progress-chapter-text')
+            if (labelEl) {
+                labelEl.innerHTML = ''
+                if (chapterLabel) {
+                    const main = document.createElement('span')
+                    main.className = 'progress-chapter-main'
+                    main.textContent = chapterLabel
+                    labelEl.appendChild(main)
+                }
+                if (subLabel) {
+                    const sub = document.createElement('span')
+                    sub.className = 'progress-chapter-sub'
+                    sub.textContent = subLabel
+                    labelEl.appendChild(sub)
+                }
+            }
+
+            // Update fill widths — stagger transitions on big jumps for sweep effect
+            const isJump = Math.abs(data.current - _pbPrevCurrent) > 2
+            _pbPrevCurrent = data.current
+            const segEls = progressBarEl.querySelectorAll('.progress-seg')
+            for (let i = 0; i < data.segments.length; i++) {
+                const seg = data.segments[i]
+                const done = Math.max(0, Math.min(seg.cueCount, data.current - seg.startCue + 1))
+                const fill = segEls[i].firstChild
+                const delay = isJump ? (i * 0.055).toFixed(3) + 's' : '0s'
+                fill.style.transition = `width 0.3s ease ${delay}`
+                fill.style.width = (done / seg.cueCount * 100).toFixed(2) + '%'
             }
         }
 
@@ -406,6 +499,7 @@
             renderScript(blocks, nextCue, currentCue ?? 0, selectedVariant)
             syncAudio(audioProgress || [])
             updateInfoBar(state)
+            updateProgressBar(state.showProgress)
         }
 
         // ── Controls ─────────────────────────────────────────────────────

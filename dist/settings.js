@@ -610,6 +610,12 @@
                 oscFieldsEl.style.pointerEvents  = oscEnabledEl.checked ? '' : 'none'
             })
 
+            // ── Anzeige ───────────────────────────────────────────────
+            const micGroupDisplayEl = document.getElementById('mic-group-display')
+            micGroupDisplayEl.checked = settings.micGroupDisplay ?? true
+            const openLockedEl = document.getElementById('open-locked')
+            openLockedEl.checked = settings.openLocked ?? false
+
             // ── Text-Editor ───────────────────────────────────────────
             const editorAppSel   = document.getElementById('editor-app')
 
@@ -691,6 +697,8 @@
                     oscHost:    oscHostEl.value.trim() || '127.0.0.1',
                     oscPort:    isNaN(oscPortVal) ? 8000 : Math.max(1, Math.min(65535, oscPortVal)),
                     micDevices: micDeviceStates.map(s => s.getValues()),
+                    micGroupDisplay: micGroupDisplayEl.checked,
+                    openLocked: openLockedEl.checked,
                 })
                 window.close()
             })

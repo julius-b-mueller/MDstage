@@ -5,21 +5,27 @@ config:
         Frank:
             color: blue
             ch: null
+            device: 0
         Thomas:
             color: red
             ch: null
+            device: 0
         Christian:
             color: green
             ch: null
+            device: 0
         Annabel:
             color: yellow
             ch: null
+            device: 0
         Julie:
             color: purple
             ch: null
+            device: 0
         Mathilda:
             color: cyan
             ch: null
+            device: 0
     settings:
         MacBook-Pro-von-Julius:
             mainAudioDevice: null
@@ -44,6 +50,13 @@ config:
             micMuteOscPath: /ch/{ch}/mix/on
             micMuteOscUnmute: '1'
             micMuteOscMute: '0'
+    groups:
+        Gäste:
+            color: darkgreen
+            roles:
+                - Frank
+                - Annabel
+                - Julie
 ```
 
 # Online-Demo

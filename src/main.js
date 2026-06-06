@@ -155,6 +155,8 @@ let cueHistory     = []
 let cueHistoryAuto = []   // parallel to cueHistory: true = fired by auto_trigger YAML
 let pendingAutoTrigger = false  // set just before calling triggerAction from auto-trigger
 let liveViewOpen = false
+let showLock = false
+let lockAutoActivated = false
 let armedCue = null
 let midiGoNote = null
 let midiBackNote = null
@@ -171,6 +173,7 @@ let oscEnabled = false
 let oscHost = '127.0.0.1'
 let oscPort = 8000
 let appLanguage = 'de'
+let micGroupDisplay = true      // whether to bundle mic roles into group boxes in the UI
 let effectiveLightScene = null  // light: value of last fired cue that had one
 let effectiveMics       = null  // mic: value of last fired cue that had one
 let micDevices = []   // array of device config objects (from settings.micDevices)
@@ -832,9 +835,11 @@ function openRoleChangeDropdown(nameSpan, editorEl, opts = {}) {
     const spaceAbove = rect.top - 8
     if (spaceBelow >= 80 || spaceBelow >= spaceAbove) {
         dropdown.style.top = (rect.bottom + 4) + 'px'
+        dropdown.style.maxHeight = Math.min(spaceBelow, window.innerHeight * 0.6) + 'px'
     } else {
         dropdown.style.bottom = (window.innerHeight - rect.top + 4) + 'px'
         dropdown.style.top = 'auto'
+        dropdown.style.maxHeight = Math.min(spaceAbove, window.innerHeight * 0.6) + 'px'
     }
 
     // ── Action row: two halves (−  |  +) ──────────────────────────────────────
@@ -1878,9 +1883,11 @@ function openChipDropdown(chip) {
     const spaceAbove = rect.top - 8
     if (spaceBelow >= 80 || spaceBelow >= spaceAbove) {
         dropdown.style.top = (rect.bottom + 4) + 'px'
+        dropdown.style.maxHeight = Math.min(spaceBelow, window.innerHeight * 0.6) + 'px'
     } else {
         dropdown.style.bottom = (window.innerHeight - rect.top + 4) + 'px'
         dropdown.style.top = 'auto'
+        dropdown.style.maxHeight = Math.min(spaceAbove, window.innerHeight * 0.6) + 'px'
     }
 
     // Action row: [\u2212 Entfernen | + Hinzuf\u00fcgen]
@@ -1990,9 +1997,11 @@ function openAddRoleDropdown(referenceChip) {
     const spaceAbove = rect.top - 8
     if (spaceBelow >= 80 || spaceBelow >= spaceAbove) {
         dropdown.style.top = (rect.bottom + 4) + 'px'
+        dropdown.style.maxHeight = Math.min(spaceBelow, window.innerHeight * 0.6) + 'px'
     } else {
         dropdown.style.bottom = (window.innerHeight - rect.top + 4) + 'px'
         dropdown.style.top = 'auto'
+        dropdown.style.maxHeight = Math.min(spaceAbove, window.innerHeight * 0.6) + 'px'
     }
 
     for (const roleName of roles) {
@@ -2232,6 +2241,7 @@ function openNextBlockAfterLine(targetLine, forceAfterRole) {
 }
 
 function onScriptClick(e) {
+    if (showLock) return
     const blockEl    = e.target.closest('[data-block-idx]')
     const isEditable = blockEl && !isTriggerEl(blockEl)
     const activeContainer = inlineEditor?.wrapper ?? inlineEditor?.el
@@ -3283,18 +3293,93 @@ function updateAutoTriggerInScript(targetIndex, autoYaml) {
 // ── Role-group helpers ─────────────────────────────────────────────────────────
 
 function isGroup(name) {
-    if (name === 'Alle') return true
+    if (name === 'Alle' || (name === 'All' && appLanguage === 'en')) return true
     return !!(config.groups?.[name])
 }
 
 function getGroupRoles(name) {
-    if (name === 'Alle') return Object.keys(config.roles || {})
+    if (name === 'Alle' || (name === 'All' && appLanguage === 'en')) return Object.keys(config.roles || {})
     return config.groups?.[name]?.roles || []
 }
 
 function getGroupColor(name) {
-    if (name === 'Alle') return null
+    if (name === 'Alle' || (name === 'All' && appLanguage === 'en')) return null
     return config.groups?.[name]?.color || null
+}
+
+function getGroupDisplayName(name) {
+    if (name === 'Alle') return t('mic.group.alle')
+    return name
+}
+
+// Converts a mic value (group names or individual roles) into a display-ready array.
+// Each entry is either {isGroup:true, name, color, members:[{name,color}]}
+//                   or {isGroup:false, name, color}.
+// When entries are already group names → expand directly.
+// When entries are individual role names → reverse-map to groups where all members are active.
+function groupRolesForDisplay(micVal, grouped = true) {
+    if (!micVal || micVal === 'muteall') return []
+    const arr = typeof micVal === 'string' ? [micVal] : micVal
+
+    if (!grouped) {
+        // Flat mode: expand groups to individual roles, deduplicate by name
+        const result = []
+        const seen = new Set()
+        for (const name of arr) {
+            if (isGroup(name)) {
+                for (const r of getGroupRoles(name).filter(r => config.roles?.[r])) {
+                    if (!seen.has(r)) { seen.add(r); result.push({ isGroup: false, name: r, color: config.roles[r]?.color || null }) }
+                }
+            } else if (!seen.has(name)) {
+                seen.add(name)
+                result.push({ isGroup: false, name, color: config.roles?.[name]?.color || null })
+            }
+        }
+        return result
+    }
+
+    // If any entry is already a group name, use direct expansion (manual mic case)
+    if (arr.some(name => isGroup(name))) {
+        return arr.map(name => {
+            if (isGroup(name)) {
+                const members = getGroupRoles(name).filter(r => config.roles?.[r])
+                return {
+                    isGroup: true,
+                    name: getGroupDisplayName(name),
+                    color: getGroupColor(name),
+                    members: members.map(r => ({ name: r, color: config.roles[r]?.color || null }))
+                }
+            }
+            return { isGroup: false, name, color: config.roles?.[name]?.color || null }
+        })
+    }
+
+    // All entries are individual role names — reverse-map to groups
+    const activeSet = new Set(arr)
+
+    // Show all custom groups where ALL their members are active (no claiming — groups may overlap)
+    const matched = []
+    for (const [gName, gCfg] of Object.entries(config.groups || {})) {
+        const gRoles = (gCfg.roles || []).filter(r => config.roles?.[r])
+        if (gRoles.length > 0 && gRoles.every(r => activeSet.has(r))) {
+            matched.push({
+                isGroup: true,
+                name: gName,
+                color: gCfg.color || null,
+                members: gRoles.map(r => ({ name: r, color: config.roles[r]?.color || null }))
+            })
+        }
+    }
+
+    // Individual roles not covered by ANY matched group (avoid redundant individual chips)
+    const covered = new Set(matched.flatMap(g => g.members.map(m => m.name)))
+    const result = [...matched]
+    for (const name of arr) {
+        if (!covered.has(name)) {
+            result.push({ isGroup: false, name, color: config.roles?.[name]?.color || null })
+        }
+    }
+    return result
 }
 
 // Expands group names in a mic value to individual role names (for MIDI/OSC routing)
@@ -3391,26 +3476,104 @@ function getMicForCue(triggerIndex) {
 function renderMicIntoEl(el, mic, isAuto) {
     el.innerHTML = MIC_SVG
     if (mic === 'muteall') {
-        el.appendChild(document.createTextNode(' alle aus'))
-    } else {
-        el.appendChild(document.createTextNode(' '))
-        const roles = typeof mic === 'string' ? [mic] : mic
-        for (const r of roles) {
-            const sp = document.createElement('span')
-            sp.innerText = r
-            if (isGroup(r)) {
-                const gc = getGroupColor(r)
-                if (gc) sp.classList.add('color-' + gc)
-            } else if (config.roles?.[r]?.color) {
-                sp.classList.add('color-' + config.roles[r].color)
+        const s = document.createElement('span')
+        s.className = 'mic-all-off'
+        s.textContent = ' ' + t('mic.muteall')
+        el.appendChild(s)
+        return
+    }
+    el.appendChild(document.createTextNode(' '))
+    for (const item of groupRolesForDisplay(mic, micGroupDisplay)) {
+        if (item.isGroup) {
+            const grpEl = document.createElement('span')
+            grpEl.className = 'mic-group'
+            const grpName = document.createElement('span')
+            grpName.className = 'mic-group-name' + (item.color ? ' color-' + item.color : '')
+            grpName.textContent = item.name
+            grpEl.appendChild(grpName)
+            for (const member of (item.members || [])) {
+                const mEl = document.createElement('span')
+                mEl.className = 'mic-chip' + (member.color ? ' color-' + member.color : '')
+                mEl.textContent = member.name
+                grpEl.appendChild(mEl)
             }
+            el.appendChild(grpEl)
+        } else {
+            const sp = document.createElement('span')
+            sp.innerText = item.name
+            if (item.color) sp.classList.add('color-' + item.color)
             el.appendChild(sp)
         }
     }
 }
 
+// Removes mic: fields from all YAML cue blocks in the script.
+function removeAllManualMicsFromScript() {
+    const blocks = tokenizeScript(scriptText)
+    let changed = false
+    for (let i = 0; i < blocks.length; i++) {
+        if (blocks[i].type !== 'yaml') continue
+        const raw = blocks[i].content.replace(/^```yaml\n/, '').replace(/\n?```$/, '')
+        try {
+            const parsed = yaml.load(raw)
+            if (parsed && parsed.mic !== undefined) {
+                delete parsed.mic
+                blocks[i] = { type: 'yaml', content: '```yaml\n' + inlineNoteObjects(yaml.dump(parsed, { indent: 4 }).trimEnd()) + '\n```' }
+                changed = true
+            }
+        } catch (e) {}
+    }
+    if (!changed) return
+    const updated = blocks.map(b => b.content).join('\n\n') + '\n'
+    scriptText = updated
+    window.electronAPI.writeScriptMd(updated)
+    for (const ty of triggerYamls) {
+        if (ty) delete ty.mic
+    }
+}
+
 // Saves or removes auto_mic: true on a cue in scriptText, then refreshes all mic displays.
 function updateAutoMicInScript(triggerIndex, enabled) {
+    if (enabled && !hasAnyAutoMic()) {
+        const hasManualMics = triggerYamls.some(ty => ty?.mic !== undefined)
+        if (hasManualMics) {
+            const overlay = document.createElement('div')
+            overlay.className = 'dialog-overlay'
+            overlay.style.zIndex = '9999'
+            const box = document.createElement('div')
+            box.className = 'dialog-box'
+            box.style.maxWidth = '420px'
+            const msg = document.createElement('p')
+            msg.style.cssText = 'color:#abb2bf;font-size:0.9rem;margin:0 0 1.5rem;line-height:1.6'
+            msg.textContent = t('automic.warn.msg')
+            const actions = document.createElement('div')
+            actions.className = 'dialog-actions'
+            actions.style.cssText = 'flex-direction:column;align-items:stretch'
+            const cancelBtn = document.createElement('button')
+            cancelBtn.className = 'dialog-btn'
+            cancelBtn.textContent = t('btn.cancel')
+            const keepBtn = document.createElement('button')
+            keepBtn.className = 'dialog-btn'
+            keepBtn.textContent = t('automic.warn.keep')
+            const removeBtn = document.createElement('button')
+            removeBtn.className = 'dialog-btn dialog-btn-danger'
+            removeBtn.textContent = t('automic.warn.remove')
+            actions.append(cancelBtn, keepBtn, removeBtn)
+            box.append(msg, actions)
+            overlay.appendChild(box)
+            document.body.appendChild(overlay)
+            const close = () => overlay.remove()
+            cancelBtn.addEventListener('click', close)
+            overlay.addEventListener('mousedown', e => { if (e.target === overlay) close() })
+            keepBtn.addEventListener('click', () => { close(); _applyAutoMicInScript(triggerIndex, enabled) })
+            removeBtn.addEventListener('click', () => { close(); removeAllManualMicsFromScript(); _applyAutoMicInScript(triggerIndex, enabled) })
+            return
+        }
+    }
+    _applyAutoMicInScript(triggerIndex, enabled)
+}
+
+function _applyAutoMicInScript(triggerIndex, enabled) {
     let blockIdx = 0
     const updated = scriptText.replace(/```yaml\n([\s\S]*?)```/g, (match, content) => {
         blockIdx++
@@ -3433,9 +3596,10 @@ function updateAutoMicInScript(triggerIndex, enabled) {
         if (!triggerInfo) continue
         // Remove old mic display
         triggerInfo.querySelector('.trigger-mic')?.remove()
-        // Re-render if this is an auto-mic cue or has a manual mic
+        // Auto_mic cues always show computed mics; manual mics only when no auto_mic is active anywhere
         const ty = triggerYamls[i]
-        const micValue = ty?.auto_mic ? computeAutoMicRoles(i) : ty?.mic
+        const anyAutoMic = hasAnyAutoMic()
+        const micValue = ty?.auto_mic ? computeAutoMicRoles(i) : (!anyAutoMic ? ty?.mic : null)
         if (micValue) {
             const micEl = document.createElement('div')
             micEl.classList.add('trigger-mic')
@@ -3541,8 +3705,8 @@ function buildTrigger(codeblockYaml, index) {
 
     triggers[index] = triggerDiv
 
-    // mic info — show for manual mic or auto_mic cue
-    const micValue = codeblockYaml.auto_mic ? computeAutoMicRoles(index) : codeblockYaml.mic
+    // mic info — auto_mic cues always show computed mics; manual mics only when no auto_mic is active anywhere
+    const micValue = codeblockYaml.auto_mic ? computeAutoMicRoles(index) : (!hasAnyAutoMic() ? codeblockYaml.mic : null)
     if (micValue) {
         renderMicIntoEl(triggerMic, micValue, codeblockYaml.auto_mic)
         triggerInfo.insertBefore(triggerMic, triggerInfo.firstChild)
@@ -5999,6 +6163,13 @@ function setArmedCue(idx) {
     if (armedCue !== null && triggers[armedCue]) triggers[armedCue].classList.add('trigger-armed')
 }
 
+function setShowLock(locked) {
+    showLock = locked
+    document.body.classList.toggle('show-locked', locked)
+    document.querySelector('.lock-button')?.classList.toggle('active', locked)
+    if (locked && inlineEditor) closeEditor(false)
+}
+
 // Returns list of trigger indices whose loop_outro points to idx
 function loopSourcesOf(idx) {
     const sources = []
@@ -6314,20 +6485,22 @@ function broadcastLiveState() {
     const rawBlocks = tokenizeScript(scriptText)
     const liveBlocks = []
     let yamlCount = 0
+    // For progress bar: track headings (h1/h2) and cue count
+    const _progressHeadings = []  // { afterCueIdx, label }
+    let _progressCueCount = 0
     for (const b of rawBlocks) {
         if (b.type === 'yaml') {
             yamlCount++
             if (yamlCount === 1) continue  // config block
+            _progressCueCount++
             const cueIdx = yamlCount - 1
             const ty = triggerYamls[cueIdx]
             if (!ty) continue
 
-            const micList = !ty.mic ? [] :
-                ty.mic === 'muteall' ? null :
-                (typeof ty.mic === 'string' ? [ty.mic] : ty.mic)
-            const micColors = micList ? micList.map(name => ({
-                name, color: config.roles?.[name]?.color || null
-            })) : null
+            const anyAutoMic = hasAnyAutoMic()
+            const rawMicVal = ty.auto_mic ? getMicForCue(cueIdx) : (!anyAutoMic ? ty.mic : undefined)
+            const muteallCue = rawMicVal === 'muteall'
+            const micColors = (rawMicVal === undefined || muteallCue) ? null : groupRolesForDisplay(rawMicVal, micGroupDisplay)
 
             const musicLabel = typeof ty.music === 'string' ? ty.music :
                 ty.music?.file ? ty.music.file : null
@@ -6420,7 +6593,7 @@ function broadcastLiveState() {
                 isSibling: !!ty.sibling,
                 isPlaying: triggerAudio.get(cueIdx)?.ws.isPlaying() ?? false,
                 micColors,
-                muteall: ty.mic === 'muteall',
+                muteall: muteallCue,
                 musicLabel, musicAdjust,
                 lightScene: ty.light || null,
                 oscPath: ty.osc || null,
@@ -6433,10 +6606,26 @@ function broadcastLiveState() {
                 slfLabel,
             })
         } else {
+            const hm = b.content.match(/^(#{1,2}) (.+)/)
+            if (hm) _progressHeadings.push({ afterCueIdx: _progressCueCount, label: hm[2].trim(), level: hm[1].length })
             liveBlocks.push({
                 type: 'text',
                 html: applyRoleColorsToHtml(makeHtmlSafe(b.content)),
             })
+        }
+    }
+
+    // Build progress segments from headings
+    const _progressSegs = []
+    if (_progressHeadings.length === 0) {
+        if (_progressCueCount > 0) _progressSegs.push({ label: null, startCue: 1, cueCount: _progressCueCount })
+    } else {
+        if (_progressHeadings[0].afterCueIdx > 0)
+            _progressSegs.push({ label: null, level: null, startCue: 1, cueCount: _progressHeadings[0].afterCueIdx })
+        for (let i = 0; i < _progressHeadings.length; i++) {
+            const start = _progressHeadings[i].afterCueIdx + 1
+            const end = i + 1 < _progressHeadings.length ? _progressHeadings[i + 1].afterCueIdx : _progressCueCount
+            if (end >= start) _progressSegs.push({ label: _progressHeadings[i].label, level: _progressHeadings[i].level, startCue: start, cueCount: end - start + 1 })
         }
     }
 
@@ -6466,23 +6655,8 @@ function broadcastLiveState() {
         : null
     // Build effective mic display from effectiveMics
     let effectiveMicColors = null
-    if (effectiveMics === 'muteall') {
-        effectiveMicColors = null
-    } else if (effectiveMics) {
-        const micArr = typeof effectiveMics === 'string' ? [effectiveMics] : effectiveMics
-        effectiveMicColors = micArr.map(name => {
-            if (isGroup(name)) {
-                return {
-                    name,
-                    color: getGroupColor(name),
-                    isGroup: true,
-                    members: getGroupRoles(name)
-                        .filter(r => config.roles?.[r])
-                        .map(r => ({ name: r, color: config.roles[r]?.color || null }))
-                }
-            }
-            return { name, color: config.roles?.[name]?.color || null }
-        })
+    if (effectiveMics && effectiveMics !== 'muteall') {
+        effectiveMicColors = groupRolesForDisplay(effectiveMics, micGroupDisplay)
     }
 
     window.electronAPI.sendLiveState({
@@ -6497,6 +6671,7 @@ function broadcastLiveState() {
         effectiveMuteall: effectiveMics === 'muteall',
         effectiveMicColors: effectiveMics === 'muteall' ? null : (effectiveMicColors ?? undefined),
         hasMicState: effectiveMics !== null,
+        showProgress: { current: liveCurrent, total: _progressCueCount, segments: _progressSegs },
     })
 }
 
@@ -6917,6 +7092,7 @@ function initButtons() {
     document.querySelector(".em-music").addEventListener("mousedown", stopall)
     document.querySelector(".em-mic").addEventListener("mousedown", () => x32UnmuteChannels("muteall"))
     document.querySelector(".live-window-button").addEventListener("mousedown", () => window.electronAPI.openLiveWindow())
+    document.querySelector(".lock-button").addEventListener("mousedown", () => { lockAutoActivated = false; setShowLock(!showLock) })
     document.querySelector(".current-trigger-button").addEventListener("mousedown", () => scrollToTrigger(currentCue))
     document.querySelector(".reload-button").addEventListener("mousedown", () => {
         sessionStorage.setItem('reloadScrollY', String(window.scrollY))
@@ -6924,6 +7100,31 @@ function initButtons() {
     })
     document.querySelector(".sidebar-toggle-button").addEventListener("mousedown", toggleSidebar)
     document.getElementById('script-content').addEventListener('click', onScriptClick)
+
+    // Capture-phase listener: when show-locked, intercept all clicks in script area
+    document.getElementById('script-content').addEventListener('mousedown', (e) => {
+        if (!showLock || pickModeCallback) return
+        if (e.target.closest('.dialog-overlay')) return
+        const triggerEl = e.target.closest('[data-trigger-index]')
+        if (triggerEl) {
+            const index = parseInt(triggerEl.dataset.triggerIndex)
+            e.stopImmediatePropagation()
+            if (liveViewOpen) {
+                setArmedCue(index)
+                const isSibling = !!triggerYamls[index]?.sibling
+                const hasNextSibling = !!(triggerYamls[index + 1]?.sibling)
+                if (isSibling || hasNextSibling) selectedVariant = index
+                broadcastLiveState()
+            } else {
+                currentCue = index
+                markTriggers(index)
+                triggerAction(index)
+            }
+        } else {
+            e.stopImmediatePropagation()
+            e.preventDefault()
+        }
+    }, true)
     document.addEventListener('mousedown', (e) => {
         const sidebar = document.getElementById('scene-sidebar')
         if (!sidebar.classList.contains('open')) return
@@ -7162,6 +7363,8 @@ async function initApp() {
     mainChannelR    = savedSettings.mainChannelR    ?? 1
     monitorEnabled  = savedSettings.monitorEnabled  ?? false
     appLanguage     = savedSettings.appLanguage     || 'de'
+    micGroupDisplay = savedSettings.micGroupDisplay ?? true
+    if (savedSettings.openLocked) { lockAutoActivated = false; setShowLock(true) }
     window.applyI18n?.(appLanguage)
     monitorChannelL = monitorEnabled ? (savedSettings.monitorChannelL ?? mainChannelL) : mainChannelL
     monitorChannelR = monitorEnabled ? (savedSettings.monitorChannelR ?? mainChannelR) : mainChannelR
@@ -7289,6 +7492,7 @@ async function initApp() {
                 appLanguage = newLang
                 window.applyI18n?.(appLanguage)
             }
+            micGroupDisplay = newSettings.micGroupDisplay ?? true
             if (changed)
                 for (const ta of triggerAudio.values()) { ta.decodedBuffer = null; ta._decoding = false }
             applyAudioDevices()
@@ -7342,7 +7546,7 @@ function _slfRolesForExport(allYamls) {
     })
 }
 
-function buildExportData(withCues, withColors) {
+function buildExportData(withCues, withColors, withGroupedMics = true) {
     const titleMatch = scriptText.match(/^# (.+)/m)
     const title = titleMatch ? titleMatch[1].trim() : 'Skript'
     const date = new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })
@@ -7387,14 +7591,12 @@ function buildExportData(withCues, withColors) {
                 if (computed === 'muteall') {
                     cue.mic = 'muteall'
                 } else if (computed) {
-                    const roles = Array.isArray(computed) ? computed : [computed]
-                    cue.micRoles = roles
-                    cue.mic = roles.join(', ')
+                    cue.micItems = groupRolesForDisplay(computed, withGroupedMics)
+                    cue.mic = true
                 }
             } else if (parsed.mic) {
-                const roles = Array.isArray(parsed.mic) ? parsed.mic : [parsed.mic]
-                cue.micRoles = roles  // keep array for coloring
-                cue.mic = roles.join(', ')
+                cue.micItems = groupRolesForDisplay(parsed.mic, withGroupedMics)
+                cue.mic = true
             }
             if (parsed.music) {
                 const m = typeof parsed.music === 'string' ? { file: parsed.music } : (parsed.music || {})
@@ -7494,7 +7696,23 @@ function generateExportHtml(data) {
         } else if (item.type === 'cue') {
             const rows = []
             if (item.mic) {
-                const micHtml = (item.micRoles || [item.mic]).map(n => _esc(n)).join(', ')
+                let micHtml
+                if (item.mic === 'muteall') {
+                    micHtml = '<em>alle aus</em>'
+                } else if (item.micItems) {
+                    const parts = []
+                    for (const mi of item.micItems) {
+                        if (mi.isGroup) {
+                            const mems = (mi.members || []).map(m => `<span class="exp-chip">${_esc(m.name)}</span>`).join('')
+                            parts.push(`<span class="exp-group"><span class="exp-gname">${_esc(mi.name)}</span>${mems}</span>`)
+                        } else {
+                            parts.push(_esc(mi.name))
+                        }
+                    }
+                    micHtml = parts.join(' ')
+                } else {
+                    micHtml = ''
+                }
                 rows.push(`<tr><td class="cfl">Mic</td><td class="cfv">${micHtml}</td></tr>`)
             }
             if (item.music) {
@@ -7566,7 +7784,10 @@ h3{font-size:1.1rem;font-weight:bold;font-style:italic;margin-top:1.2rem;margin-
 .cfl{white-space:nowrap;padding-right:.5rem;color:#555;vertical-align:top}
 .cfv{vertical-align:top}
 .cfd{color:#555}
-.narr{margin:.3rem 0;color:#222}`
+.narr{margin:.3rem 0;color:#222}
+.exp-group{display:inline-block;border:0.5pt solid #999;border-radius:2pt;padding:0 2pt;margin:0 1pt;white-space:nowrap}
+.exp-gname{font-weight:bold;margin-right:2pt}
+.exp-chip{display:inline-block;margin:0 1pt}`
 
     return `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';"><style>${css}</style></head><body>
@@ -7600,12 +7821,20 @@ function showExportDialog() {
         labelCues.append(chkCues, t('dlg.export.cues'))
 
         const labelColors = document.createElement('label')
-        labelColors.style.cssText = chkStyle + ';margin-bottom:1.5rem'
+        labelColors.style.cssText = chkStyle
         const chkColors = document.createElement('input')
         chkColors.type = 'checkbox'
         chkColors.checked = true
         chkColors.style.cssText = 'width:15px;height:15px;cursor:pointer'
         labelColors.append(chkColors, t('dlg.export.colors'))
+
+        const labelGrouped = document.createElement('label')
+        labelGrouped.style.cssText = chkStyle + ';margin-bottom:1.5rem'
+        const chkGrouped = document.createElement('input')
+        chkGrouped.type = 'checkbox'
+        chkGrouped.checked = true
+        chkGrouped.style.cssText = 'width:15px;height:15px;cursor:pointer'
+        labelGrouped.append(chkGrouped, t('dlg.export.grouped'))
 
         const actions = document.createElement('div')
         actions.className = 'dialog-actions'
@@ -7620,15 +7849,15 @@ function showExportDialog() {
         const pdfBtn = document.createElement('button')
         pdfBtn.className = 'dialog-btn dialog-btn-primary'
         pdfBtn.textContent = t('dlg.export.pdf')
-        pdfBtn.addEventListener('click', () => close({ format: 'pdf', withCues: chkCues.checked, withColors: chkColors.checked }))
+        pdfBtn.addEventListener('click', () => close({ format: 'pdf', withCues: chkCues.checked, withColors: chkColors.checked, withGroupedMics: chkGrouped.checked }))
 
         const docxBtn = document.createElement('button')
         docxBtn.className = 'dialog-btn dialog-btn-primary'
         docxBtn.textContent = t('dlg.export.docx')
-        docxBtn.addEventListener('click', () => close({ format: 'docx', withCues: chkCues.checked, withColors: chkColors.checked }))
+        docxBtn.addEventListener('click', () => close({ format: 'docx', withCues: chkCues.checked, withColors: chkColors.checked, withGroupedMics: chkGrouped.checked }))
 
         actions.append(cancelBtn, pdfBtn, docxBtn)
-        box.append(h3, labelCues, labelColors, actions)
+        box.append(h3, labelCues, labelColors, labelGrouped, actions)
         overlay.append(box)
         document.body.appendChild(overlay)
         cancelBtn.focus()
@@ -7638,7 +7867,7 @@ function showExportDialog() {
 async function runExport() {
     const choice = await showExportDialog()
     if (!choice) return
-    const data = buildExportData(choice.withCues, choice.withColors)
+    const data = buildExportData(choice.withCues, choice.withColors, choice.withGroupedMics ?? true)
     if (choice.format === 'pdf') {
         await window.electronAPI.exportPdf({ html: generateExportHtml(data), title: data.title })
     } else {
@@ -7661,7 +7890,13 @@ window.__runExport = runExport
 
 window.electronAPI.onLiveWindowState((isOpen) => {
     liveViewOpen = isOpen
-    if (!isOpen) setArmedCue(null)
+    if (!isOpen) {
+        setArmedCue(null)
+        if (lockAutoActivated) { lockAutoActivated = false; setShowLock(false) }
+    } else if (!showLock) {
+        lockAutoActivated = true
+        setShowLock(true)
+    }
     broadcastLiveState()
 })
 
