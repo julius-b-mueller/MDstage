@@ -11,21 +11,22 @@ Electron-based stage manager app for live shows and theatre productions. The scr
 3. [Cue System (Triggers)](#cue-system-triggers)
 4. [Auto-Mic](#auto-mic)
 5. [Audio Playback](#audio-playback)
-5. [S/L/F – Start / Loop / Finish](#slf--start--loop--finish)
-6. [Auto-Cue](#auto-cue)
-7. [Adjust (Cross-Fade / Volume)](#adjust-cross-fade--volume)
-8. [MIDI](#midi)
-9. [OSC Output](#osc-output)
-10. [Timecode (MTC)](#timecode-mtc)
-11. [Live View](#live-view)
-12. [Emergency Controls](#emergency-controls)
-13. [Cue Navigation](#cue-navigation)
-14. [Role Editor](#role-editor)
-15. [Settings](#settings)
-16. [Export (PDF / DOCX)](#export-pdf--docx)
-17. [Scene Sidebar & Search](#scene-sidebar--search)
-18. [Script Formatting](#script-formatting)
-19. [Keyboard Shortcuts](#keyboard-shortcuts)
+6. [S/L/F – Start / Loop / Finish](#slf--start--loop--finish)
+7. [Auto-Cue](#auto-cue)
+8. [Adjust (Cross-Fade / Volume)](#adjust-cross-fade--volume)
+9. [MIDI](#midi)
+10. [OSC Output](#osc-output)
+11. [Timecode (MTC)](#timecode-mtc)
+12. [Live View](#live-view)
+13. [Emergency Controls](#emergency-controls)
+14. [Cue Navigation](#cue-navigation)
+15. [Role Editor](#role-editor)
+16. [Role Groups](#role-groups)
+17. [Settings](#settings)
+18. [Export (PDF / DOCX)](#export-pdf--docx)
+19. [Scene Sidebar & Search](#scene-sidebar--search)
+20. [Script Formatting](#script-formatting)
+21. [Keyboard Shortcuts](#keyboard-shortcuts)
 
 ---
 
@@ -57,6 +58,10 @@ config:
         Ben:
             color: green
             ch: 5
+    groups:
+        Ensemble:
+            color: purple
+            roles: [Anna, Ben]
     emLightNote: {ch: 1, note: 64}
     settings:
         MacBookPro:
@@ -133,7 +138,7 @@ Every YAML block (except the config block) is a **cue** (trigger). It is display
 | Field | Description |
 |---|---|
 | `trigger_note: {ch: 1, note: 42}` | MIDI note sent when the cue fires. Assigned automatically if not set. |
-| `mic: "Anna"` | Role name(s) whose microphone channel on the X32 is opened. All others are muted. `muteall` mutes everyone. Not used when Auto-Mic is active. |
+| `mic: "Anna"` | Role name(s) or group name(s) whose microphone channels are opened. All others are muted. `muteall` mutes everyone. Group names expand to all member roles. Not used when Auto-Mic is active. |
 | `auto_mic: true` | Enables Auto-Mic for this cue (see [Auto-Mic](#auto-mic)). |
 | `music: file.wav` | Audio file from the `audio/` subfolder. Short form or object (see below). |
 | `light: "Scene A"` | Free-text note for the lighting operator (documentation only). |
@@ -442,6 +447,52 @@ Roles can be renamed; all `**Role name**` occurrences in the script are updated 
 
 ---
 
+## Role Groups
+
+Groups bundle multiple roles into a named set. They are managed in the **Role Editor** window, below the individual roles.
+
+### Creating and editing groups
+
+- Click **+ Add group** to add a new group row.
+- Each group has a **name**, a **colour**, and a list of **member roles** (selected via chips below the group header).
+- Groups can be reordered by dragging the handle on the left.
+- Click **×** on a group row to remove it.
+- Save applies all group changes together with any role changes.
+
+Group names must not conflict with existing role names; the editor highlights duplicates before saving.
+
+### Config block syntax
+
+```yaml
+config:
+    groups:
+        Ensemble:
+            color: purple
+            roles: [Anna, Ben]
+        Chor:
+            color: cyan
+            roles: [Anna, Ben, Clara]
+```
+
+### Using groups as mic assignments
+
+A group name can be used anywhere a role name is accepted for `mic:`:
+
+```yaml
+mic: Ensemble          # opens all channels of the group
+mic: [Ensemble, Clara] # group + additional individual role
+```
+
+When a cue fires, the group is expanded to all its member roles for MIDI/OSC routing. In the cue panel and live view, the group is shown as a labelled box containing the individual role chips.
+
+The built-in group **Alle** (German) / **All** (English) always refers to all defined roles and cannot be created manually.
+
+### Group display in the cue panel and live view
+
+Mic assignments are shown as grouped chips by default. The display can be switched to individual chips (flat list) via **Settings → Mic group display**.
+
+---
+
 ## Settings
 
 **Settings…** (`Cmd/Ctrl+,`) opens:
@@ -489,6 +540,8 @@ The microphone muting method can be configured independently of the MIDI trigger
 | Emergency Light note | MIDI note for the emergency light button (channel + note number) |
 | Language | App interface language (German / English) |
 | Open in editor (right-click) | VS Code, Zed, or disabled |
+| Mic group display | When enabled, mic chips in the cue panel and live view are bundled into labelled group boxes. Disable for a flat chip list. |
+| Open locked | When enabled, the script editing lock is activated automatically on startup. |
 
 Settings are stored **per hostname** in the config block of the script file, so the same file can use different devices on multiple computers.
 
@@ -500,6 +553,7 @@ Settings are stored **per hostname** in the config block of the script file, so 
 
 - **Include cues:** Whether trigger blocks (mic, music, light, etc.) appear in the export
 - **Role colours:** Whether role names are shown in colour
+- **Grouped mics:** Whether mic assignments in cue tables are rendered as labelled group boxes (enabled) or as a flat list of role names (disabled)
 
 **Output formats:**
 
