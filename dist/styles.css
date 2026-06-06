@@ -165,6 +165,106 @@ p {
     opacity: 0.8;
 }
 
+.trigger-cue-midi,
+.trigger-cue-osc {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    margin-top: 0.15rem;
+}
+
+.cue-msg-chip {
+    display: inline-flex;
+    align-items: stretch;
+    font-size: 0.72rem;
+    font-family: monospace;
+    border-radius: 3px;
+    opacity: 0.85;
+    white-space: nowrap;
+    overflow: hidden;
+    padding: 0;
+}
+
+.cue-msg-chip--midi {
+    color: #abb2bf;
+    background: rgba(229, 192, 123, 0.07);
+    border: 1px solid rgba(229, 192, 123, 0.25);
+}
+
+.cue-msg-chip--osc {
+    color: #abb2bf;
+    background: rgba(97, 175, 239, 0.07);
+    border: 1px solid rgba(97, 175, 239, 0.25);
+}
+
+.cue-type-badge {
+    display: flex;
+    align-items: center;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 0 0.38em;
+    line-height: 1;
+}
+
+.cue-msg-chip--midi .cue-type-badge {
+    background: rgba(229, 192, 123, 0.32);
+    color: #e5c07b;
+}
+
+.cue-msg-chip--osc .cue-type-badge {
+    background: rgba(97, 175, 239, 0.32);
+    color: #61afef;
+}
+
+.cue-msg-content {
+    padding: 0.05rem 0.4rem;
+    display: flex;
+    align-items: center;
+}
+
+/* ── Cue message dialog cards ──────────────────────────────────────── */
+.cue-msg-card {
+    border: 1px solid #383c44;
+    border-radius: 5px;
+    padding: 0.5rem 0.6rem;
+    margin-bottom: 0.5rem;
+    background: #21252b;
+}
+
+.cue-msg-card-header {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    margin-bottom: 0.4rem;
+}
+
+.cue-msg-card-header input {
+    flex: 1;
+    background: #383c44;
+    color: #abb2bf;
+    border: 1px solid #4b5263;
+    padding: 0.3rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    font-family: inherit;
+    box-sizing: border-box;
+}
+
+.cue-msg-card-remove {
+    background: none;
+    border: 1px solid #4b5263;
+    color: #e06c75;
+    border-radius: 4px;
+    padding: 0.2rem 0.5rem;
+    cursor: pointer;
+    font-size: 0.9rem;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.cue-msg-card-remove:hover { background: rgba(224,108,117,0.12); }
+
 .trigger-number {
     font-size: 3rem;
     font-weight: bold;

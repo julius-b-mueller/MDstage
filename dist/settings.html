@@ -138,36 +138,20 @@
         </table>
     </div>
 
+    <div class="section-title">MIDI-Ausgabe-Geräte</div>
+    <div id="midi-output-devices-list"></div>
+    <button class="add-device-btn" id="add-midi-output-device-btn">+ Gerät hinzufügen</button>
+
     <div class="section-title" data-i18n="s.midi">MIDI</div>
-    <div class="field">
-        <label data-i18n="s.midi.trigger">Trigger-Noten</label>
-        <select id="trigger-device">
-            <option value="" data-i18n="s.no.device">— kein Gerät —</option>
-        </select>
-    </div>
     <div class="field">
         <label data-i18n="s.midi.tc">MIDI-Timecode</label>
         <select id="tc-device">
             <option value="" data-i18n="s.no.device">— kein Gerät —</option>
         </select>
     </div>
-    <div class="section-title" data-i18n="s.osc">OSC</div>
-    <div class="field">
-        <label style="display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf">
-            <input type="checkbox" id="osc-enabled" style="width:auto">
-            <span data-i18n="s.osc.enabled">OSC aktiviert</span>
-        </label>
-    </div>
-    <div id="osc-fields">
-        <div class="field">
-            <label data-i18n="s.osc.host">Ziel-Adresse</label>
-            <input type="text" id="osc-host" placeholder="127.0.0.1">
-        </div>
-        <div class="field">
-            <label data-i18n="s.osc.port">Port</label>
-            <input type="number" id="osc-port" min="1" max="65535" placeholder="8000">
-        </div>
-    </div>
+    <div class="section-title" data-i18n="s.osc">OSC-Ausgabe-Geräte</div>
+    <div id="osc-output-devices-list"></div>
+    <button class="add-device-btn" id="add-osc-device-btn">+ Gerät hinzufügen</button>
 
     <div class="section-title" data-i18n="s.mischpult">Mischpult Fernbedienung</div>
     <div id="mic-devices-list"></div>
@@ -214,7 +198,13 @@
                 <button class="btn" id="em-light-clear">✕</button>
             </div>
         </div>
-        <p class="hint" data-i18n="s.emlight.hint">Wird über den Trigger-MIDI-Ausgang gesendet. Leer lassen = Button deaktiviert.</p>
+        <p class="hint">Leer lassen = Button deaktiviert.</p>
+    </div>
+    <div class="field">
+        <label data-i18n="s.emlight.device">MIDI-Gerät</label>
+        <select id="em-light-device">
+            <option value="">— erstes Gerät —</option>
+        </select>
     </div>
 
     <div class="section-title" data-i18n="s.display">Anzeige</div>

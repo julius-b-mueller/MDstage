@@ -89,6 +89,31 @@
                 ? `<div class="trigger-light">✦ ${esc(b.lightScene)}</div>` : ''
             const oscRow = b.oscPath
                 ? `<div class="trigger-osc">⌁ ${esc(b.oscPath)}${b.oscArg !== null ? ' ' + esc(b.oscArg) : ''}</div>` : ''
+            let cueMidiRow = ''
+            if (b.cueMidi?.length) {
+                const chips = b.cueMidi.map(msg => {
+                    let text
+                    if (msg.comment) { text = esc(msg.comment) }
+                    else if (msg.type === 'note')  { text = `N${msg.note}` }
+                    else if (msg.type === 'cc')    { text = `CC${msg.cc}=${msg.value}` }
+                    else if (msg.type === 'pc')    { text = `PC${msg.program}` }
+                    else                           { text = 'SysEx' }
+                    const dev = msg.device ? ` → ${esc(msg.device)}` : ''
+                    return `<span class="cue-msg-chip cue-msg-chip--midi"><span class="cue-type-badge">MIDI</span><span class="cue-msg-content">${text}${dev}</span></span>`
+                }).join('')
+                cueMidiRow = `<div class="trigger-cue-midi">${chips}</div>`
+            }
+            let cueOscRow = ''
+            if (b.cueOsc?.length) {
+                const chips = b.cueOsc.map(msg => {
+                    let text
+                    if (msg.comment) { text = esc(msg.comment) }
+                    else { text = `${esc(msg.path || '')}${msg.arg !== undefined && msg.arg !== '' ? ' ' + esc(String(msg.arg)) : ''}` }
+                    const dev = msg.device ? ` → ${esc(msg.device)}` : ''
+                    return `<span class="cue-msg-chip cue-msg-chip--osc"><span class="cue-type-badge">OSC</span><span class="cue-msg-content">${text}${dev}</span></span>`
+                }).join('')
+                cueOscRow = `<div class="trigger-cue-osc">${chips}</div>`
+            }
             const slfRow = b.slfLabel
                 ? `<div class="trigger-slf trigger-slf--${b.slfLabel.role.toLowerCase()}">${esc(b.slfLabel.role)} <span style="opacity:0.65;font-weight:normal">${esc(b.slfLabel.detail)}</span></div>` : ''
             const playDot = b.isPlaying
@@ -104,7 +129,7 @@
             return `
                 <div class="trigger-row">
                     <div class="trigger-info">
-                        ${micRow}${musicRow}${lightRow}${oscRow}${slfRow}
+                        ${micRow}${musicRow}${lightRow}${oscRow}${cueMidiRow}${cueOscRow}${slfRow}
                     </div>
                     ${b.note ? `<div class="trigger-note">${esc(b.note)}</div>` : ''}
                     <div style="display:flex;align-items:center;gap:0.5rem;padding-right:0.5rem">${tnLabel}${playDot}</div>

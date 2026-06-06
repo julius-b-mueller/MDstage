@@ -172,6 +172,10 @@ let mtc = null
 let oscEnabled = false
 let oscHost = '127.0.0.1'
 let oscPort = 8000
+let midiOutputDevices = []   // [{name, device, sendTriggerNote}]
+let midiOutputPorts   = []   // resolved MIDI output ports (parallel array)
+let oscOutputDevices  = []   // [{name, enabled, host, port, sendTriggerNote}]
+let emLightMidiDevice = null // name of midiOutputDevice to use for emergency light
 let appLanguage = 'de'
 let micGroupDisplay = true      // whether to bundle mic roles into group boxes in the UI
 let effectiveLightScene = null  // light: value of last fired cue that had one
@@ -2835,6 +2839,12 @@ function validateCueFields(y, blockNum, lineNum) {
         if (typeof at !== 'number' || !isFinite(at) || at < 0)
             parseErrors.push({ blockNum, line: lineNum, message: `auto_trigger.at ungültig: ${at} (nicht-negative Zahl erwartet)` })
     }
+
+    if (y.cue_midi != null && !Array.isArray(y.cue_midi))
+        parseErrors.push({ blockNum, line: lineNum, message: 'cue_midi muss eine Liste sein' })
+
+    if (y.cue_osc != null && !Array.isArray(y.cue_osc))
+        parseErrors.push({ blockNum, line: lineNum, message: 'cue_osc muss eine Liste sein' })
 }
 
 function validateYamlBlocks(text) {
@@ -3813,6 +3823,60 @@ function buildTrigger(codeblockYaml, index) {
         triggerInfo.appendChild(oscBadge)
     }
 
+    // cue_midi chips
+    if (Array.isArray(codeblockYaml.cue_midi) && codeblockYaml.cue_midi.length > 0) {
+        const midiRow = document.createElement('div')
+        midiRow.classList.add('trigger-cue-midi')
+        for (const msg of codeblockYaml.cue_midi) {
+            const chip = document.createElement('span')
+            chip.classList.add('cue-msg-chip', 'cue-msg-chip--midi')
+            const badge = document.createElement('span')
+            badge.className = 'cue-type-badge'
+            badge.textContent = 'MIDI'
+            let text
+            if (msg.comment) { text = msg.comment }
+            else if (msg.type === 'note')  { text = `N${msg.note}` }
+            else if (msg.type === 'cc')    { text = `CC${msg.cc}=${msg.value}` }
+            else if (msg.type === 'pc')    { text = `PC${msg.program}` }
+            else                           { text = 'SysEx' }
+            if (msg.device) text += ` → ${msg.device}`
+            const content = document.createElement('span')
+            content.className = 'cue-msg-content'
+            content.textContent = text
+            chip.appendChild(badge)
+            chip.appendChild(content)
+            midiRow.appendChild(chip)
+        }
+        triggerInfo.appendChild(midiRow)
+    }
+
+    // cue_osc chips
+    if (Array.isArray(codeblockYaml.cue_osc) && codeblockYaml.cue_osc.length > 0) {
+        const oscRow = document.createElement('div')
+        oscRow.classList.add('trigger-cue-osc')
+        for (const msg of codeblockYaml.cue_osc) {
+            const chip = document.createElement('span')
+            chip.classList.add('cue-msg-chip', 'cue-msg-chip--osc')
+            const badge = document.createElement('span')
+            badge.className = 'cue-type-badge'
+            badge.textContent = 'OSC'
+            let text
+            if (msg.comment) { text = msg.comment }
+            else {
+                text = msg.path || ''
+                if (msg.arg !== undefined && String(msg.arg).trim() !== '') text += ` ${msg.arg}`
+            }
+            if (msg.device) text += ` → ${msg.device}`
+            const content = document.createElement('span')
+            content.className = 'cue-msg-content'
+            content.textContent = text
+            chip.appendChild(badge)
+            chip.appendChild(content)
+            oscRow.appendChild(chip)
+        }
+        triggerInfo.appendChild(oscRow)
+    }
+
     // text note
     if (codeblockYaml.note) triggerNote.innerText = codeblockYaml.note
 
@@ -4225,6 +4289,8 @@ function buildTrigger(codeblockYaml, index) {
                 x32UnmuteChannels(_micGap)
                 sendTriggerNote(nextIdx)
                 sendOscMessage(nextIdx)
+                sendCueMidiMessages(nextIdx)
+                sendCueOscMessages(nextIdx)
                 cueHistory.push(nextIdx); cueHistoryAuto.push(false)
                 broadcastLiveState()
                 return
@@ -5741,74 +5807,246 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     }
     box.appendChild(lightWrap)
 
-    // ── OSC-Pfad ─────────────────────────────────────────────────────
-    const { wrap: oscWrap, input: oscInput } = mkDialogField(t('dlg.trigger.osc'), 'text', '')
-    oscInput.placeholder = t('dlg.trigger.osc.ph')
-    if ((isEdit || isCopy) && existingYaml?.osc) oscInput.value = existingYaml.osc
-    box.appendChild(oscWrap)
+    // ── MIDI-Nachrichten (cue_midi) ────────────────────────────────────
+    const cueMidiSection = document.createElement('div')
+    cueMidiSection.classList.add('dialog-field')
+    const cueMidiHeaderRow = document.createElement('div')
+    cueMidiHeaderRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem'
+    const cueMidiLabel = document.createElement('label')
+    cueMidiLabel.textContent = 'MIDI-Nachrichten'
+    cueMidiLabel.style.marginBottom = '0'
+    const addMidiBtn = document.createElement('button')
+    addMidiBtn.type = 'button'
+    addMidiBtn.classList.add('dialog-btn')
+    addMidiBtn.textContent = '+ MIDI'
+    addMidiBtn.style.cssText = 'padding:0.2rem 0.6rem;font-size:0.82rem'
+    cueMidiHeaderRow.append(cueMidiLabel, addMidiBtn)
+    cueMidiSection.appendChild(cueMidiHeaderRow)
+    const cueMidiList = document.createElement('div')
+    cueMidiSection.appendChild(cueMidiList)
+    box.appendChild(cueMidiSection)
 
-    // ── OSC-Argument ──────────────────────────────────────────────────
-    const oscArgWrap = document.createElement('div')
-    oscArgWrap.classList.add('dialog-field')
-    oscArgWrap.style.display = existingYaml?.osc ? '' : 'none'
-    const oscArgLabel = document.createElement('label')
-    oscArgLabel.textContent = t('dlg.trigger.osc_arg')
-    const oscArgRow = document.createElement('div')
-    oscArgRow.style.cssText = 'display:flex;gap:0.5rem'
+    function buildMidiMsgCard(cfg) {
+        cfg = cfg || {}
+        const card = document.createElement('div')
+        card.className = 'cue-msg-card'
 
-    const oscArgTypeSelect = document.createElement('select')
-    oscArgTypeSelect.classList.add('dialog-select')
-    oscArgTypeSelect.style.cssText = 'width:auto;flex-shrink:0'
-    for (const typ of ['int', 'float', 'string']) {
-        const o = document.createElement('option')
-        o.value = typ; o.textContent = typ
-        oscArgTypeSelect.appendChild(o)
-    }
+        const cardHeader = document.createElement('div')
+        cardHeader.className = 'cue-msg-card-header'
 
-    const oscArgInput = document.createElement('input')
-    oscArgInput.type = 'text'
-    oscArgInput.style.flex = '1'
-    oscArgInput.placeholder = '— kein Argument —'
+        const commentIn = document.createElement('input')
+        commentIn.type = 'text'; commentIn.placeholder = 'Kommentar (optional)'
+        commentIn.value = cfg.comment || ''
+        commentIn.style.flex = '1'
 
-    function applyOscArgType() {
-        const type = oscArgTypeSelect.value
-        if (type === 'int') {
-            oscArgInput.placeholder = 'z.B. 1'
-            // Strip anything that's not a digit or leading minus
-            oscArgInput.value = oscArgInput.value.replace(/[^0-9\-]/g, '').replace(/^(-?)(.*)$/, (_, s, rest) => s + rest.replace(/-/g, ''))
-        } else if (type === 'float') {
-            oscArgInput.placeholder = 'z.B. 1.0'
-            oscArgInput.value = oscArgInput.value.replace(/[^0-9.\-]/g, '').replace(/^(-?)(.*)$/, (_, s, rest) => s + rest.replace(/-/g, '')).replace(/(\..*)\./g, '$1')
-        } else {
-            oscArgInput.placeholder = 'z.B. go'
+        const removeBtn = document.createElement('button')
+        removeBtn.type = 'button'
+        removeBtn.className = 'cue-msg-card-remove'
+        removeBtn.textContent = '✕'
+        removeBtn.addEventListener('click', () => card.remove())
+
+        cardHeader.append(commentIn, removeBtn)
+        card.appendChild(cardHeader)
+
+        // Device select
+        const devRow = document.createElement('div')
+        devRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:0.4rem;margin-bottom:0.4rem'
+        const devSel = document.createElement('select')
+        devSel.classList.add('dialog-select')
+        for (const d of midiOutputDevices) {
+            const o = new Option(d.name, d.name)
+            if (d.name === cfg.device) o.selected = true
+            devSel.appendChild(o)
         }
+        const typeSel = document.createElement('select')
+        typeSel.classList.add('dialog-select')
+        for (const [v, lbl] of [['note','Note'],['cc','CC'],['pc','Program Change'],['sysex','SysEx']]) {
+            const o = new Option(lbl, v)
+            if (v === (cfg.type || 'note')) o.selected = true
+            typeSel.appendChild(o)
+        }
+        devRow.append(devSel, typeSel)
+        card.appendChild(devRow)
+
+        // Type-specific fields
+        const noteDiv = document.createElement('div')
+        noteDiv.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.4rem;margin-bottom:0.4rem'
+        const mkNumIn = (ph, min, max, val) => {
+            const el = document.createElement('input'); el.type = 'number'
+            el.placeholder = ph; el.min = min; el.max = max
+            if (val !== undefined) el.value = val
+            el.classList.add('dialog-select'); el.style.width = '100%'
+            return el
+        }
+        const noteCh  = mkNumIn('Kanal', 1, 16, cfg.ch || 1)
+        const noteNote = mkNumIn('Note', 0, 127, cfg.note !== undefined ? cfg.note : '')
+        const noteVel  = mkNumIn('Velocity', 0, 127, cfg.vel !== undefined ? cfg.vel : 100)
+        const mkLbl = txt => { const l = document.createElement('div'); l.style.cssText = 'font-size:0.72rem;color:#5c6370'; l.textContent = txt; return l }
+        const noteChWrap = document.createElement('div'); noteChWrap.append(mkLbl('Kanal (1–16)'), noteCh)
+        const noteNoteWrap = document.createElement('div'); noteNoteWrap.append(mkLbl('Note (0–127)'), noteNote)
+        const noteVelWrap = document.createElement('div'); noteVelWrap.append(mkLbl('Velocity'), noteVel)
+        noteDiv.append(noteChWrap, noteNoteWrap, noteVelWrap)
+
+        const ccDiv = document.createElement('div')
+        ccDiv.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.4rem;margin-bottom:0.4rem'
+        const ccCh  = mkNumIn('Kanal', 1, 16, cfg.ch || 1)
+        const ccNum = mkNumIn('CC-Nummer', 0, 127, cfg.cc !== undefined ? cfg.cc : '')
+        const ccVal = mkNumIn('Wert', 0, 127, cfg.value !== undefined ? cfg.value : '')
+        const ccChWrap = document.createElement('div'); ccChWrap.append(mkLbl('Kanal (1–16)'), ccCh)
+        const ccNumWrap = document.createElement('div'); ccNumWrap.append(mkLbl('CC (0–127)'), ccNum)
+        const ccValWrap = document.createElement('div'); ccValWrap.append(mkLbl('Wert (0–127)'), ccVal)
+        ccDiv.append(ccChWrap, ccNumWrap, ccValWrap)
+
+        const pcDiv = document.createElement('div')
+        pcDiv.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:0.4rem;margin-bottom:0.4rem'
+        const pcCh  = mkNumIn('Kanal', 1, 16, cfg.ch || 1)
+        const pcPgm = mkNumIn('Programm', 0, 127, cfg.program !== undefined ? cfg.program : '')
+        const pcChWrap = document.createElement('div'); pcChWrap.append(mkLbl('Kanal (1–16)'), pcCh)
+        const pcPgmWrap = document.createElement('div'); pcPgmWrap.append(mkLbl('Programm (0–127)'), pcPgm)
+        pcDiv.append(pcChWrap, pcPgmWrap)
+
+        const sysexDiv = document.createElement('div')
+        sysexDiv.style.marginBottom = '0.4rem'
+        const sysexIn = document.createElement('input'); sysexIn.type = 'text'
+        sysexIn.placeholder = 'z.B. F0 41 F7'; sysexIn.value = cfg.bytes || ''
+        sysexIn.classList.add('dialog-select'); sysexIn.style.width = '100%'
+        const sysexLbl = mkLbl('Hex-Bytes (Leerzeichen-getrennt)')
+        sysexDiv.append(sysexLbl, sysexIn)
+
+        card.append(noteDiv, ccDiv, pcDiv, sysexDiv)
+
+        function updateTypeDivs() {
+            const t = typeSel.value
+            noteDiv.style.display   = t === 'note'   ? '' : 'none'
+            ccDiv.style.display     = t === 'cc'     ? '' : 'none'
+            pcDiv.style.display     = t === 'pc'     ? '' : 'none'
+            sysexDiv.style.display  = t === 'sysex'  ? '' : 'none'
+        }
+        typeSel.addEventListener('change', updateTypeDivs)
+        updateTypeDivs()
+
+        card.getValues = () => {
+            const t = typeSel.value
+            const out = { type: t, device: devSel.value || midiOutputDevices[0]?.name || '' }
+            if (commentIn.value.trim()) out.comment = commentIn.value.trim()
+            if (t === 'note') {
+                out.ch = parseInt(noteCh.value) || 1
+                out.note = parseInt(noteNote.value) || 0
+                out.vel = parseInt(noteVel.value) ?? 100
+            } else if (t === 'cc') {
+                out.ch = parseInt(ccCh.value) || 1
+                out.cc = parseInt(ccNum.value) || 0
+                out.value = parseInt(ccVal.value) ?? 0
+            } else if (t === 'pc') {
+                out.ch = parseInt(pcCh.value) || 1
+                out.program = parseInt(pcPgm.value) || 0
+            } else if (t === 'sysex') {
+                out.bytes = sysexIn.value.trim()
+            }
+            return out
+        }
+
+        cueMidiList.appendChild(card)
     }
-    oscArgTypeSelect.addEventListener('change', applyOscArgType)
 
-    oscArgInput.addEventListener('beforeinput', (e) => {
-        if (!e.data) return
-        const type = oscArgTypeSelect.value
-        if (type === 'string') return
-        const cur = oscArgInput.value
-        const sel = oscArgInput.selectionStart
-        const preview = cur.slice(0, sel) + e.data + cur.slice(oscArgInput.selectionEnd)
-        if (type === 'int'   && !/^-?\d*$/.test(preview)) e.preventDefault()
-        if (type === 'float' && !/^-?\d*\.?\d*$/.test(preview)) e.preventDefault()
-    })
-
-    oscArgRow.append(oscArgTypeSelect, oscArgInput)
-    oscArgWrap.append(oscArgLabel, oscArgRow)
-    box.appendChild(oscArgWrap)
-
-    oscInput.addEventListener('input', () => {
-        oscArgWrap.style.display = oscInput.value.trim() ? '' : 'none'
-    })
-
-    if ((isEdit || isCopy) && existingYaml?.osc_arg !== undefined && existingYaml.osc_arg !== '') {
-        oscArgInput.value = String(existingYaml.osc_arg)
-        if (existingYaml.osc_arg_type) oscArgTypeSelect.value = existingYaml.osc_arg_type
-        applyOscArgType()
+    if ((isEdit || isCopy) && Array.isArray(existingYaml?.cue_midi)) {
+        for (const m of existingYaml.cue_midi) buildMidiMsgCard(m)
     }
+    addMidiBtn.addEventListener('click', () => buildMidiMsgCard({}))
+
+    // ── OSC-Nachrichten (cue_osc) ───────────────────────────────────────
+    const cueOscSection = document.createElement('div')
+    cueOscSection.classList.add('dialog-field')
+    const cueOscHeaderRow = document.createElement('div')
+    cueOscHeaderRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem'
+    const cueOscLabel = document.createElement('label')
+    cueOscLabel.textContent = 'OSC-Nachrichten'
+    cueOscLabel.style.marginBottom = '0'
+    const addOscBtn = document.createElement('button')
+    addOscBtn.type = 'button'
+    addOscBtn.classList.add('dialog-btn')
+    addOscBtn.textContent = '+ OSC'
+    addOscBtn.style.cssText = 'padding:0.2rem 0.6rem;font-size:0.82rem'
+    cueOscHeaderRow.append(cueOscLabel, addOscBtn)
+    cueOscSection.appendChild(cueOscHeaderRow)
+    const cueOscList = document.createElement('div')
+    cueOscSection.appendChild(cueOscList)
+    box.appendChild(cueOscSection)
+
+    function buildOscMsgCard(cfg) {
+        cfg = cfg || {}
+        const card = document.createElement('div')
+        card.className = 'cue-msg-card'
+
+        const cardHeader = document.createElement('div')
+        cardHeader.className = 'cue-msg-card-header'
+
+        const commentIn = document.createElement('input')
+        commentIn.type = 'text'; commentIn.placeholder = 'Kommentar (optional)'
+        commentIn.value = cfg.comment || ''
+        commentIn.style.flex = '1'
+
+        const removeBtn = document.createElement('button')
+        removeBtn.type = 'button'
+        removeBtn.className = 'cue-msg-card-remove'
+        removeBtn.textContent = '✕'
+        removeBtn.addEventListener('click', () => card.remove())
+
+        cardHeader.append(commentIn, removeBtn)
+        card.appendChild(cardHeader)
+
+        const devRow = document.createElement('div')
+        devRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:0.4rem;margin-bottom:0.4rem'
+        const devSel = document.createElement('select')
+        devSel.classList.add('dialog-select')
+        for (const d of oscOutputDevices) {
+            const o = new Option(d.name, d.name)
+            if (d.name === cfg.device) o.selected = true
+            devSel.appendChild(o)
+        }
+        const pathIn = document.createElement('input')
+        pathIn.type = 'text'; pathIn.placeholder = '/pfad/zum/ziel'
+        pathIn.value = cfg.path || ''
+        pathIn.classList.add('dialog-select'); pathIn.style.width = '100%'
+        devRow.append(devSel, pathIn)
+        card.appendChild(devRow)
+
+        const argRow = document.createElement('div')
+        argRow.style.cssText = 'display:flex;gap:0.4rem;margin-bottom:0.4rem'
+        const argTypeSel = document.createElement('select')
+        argTypeSel.classList.add('dialog-select')
+        argTypeSel.style.cssText = 'width:auto;flex-shrink:0'
+        for (const [v, lbl] of [['none','— kein Argument —'],['string','string'],['int','int'],['float','float']]) {
+            const o = new Option(lbl, v)
+            if (v === (cfg.arg !== undefined && cfg.arg !== '' ? (cfg.arg_type || 'string') : 'none')) o.selected = true
+            argTypeSel.appendChild(o)
+        }
+        const argIn = document.createElement('input')
+        argIn.type = 'text'; argIn.placeholder = 'Wert'; argIn.style.flex = '1'
+        argIn.value = cfg.arg !== undefined ? String(cfg.arg) : ''
+        const updateArgVis = () => { argIn.style.display = argTypeSel.value === 'none' ? 'none' : '' }
+        argTypeSel.addEventListener('change', updateArgVis)
+        updateArgVis()
+        argRow.append(argTypeSel, argIn)
+        card.appendChild(argRow)
+
+        card.getValues = () => {
+            const out = { device: devSel.value || oscOutputDevices[0]?.name || '', path: pathIn.value.trim() }
+            if (commentIn.value.trim()) out.comment = commentIn.value.trim()
+            if (argTypeSel.value !== 'none' && argIn.value.trim() !== '') {
+                out.arg = argIn.value.trim()
+                out.arg_type = argTypeSel.value
+            }
+            return out
+        }
+
+        cueOscList.appendChild(card)
+    }
+
+    if ((isEdit || isCopy) && Array.isArray(existingYaml?.cue_osc)) {
+        for (const m of existingYaml.cue_osc) buildOscMsgCard(m)
+    }
+    addOscBtn.addEventListener('click', () => buildOscMsgCard({}))
 
     // ── Start-Timecode ───────────────────────────────────────────────
     let tcInput = null
@@ -5978,16 +6216,26 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         const lightVal = lightInput.value.trim()
         if (lightVal) newYaml.light = lightVal
 
-        // OSC path + optional argument
-        const oscVal = oscInput.value.trim()
-        if (oscVal) {
-            newYaml.osc = oscVal
-            const argVal = oscArgInput.value.trim()
-            if (argVal) {
-                newYaml.osc_arg      = argVal
-                newYaml.osc_arg_type = oscArgTypeSelect.value
-            }
+        // OSC-Pfad: bestehende Felder beim Bearbeiten erhalten (UI-Feld wurde entfernt)
+        if (isEdit && !isCopy && existingYaml?.osc) {
+            newYaml.osc = existingYaml.osc
+            if (existingYaml.osc_arg !== undefined) newYaml.osc_arg = existingYaml.osc_arg
+            if (existingYaml.osc_arg_type) newYaml.osc_arg_type = existingYaml.osc_arg_type
         }
+
+        // cue_midi messages
+        const midiMsgs = [...cueMidiList.querySelectorAll('.cue-msg-card')]
+            .filter(c => typeof c.getValues === 'function')
+            .map(c => c.getValues())
+            .filter(m => m.type !== 'sysex' || m.bytes)
+        if (midiMsgs.length) newYaml.cue_midi = midiMsgs
+
+        // cue_osc messages
+        const oscMsgs = [...cueOscList.querySelectorAll('.cue-msg-card')]
+            .filter(c => typeof c.getValues === 'function')
+            .map(c => c.getValues())
+            .filter(m => m.path)
+        if (oscMsgs.length) newYaml.cue_osc = oscMsgs
 
         // start_tc (only for root SLF cues; non-root members use derived TC)
         const tcVal = tcInput?.value.trim() ?? ''
@@ -6048,6 +6296,7 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         // preserve S/L/F links — managed by the S/L/F button, not the edit dialog
         if (isEdit && existingYaml?.chain_end)  newYaml.chain_end  = existingYaml.chain_end
         if (isEdit && existingYaml?.loop_outro) newYaml.loop_outro = existingYaml.loop_outro
+        // cue_midi and cue_osc are already collected from the UI above; no separate preservation needed
 
         close()
         if (isEdit) {
@@ -6454,6 +6703,8 @@ function triggerAction(cue) {
     playMusic(cue)
     sendTriggerNote(cue)
     sendOscMessage(cue)
+    sendCueMidiMessages(cue)
+    sendCueOscMessages(cue)
 
     if (startTc && mtc) {
         if (ta) mtc.start(startTc, ta.ws, cue, ta.mp?.start ?? 0)
@@ -6663,6 +6914,8 @@ function broadcastLiveState() {
                 outroPending,
                 autoCuePending,
                 slfLabel,
+                cueMidi: ty.cue_midi || null,
+                cueOsc:  ty.cue_osc  || null,
             })
         } else {
             const hm = b.content.match(/^(#{1,2}) (.+)/)
@@ -6864,13 +7117,18 @@ function backAction() {
 
 function sendTriggerNote(cue) {
     const tn = triggerYamls[cue].trigger_note
-    if (!tn || !midiTrigger) return
-    midiTrigger.send([0x90 | (tn.ch - 1), tn.note, 100])
-    setTimeout(() => midiTrigger.send([0x80 | (tn.ch - 1), tn.note, 0]), 100)
+    if (!tn) return
+    for (let i = 0; i < midiOutputDevices.length; i++) {
+        if (!midiOutputDevices[i].sendTriggerNote) continue
+        const port = midiOutputPorts[i]
+        if (!port) continue
+        port.send([0x90 | (tn.ch - 1), tn.note, 100])
+        setTimeout(() => port.send([0x80 | (tn.ch - 1), tn.note, 0]), 100)
+    }
 }
 
 function sendOscMessage(cue) {
-    if (!oscEnabled || !window.electronAPI?.sendOsc) return
+    if (!window.electronAPI?.sendOsc) return
     const ty = triggerYamls[cue]
     if (!ty) return
     let oscPath, args = []
@@ -6888,7 +7146,59 @@ function sendOscMessage(cue) {
     } else {
         return
     }
-    window.electronAPI.sendOsc({ path: oscPath, args, host: oscHost, port: oscPort })
+    for (const dev of oscOutputDevices) {
+        if (!dev.enabled || !dev.sendTriggerNote) continue
+        window.electronAPI.sendOsc({ path: oscPath, args, host: dev.host || '127.0.0.1', port: dev.port ?? 8000 })
+    }
+}
+
+function sendCueMidiMessages(cue) {
+    const ty = triggerYamls[cue]
+    if (!ty?.cue_midi?.length) return
+    for (const msg of ty.cue_midi) {
+        const devIdx = midiOutputDevices.findIndex(d => d.name === (msg.device || ''))
+        const port = (devIdx >= 0 ? midiOutputPorts[devIdx] : null) ?? midiOutputPorts[0]
+        if (!port) continue
+        if (msg.type === 'note') {
+            const ch = ((parseInt(msg.ch) || 1) - 1) & 0xF
+            const note = Math.max(0, Math.min(127, parseInt(msg.note) || 0))
+            const vel  = Math.max(0, Math.min(127, parseInt(msg.vel) ?? 100))
+            port.send([0x90 | ch, note, vel])
+            setTimeout(() => port.send([0x80 | ch, note, 0]), 100)
+        } else if (msg.type === 'cc') {
+            const ch  = ((parseInt(msg.ch)    || 1) - 1) & 0xF
+            const cc  = Math.max(0, Math.min(127, parseInt(msg.cc)    || 0))
+            const val = Math.max(0, Math.min(127, parseInt(msg.value) ?? 0))
+            port.send([0xB0 | ch, cc, val])
+        } else if (msg.type === 'pc') {
+            const ch  = ((parseInt(msg.ch) || 1) - 1) & 0xF
+            const pgm = Math.max(0, Math.min(127, parseInt(msg.program) || 0))
+            port.send([0xC0 | ch, pgm])
+        } else if (msg.type === 'sysex') {
+            const bytes = String(msg.bytes || '').trim().split(/\s+/)
+                .map(h => parseInt(h, 16)).filter(n => !isNaN(n) && n >= 0 && n <= 255)
+            if (bytes.length) port.send(bytes)
+        }
+    }
+}
+
+function sendCueOscMessages(cue) {
+    const ty = triggerYamls[cue]
+    if (!ty?.cue_osc?.length || !window.electronAPI?.sendOsc) return
+    for (const msg of ty.cue_osc) {
+        const dev = oscOutputDevices.find(d => d.name === (msg.device || '')) ?? oscOutputDevices[0]
+        if (!dev?.enabled) continue
+        const oscPath = String(msg.path || '').trim()
+        if (!oscPath || !/^\/[\x20-\x7e]*$/.test(oscPath)) continue
+        const args = []
+        if (msg.arg !== undefined && String(msg.arg).trim() !== '') {
+            const type = msg.arg_type || 'string'
+            if (type === 'int')        args.push(parseInt(msg.arg)   || 0)
+            else if (type === 'float') args.push(parseFloat(msg.arg) || 0)
+            else                       args.push(String(msg.arg))
+        }
+        window.electronAPI.sendOsc({ path: oscPath, args, host: dev.host || '127.0.0.1', port: dev.port ?? 8000 })
+    }
 }
 
 async function playMusic(cue) {
@@ -7147,9 +7457,14 @@ function colorText() {
 function initButtons() {
     document.querySelector(".em-light").addEventListener("mousedown", () => {
         const eln = config.emLightNote
-        if (!eln || !midiTrigger) return
-        midiTrigger.send([0x90 | (eln.ch - 1), eln.note, 100])
-        setTimeout(() => midiTrigger.send([0x80 | (eln.ch - 1), eln.note, 0]), 100)
+        if (!eln) return
+        const _elIdx = emLightMidiDevice
+            ? midiOutputDevices.findIndex(d => d.name === emLightMidiDevice)
+            : 0
+        const _elPort = midiOutputPorts[_elIdx >= 0 ? _elIdx : 0]
+        if (!_elPort) return
+        _elPort.send([0x90 | (eln.ch - 1), eln.note, 100])
+        setTimeout(() => _elPort.send([0x80 | (eln.ch - 1), eln.note, 0]), 100)
     })
     document.querySelector(".em-music").addEventListener("mousedown", stopall)
     document.querySelector(".em-mic").addEventListener("mousedown", () => x32UnmuteChannels("muteall"))
@@ -7204,6 +7519,25 @@ function initButtons() {
     document.getElementById('search-prev').addEventListener('click', () => searchStep(-1))
     document.getElementById('search-next').addEventListener('click', () => searchStep(1))
     document.getElementById('search-close').addEventListener('click', closeSearch)
+}
+
+// Migrate flat settings to midiOutputDevices array (backwards compat)
+function _migrateMidiOutputDevices(settings) {
+    if (settings.midiOutputDevices?.length > 0) {
+        // Ensure every entry has sendTriggerNote; default first device to true if missing
+        return settings.midiOutputDevices.map((d, i) =>
+            'sendTriggerNote' in d ? d : { ...d, sendTriggerNote: i === 0 })
+    }
+    return [{ name: 'Gerät 1', device: settings.midiTriggerDevice || null, sendTriggerNote: true }]
+}
+
+// Migrate flat OSC settings to oscOutputDevices array (backwards compat)
+function _migrateOscOutputDevices(settings) {
+    if (settings.oscOutputDevices?.length > 0) {
+        return settings.oscOutputDevices.map((d, i) =>
+            'sendTriggerNote' in d ? d : { ...d, sendTriggerNote: i === 0 })
+    }
+    return [{ name: 'Gerät 1', enabled: settings.oscEnabled ?? false, host: settings.oscHost || '127.0.0.1', port: settings.oscPort ?? 8000, sendTriggerNote: true }]
 }
 
 // Migrate flat settings to micDevices array (backwards compat)
@@ -7327,6 +7661,7 @@ function _sendMicToDevice(dev, devIdx, allChs, unmuteChs) {
 
 function refreshMidiDevices(settings) {
     micDeviceOutputs = micDevices.map(() => null)
+    midiOutputPorts  = midiOutputDevices.map(() => null)
     midiTrigger = null
     midiTC = null
     midiGoNote    = settings.midiGoNote    || null
@@ -7340,9 +7675,13 @@ function refreshMidiDevices(settings) {
                 dev.midiX32Device && output.name === dev.midiX32Device)
                 micDeviceOutputs[i] = output
         }
-        if (settings.midiTriggerDevice && output.name === settings.midiTriggerDevice) midiTrigger = output
+        for (let i = 0; i < midiOutputDevices.length; i++) {
+            if (midiOutputDevices[i].device && output.name === midiOutputDevices[i].device)
+                midiOutputPorts[i] = output
+        }
         if (settings.midiTCDevice && output.name === settings.midiTCDevice) midiTC = output
     }
+    midiTrigger = midiOutputPorts[0] ?? null  // keeps sendTriggerNote working
     if (mtc) mtc.setOutput(midiTC)
 }
 
@@ -7431,9 +7770,15 @@ async function initApp() {
     monitorChannelL = monitorEnabled ? (savedSettings.monitorChannelL ?? mainChannelL) : mainChannelL
     monitorChannelR = monitorEnabled ? (savedSettings.monitorChannelR ?? mainChannelR) : mainChannelR
     editorApp       = savedSettings.editorApp || null
-    oscEnabled      = savedSettings.oscEnabled ?? false
-    oscHost         = savedSettings.oscHost    || '127.0.0.1'
-    oscPort         = savedSettings.oscPort    ?? 8000
+    midiOutputDevices = _migrateMidiOutputDevices(savedSettings)
+    midiOutputPorts   = midiOutputDevices.map(() => null)
+    oscOutputDevices  = _migrateOscOutputDevices(savedSettings)
+    emLightMidiDevice = savedSettings.emLightMidiDevice || null
+    // Keep compat vars (used by sendOscMessage and other places) from first device
+    const _firstOsc = oscOutputDevices[0] || {}
+    oscEnabled = _firstOsc.enabled ?? false
+    oscHost    = _firstOsc.host    || '127.0.0.1'
+    oscPort    = _firstOsc.port    ?? 8000
     micDevices       = _migrateMicDevices(savedSettings)
     micDeviceOutputs = micDevices.map(() => null)
 
@@ -7544,9 +7889,14 @@ async function initApp() {
             monitorEnabled  = monEn
             monitorChannelL = newMoL; monitorChannelR = newMoR
             editorApp       = newSettings.editorApp || null
-            oscEnabled      = newSettings.oscEnabled ?? false
-            oscHost         = newSettings.oscHost    || '127.0.0.1'
-            oscPort         = newSettings.oscPort    ?? 8000
+            midiOutputDevices = _migrateMidiOutputDevices(newSettings)
+            midiOutputPorts   = midiOutputDevices.map(() => null)
+            oscOutputDevices  = _migrateOscOutputDevices(newSettings)
+            emLightMidiDevice = newSettings.emLightMidiDevice || null
+            const _newFirstOsc = oscOutputDevices[0] || {}
+            oscEnabled = _newFirstOsc.enabled ?? false
+            oscHost    = _newFirstOsc.host    || '127.0.0.1'
+            oscPort    = _newFirstOsc.port    ?? 8000
             micDevices       = _migrateMicDevices(newSettings)
             micDeviceOutputs = micDevices.map(() => null)
             const newLang   = newSettings.appLanguage || 'de'
