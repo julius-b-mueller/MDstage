@@ -180,6 +180,11 @@
             'm.dev':                      'Entwickler',
             'm.devtools':                 'DevTools öffnen',
             'm.devtools.live':            'DevTools (Live-Fenster)',
+            // ── Welcome-Dialog ──────────────────────────────────────
+            'welcome.title':              'Neu hier?',
+            'welcome.body':               'Es gibt keine letzte Datei, die automatisch geöffnet werden kann.',
+            'welcome.open':               'Datei öffnen',
+            'welcome.new':                'Neue Datei',
         },
         en: {
             // ── Trigger-Aktions-Buttons ──────────────────────────────
@@ -360,6 +365,11 @@
             'm.dev':                      'Developer',
             'm.devtools':                 'Open DevTools',
             'm.devtools.live':            'DevTools (Live window)',
+            // ── Welcome dialog ──────────────────────────────────────
+            'welcome.title':              'New here?',
+            'welcome.body':               'There is no recent file that can be opened automatically.',
+            'welcome.open':               'Open File',
+            'welcome.new':                'New File',
         },
     }
 

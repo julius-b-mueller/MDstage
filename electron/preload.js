@@ -70,6 +70,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
         return () => ipcRenderer.removeListener('live-window-state', handler)
     },
     openLiveWindow: () => ipcRenderer.send('open-live-window'),
+    openRoleEditor: () => ipcRenderer.send('open-role-editor'),
+    openFileWelcome: () => ipcRenderer.invoke('open-file-welcome'),
+    onWelcomeDialog: (cb) => ipcRenderer.once('welcome-dialog', cb),
     exportPdf: (data) => ipcRenderer.invoke('export-pdf', data),
     exportDocx: (data) => ipcRenderer.invoke('export-docx', data),
     getEmLightNote: () => ipcRenderer.invoke('get-em-light-note'),

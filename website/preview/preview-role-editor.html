@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Rolleneditor – Vorschau</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="../app/styles.css">
+    <script>window.__webPreview = true</script>
+    <script src="shim.js"></script>
+    <script src="../app/i18n.js"></script>
+    <style>
+        body { padding: 1rem 1.5rem; padding-bottom: 5rem; }
+        .role-row {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.6rem;
+            padding: 0.5rem 0.6rem;
+            background: #2c313a;
+            border-radius: 5px;
+        }
+        .role-name {
+            flex: 1;
+            background: #383c44;
+            color: #abb2bf;
+            border: 1px solid #4b5263;
+            padding: 0.4rem 0.6rem;
+            border-radius: 4px;
+            font-size: 0.95rem;
+            font-family: inherit;
+            min-width: 0;
+        }
+        .role-name:focus { outline: none; border-color: #61afef; }
+        .color-dot { width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0; border: 2px solid rgba(255,255,255,0.15); }
+        .role-color {
+            background: #383c44; color: #abb2bf; border: 1px solid #4b5263;
+            padding: 0.35rem 0.4rem; border-radius: 4px; font-size: 0.9rem;
+            font-family: inherit; cursor: pointer; width: 130px;
+        }
+        .role-color:focus { outline: none; border-color: #61afef; }
+        .role-device {
+            background: #383c44; color: #abb2bf; border: 1px solid #4b5263;
+            padding: 0.35rem 0.4rem; border-radius: 4px; font-size: 0.9rem;
+            font-family: inherit; cursor: pointer; width: 130px;
+        }
+        .role-device:focus { outline: none; border-color: #61afef; }
+        .role-ch {
+            width: 64px; background: #383c44; color: #abb2bf; border: 1px solid #4b5263;
+            padding: 0.4rem 0.5rem; border-radius: 4px; font-size: 0.9rem;
+            font-family: inherit; text-align: center;
+        }
+        .role-ch:focus { outline: none; border-color: #61afef; }
+        .ch-label { font-size: 0.78rem; color: #5c6370; white-space: nowrap; }
+        .remove-btn {
+            background: none; border: none; color: #5c6370; cursor: pointer;
+            font-size: 1.1rem; padding: 0.2rem 0.4rem; border-radius: 4px; line-height: 1; flex-shrink: 0;
+        }
+        .remove-btn:hover { color: #e06c75; background: rgba(224,108,117,0.12); }
+        .group-row {
+            display: flex; flex-direction: column; gap: 0.4rem;
+            margin-bottom: 0.6rem; padding: 0.5rem 0.6rem;
+            background: #21252b; border: 1px solid #383c44; border-radius: 5px;
+        }
+        .group-row-header { display: flex; align-items: center; gap: 0.5rem; }
+        .group-name {
+            flex: 1; background: #383c44; color: #abb2bf; border: 1px solid #4b5263;
+            padding: 0.4rem 0.6rem; border-radius: 4px; font-size: 0.95rem;
+            font-family: inherit; min-width: 0;
+        }
+        .group-name:focus { outline: none; border-color: #61afef; }
+        .group-color {
+            background: #383c44; color: #abb2bf; border: 1px solid #4b5263;
+            padding: 0.35rem 0.4rem; border-radius: 4px; font-size: 0.9rem;
+            font-family: inherit; cursor: pointer; width: 130px;
+        }
+        .group-color:focus { outline: none; border-color: #61afef; }
+        .group-members { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+        .drag-handle {
+            cursor: grab; color: #4b5263; padding: 0 0.25rem; font-size: 1.1rem;
+            flex-shrink: 0; user-select: none; line-height: 1;
+        }
+        .drag-handle:hover { color: #7c8898; }
+        .drag-handle:active { cursor: grabbing; }
+        .role-row.dragging, .group-row.dragging { opacity: 0.35; }
+        .role-row.drag-over-top, .group-row.drag-over-top { box-shadow: 0 -2px 0 #61afef; }
+        .role-row.drag-over-bottom, .group-row.drag-over-bottom { box-shadow: 0 2px 0 #61afef; }
+        .member-chip {
+            --chip-col: #abb2bf;
+            padding: 0.2rem 0.55rem; border-radius: 3px; font-size: 0.82rem;
+            cursor: pointer; border: 1px solid #4b5263; background: #2c313a;
+            color: #7c8898; user-select: none; transition: background 0.1s, border-color 0.1s, color 0.1s;
+        }
+        .member-chip.active { background: #383c44; border-color: var(--chip-col); color: var(--chip-col); }
+        .member-chip:hover { background: #383c44; }
+        .name-conflict { border-color: #e06c75 !important; box-shadow: 0 0 0 2px rgba(224,108,117,0.22) !important; }
+        .add-btn {
+            background: #2c313a; color: #98c379; border: 1px dashed #4b5263;
+            padding: 0.5rem 1rem; border-radius: 5px; cursor: pointer; font-size: 0.95rem;
+            font-family: inherit; width: 100%; text-align: center; margin-top: 0.3rem;
+        }
+        .add-btn:hover { background: #323840; border-color: #98c379; }
+        .actions {
+            position: fixed; bottom: 0; left: 0; right: 0;
+            padding: 0.75rem 1.5rem; background: #282c34;
+            border-top: 1px solid #383c44; display: flex;
+            justify-content: flex-end; gap: 0.5rem; z-index: 10;
+        }
+        .btn {
+            background: #4b5263; color: #abb2bf; border: none;
+            padding: 0.5rem 1.25rem; border-radius: 5px; cursor: pointer;
+            font-size: 0.95rem; font-family: inherit;
+        }
+        .btn:hover { background: #5c6370; }
+        .btn-primary { background: #61afef; color: #282c34; }
+        .btn-primary:hover { background: #71bfff; }
+        .section-title {
+            font-size: 0.75rem; color: #5c6370; text-transform: uppercase;
+            letter-spacing: 0.08em; margin: 0 0 0.7rem;
+            padding-bottom: 0.3rem; border-bottom: 1px solid #383c44;
+        }
+        .col-headers {
+            display: flex; gap: 0.5rem; padding: 0 0.6rem;
+            margin-bottom: 0.3rem; font-size: 0.72rem; color: #5c6370;
+            text-transform: uppercase; letter-spacing: 0.05em;
+        }
+        .col-name { flex: 1; }
+        .col-color { width: calc(18px + 130px + 0.5rem); }
+        .col-device { width: 130px; }
+        .col-ch { width: 64px; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="section-title">Rollen</div>
+    <div class="col-headers">
+        <div class="col-name">Name</div>
+        <div class="col-color">Farbe</div>
+        <div class="col-device" id="col-device-header">Gerät</div>
+        <div class="col-ch">Kanal</div>
+    </div>
+    <div id="role-list"></div>
+    <button class="add-btn" id="add-btn">+ Rolle hinzufügen</button>
+
+    <div class="section-title" style="margin-top:1.2rem">Gruppen</div>
+    <p style="font-size:0.78rem;color:#5c6370;margin:0 0 0.6rem">Die Gruppe <strong style="color:#abb2bf">Alle</strong> ist immer vorhanden und enthält automatisch alle Rollen.</p>
+    <div id="group-list"></div>
+    <button class="add-btn" id="add-group-btn">+ Gruppe hinzufügen</button>
+
+    <div class="actions">
+        <button class="btn" id="cancel-btn">Abbrechen</button>
+        <button class="btn btn-primary" id="save-btn">Speichern</button>
+    </div>
+    <script src="../app/role-editor.js"></script>
+</body>
+</html>

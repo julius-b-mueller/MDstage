@@ -311,9 +311,6 @@ async function createNewFile() {
         fs.writeFileSync(result.filePath, template, 'utf8')
         scriptMdPath = result.filePath
         saveLastFilePath(scriptMdPath)
-        mainWindow.webContents.once('did-finish-load', () => {
-            setTimeout(createRoleEditorWindow, 400)
-        })
         mainWindow.reload()
     }
 }
@@ -717,19 +714,8 @@ app.whenReady().then(async () => {
         app.dock.setIcon(path.join(__dirname, '../dist/assets/icon.png'))
     }
     scriptMdPath = getLastFilePath()
-    if (!scriptMdPath) {
-        const result = await dialog.showOpenDialog({
-            title: 'Skript öffnen',
-            filters: [{ name: 'Markdown', extensions: ['md'] }],
-            properties: ['openFile'],
-        })
-        if (result.canceled || !result.filePaths.length) {
-            app.quit()
-            return
-        }
-        scriptMdPath = result.filePaths[0]
-        saveLastFilePath(scriptMdPath)
-    }
+    if (scriptMdPath && !fs.existsSync(scriptMdPath)) scriptMdPath = null
+    const showWelcome = !scriptMdPath
 
     ipcMain.on('send-osc', (_, { path: oscPath, args = [], host = '127.0.0.1', port = 8000 }) => {
         const safePort = parseInt(port, 10)
@@ -759,17 +745,33 @@ app.whenReady().then(async () => {
 
     ipcMain.handle('get-hostname', () => hostname)
 
-    ipcMain.handle('get-script-md', () => fs.readFileSync(scriptMdPath, 'utf8'))
+    ipcMain.handle('get-script-md', () => {
+        if (!scriptMdPath) return '```yaml\nconfig:\n    roles: {}\n```\n'
+        return fs.readFileSync(scriptMdPath, 'utf8')
+    })
 
     ipcMain.handle('write-script-md', (_, content) => {
+        if (!scriptMdPath) throw new Error('No file open')
         if (typeof content !== 'string') throw new Error('Invalid content')
         if (content.length > 10 * 1024 * 1024) throw new Error('File too large')
         fs.writeFileSync(scriptMdPath, content, 'utf8')
     })
 
-    ipcMain.handle('get-script-path', () => scriptMdPath)
+    ipcMain.handle('get-script-path', () => scriptMdPath ?? '')
+    ipcMain.handle('open-file-welcome', async () => {
+        const result = await dialog.showOpenDialog(mainWindow, {
+            filters: [{ name: 'Markdown', extensions: ['md'] }],
+            properties: ['openFile'],
+        })
+        if (!result.canceled && result.filePaths.length > 0) {
+            scriptMdPath = result.filePaths[0]
+            saveLastFilePath(scriptMdPath)
+            mainWindow.reload()
+        }
+    })
 
     ipcMain.handle('backup-script-md', () => {
+        if (!scriptMdPath) throw new Error('No file open')
         const backupPath = scriptMdPath.replace(/\.md$/, '~unformatted.md')
         fs.copyFileSync(scriptMdPath, backupPath)
         return path.basename(backupPath)
@@ -890,6 +892,7 @@ app.whenReady().then(async () => {
     })
 
     ipcMain.on('open-live-window', createLiveWindow)
+    ipcMain.on('open-role-editor', createRoleEditorWindow)
     ipcMain.on('live-go', () => {
         if (mainWindow) mainWindow.webContents.executeJavaScript('window.__liveGo && window.__liveGo()').catch(() => {})
     })
@@ -909,6 +912,12 @@ app.whenReady().then(async () => {
 
     Menu.setApplicationMenu(buildMenu())
     createMainWindow()
+
+    if (showWelcome) {
+        mainWindow.webContents.once('did-finish-load', () => {
+            mainWindow.webContents.send('welcome-dialog')
+        })
+    }
 
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createMainWindow()

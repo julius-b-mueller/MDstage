@@ -109,6 +109,23 @@
             padding: 5px 8px;
         }
 
+        /* ── Show progress bar ───────────────────────────────────────────── */
+        .show-progress-bar {
+            display: flex; flex-direction: column; gap: 6px;
+            padding: 9px 12px; background: #272b32;
+            border-top: 1px solid #383c44; border-bottom: 1px solid #383c44;
+            flex-shrink: 0; box-shadow: 0 -5px 16px rgba(0,0,0,0.5);
+            position: relative; z-index: 10;
+        }
+        .audio-panel.has-audio ~ .show-progress-bar { box-shadow: 0 -3px 8px rgba(0,0,0,0.3); }
+        .show-progress-bar.pb-hidden { display: none; }
+        .progress-chapter-text { font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .progress-chapter-main { color: #abb2bf; }
+        .progress-chapter-sub  { color: #5c6370; margin-left: 0.35rem; }
+        .progress-segs-wrap { display: flex; gap: 3px; height: 5px; }
+        .progress-seg { background: #383c44; border-radius: 3px; overflow: hidden; min-width: 3px; }
+        .progress-fill { height: 100%; background: rgba(255,255,255,0.5); border-radius: 3px; }
+
         /* ── Audio progress ──────────────────────────────────────────────── */
         .audio-panel {
             flex-shrink: 0;
@@ -294,6 +311,7 @@
     </div>
 
     <div class="audio-panel" id="audio-panel"></div>
+    <div class="show-progress-bar pb-hidden" id="show-progress-bar"></div>
 
     <div class="bottom-bar">
         <button class="ctrl-btn btn-back" id="btn-back" tabindex="-1" data-i18n="live.back">◀ Back</button>
@@ -363,8 +381,16 @@
                 micRow = `<div class="trigger-mic">${MIC_SVG} alle aus</div>`
             } else if (b.micColors && b.micColors.length) {
                 let spans = ''
-                for (const { name, color } of b.micColors)
-                    spans += `<span${color ? ` class="color-${color}"` : ''}>${esc(name)}</span> `
+                for (const item of b.micColors) {
+                    if (item.isGroup) {
+                        let grp = `<span class="mic-group"><span class="mic-group-name${item.color ? ' color-' + item.color : ''}">${esc(item.name)}</span>`
+                        for (const m of (item.members || [])) grp += `<span class="mic-chip${m.color ? ' color-' + m.color : ''}">${esc(m.name)}</span>`
+                        grp += '</span>'
+                        spans += grp
+                    } else {
+                        spans += `<span${item.color ? ` class="color-${item.color}"` : ''}>${esc(item.name)}</span> `
+                    }
+                }
                 micRow = `<div class="trigger-mic">${MIC_SVG} ${spans}</div>`
             }
             let musicRow = ''
@@ -633,12 +659,99 @@
                 if (effectiveMuteall) {
                     micsHtml += `<span class="mic-all-off">alle aus</span>`
                 } else if (effectiveMicColors && effectiveMicColors.length) {
-                    for (const { name, color } of effectiveMicColors)
-                        micsHtml += `<span class="mic-chip${color ? ' color-' + color : ''}">${esc(name)}</span>`
+                    for (const item of effectiveMicColors) {
+                        if (item.isGroup) {
+                            micsHtml += `<span class="mic-group"><span class="mic-group-name${item.color ? ' color-' + item.color : ''}">${esc(item.name)}</span>`
+                            for (const m of (item.members || [])) micsHtml += `<span class="mic-chip${m.color ? ' color-' + m.color : ''}">${esc(m.name)}</span>`
+                            micsHtml += '</span>'
+                        } else {
+                            micsHtml += `<span class="mic-chip${item.color ? ' color-' + item.color : ''}">${esc(item.name)}</span>`
+                        }
+                    }
                 }
                 micsHtml += '</div>'
                 cell.innerHTML = micsHtml
                 infoBarEl.appendChild(cell)
+            }
+        }
+
+        const progressBarEl = document.getElementById('show-progress-bar')
+        let _pbSegCount = -1
+        let _pbPrevCurrent = 0
+
+        function updateProgressBar(data) {
+            if (!data || !data.segments || data.segments.length === 0) {
+                progressBarEl.classList.add('pb-hidden')
+                return
+            }
+            progressBarEl.classList.remove('pb-hidden')
+
+            let activeIdx = -1
+            for (let i = data.segments.length - 1; i >= 0; i--) {
+                if (data.current >= data.segments[i].startCue) { activeIdx = i; break }
+            }
+
+            let chapterLabel = null, subLabel = null
+            if (activeIdx >= 0) {
+                const seg = data.segments[activeIdx]
+                if (seg.level === 2) {
+                    subLabel = seg.label
+                    for (let i = activeIdx - 1; i >= 0; i--) {
+                        if (data.segments[i].level === 1) { chapterLabel = data.segments[i].label; break }
+                    }
+                } else {
+                    chapterLabel = seg.label
+                }
+            }
+
+            if (_pbSegCount !== data.segments.length) {
+                _pbSegCount = data.segments.length
+                progressBarEl.innerHTML = ''
+                const labelEl = document.createElement('div')
+                labelEl.className = 'progress-chapter-text'
+                progressBarEl.appendChild(labelEl)
+                const segsWrap = document.createElement('div')
+                segsWrap.className = 'progress-segs-wrap'
+                for (const seg of data.segments) {
+                    const segEl = document.createElement('div')
+                    segEl.className = 'progress-seg'
+                    segEl.style.flex = seg.cueCount
+                    if (seg.label) segEl.title = seg.label
+                    const fill = document.createElement('div')
+                    fill.className = 'progress-fill'
+                    segEl.appendChild(fill)
+                    segsWrap.appendChild(segEl)
+                }
+                progressBarEl.appendChild(segsWrap)
+            }
+
+            const labelEl = progressBarEl.querySelector('.progress-chapter-text')
+            if (labelEl) {
+                labelEl.innerHTML = ''
+                if (chapterLabel) {
+                    const main = document.createElement('span')
+                    main.className = 'progress-chapter-main'
+                    main.textContent = chapterLabel
+                    labelEl.appendChild(main)
+                }
+                if (subLabel) {
+                    const sub = document.createElement('span')
+                    sub.className = 'progress-chapter-sub'
+                    sub.textContent = subLabel
+                    labelEl.appendChild(sub)
+                }
+            }
+
+            const isJump = Math.abs(data.current - _pbPrevCurrent) > 2
+            _pbPrevCurrent = data.current
+            const segEls = progressBarEl.querySelectorAll('.progress-seg')
+            for (let i = 0; i < data.segments.length; i++) {
+                const seg = data.segments[i]
+                const done = Math.max(0, Math.min(seg.cueCount, data.current - seg.startCue + 1))
+                const fill = segEls[i].firstChild
+                const delay = isJump ? (i * 0.055).toFixed(3) + 's' : '0s'
+                fill.style.transition = `width 0.3s ease ${delay}`
+                fill.style.width = (done / seg.cueCount * 100).toFixed(2) + '%'
             }
         }
 
@@ -655,6 +768,7 @@
             renderScript(blocks, nextCue, currentCue ?? 0, selectedVariant)
             syncAudio(audioProgress || [])
             updateInfoBar(state)
+            updateProgressBar(state.showProgress)
         }
 
         btnGo.addEventListener('click', () => {

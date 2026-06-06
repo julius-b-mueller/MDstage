@@ -1575,59 +1575,109 @@ function openNewBlock(afterBlockEl, forceAfterRole) {
 
 function checkEmptyScript() {
     if (inlineEditor) return
-    const hasTextBlocks = tokenizeScript(scriptText).some(b => b.type === 'text')
-    if (!hasTextBlocks) openEmptyScriptEditor()
+    const blocks = tokenizeScript(scriptText)
+    const hasContent = blocks.some(b => {
+        if (b.type === 'text') return true
+        if (b.type === 'yaml') {
+            const m = b.content.match(/^```yaml\n([\s\S]*?)\n```$/)
+            try { const y = yaml.load(m?.[1]); return y && !y.config } catch {}
+        }
+        return false
+    })
+    showEmptyState(!hasContent)
 }
 
-function openEmptyScriptEditor() {
-    if (inlineEditor) return
-
-    const div = document.createElement('div')
-    div.className = 'inline-editor inline-editor-new'
-    div.contentEditable = 'true'
-    div.dataset.placeholder = t('editor.ph.stage')
-
-    const wrapper = document.createElement('div')
-    wrapper.className = 'new-block-wrapper'
+function showEmptyState(show) {
     const contentEl = document.getElementById('script-content')
-    if (contentEl) wrapper.style.width = contentEl.getBoundingClientRect().width + 'px'
+    if (!contentEl) return
+    const existing = contentEl.querySelector('.empty-script-state')
+    if (!show) { existing?.remove(); return }
+    if (existing) return
 
-    const controls = document.createElement('div')
-    controls.className = 'editor-controls new-block-controls'
-    const btnDel = document.createElement('button')
-    btnDel.className = 'editor-btn editor-btn-delete'
-    btnDel.textContent = '✕'
-    btnDel.title = t('editor.del.title')
-    controls.append(btnDel)
-    wrapper.append(div, controls)
+    const state = document.createElement('div')
+    state.className = 'empty-script-state'
 
-    wrapper.style.marginTop = '4.5rem'
-    contentEl?.appendChild(wrapper)
-    requestAnimationFrame(() => div.focus())
+    const btns = document.createElement('div')
+    btns.className = 'empty-script-buttons'
 
-    const lineStart = scriptText.split('\n').length - 1
-    inlineEditor = { el: div, wrapper, blockEl: null, afterBlockEl: null, lineStart, isNew: true, isAfterRole: false, isPersistent: true }
+    const btnCue = document.createElement('button')
+    btnCue.className = 'empty-script-btn'
+    btnCue.innerHTML = '+ Cue'
+    btnCue.addEventListener('click', (e) => { e.stopPropagation(); showTriggerDialog({ insertAfterBlockIdx: 0 }) })
 
-    div.addEventListener('keydown', onNewBlockKey)
-    div.addEventListener('beforeinput', onNewBlockBeforeInput)
-    div.addEventListener('input', onNewBlockInput)
+    const btnText = document.createElement('button')
+    btnText.className = 'empty-script-btn'
+    btnText.innerHTML = '+ Rollentext / Regieanweisung'
+    btnText.addEventListener('click', (e) => {
+        e.stopPropagation()
+        if (inlineEditor) return
 
-    div.addEventListener('blur', () => setTimeout(() => {
-        if (inlineEditor?.el !== div) return
-        if (document.getElementById('chip-dropdown') || document.getElementById('role-add-dropdown')) {
-            div.focus()
-            return
-        }
-        if (inlineEditor.isPersistent && !getTyped(div).trim() && !inlineEditor.confirmedRole && !inlineEditor.confirmedRoles?.length) return
-        commitNewBlock()
-    }, 180))
+        const w = contentEl.getBoundingClientRect().width  // measure before state.remove()
 
-    btnDel.addEventListener('mousedown', (e) => {
-        e.preventDefault()
-        if (getTyped(div).trim() || inlineEditor?.confirmedRole || inlineEditor?.confirmedRoles?.length) {
-            clearGhost(); wrapper.remove(); inlineEditor = null
-        }
+        const div = document.createElement('div')
+        div.className = 'inline-editor inline-editor-new'
+        div.contentEditable = 'true'
+        div.dataset.placeholder = t('editor.ph.stage')
+
+        const wrapper = document.createElement('div')
+        wrapper.className = 'new-block-wrapper'
+        if (w) wrapper.style.width = w + 'px'
+
+        const controls = document.createElement('div')
+        controls.className = 'editor-controls new-block-controls'
+        const btnDel = document.createElement('button')
+        btnDel.className = 'editor-btn editor-btn-delete'
+        btnDel.textContent = '✕'
+        btnDel.title = t('editor.del.title')
+        controls.append(btnDel)
+        wrapper.append(div, controls)
+
+        wrapper.style.marginTop = '4.5rem'
+        contentEl.appendChild(wrapper)
+
+        const lineStart = scriptText.split('\n').length - 1
+        inlineEditor = { el: div, wrapper, blockEl: null, afterBlockEl: null, lineStart, isNew: true, isAfterRole: false, isPersistent: true }
+
+        div.addEventListener('keydown', onNewBlockKey)
+        div.addEventListener('beforeinput', onNewBlockBeforeInput)
+        div.addEventListener('input', onNewBlockInput)
+
+        div.addEventListener('blur', () => setTimeout(() => {
+            if (inlineEditor?.el !== div) return
+            if (document.getElementById('chip-dropdown') || document.getElementById('role-add-dropdown')) {
+                div.focus()
+                return
+            }
+            if (inlineEditor.isPersistent && !getTyped(div).trim() && !inlineEditor.confirmedRole && !inlineEditor.confirmedRoles?.length) {
+                wrapper.remove(); inlineEditor = null; checkEmptyScript()
+                return
+            }
+            commitNewBlock()
+        }, 180))
+
+        btnDel.addEventListener('mousedown', (e) => {
+            e.preventDefault()
+            if (getTyped(div).trim() || inlineEditor?.confirmedRole || inlineEditor?.confirmedRoles?.length) {
+                clearGhost(); wrapper.remove(); inlineEditor = null
+            }
+        })
+
+        state.remove()  // remove after inlineEditor is set so checkEmptyScript bails early
+        div.focus()
     })
+
+    btns.append(btnCue, btnText)
+
+    const hint = document.createElement('div')
+    hint.className = 'empty-script-hint'
+    const hintLink = document.createElement('span')
+    hintLink.className = 'empty-script-hint-link'
+    hintLink.textContent = 'Rolleneditor'
+    hintLink.addEventListener('click', (e) => { e.stopPropagation(); window.electronAPI.openRoleEditor?.() })
+    hint.append('Rollen können im ', hintLink, ' angelegt werden.')
+
+    state.append(btns, hint)
+    contentEl.appendChild(state)
 }
 
 function getTyped(el) {
@@ -2348,6 +2398,12 @@ function updateHeaderShield() {
     const btns = document.querySelector('.buttons')
     const btnsBottom = btns ? btns.getBoundingClientRect().bottom : 0
     document.documentElement.style.setProperty('--btns-bottom', btnsBottom + 'px')
+    const content = document.getElementById('script-content')
+    if (content) {
+        const contentAbsTop = content.getBoundingClientRect().top + window.scrollY
+        const cuePadding = Math.max(0, btnsBottom - contentAbsTop)
+        document.documentElement.style.setProperty('--first-cue-padding', cuePadding + 'px')
+    }
     const heading = document.querySelector('#script-content h1, #script-content h2, #script-content h3')
     const stickyTop = heading ? parseFloat(getComputedStyle(heading).top) || 0 : 0
     if (stickyTop <= 0) { _headerShield.style.height = '0'; return }
@@ -2892,6 +2948,9 @@ function annotateBlocks() {
             ti++
         }
     }
+    const firstBlock = content.querySelector(':scope > :not(.insert-zone):not(.empty-script-state)')
+    const isFirstCue = !!(firstBlock?.classList.contains('trigger') || firstBlock?.classList.contains('trigger-group'))
+    content.classList.toggle('first-block-is-cue', isFirstCue)
 }
 
 function findTriggerByNote(tn) {
@@ -7025,6 +7084,9 @@ function convertCodeblocks() {
             parseErrors.push({ blockNum: 1, line: null, message: `Name-Konflikt: "${gName}" ist sowohl als Rolle als auch als Gruppe definiert` })
         }
     }
+    if (window.__webPreview) {
+        try { localStorage.setItem('preview-roles', JSON.stringify({ roles: config.roles || {}, groups: config.groups || {} })) } catch {}
+    }
     codeblocks[0].remove()
     for (let index = 1; index < codeblocks.length; index++) {
         const codeblock = codeblocks[index]
@@ -7875,7 +7937,51 @@ async function runExport() {
     }
 }
 
+function showWelcomeDialog() {
+    const overlay = document.createElement('div')
+    overlay.className = 'dialog-overlay'
+    overlay.style.zIndex = '9999'
+    overlay.addEventListener('mousedown', e => e.stopPropagation())
+
+    const box = document.createElement('div')
+    box.className = 'dialog-box'
+    box.style.cssText = 'text-align:center;max-width:380px'
+
+    const img = document.createElement('img')
+    img.src = 'assets/new.png'
+    img.style.cssText = 'width:80%;border-radius:4px;margin:0 auto 0.8rem;display:block'
+
+    const h3 = document.createElement('h3')
+    h3.textContent = t('welcome.title')
+
+    const bodyEl = document.createElement('p')
+    bodyEl.style.cssText = 'color:#5c6370;font-size:0.88rem;margin:0 0 0.5rem;line-height:1.6'
+    bodyEl.textContent = t('welcome.body')
+
+    const actions = document.createElement('div')
+    actions.className = 'dialog-actions'
+    actions.style.justifyContent = 'center'
+
+    const btnOpen = document.createElement('button')
+    btnOpen.className = 'dialog-btn'
+    btnOpen.textContent = t('welcome.open')
+    btnOpen.addEventListener('click', () => window.electronAPI.openFileWelcome())
+
+    const btnNew = document.createElement('button')
+    btnNew.className = 'dialog-btn dialog-btn-primary'
+    btnNew.textContent = t('welcome.new')
+    btnNew.addEventListener('click', () => window.electronAPI.newFile())
+
+    actions.append(btnOpen, btnNew)
+    box.append(img, h3, bodyEl, actions)
+    overlay.append(box)
+    document.body.appendChild(overlay)
+    btnNew.focus()
+}
+
 // Registered at module level (before async initApp) so the listener is always ready.
+window.electronAPI.onWelcomeDialog?.(() => showWelcomeDialog())
+
 window.addEventListener('__live-go__', () => {
     console.log('[main-win] live-go received, triggerYamls.length:', triggerYamls.length, 'currentCue:', currentCue)
     goAction()
@@ -7887,6 +7993,37 @@ window.__selectVariant = (idx) => { selectedVariant = idx; broadcastLiveState() 
 window.__stopAudio = (cueIdx) => { const ta = triggerAudio.get(cueIdx); if (ta) fadeAdjustAudio(ta, 0.5) }
 window.__rerender = () => { if (scriptText) rerender(scriptText) }
 window.__runExport = runExport
+window.__handleRolesSaved = ({ roles, renames, groups }) => {
+    let text = scriptText
+    for (const { from, to } of (renames || [])) {
+        if (!from || !to || from === to) continue
+        const re = new RegExp(`\\*\\*${from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\*\\*`, 'g')
+        text = text.replace(re, `**${to}**`)
+        for (const grp of Object.values(groups || {})) {
+            if (Array.isArray(grp.roles)) {
+                const idx = grp.roles.indexOf(from)
+                if (idx !== -1) grp.roles[idx] = to
+            }
+        }
+    }
+    const m = text.match(/```yaml\n([\s\S]*?)\n```/)
+    if (m) {
+        try {
+            const parsed = yaml.load(m[1])
+            if (parsed?.config) {
+                parsed.config.roles = roles
+                if (groups && Object.keys(groups).length > 0) {
+                    parsed.config.groups = groups
+                } else {
+                    delete parsed.config.groups
+                }
+                const newYaml = yaml.dump(parsed, { indent: 4, lineWidth: -1, noRefs: true })
+                text = text.replace(m[0], '```yaml\n' + newYaml.trimEnd() + '\n```')
+            }
+        } catch {}
+    }
+    window.electronAPI.writeScriptMd(text)
+}
 
 window.electronAPI.onLiveWindowState((isOpen) => {
     liveViewOpen = isOpen

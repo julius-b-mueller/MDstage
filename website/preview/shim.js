@@ -28,12 +28,14 @@ const _liveVolumeListeners = []
 _ch.onmessage = ({ data }) => {
     if (!data?.type) return
     const { type } = data
-    if (type === 'live-state')     _liveStateListeners.forEach(cb => cb(data.state))
-    if (type === 'live-volumes')   _liveVolumeListeners.forEach(cb => cb(data.volumes))
-    if (type === 'live-go')        window.dispatchEvent(new CustomEvent('__live-go__'))
-    if (type === 'live-back')      window.dispatchEvent(new CustomEvent('__live-back__'))
-    if (type === 'select-variant') window.__selectVariant?.(data.idx)
-    if (type === 'stop-audio')     window.__stopAudio?.(data.cueIdx)
+    if (type === 'live-state')        _liveStateListeners.forEach(cb => cb(data.state))
+    if (type === 'live-volumes')      _liveVolumeListeners.forEach(cb => cb(data.volumes))
+    if (type === 'live-go')           window.dispatchEvent(new CustomEvent('__live-go__'))
+    if (type === 'live-back')         window.dispatchEvent(new CustomEvent('__live-back__'))
+    if (type === 'select-variant')    window.__selectVariant?.(data.idx)
+    if (type === 'stop-audio')        window.__stopAudio?.(data.cueIdx)
+    if (type === 'settings-changed')  _settingsChangedListeners.forEach(cb => cb(data.settings))
+    if (type === 'roles-saved')       window.__handleRolesSaved?.({ roles: data.roles, renames: data.renames, groups: data.groups })
 }
 
 // ── electronAPI shim ──────────────────────────────────────────────────────────
@@ -52,6 +54,7 @@ const _settings = {
 
 let _scriptCache = null
 const _settingsChangedListeners = []
+const _scriptChangedListeners  = []
 
 // Sprache wechseln und App-interne onSettingsChanged-Callbacks aufrufen
 window.__previewSetLanguage = (lang) => {
@@ -74,12 +77,16 @@ try {
     if (saved) _settings.appLanguage = saved
 } catch {}
 
+const _versionInfo = fetch('../app/version.json').then(r => r.ok ? r.json() : {}).catch(() => ({}))
+
 window.electronAPI = {
-    getAppVersion: () => Promise.resolve('0.0.0'),
-    getBuildInfo:  () => Promise.resolve({ commit: 'preview', date: '' }),
+    getAppVersion: () => _versionInfo.then(v => v.version || '—'),
+    getBuildInfo:  () => _versionInfo.then(v => ({ commit: v.commit || 'preview', date: v.date || '' })),
     getSettings:       () => Promise.resolve({ ..._settings }),
-    saveSettings:      () => Promise.resolve(),
+    saveSettings:      (s) => { Object.assign(_settings, s); _ch.postMessage({ type: 'settings-changed', settings: { ..._settings } }); return Promise.resolve() },
     getHostname:       () => Promise.resolve('preview'),
+    getEmLightNote:    () => Promise.resolve(_settings.emLightNote || null),
+    saveEmLightNote:   (v) => { _settings.emLightNote = v; return Promise.resolve() },
 
     getScriptMd: () => {
         if (_scriptCache !== null) return Promise.resolve(_scriptCache)
@@ -88,16 +95,26 @@ window.electronAPI = {
             .then(t  => { _scriptCache = t; return t })
             .catch(() => { const t = '```yaml\nconfig:\n    roles: {}\n```\n'; _scriptCache = t; return t })
     },
-    writeScriptMd:  (t) => { _scriptCache = t; return Promise.resolve() },
+    writeScriptMd:  (t) => { _scriptCache = t; _scriptChangedListeners.forEach(cb => cb()); return Promise.resolve() },
     listAudioFiles: () => fetch('audio/files.json').then(r => r.ok ? r.json() : []).catch(() => []),
     getScriptPath:  () => Promise.resolve('preview/script.md'),
     backupScriptMd: () => Promise.resolve(''),
-    getRoles:       () => Promise.resolve({}),
-    saveRoles:      () => Promise.resolve(),
+    getRoles: () => {
+        try {
+            const s = localStorage.getItem('preview-roles')
+            if (s) return Promise.resolve(JSON.parse(s))
+        } catch {}
+        return Promise.resolve({ roles: {}, groups: {} })
+    },
+    saveRoles: ({ roles, renames, groups }) => {
+        try { localStorage.setItem('preview-roles', JSON.stringify({ roles, groups })) } catch {}
+        _ch.postMessage({ type: 'roles-saved', roles, renames, groups })
+        return Promise.resolve()
+    },
     newFile:        () => Promise.resolve(),
 
     onSettingsChanged: (cb) => _settingsChangedListeners.push(cb),
-    onScriptChanged:       () => {},
+    onScriptChanged:   (cb) => _scriptChangedListeners.push(cb),
     showEditorContextMenu: () => {},
 
     // Main → broadcasts live state to all listeners (iframes + separate windows)
@@ -117,6 +134,10 @@ window.electronAPI = {
     onLiveGo:  () => {},
     onLiveBack: () => {},
     onLiveWindowState: (cb) => { _liveWindowStateListeners.push(cb) },
+
+    openRoleEditor: () => {
+        window.open('preview-role-editor.html', 'maindesk-roles', 'width=560,height=700,menubar=no,toolbar=no,location=no,status=no')
+    },
 
     // Opens the live view in a separate browser window
     openLiveWindow: () => {
