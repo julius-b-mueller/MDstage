@@ -7938,14 +7938,17 @@ async function runExport() {
 }
 
 function showWelcomeDialog() {
+    const quit = () => window.electronAPI.quitApp?.()
+
     const overlay = document.createElement('div')
     overlay.className = 'dialog-overlay'
     overlay.style.zIndex = '9999'
-    overlay.addEventListener('mousedown', e => e.stopPropagation())
+    overlay.addEventListener('mousedown', () => quit())
 
     const box = document.createElement('div')
     box.className = 'dialog-box'
     box.style.cssText = 'text-align:center;max-width:380px'
+    box.addEventListener('mousedown', e => e.stopPropagation())
 
     const img = document.createElement('img')
     img.src = 'assets/new.png'
@@ -7977,6 +7980,9 @@ function showWelcomeDialog() {
     overlay.append(box)
     document.body.appendChild(overlay)
     btnNew.focus()
+
+    const onKey = (e) => { if (e.key === 'Escape') { document.removeEventListener('keydown', onKey); quit() } }
+    document.addEventListener('keydown', onKey)
 }
 
 // Registered at module level (before async initApp) so the listener is always ready.

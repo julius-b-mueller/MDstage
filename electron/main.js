@@ -112,6 +112,7 @@ function openLineInEditor(settings, line) {
 }
 
 function readConfigBlock() {
+    if (!scriptMdPath) return { text: '', parsed: null, block: '' }
     const text = fs.readFileSync(scriptMdPath, 'utf8')
     const m = text.match(/```yaml\n([\s\S]*?)\n```/)
     if (!m) return { text, parsed: null, block: '' }
@@ -893,6 +894,7 @@ app.whenReady().then(async () => {
 
     ipcMain.on('open-live-window', createLiveWindow)
     ipcMain.on('open-role-editor', createRoleEditorWindow)
+    ipcMain.on('quit-app', () => app.quit())
     ipcMain.on('live-go', () => {
         if (mainWindow) mainWindow.webContents.executeJavaScript('window.__liveGo && window.__liveGo()').catch(() => {})
     })

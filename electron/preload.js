@@ -71,6 +71,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     openLiveWindow: () => ipcRenderer.send('open-live-window'),
     openRoleEditor: () => ipcRenderer.send('open-role-editor'),
+    quitApp: () => ipcRenderer.send('quit-app'),
     openFileWelcome: () => ipcRenderer.invoke('open-file-welcome'),
     onWelcomeDialog: (cb) => ipcRenderer.once('welcome-dialog', cb),
     exportPdf: (data) => ipcRenderer.invoke('export-pdf', data),
