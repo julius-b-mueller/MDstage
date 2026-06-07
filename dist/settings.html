@@ -183,29 +183,17 @@
 
     <div class="section-title" data-i18n="s.emlight">Notfall-Licht</div>
     <div class="field">
-        <label data-i18n="s.emlight.note">Trigger-Note (gilt für alle PCs)</label>
-        <div style="display:flex;gap:0.5rem;align-items:center">
-            <div style="flex:1">
-                <label style="font-size:0.78rem;margin-bottom:0.2rem" data-i18n="s.emlight.ch">Kanal (1–16)</label>
-                <input type="number" id="em-light-ch" min="1" max="16" value="1">
-            </div>
-            <div style="flex:1">
-                <label style="font-size:0.78rem;margin-bottom:0.2rem" data-i18n="s.emlight.note.n">Note (0–127)</label>
-                <input type="number" id="em-light-note" min="0" max="127" value="0">
-            </div>
-            <div style="padding-bottom:0">
-                <label style="font-size:0.78rem;margin-bottom:0.2rem;visibility:hidden">x</label>
-                <button class="btn" id="em-light-clear">✕</button>
-            </div>
-        </div>
-        <p class="hint">Leer lassen = Button deaktiviert.</p>
+        <label style="display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf">
+            <input type="checkbox" id="em-light-enabled" style="width:auto" checked>
+            <span data-i18n="s.emlight.enabled">Notfall-Licht-Button anzeigen</span>
+        </label>
     </div>
     <div class="field">
-        <label data-i18n="s.emlight.device">MIDI-Gerät</label>
-        <select id="em-light-device">
-            <option value="">— erstes Gerät —</option>
-        </select>
+        <label data-i18n="s.emlight.device">Gerät (MIDI/OSC)</label>
+        <select id="em-light-device"></select>
     </div>
+    <div id="em-light-midi-panel" style="display:none"></div>
+    <div id="em-light-osc-panel" style="display:none"></div>
 
     <div class="section-title" data-i18n="s.display">Anzeige</div>
     <div class="field">

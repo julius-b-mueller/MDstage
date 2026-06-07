@@ -6,10 +6,9 @@
 
         // ── Init ─────────────────────────────────────────────────────────
         async function init() {
-            const [settings, hn, emLightNote0] = await Promise.all([
+            const [settings, hn] = await Promise.all([
                 window.electronAPI.getSettings(),
                 window.electronAPI.getHostname(),
-                window.electronAPI.getEmLightNote(),
             ])
             // Apply language before rendering anything else
             window.applyI18n(settings.appLanguage || 'de')
@@ -17,7 +16,6 @@
             langSel.value = settings.appLanguage || 'de'
             langSel.addEventListener('change', () => window.applyI18n(langSel.value))
 
-            let emLightNote = emLightNote0 || null
             document.getElementById('hostname-label').textContent = 'Dieser PC: ' + hn
 
             const mainAudioSel = document.getElementById('main-audio-device')
@@ -653,7 +651,18 @@
             addOscDeviceBtn.addEventListener('click', () => {
                 buildOscOutputDeviceCard({ name: `Gerät ${oscOutputDeviceStates.length + 1}`, enabled: false, host: '127.0.0.1', port: 8000 })
                 updateOscOutputRemoveBtns()
+                populateEmLightDeviceSelect()
             })
+
+            const emLightDeviceSel = document.getElementById('em-light-device')
+            const emLightMidiPanel = document.getElementById('em-light-midi-panel')
+            const emLightOscPanel  = document.getElementById('em-light-osc-panel')
+
+            function updateEmLightPanels() {
+                const val = emLightDeviceSel.value
+                emLightMidiPanel.style.display = val.startsWith('midi:') ? '' : 'none'
+                emLightOscPanel.style.display  = val.startsWith('osc:')  ? '' : 'none'
+            }
 
             try {
                 const midiAccess = await navigator.requestMIDIAccess({ sysex: true })
@@ -765,28 +774,151 @@
             document.getElementById('back-clear-btn').addEventListener('click', () => { midiBackNote = null; applyMidiLabel('back', null); stopLearn() })
 
             // ── Notfall-Licht ────────────────────────────────────────
-            const emLightChEl     = document.getElementById('em-light-ch')
-            const emLightNoteEl   = document.getElementById('em-light-note')
-            const emLightClear    = document.getElementById('em-light-clear')
-            const emLightDeviceSel = document.getElementById('em-light-device')
+            const emLightEnabledEl = document.getElementById('em-light-enabled')
+            emLightEnabledEl.checked = settings.emLightEnabled ?? true
 
-            function applyEmLight(n) {
-                emLightNote = n
-                if (n) { emLightChEl.value = n.ch; emLightNoteEl.value = n.note }
-                else   { emLightChEl.value = ''; emLightNoteEl.value = '' }
+            // Helper builders
+            function _elNumIn(id, min, max, val) {
+                const el = document.createElement('input')
+                el.type = 'number'; el.id = id; el.min = min; el.max = max; el.value = val
+                el.style.width = '100%'; return el
             }
-            applyEmLight(emLightNote)
-            emLightClear.addEventListener('click', () => applyEmLight(null))
+            function _elTxtIn(id, placeholder, val) {
+                const el = document.createElement('input')
+                el.type = 'text'; el.id = id; el.placeholder = placeholder; el.value = val
+                el.style.width = '100%'; return el
+            }
+            function _elSubField(labelText) {
+                const wrap = document.createElement('div'); wrap.className = 'field'; wrap.style.flex = '1'
+                const lbl = document.createElement('label')
+                lbl.textContent = labelText
+                lbl.style.cssText = 'text-transform:none;font-size:0.82rem;color:#5c6370'
+                wrap.appendChild(lbl)
+                return { wrap, append: (el) => wrap.appendChild(el) }
+            }
+
+            // MIDI panel
+            const midiTypeField = document.createElement('div'); midiTypeField.className = 'field'
+            const midiTypeLbl = document.createElement('label'); midiTypeLbl.setAttribute('data-i18n', 's.emlight.midi.type'); midiTypeLbl.textContent = window.t('s.emlight.midi.type')
+            const midiTypeSel = document.createElement('select'); midiTypeSel.id = 'em-light-midi-type'
+            for (const [v, k] of [['note','s.emlight.midi.type.note'],['cc','s.emlight.midi.type.cc'],['pc','s.emlight.midi.type.pc'],['sysex','s.emlight.midi.type.sysex']])
+                midiTypeSel.appendChild(new Option(window.t(k), v))
+            midiTypeSel.value = settings.emLightMidiType || 'note'
+            midiTypeField.append(midiTypeLbl, midiTypeSel)
+
+            const midiChField = document.createElement('div'); midiChField.className = 'field'
+            const midiChLbl = document.createElement('label'); midiChLbl.setAttribute('data-i18n','s.emlight.midi.ch'); midiChLbl.textContent = window.t('s.emlight.midi.ch')
+            const midiChIn = _elNumIn('em-light-midi-ch', 1, 16, settings.emLightMidiCh ?? 1)
+            midiChField.append(midiChLbl, midiChIn)
+
+            // Note row
+            const noteRow = document.createElement('div'); noteRow.style.cssText = 'display:flex;gap:0.5rem'
+            const noteNoteF = _elSubField(window.t('s.emlight.midi.note'))
+            noteNoteF.append(_elNumIn('em-light-midi-note', 0, 127, settings.emLightMidiNote ?? 60))
+            const noteOnF = _elSubField(`${window.t('s.emlight.midi.on')} – ${window.t('s.emlight.midi.vel')}`)
+            noteOnF.append(_elNumIn('em-light-midi-on-vel', 0, 127, settings.emLightMidiOnVel ?? 127))
+            const noteOffF = _elSubField(`${window.t('s.emlight.midi.off')} – ${window.t('s.emlight.midi.vel')}`)
+            noteOffF.append(_elNumIn('em-light-midi-off-vel', 0, 127, settings.emLightMidiOffVel ?? 0))
+            noteRow.append(noteNoteF.wrap, noteOnF.wrap, noteOffF.wrap)
+
+            // CC row
+            const ccRow = document.createElement('div'); ccRow.style.cssText = 'display:flex;gap:0.5rem'
+            const ccCcF = _elSubField(window.t('s.emlight.midi.cc'))
+            ccCcF.append(_elNumIn('em-light-midi-cc', 0, 127, settings.emLightMidiCc ?? 0))
+            const ccOnF = _elSubField(`${window.t('s.emlight.midi.on')} – ${window.t('s.emlight.midi.val')}`)
+            ccOnF.append(_elNumIn('em-light-midi-on-value', 0, 127, settings.emLightMidiOnValue ?? 127))
+            const ccOffF = _elSubField(`${window.t('s.emlight.midi.off')} – ${window.t('s.emlight.midi.val')}`)
+            ccOffF.append(_elNumIn('em-light-midi-off-value', 0, 127, settings.emLightMidiOffValue ?? 0))
+            ccRow.append(ccCcF.wrap, ccOnF.wrap, ccOffF.wrap)
+
+            // PC row
+            const pcRow = document.createElement('div'); pcRow.style.cssText = 'display:flex;gap:0.5rem'
+            const pcOnF = _elSubField(`${window.t('s.emlight.midi.on')} – ${window.t('s.emlight.midi.prog')}`)
+            pcOnF.append(_elNumIn('em-light-midi-on-prog', 0, 127, settings.emLightMidiOnProgram ?? 0))
+            const pcOffF = _elSubField(`${window.t('s.emlight.midi.off')} – ${window.t('s.emlight.midi.prog')}`)
+            pcOffF.append(_elNumIn('em-light-midi-off-prog', 0, 127, settings.emLightMidiOffProgram ?? 127))
+            pcRow.append(pcOnF.wrap, pcOffF.wrap)
+
+            // Sysex fields
+            const sysexWrap = document.createElement('div')
+            const sysexOnF = document.createElement('div'); sysexOnF.className = 'field'
+            const sysexOnL = document.createElement('label'); sysexOnL.textContent = `${window.t('s.emlight.midi.on')} – ${window.t('s.emlight.midi.bytes')}`
+            const sysexOnIn = _elTxtIn('em-light-midi-on-bytes', 'F0 00 F7', settings.emLightMidiOnBytes || '')
+            sysexOnF.append(sysexOnL, sysexOnIn)
+            const sysexOffF = document.createElement('div'); sysexOffF.className = 'field'
+            const sysexOffL = document.createElement('label'); sysexOffL.textContent = `${window.t('s.emlight.midi.off')} – ${window.t('s.emlight.midi.bytes')}`
+            const sysexOffIn = _elTxtIn('em-light-midi-off-bytes', 'F0 01 F7', settings.emLightMidiOffBytes || '')
+            sysexOffF.append(sysexOffL, sysexOffIn)
+            sysexWrap.append(sysexOnF, sysexOffF)
+
+            emLightMidiPanel.append(midiTypeField, midiChField, noteRow, ccRow, pcRow, sysexWrap)
+
+            function updateMidiTypePanel() {
+                const type = midiTypeSel.value
+                noteRow.style.display    = type === 'note'  ? '' : 'none'
+                ccRow.style.display      = type === 'cc'    ? '' : 'none'
+                pcRow.style.display      = type === 'pc'    ? '' : 'none'
+                sysexWrap.style.display  = type === 'sysex' ? '' : 'none'
+                midiChField.style.display = type !== 'sysex' ? '' : 'none'
+            }
+            midiTypeSel.addEventListener('change', updateMidiTypePanel)
+            updateMidiTypePanel()
+
+            // OSC panel
+            const oscAddrF = document.createElement('div'); oscAddrF.className = 'field'
+            const oscAddrL = document.createElement('label'); oscAddrL.setAttribute('data-i18n','s.emlight.osc.addr'); oscAddrL.textContent = window.t('s.emlight.osc.addr')
+            const oscAddrIn = _elTxtIn('em-light-osc-addr', '/light', settings.emLightOscAddress || '')
+            oscAddrF.append(oscAddrL, oscAddrIn)
+
+            const oscArgTypeF = document.createElement('div'); oscArgTypeF.className = 'field'
+            const oscArgTypeL = document.createElement('label'); oscArgTypeL.setAttribute('data-i18n','s.emlight.osc.argtype'); oscArgTypeL.textContent = window.t('s.emlight.osc.argtype')
+            const oscArgTypeSel = document.createElement('select'); oscArgTypeSel.id = 'em-light-osc-argtype'
+            for (const [v, label] of [['int','Integer'],['float','Float'],['string','String'],['bool','Bool']])
+                oscArgTypeSel.appendChild(new Option(label, v))
+            oscArgTypeSel.value = settings.emLightOscArgType || 'int'
+            oscArgTypeF.append(oscArgTypeL, oscArgTypeSel)
+
+            const oscArgRow = document.createElement('div'); oscArgRow.style.cssText = 'display:flex;gap:0.5rem'
+            const oscOnF = _elSubField(`${window.t('s.emlight.osc.arg')} (${window.t('s.emlight.midi.on')})`)
+            const oscOnIn = _elTxtIn('em-light-osc-on-arg', '1', settings.emLightOscOnArg ?? '1')
+            oscOnF.append(oscOnIn)
+            const oscOffF = _elSubField(`${window.t('s.emlight.osc.arg')} (${window.t('s.emlight.midi.off')})`)
+            const oscOffIn = _elTxtIn('em-light-osc-off-arg', '0', settings.emLightOscOffArg ?? '0')
+            oscOffF.append(oscOffIn)
+            oscArgRow.append(oscOnF.wrap, oscOffF.wrap)
+
+            emLightOscPanel.append(oscAddrF, oscArgTypeF, oscArgRow)
+
+            emLightDeviceSel.addEventListener('change', updateEmLightPanels)
 
             function populateEmLightDeviceSelect() {
                 const current = emLightDeviceSel.value
                 emLightDeviceSel.innerHTML = ''
-                emLightDeviceSel.appendChild(new Option('— erstes Gerät —', ''))
+                emLightDeviceSel.appendChild(new Option(window.t('s.emlight.device.none'), ''))
+                const midiGroup = document.createElement('optgroup')
+                midiGroup.label = 'MIDI'
                 for (const s of midiOutputDeviceStates) {
                     const name = s.getValues().name
-                    emLightDeviceSel.appendChild(new Option(name, name))
+                    midiGroup.appendChild(new Option(name, 'midi:' + name))
                 }
-                emLightDeviceSel.value = current || (settings.emLightMidiDevice ?? '')
+                if (midiGroup.children.length) emLightDeviceSel.appendChild(midiGroup)
+                const oscGroup = document.createElement('optgroup')
+                oscGroup.label = 'OSC'
+                for (const s of oscOutputDeviceStates) {
+                    const name = s.getValues().name
+                    oscGroup.appendChild(new Option(name, 'osc:' + name))
+                }
+                if (oscGroup.children.length) emLightDeviceSel.appendChild(oscGroup)
+                if (current) {
+                    emLightDeviceSel.value = current
+                } else {
+                    const savedKind = settings.emLightDeviceKind
+                    const savedDev  = settings.emLightDevice || settings.emLightMidiDevice
+                    if (savedDev) {
+                        emLightDeviceSel.value = savedKind ? `${savedKind}:${savedDev}` : `midi:${savedDev}`
+                    }
+                }
+                updateEmLightPanels()
             }
 
             // ── Anzeige ───────────────────────────────────────────────
@@ -843,12 +975,8 @@
                     if (firstInvalid) { firstInvalid.scrollIntoView({ behavior: 'smooth', block: 'center' }); firstInvalid.focus() }
                     return
                 }
-                const chVal   = parseInt(emLightChEl.value)
-                const noteVal = parseInt(emLightNoteEl.value)
-                const newEmLight = (!isNaN(chVal) && !isNaN(noteVal) && emLightChEl.value !== '' && emLightNoteEl.value !== '')
-                    ? { ch: Math.max(1, Math.min(16, chVal)), note: Math.max(0, Math.min(127, noteVal)) }
-                    : null
-                await window.electronAPI.saveEmLightNote(newEmLight)
+                const _elDevVal  = emLightDeviceSel.value
+                const _elColonI  = _elDevVal.indexOf(':')
                 const oscDevs = oscOutputDeviceStates.map(s => s.getValues())
                 const midiOutDevs = midiOutputDeviceStates.map(s => s.getValues())
                 await window.electronAPI.saveSettings({
@@ -862,7 +990,25 @@
                     midiLiveDevice: liveInputSelect.value || null,
                     appLanguage: langSel.value || 'de',
                     oscOutputDevices: oscDevs,
-                    emLightMidiDevice: emLightDeviceSel.value || null,
+                    emLightEnabled:         emLightEnabledEl.checked,
+                    emLightDevice:          _elColonI >= 0 ? _elDevVal.slice(_elColonI + 1) : null,
+                    emLightDeviceKind:      _elDevVal.startsWith('midi:') ? 'midi' : _elDevVal.startsWith('osc:') ? 'osc' : null,
+                    emLightMidiType:        midiTypeSel.value,
+                    emLightMidiCh:          parseInt(midiChIn.value) || 1,
+                    emLightMidiNote:        parseInt(document.getElementById('em-light-midi-note')?.value) ?? 60,
+                    emLightMidiOnVel:       parseInt(document.getElementById('em-light-midi-on-vel')?.value) ?? 127,
+                    emLightMidiOffVel:      parseInt(document.getElementById('em-light-midi-off-vel')?.value) ?? 0,
+                    emLightMidiCc:          parseInt(document.getElementById('em-light-midi-cc')?.value) ?? 0,
+                    emLightMidiOnValue:     parseInt(document.getElementById('em-light-midi-on-value')?.value) ?? 127,
+                    emLightMidiOffValue:    parseInt(document.getElementById('em-light-midi-off-value')?.value) ?? 0,
+                    emLightMidiOnProgram:   parseInt(document.getElementById('em-light-midi-on-prog')?.value) ?? 0,
+                    emLightMidiOffProgram:  parseInt(document.getElementById('em-light-midi-off-prog')?.value) ?? 127,
+                    emLightMidiOnBytes:     sysexOnIn.value || '',
+                    emLightMidiOffBytes:    sysexOffIn.value || '',
+                    emLightOscAddress:      oscAddrIn.value.trim() || null,
+                    emLightOscArgType:      oscArgTypeSel.value,
+                    emLightOscOnArg:        oscOnIn.value,
+                    emLightOscOffArg:       oscOffIn.value,
                     micDevices: micDeviceStates.map(s => s.getValues()),
                     micGroupDisplay: micGroupDisplayEl.checked,
                     openLocked: openLockedEl.checked,

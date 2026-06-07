@@ -175,7 +175,25 @@ let oscPort = 8000
 let midiOutputDevices = []   // [{name, device, sendTriggerNote}]
 let midiOutputPorts   = []   // resolved MIDI output ports (parallel array)
 let oscOutputDevices  = []   // [{name, enabled, host, port, sendTriggerNote}]
-let emLightMidiDevice = null // name of midiOutputDevice to use for emergency light
+let emLightEnabled       = true
+let emLightDevice        = null  // device name
+let emLightDeviceKind    = null  // 'midi' | 'osc'
+let emLightMidiType      = 'note'
+let emLightMidiCh        = 1
+let emLightMidiNote      = 60
+let emLightMidiOnVel     = 127
+let emLightMidiOffVel    = 0
+let emLightMidiCc        = 0
+let emLightMidiOnValue   = 127
+let emLightMidiOffValue  = 0
+let emLightMidiOnProgram  = 0
+let emLightMidiOffProgram = 127
+let emLightMidiOnBytes    = ''
+let emLightMidiOffBytes   = ''
+let emLightOscAddress    = null
+let emLightOscArgType    = 'int'
+let emLightOscOnArg      = '1'
+let emLightOscOffArg     = '0'
 let appLanguage = 'de'
 let micGroupDisplay = true      // whether to bundle mic roles into group boxes in the UI
 let effectiveLightScene = null  // light: value of last fired cue that had one
@@ -7454,18 +7472,71 @@ function colorText() {
     }
 }
 
+function _applyEmLightSettings(s) {
+    emLightEnabled       = s.emLightEnabled ?? true
+    emLightDevice        = s.emLightDevice        || s.emLightMidiDevice || null
+    emLightDeviceKind    = s.emLightDeviceKind    || (emLightDevice ? 'midi' : null)
+    emLightMidiType      = s.emLightMidiType      || 'note'
+    emLightMidiCh        = s.emLightMidiCh        ?? 1
+    emLightMidiNote      = s.emLightMidiNote      ?? 60
+    emLightMidiOnVel     = s.emLightMidiOnVel     ?? 127
+    emLightMidiOffVel    = s.emLightMidiOffVel    ?? 0
+    emLightMidiCc        = s.emLightMidiCc        ?? 0
+    emLightMidiOnValue   = s.emLightMidiOnValue   ?? 127
+    emLightMidiOffValue  = s.emLightMidiOffValue  ?? 0
+    emLightMidiOnProgram  = s.emLightMidiOnProgram  ?? 0
+    emLightMidiOffProgram = s.emLightMidiOffProgram ?? 127
+    emLightMidiOnBytes    = s.emLightMidiOnBytes    || ''
+    emLightMidiOffBytes   = s.emLightMidiOffBytes   || ''
+    emLightOscAddress    = s.emLightOscAddress    || null
+    emLightOscArgType    = s.emLightOscArgType    || 'int'
+    emLightOscOnArg      = s.emLightOscOnArg      ?? '1'
+    emLightOscOffArg     = s.emLightOscOffArg     ?? '0'
+}
+
+function fireEmLight(on) {
+    if (!emLightDevice) return
+    if (emLightDeviceKind === 'midi') {
+        const devIdx = midiOutputDevices.findIndex(d => d.name === emLightDevice)
+        const port   = (devIdx >= 0 ? midiOutputPorts[devIdx] : null) ?? midiOutputPorts[0]
+        if (!port) return
+        const ch = ((emLightMidiCh || 1) - 1) & 0xF
+        if (emLightMidiType === 'note') {
+            const vel = on ? (emLightMidiOnVel ?? 127) : (emLightMidiOffVel ?? 0)
+            port.send([0x90 | ch, emLightMidiNote ?? 60, vel])
+        } else if (emLightMidiType === 'cc') {
+            const val = on ? (emLightMidiOnValue ?? 127) : (emLightMidiOffValue ?? 0)
+            port.send([0xB0 | ch, emLightMidiCc ?? 0, val])
+        } else if (emLightMidiType === 'pc') {
+            const pgm = on ? (emLightMidiOnProgram ?? 0) : (emLightMidiOffProgram ?? 127)
+            port.send([0xC0 | ch, pgm])
+        } else if (emLightMidiType === 'sysex') {
+            const bytesStr = on ? emLightMidiOnBytes : emLightMidiOffBytes
+            const bytes = String(bytesStr || '').trim().split(/\s+/)
+                .map(h => parseInt(h, 16)).filter(n => !isNaN(n) && n >= 0 && n <= 255)
+            if (bytes.length) port.send(bytes)
+        }
+    } else if (emLightDeviceKind === 'osc') {
+        const dev = oscOutputDevices.find(d => d.name === emLightDevice) ?? oscOutputDevices[0]
+        if (!dev?.enabled) return
+        const path = emLightOscAddress || ''
+        if (!/^\/[\x20-\x7e]*$/.test(path)) return
+        const argStr = on ? emLightOscOnArg : emLightOscOffArg
+        const args = []
+        if (argStr !== undefined && String(argStr).trim() !== '') {
+            if (emLightOscArgType === 'int')        args.push(parseInt(argStr) || 0)
+            else if (emLightOscArgType === 'float') args.push(parseFloat(argStr) || 0)
+            else if (emLightOscArgType === 'bool')  args.push(argStr === 'true' || argStr === '1')
+            else                                     args.push(String(argStr))
+        }
+        window.electronAPI?.sendOsc({ path, args, host: dev.host || '127.0.0.1', port: dev.port ?? 8000 })
+    }
+}
+
 function initButtons() {
-    document.querySelector(".em-light").addEventListener("mousedown", () => {
-        const eln = config.emLightNote
-        if (!eln) return
-        const _elIdx = emLightMidiDevice
-            ? midiOutputDevices.findIndex(d => d.name === emLightMidiDevice)
-            : 0
-        const _elPort = midiOutputPorts[_elIdx >= 0 ? _elIdx : 0]
-        if (!_elPort) return
-        _elPort.send([0x90 | (eln.ch - 1), eln.note, 100])
-        setTimeout(() => _elPort.send([0x80 | (eln.ch - 1), eln.note, 0]), 100)
-    })
+    const emLightBtn = document.querySelector('.em-light')
+    emLightBtn.addEventListener('mousedown', () => fireEmLight(true))
+    emLightBtn.addEventListener('mouseup',   () => fireEmLight(false))
     document.querySelector(".em-music").addEventListener("mousedown", stopall)
     document.querySelector(".em-mic").addEventListener("mousedown", () => x32UnmuteChannels("muteall"))
     document.querySelector(".live-window-button").addEventListener("mousedown", () => window.electronAPI.openLiveWindow())
@@ -7773,7 +7844,7 @@ async function initApp() {
     midiOutputDevices = _migrateMidiOutputDevices(savedSettings)
     midiOutputPorts   = midiOutputDevices.map(() => null)
     oscOutputDevices  = _migrateOscOutputDevices(savedSettings)
-    emLightMidiDevice = savedSettings.emLightMidiDevice || null
+    _applyEmLightSettings(savedSettings)
     // Keep compat vars (used by sendOscMessage and other places) from first device
     const _firstOsc = oscOutputDevices[0] || {}
     oscEnabled = _firstOsc.enabled ?? false
@@ -7844,12 +7915,20 @@ async function initApp() {
     }
 
     colorText()
+    // Check for duplicate device names across MIDI and OSC output devices
+    const _devNames = new Set()
+    for (const d of [...midiOutputDevices, ...oscOutputDevices]) {
+        if (_devNames.has(d.name))
+            parseErrors.push({ blockNum: null, line: null, message: `Doppelter Gerätename: „${d.name}" – Gerätenamen müssen eindeutig sein` })
+        _devNames.add(d.name)
+    }
     showParseErrors()
     markControlledTriggers()
     groupSiblingTriggers()
     annotateBlocks()
     buildInsertZones()
     initButtons()
+    document.querySelector('.em-light').style.display = emLightEnabled ? '' : 'none'
     setupAutoTriggers()
     buildSidebar()
 
@@ -7892,7 +7971,8 @@ async function initApp() {
             midiOutputDevices = _migrateMidiOutputDevices(newSettings)
             midiOutputPorts   = midiOutputDevices.map(() => null)
             oscOutputDevices  = _migrateOscOutputDevices(newSettings)
-            emLightMidiDevice = newSettings.emLightMidiDevice || null
+            _applyEmLightSettings(newSettings)
+            document.querySelector('.em-light').style.display = emLightEnabled ? '' : 'none'
             const _newFirstOsc = oscOutputDevices[0] || {}
             oscEnabled = _newFirstOsc.enabled ?? false
             oscHost    = _newFirstOsc.host    || '127.0.0.1'
