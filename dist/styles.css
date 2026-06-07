@@ -83,7 +83,8 @@ p {
 }
 
 .trigger-info {
-    max-width: 75%;
+    flex: 1;
+    min-width: 0;
 }
 
 .trigger-note {

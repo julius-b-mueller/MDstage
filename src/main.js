@@ -3424,32 +3424,9 @@ function groupRolesForDisplay(micVal, grouped = true) {
         })
     }
 
-    // All entries are individual role names — reverse-map to groups
-    const activeSet = new Set(arr)
-
-    // Show all custom groups where ALL their members are active (no claiming — groups may overlap)
-    const matched = []
-    for (const [gName, gCfg] of Object.entries(config.groups || {})) {
-        const gRoles = (gCfg.roles || []).filter(r => config.roles?.[r])
-        if (gRoles.length > 0 && gRoles.every(r => activeSet.has(r))) {
-            matched.push({
-                isGroup: true,
-                name: gName,
-                color: gCfg.color || null,
-                members: gRoles.map(r => ({ name: r, color: config.roles[r]?.color || null }))
-            })
-        }
-    }
-
-    // Individual roles not covered by ANY matched group (avoid redundant individual chips)
-    const covered = new Set(matched.flatMap(g => g.members.map(m => m.name)))
-    const result = [...matched]
-    for (const name of arr) {
-        if (!covered.has(name)) {
-            result.push({ isGroup: false, name, color: config.roles?.[name]?.color || null })
-        }
-    }
-    return result
+    // All entries are individual role names — show as-is without reverse-mapping to groups.
+    // Groups only appear when their name was explicitly used (handled by the branch above).
+    return arr.map(name => ({ isGroup: false, name, color: config.roles?.[name]?.color || null }))
 }
 
 // Expands group names in a mic value to individual role names (for MIDI/OSC routing)
@@ -3509,8 +3486,10 @@ function computeAutoMicRoles(triggerIndex) {
 
     if (myBlockIdx === -1) return null
 
-    // Collect roles with dialogue in text blocks between this cue and the next auto-mic cue
-    const seen = new Set()
+    // Collect roles/groups with dialogue in text blocks between this cue and the next auto-mic cue.
+    // Preserve group names as-is so the display shows the group rather than its individual members.
+    const seen = new Set()       // names added to roles (groups by group name, individuals by role name)
+    const covered = new Set()    // individual members already covered by an added group
     const roles = []
     for (let i = myBlockIdx + 1; i < blocks.length; i++) {
         if (nextAutoMicBlockIdx !== null && i >= nextAutoMicBlockIdx) break
@@ -3519,10 +3498,11 @@ function computeAutoMicRoles(triggerIndex) {
         if (m && m[2].trim()) {
             for (const r of m[1].split('/').map(s => s.trim()).filter(Boolean)) {
                 if (isGroup(r)) {
-                    for (const member of getGroupRoles(r)) {
-                        if (!seen.has(member) && config.roles?.[member]) { seen.add(member); roles.push(member) }
+                    if (!seen.has(r)) {
+                        seen.add(r); roles.push(r)
+                        for (const member of getGroupRoles(r)) covered.add(member)
                     }
-                } else if (!seen.has(r) && config.roles?.[r]) {
+                } else if (!covered.has(r) && !seen.has(r) && config.roles?.[r]) {
                     seen.add(r); roles.push(r)
                 }
             }

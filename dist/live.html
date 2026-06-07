@@ -46,7 +46,7 @@
         .live-info-bar.empty { min-height: 0; border-bottom: none; }
         .live-info-cell {
             display: flex;
-            align-items: baseline;
+            align-items: center;
             gap: 0.6rem;
             padding: 0.45rem 1.4rem;
             border-right: 1px solid #2c313a;
@@ -196,7 +196,7 @@
         .trigger .trigger-actions  { display: none; }
         .trigger .trigger-move-btns { display: none; }
         .trigger { cursor: default !important; pointer-events: none; margin: 1.2rem 1.5rem; padding: 1rem 1.2rem; }
-        .trigger .trigger-info { max-width: 65%; }
+        .trigger .trigger-info { flex: 1; min-width: 0; }
         .trigger .trigger-mic,
         .trigger .trigger-music,
         .trigger .trigger-light,
