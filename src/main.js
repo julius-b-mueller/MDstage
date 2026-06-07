@@ -7568,7 +7568,7 @@ function initButtons() {
 
 // Migrate to unified outputDevices array (backwards compat)
 function _migrateOutputDevices(settings) {
-    if (settings.outputDevices?.length > 0) {
+    if (Array.isArray(settings.outputDevices)) {
         return settings.outputDevices.map((d, i) => ({
             enabled: true,
             sendTriggerNote: i === 0,

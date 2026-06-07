@@ -44,10 +44,10 @@ const _settings = {
     mainAudioDevice: null,
     mainChannelL: 0, mainChannelR: 1,
     monitorChannelL: 0, monitorChannelR: 1,
-    midiX32Device: null, midiTriggerDevice: null, midiTCDevice: null,
+    outputDevices: [],
+    midiTCDevice: null,
     editorApp: null, editorCustomCmd: '',
     midiGoNote: null, midiBackNote: null, midiLiveDevice: null,
-    oscEnabled: false, oscHost: '127.0.0.1', oscPort: 8000,
     monitorEnabled: false,
     appLanguage: 'de',
 }
