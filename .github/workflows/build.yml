@@ -112,7 +112,7 @@ jobs:
       - run: npm ci
       - run: npx webpack --mode production
       - run: node scripts/build-version.js
-      - run: npx electron-builder --mac dmg --arch arm64 --arch x64 --publish never
+      - run: npx electron-builder --mac dmg --arm64 --x64 --publish never
       - run: |
           mkdir -p artifacts
           find release -name "*arm64.dmg"                    -exec cp {} artifacts/MainDesk-macos-arm64.dmg \; 2>/dev/null || true
