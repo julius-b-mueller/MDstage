@@ -28,6 +28,7 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npx webpack --mode production
+      - run: node scripts/build-version.js
       - run: rm -f dist/*.map
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -111,11 +112,11 @@ jobs:
       - run: npm ci
       - run: npx webpack --mode production
       - run: node scripts/build-version.js
-      - run: npx electron-builder --mac dmg --publish never
+      - run: npx electron-builder --mac dmg --arch arm64 --arch x64 --publish never
       - run: |
           mkdir -p artifacts
-          find release -name "*arm64.dmg" -exec cp {} artifacts/MainDesk-macos-arm64.dmg \; 2>/dev/null || true
-          find release -name "*x64.dmg"   -exec cp {} artifacts/MainDesk-macos-x64.dmg \;   2>/dev/null || true
+          find release -name "*arm64.dmg"                    -exec cp {} artifacts/MainDesk-macos-arm64.dmg \; 2>/dev/null || true
+          find release -name "*.dmg" ! -name "*arm64*" -exec cp {} artifacts/MainDesk-macos-x64.dmg \;        2>/dev/null || true
           ls -lh artifacts/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
