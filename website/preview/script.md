@@ -1,6 +1,6 @@
 ```yaml
 config:
-    app_version: 1.7.0
+    app_version: 1.7.4
     roles:
         Frank:
             color: blue
@@ -27,7 +27,7 @@ config:
             ch: null
             device: 0
     settings:
-        MacBook-Pro-von-Julius:
+        web-preview:
             mainAudioDevice: null
             mainChannelL: 0
             mainChannelR: 1
