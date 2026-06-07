@@ -12,14 +12,6 @@ try {
 } catch {}
 
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'))
-const payload = JSON.stringify({ version: pkg.version, commit, date }, null, 2)
-
-const targets = [
-    path.join(__dirname, '..', 'dist', 'version.json'),
-    path.join(__dirname, '..', 'website', 'app', 'version.json'),
-]
-for (const out of targets) {
-    fs.mkdirSync(path.dirname(out), { recursive: true })
-    fs.writeFileSync(out, payload)
-}
+const out = path.join(__dirname, '..', 'dist', 'version.json')
+fs.writeFileSync(out, JSON.stringify({ version: pkg.version, commit, date }, null, 2))
 console.log(`version.json → version=${pkg.version} commit=${commit} date=${date}`)

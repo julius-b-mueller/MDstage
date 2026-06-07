@@ -10,7 +10,7 @@
   "homepage": "https://essener-volksbuehne.github.io/evb-ai",
   "main": "electron/main.js",
   "scripts": {
-    "build": "webpack && node scripts/copy-preview.js && node scripts/build-version.js && electron-builder --publish never",
+    "build": "webpack && node scripts/build-version.js && node scripts/copy-preview.js && electron-builder --publish never",
     "build:renderer": "webpack",
     "build:preview": "webpack --mode production && node scripts/copy-preview.js && node scripts/generate-audio-list.js",
     "build:version": "node scripts/build-version.js",
