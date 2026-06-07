@@ -479,13 +479,31 @@
                 updateRemoveBtns()
             })
 
-            // ── MIDI-Ausgabe-Geräte (multi-device) ──────────────────
-            const midiOutputDevicesList = document.getElementById('midi-output-devices-list')
-            const addMidiOutputDeviceBtn = document.getElementById('add-midi-output-device-btn')
-            const midiOutputDeviceStates = []
+            // ── Ausgabe-Geräte (MIDI + OSC unified) ─────────────────
+            const outputDevicesList = document.getElementById('output-devices-list')
+            const addOutputDeviceBtn = document.getElementById('add-output-device-btn')
+            const outputDeviceStates = []
 
-            function buildMidiOutputDeviceCard(cfg, midiOutNames) {
-                const idx = midiOutputDeviceStates.length
+            const DEVICE_COLORS = {
+                blue: '#61afef', red: '#e06c75', green: '#98c379', yellow: '#e5c07b',
+                purple: '#c678dd', cyan: '#56b6c2', darkblue: '#317fbf', darkred: '#b03c45',
+                darkgreen: '#68b349', darkyellow: '#b5904b', darkpurple: '#9648ad', darkcyan: '#268692',
+            }
+            const DEVICE_COLOR_LABELS = {
+                blue: 'Blau', red: 'Rot', green: 'Grün', yellow: 'Gelb',
+                purple: 'Lila', cyan: 'Türkis', darkblue: 'Dunkelblau', darkred: 'Dunkelrot',
+                darkgreen: 'Dunkelgrün', darkyellow: 'Dunkelgelb', darkpurple: 'Dunkellila', darkcyan: 'Dunkeltürkis',
+            }
+            const DEVICE_COLOR_CYCLE = Object.keys(DEVICE_COLORS)
+            function hexToColorKey(hex) {
+                if (!hex) return ''
+                const h = hex.toLowerCase()
+                return Object.keys(DEVICE_COLORS).find(k => DEVICE_COLORS[k] === h) || ''
+            }
+
+            function buildOutputDeviceCard(cfg, midiOutNames) {
+                cfg = cfg || {}
+                const idx = outputDeviceStates.length
                 const card = document.createElement('div')
                 card.className = 'mic-device-card'
 
@@ -494,104 +512,53 @@
                 const nameInput = document.createElement('input')
                 nameInput.type = 'text'; nameInput.placeholder = `Gerät ${idx + 1}`
                 nameInput.value = cfg.name || `Gerät ${idx + 1}`
+                const typeSel = document.createElement('select')
+                typeSel.style.cssText = 'width:auto;background:#383c44;color:#abb2bf;border:1px solid #4b5263;padding:0.3rem 0.5rem;border-radius:4px;font-size:0.9rem;font-family:inherit;cursor:pointer;flex-shrink:0'
+                for (const [v, lbl] of [['midi','MIDI'],['osc','OSC']]) {
+                    const o = new Option(lbl, v)
+                    if (v === (cfg.type || 'midi')) o.selected = true
+                    typeSel.appendChild(o)
+                }
                 const removeBtn = document.createElement('button')
                 removeBtn.className = 'mic-device-remove'; removeBtn.textContent = '−'; removeBtn.title = 'Gerät entfernen'
-                removeBtn.style.display = idx === 0 ? 'none' : ''
                 removeBtn.addEventListener('click', () => {
-                    const i = midiOutputDeviceStates.findIndex(s => s.card === card)
-                    if (i !== -1) { midiOutputDeviceStates.splice(i, 1); card.remove(); updateMidiOutputRemoveBtns() }
+                    const i = outputDeviceStates.findIndex(s => s.card === card)
+                    if (i !== -1) { outputDeviceStates.splice(i, 1); card.remove(); populateEmLightDeviceSelect() }
                 })
-                header.append(nameInput, removeBtn)
+                header.append(nameInput, typeSel, removeBtn)
                 card.appendChild(header)
 
-                const wrap = document.createElement('div'); wrap.className = 'field'
-                const lbl = document.createElement('label'); lbl.textContent = 'MIDI-Ausgang'
+                // Aktiviert checkbox (shared)
+                const activatedLabel = document.createElement('label')
+                activatedLabel.style.cssText = 'display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf'
+                const activatedCb = document.createElement('input'); activatedCb.type = 'checkbox'; activatedCb.style.width = 'auto'
+                activatedCb.checked = cfg.enabled ?? true
+                activatedLabel.append(activatedCb, document.createTextNode('Aktiviert'))
+                const activatedWrap = document.createElement('div'); activatedWrap.className = 'field'
+                activatedWrap.appendChild(activatedLabel)
+                card.appendChild(activatedWrap)
+
+                // MIDI-specific section
+                const midiSection = document.createElement('div')
+                const midiPortWrap = document.createElement('div'); midiPortWrap.className = 'field'
+                const midiPortLbl = document.createElement('label'); midiPortLbl.textContent = 'MIDI-Ausgang'
                 const midiSel = document.createElement('select')
-                const noneOpt = new Option('— kein Gerät —', '')
-                midiSel.appendChild(noneOpt)
-                for (const name of midiOutNames) {
+                midiSel.appendChild(new Option('— kein Gerät —', ''))
+                for (const name of (midiOutNames || new Set())) {
                     const o = new Option(name, name)
                     if (name === cfg.device) o.selected = true
                     midiSel.appendChild(o)
                 }
-                if (cfg.device && !midiOutNames.has(cfg.device)) {
+                if (cfg.device && midiOutNames && !midiOutNames.has(cfg.device)) {
                     const w = document.createElement('p'); w.className = 'device-warning'
-                    w.textContent = `Gerät „${cfg.device}" nicht gefunden`; wrap.appendChild(w)
+                    w.textContent = `Gerät „${cfg.device}" nicht gefunden`; midiPortWrap.appendChild(w)
                 }
-                wrap.append(lbl, midiSel)
-                card.appendChild(wrap)
+                midiPortWrap.append(midiPortLbl, midiSel)
+                midiSection.appendChild(midiPortWrap)
+                card.appendChild(midiSection)
 
-                const trigNoteWrap = document.createElement('div'); trigNoteWrap.className = 'field'
-                const trigNoteLabel = document.createElement('label')
-                trigNoteLabel.style.cssText = 'display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf'
-                const trigNoteCb = document.createElement('input'); trigNoteCb.type = 'checkbox'; trigNoteCb.style.width = 'auto'
-                trigNoteCb.checked = cfg.sendTriggerNote ?? (idx === 0)
-                const trigNoteSpan = document.createElement('span'); trigNoteSpan.textContent = 'Trigger-Note senden'
-                trigNoteLabel.append(trigNoteCb, trigNoteSpan)
-                trigNoteWrap.appendChild(trigNoteLabel)
-                card.appendChild(trigNoteWrap)
-
-                function getValues() {
-                    return {
-                        name: nameInput.value.trim() || nameInput.placeholder,
-                        device: midiSel.value || null,
-                        sendTriggerNote: trigNoteCb.checked,
-                    }
-                }
-                midiOutputDeviceStates.push({ card, getValues, removeBtn })
-                midiOutputDevicesList.appendChild(card)
-            }
-
-            function updateMidiOutputRemoveBtns() {
-                midiOutputDeviceStates.forEach((s, i) => { s.removeBtn.style.display = i === 0 ? 'none' : '' })
-            }
-
-            // Migrate or load midiOutputDevices
-            let initialMidiOutputDevices = (settings.midiOutputDevices && settings.midiOutputDevices.length > 0)
-                ? settings.midiOutputDevices
-                : [{ name: 'Gerät 1', device: settings.midiTriggerDevice || null }]
-            let _pendingMidiOutputDevices = initialMidiOutputDevices
-
-            // ── MIDI ──────────────────────────────────────────────────
-            const tcSelect        = document.getElementById('tc-device')
-            const liveInputSelect = document.getElementById('live-input-device')
-
-            // ── OSC-Ausgabe-Geräte (multi-device) ────────────────────
-            const oscOutputDevicesList = document.getElementById('osc-output-devices-list')
-            const addOscDeviceBtn      = document.getElementById('add-osc-device-btn')
-            const oscOutputDeviceStates = []
-
-            function buildOscOutputDeviceCard(cfg) {
-                const idx = oscOutputDeviceStates.length
-                const card = document.createElement('div')
-                card.className = 'mic-device-card'
-
-                const header = document.createElement('div')
-                header.className = 'mic-device-header'
-                const nameInput = document.createElement('input')
-                nameInput.type = 'text'; nameInput.placeholder = `Gerät ${idx + 1}`
-                nameInput.value = cfg.name || `Gerät ${idx + 1}`
-                const removeBtn = document.createElement('button')
-                removeBtn.className = 'mic-device-remove'; removeBtn.textContent = '−'; removeBtn.title = 'Gerät entfernen'
-                removeBtn.style.display = idx === 0 ? 'none' : ''
-                removeBtn.addEventListener('click', () => {
-                    const i = oscOutputDeviceStates.findIndex(s => s.card === card)
-                    if (i !== -1) { oscOutputDeviceStates.splice(i, 1); card.remove(); updateOscOutputRemoveBtns() }
-                })
-                header.append(nameInput, removeBtn)
-                card.appendChild(header)
-
-                // Enabled checkbox
-                const enabledWrap = document.createElement('div'); enabledWrap.className = 'field'
-                const enabledLabel = document.createElement('label')
-                enabledLabel.style.cssText = 'display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf'
-                const enabledCb = document.createElement('input'); enabledCb.type = 'checkbox'; enabledCb.style.width = 'auto'
-                enabledCb.checked = cfg.enabled ?? false
-                const enabledSpan = document.createElement('span'); enabledSpan.textContent = 'Aktiviert'
-                enabledLabel.append(enabledCb, enabledSpan)
-                enabledWrap.appendChild(enabledLabel)
-                card.appendChild(enabledWrap)
-
+                // OSC-specific section
+                const oscSection = document.createElement('div')
                 function mkField(labelText, el) {
                     const w = document.createElement('div'); w.className = 'field'
                     const l = document.createElement('label'); l.textContent = labelText
@@ -602,9 +569,7 @@
                 const portIn = document.createElement('input'); portIn.type = 'number'
                 portIn.min = '1'; portIn.max = '65535'; portIn.placeholder = '8000'
                 portIn.value = cfg.port ?? 8000
-                card.append(mkField('Adresse', hostIn), mkField('Port', portIn))
-
-                // Validation
+                oscSection.append(mkField('Adresse', hostIn), mkField('Port', portIn))
                 const cardValidators = [
                     [hostIn, isValidIPv4],
                     [portIn, isValidPort],
@@ -613,46 +578,78 @@
                     const check = () => el.classList.toggle('invalid', el.value.trim() !== '' && !fn(el.value))
                     el.addEventListener('input', check); check()
                 }
+                card.appendChild(oscSection)
 
-                const trigNoteOscWrap = document.createElement('div'); trigNoteOscWrap.className = 'field'
-                const trigNoteOscLabel = document.createElement('label')
-                trigNoteOscLabel.style.cssText = 'display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf'
-                const trigNoteOscCb = document.createElement('input'); trigNoteOscCb.type = 'checkbox'; trigNoteOscCb.style.width = 'auto'
-                trigNoteOscCb.checked = cfg.sendTriggerNote ?? (idx === 0)
-                const trigNoteOscSpan = document.createElement('span'); trigNoteOscSpan.textContent = 'Trigger-Note senden'
-                trigNoteOscLabel.append(trigNoteOscCb, trigNoteOscSpan)
-                trigNoteOscWrap.appendChild(trigNoteOscLabel)
-                card.appendChild(trigNoteOscWrap)
+                function updateTypeVis() {
+                    const isMidi = typeSel.value === 'midi'
+                    midiSection.style.display = isMidi ? '' : 'none'
+                    oscSection.style.display   = isMidi ? 'none' : ''
+                }
+                typeSel.addEventListener('change', updateTypeVis)
+                updateTypeVis()
+
+                const trigNoteLabel = document.createElement('label')
+                trigNoteLabel.style.cssText = 'display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf'
+                const trigNoteCb = document.createElement('input'); trigNoteCb.type = 'checkbox'; trigNoteCb.style.width = 'auto'
+                trigNoteCb.checked = cfg.sendTriggerNote ?? (idx === 0)
+                trigNoteLabel.append(trigNoteCb, document.createTextNode('Trigger-Note senden'))
+                const trigNoteWrap = document.createElement('div'); trigNoteWrap.className = 'field'
+                trigNoteWrap.appendChild(trigNoteLabel)
+                card.appendChild(trigNoteWrap)
+
+                const colorWrap = document.createElement('div'); colorWrap.className = 'field'
+                const colorLbl = document.createElement('label'); colorLbl.textContent = 'Farbe'
+                const colorRow = document.createElement('div')
+                colorRow.style.cssText = 'display:flex;align-items:center;gap:0.5rem'
+                const colorDot = document.createElement('div')
+                colorDot.style.cssText = 'width:14px;height:14px;border-radius:50%;flex-shrink:0;border:2px solid rgba(255,255,255,0.15)'
+                const colorSel = document.createElement('select')
+                colorSel.style.cssText = 'flex:1'
+                const noColorOpt = document.createElement('option'); noColorOpt.value = ''; noColorOpt.textContent = '— keine Farbe —'
+                colorSel.appendChild(noColorOpt)
+                for (const key of DEVICE_COLOR_CYCLE) {
+                    const o = document.createElement('option'); o.value = key; o.textContent = DEVICE_COLOR_LABELS[key]
+                    colorSel.appendChild(o)
+                }
+                const initColorKey = hexToColorKey(cfg.color) || cfg.color || ''
+                colorSel.value = initColorKey
+                colorDot.style.background = DEVICE_COLORS[colorSel.value] || 'transparent'
+                colorSel.addEventListener('change', () => { colorDot.style.background = DEVICE_COLORS[colorSel.value] || 'transparent' })
+                colorRow.append(colorDot, colorSel)
+                colorWrap.append(colorLbl, colorRow)
+                card.appendChild(colorWrap)
 
                 function getValues() {
-                    return {
-                        name: nameInput.value.trim() || nameInput.placeholder,
-                        enabled: enabledCb.checked,
-                        host: hostIn.value.trim() || '127.0.0.1',
-                        port: parseInt(portIn.value) || 8000,
-                        sendTriggerNote: trigNoteOscCb.checked,
-                    }
+                    const type = typeSel.value
+                    const base = { name: nameInput.value.trim() || nameInput.placeholder, type, enabled: activatedCb.checked, sendTriggerNote: trigNoteCb.checked, color: DEVICE_COLORS[colorSel.value] || '' }
+                    if (type === 'midi') return { ...base, device: midiSel.value || null }
+                    return { ...base, host: hostIn.value.trim() || '127.0.0.1', port: parseInt(portIn.value) || 8000 }
                 }
-                oscOutputDeviceStates.push({ card, getValues, cardValidators, removeBtn })
-                oscOutputDevicesList.appendChild(card)
+                outputDeviceStates.push({ card, getValues, cardValidators, removeBtn })
+                outputDevicesList.appendChild(card)
             }
 
-            function updateOscOutputRemoveBtns() {
-                oscOutputDeviceStates.forEach((s, i) => { s.removeBtn.style.display = i === 0 ? 'none' : '' })
+            // Migrate or load outputDevices
+            let initialOutputDevices
+            if (settings.outputDevices?.length > 0) {
+                initialOutputDevices = settings.outputDevices
+            } else {
+                const midiDevs = settings.midiOutputDevices?.length > 0
+                    ? settings.midiOutputDevices
+                    : [{ name: 'Gerät 1', device: settings.midiTriggerDevice || null, sendTriggerNote: true }]
+                const oscDevs = settings.oscOutputDevices?.length > 0
+                    ? settings.oscOutputDevices
+                    : [{ name: 'OSC', enabled: settings.oscEnabled ?? false, host: settings.oscHost || '127.0.0.1', port: settings.oscPort ?? 8000, sendTriggerNote: false }]
+                initialOutputDevices = [
+                    ...midiDevs.map(d => ({ sendTriggerNote: true, ...d, type: 'midi' })),
+                    ...oscDevs.map(d => ({ sendTriggerNote: false, ...d, type: 'osc' })),
+                ]
             }
+            let _pendingOutputDevices = initialOutputDevices
 
-            // Migrate or load oscOutputDevices
-            let initialOscOutputDevices = (settings.oscOutputDevices && settings.oscOutputDevices.length > 0)
-                ? settings.oscOutputDevices
-                : [{ name: 'Gerät 1', enabled: settings.oscEnabled ?? false, host: settings.oscHost || '127.0.0.1', port: settings.oscPort ?? 8000 }]
-            for (const dev of initialOscOutputDevices) buildOscOutputDeviceCard(dev)
-            updateOscOutputRemoveBtns()
-
-            addOscDeviceBtn.addEventListener('click', () => {
-                buildOscOutputDeviceCard({ name: `Gerät ${oscOutputDeviceStates.length + 1}`, enabled: false, host: '127.0.0.1', port: 8000 })
-                updateOscOutputRemoveBtns()
-                populateEmLightDeviceSelect()
-            })
+            // ── MIDI ──────────────────────────────────────────────────
+            const tcSelect        = document.getElementById('tc-device')
+            const liveInputSelect = document.getElementById('live-input-device')
 
             const emLightDeviceSel = document.getElementById('em-light-device')
             const emLightMidiPanel = document.getElementById('em-light-midi-panel')
@@ -685,14 +682,12 @@
                 if (settings.midiLiveDevice && !midiInNames.has(settings.midiLiveDevice))
                     insertWarning(liveInputSelect, `Gerät „${settings.midiLiveDevice}" nicht gefunden – Eingang deaktiviert`)
 
-                // Build MIDI output device cards now that we have the MIDI output list
+                // Build output device cards now that we have the MIDI output list
                 _midiOutNames = midiOutNames
-                for (const dev of _pendingMidiOutputDevices) buildMidiOutputDeviceCard(dev, _midiOutNames)
-                updateMidiOutputRemoveBtns()
+                for (const dev of _pendingOutputDevices) buildOutputDeviceCard(dev, _midiOutNames)
                 populateEmLightDeviceSelect()
-                addMidiOutputDeviceBtn.addEventListener('click', () => {
-                    buildMidiOutputDeviceCard({ name: `Gerät ${midiOutputDeviceStates.length + 1}` }, _midiOutNames)
-                    updateMidiOutputRemoveBtns()
+                addOutputDeviceBtn.addEventListener('click', () => {
+                    buildOutputDeviceCard({ name: `Gerät ${outputDeviceStates.length + 1}`, type: 'midi' }, _midiOutNames)
                     populateEmLightDeviceSelect()
                 })
 
@@ -703,12 +698,10 @@
             } catch (e) {
                 insertError('MIDI nicht verfügbar: ' + e.message)
                 // Still build cards even without MIDI access
-                for (const dev of _pendingMidiOutputDevices) buildMidiOutputDeviceCard(dev, _midiOutNames)
-                updateMidiOutputRemoveBtns()
+                for (const dev of _pendingOutputDevices) buildOutputDeviceCard(dev, _midiOutNames)
                 populateEmLightDeviceSelect()
-                addMidiOutputDeviceBtn.addEventListener('click', () => {
-                    buildMidiOutputDeviceCard({ name: `Gerät ${midiOutputDeviceStates.length + 1}` }, _midiOutNames)
-                    updateMidiOutputRemoveBtns()
+                addOutputDeviceBtn.addEventListener('click', () => {
+                    buildOutputDeviceCard({ name: `Gerät ${outputDeviceStates.length + 1}`, type: 'midi' }, _midiOutNames)
                     populateEmLightDeviceSelect()
                 })
                 for (const dev of _pendingDevices) buildMicDeviceCard(dev, _midiOutNames)
@@ -897,17 +890,15 @@
                 emLightDeviceSel.appendChild(new Option(window.t('s.emlight.device.none'), ''))
                 const midiGroup = document.createElement('optgroup')
                 midiGroup.label = 'MIDI'
-                for (const s of midiOutputDeviceStates) {
-                    const name = s.getValues().name
-                    midiGroup.appendChild(new Option(name, 'midi:' + name))
-                }
-                if (midiGroup.children.length) emLightDeviceSel.appendChild(midiGroup)
                 const oscGroup = document.createElement('optgroup')
                 oscGroup.label = 'OSC'
-                for (const s of oscOutputDeviceStates) {
-                    const name = s.getValues().name
-                    oscGroup.appendChild(new Option(name, 'osc:' + name))
+                for (const s of outputDeviceStates) {
+                    const v = s.getValues()
+                    const opt = new Option(v.name, v.type + ':' + v.name)
+                    if (v.type === 'osc') oscGroup.appendChild(opt)
+                    else midiGroup.appendChild(opt)
                 }
+                if (midiGroup.children.length) emLightDeviceSel.appendChild(midiGroup)
                 if (oscGroup.children.length) emLightDeviceSel.appendChild(oscGroup)
                 if (current) {
                     emLightDeviceSel.value = current
@@ -956,10 +947,10 @@
             }
 
             function _hasInvalidVisible() {
-                const oscInvalid = oscOutputDeviceStates.some(s =>
-                    s.cardValidators.some(([el]) => el.offsetParent !== null && el.classList.contains('invalid'))
+                const outInvalid = outputDeviceStates.some(s =>
+                    s.cardValidators?.some(([el]) => el.offsetParent !== null && el.classList.contains('invalid'))
                 )
-                if (oscInvalid) return true
+                if (outInvalid) return true
                 return micDeviceStates.some(s =>
                     s.cardValidators.some(([el]) => el.offsetParent !== null && el.classList.contains('invalid'))
                 )
@@ -969,27 +960,25 @@
 
             document.getElementById('save').addEventListener('click', async () => {
                 if (_hasInvalidVisible()) {
-                    const firstInvalid = [...oscOutputDeviceStates, ...micDeviceStates]
-                        .flatMap(s => s.cardValidators.map(([el]) => el))
+                    const firstInvalid = [...outputDeviceStates, ...micDeviceStates]
+                        .flatMap(s => (s.cardValidators || []).map(([el]) => el))
                         .find(el => el.offsetParent !== null && el.classList.contains('invalid'))
                     if (firstInvalid) { firstInvalid.scrollIntoView({ behavior: 'smooth', block: 'center' }); firstInvalid.focus() }
                     return
                 }
                 const _elDevVal  = emLightDeviceSel.value
                 const _elColonI  = _elDevVal.indexOf(':')
-                const oscDevs = oscOutputDeviceStates.map(s => s.getValues())
-                const midiOutDevs = midiOutputDeviceStates.map(s => s.getValues())
+                const outDevs = outputDeviceStates.map(s => s.getValues())
                 await window.electronAPI.saveSettings({
                     mainAudioDevice: mainAudioSel.value || null,
                     ...getRouting(),
-                    midiOutputDevices: midiOutDevs,
+                    outputDevices: outDevs,
                     midiTCDevice:     tcSelect.value     || null,
                     editorApp:        editorAppSel.value || null,
                     midiGoNote,
                     midiBackNote,
                     midiLiveDevice: liveInputSelect.value || null,
                     appLanguage: langSel.value || 'de',
-                    oscOutputDevices: oscDevs,
                     emLightEnabled:         emLightEnabledEl.checked,
                     emLightDevice:          _elColonI >= 0 ? _elDevVal.slice(_elColonI + 1) : null,
                     emLightDeviceKind:      _elDevVal.startsWith('midi:') ? 'midi' : _elDevVal.startsWith('osc:') ? 'osc' : null,

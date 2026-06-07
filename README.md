@@ -433,6 +433,8 @@ Double-clicking a playing cue **stops** it immediately (undo function).
 
 Back fades the last-fired audio out over 500 ms, restores the previous cue state, and undoes mic changes.
 
+**Behavior after a jump:** Back always follows the actual trigger history, not the script order. If a cue was reached by jumping (clicking it directly), Back returns to the cue that was active before the jump — not to the cue that precedes it in the script. MIDI/OSC device states are also restored according to this history: for each device that received a new message in the popped cue, the previously active message for that device is resent.
+
 ---
 
 ## Role Editor

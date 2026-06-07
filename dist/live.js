@@ -28,6 +28,9 @@
         function esc(s) {
             return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
         }
+        function safeColor(c) { return /^#[0-9a-f]{3,8}$/i.test(c) ? c : '' }
+
+        let _deviceColors = {}
         function fmt(s) {
             s = Math.max(0, s | 0)
             return `${s / 60 | 0}:${(s % 60).toString().padStart(2,'0')}`
@@ -98,8 +101,11 @@
                     else if (msg.type === 'cc')    { text = `CC${msg.cc}=${msg.value}` }
                     else if (msg.type === 'pc')    { text = `PC${msg.program}` }
                     else                           { text = 'SysEx' }
-                    const dev = msg.device ? ` → ${esc(msg.device)}` : ''
-                    return `<span class="cue-msg-chip cue-msg-chip--midi"><span class="cue-type-badge">MIDI</span><span class="cue-msg-content">${text}${dev}</span></span>`
+                    const devName = msg.device || ''
+                    const devColor = safeColor(_deviceColors['midi:' + devName] || '')
+                    const chipStyle = devColor ? ` style="border-color:${devColor}55;background:${devColor}12"` : ''
+                    const badgeStyle = devColor ? ` style="background:${devColor}30;color:${devColor}"` : ''
+                    return `<span class="cue-msg-chip cue-msg-chip--midi"${chipStyle}><span class="cue-type-badge"${badgeStyle}>${esc(devName) || 'MIDI'}</span><span class="cue-msg-content">${text}</span></span>`
                 }).join('')
                 cueMidiRow = `<div class="trigger-cue-midi">${chips}</div>`
             }
@@ -109,8 +115,11 @@
                     let text
                     if (msg.comment) { text = esc(msg.comment) }
                     else { text = `${esc(msg.path || '')}${msg.arg !== undefined && msg.arg !== '' ? ' ' + esc(String(msg.arg)) : ''}` }
-                    const dev = msg.device ? ` → ${esc(msg.device)}` : ''
-                    return `<span class="cue-msg-chip cue-msg-chip--osc"><span class="cue-type-badge">OSC</span><span class="cue-msg-content">${text}${dev}</span></span>`
+                    const devName = msg.device || ''
+                    const devColor = safeColor(_deviceColors['osc:' + devName] || '')
+                    const chipStyle = devColor ? ` style="border-color:${devColor}55;background:${devColor}12"` : ''
+                    const badgeStyle = devColor ? ` style="background:${devColor}30;color:${devColor}"` : ''
+                    return `<span class="cue-msg-chip cue-msg-chip--osc"${chipStyle}><span class="cue-type-badge"${badgeStyle}>${esc(devName) || 'OSC'}</span><span class="cue-msg-content">${text}</span></span>`
                 }).join('')
                 cueOscRow = `<div class="trigger-cue-osc">${chips}</div>`
             }
@@ -364,20 +373,42 @@
             audioPanEl.classList.toggle('has-audio', audioRows.size > 0)
         }
 
-        // ── Info bar: effective light scene + mics ───────────────────────
+        // ── Info bar: device states + mics ──────────────────────────────
         function updateInfoBar(state) {
-            const { effectiveLightScene, effectiveMuteall, effectiveMicColors, hasMicState } = state
-            const hasLight = !!effectiveLightScene
-            const hasMic   = !!hasMicState
+            const { effectiveDeviceStates, deviceColors, effectiveMuteall, effectiveMicColors, hasMicState } = state
+            if (deviceColors) _deviceColors = deviceColors
+            const hasDevices = Array.isArray(effectiveDeviceStates) && effectiveDeviceStates.length > 0
+            const hasMic     = !!hasMicState
 
             infoBarEl.innerHTML = ''
-            infoBarEl.classList.toggle('empty', !hasLight && !hasMic)
+            infoBarEl.classList.toggle('empty', !hasDevices && !hasMic)
 
-            if (hasLight) {
-                const cell = document.createElement('div')
-                cell.className = 'live-info-cell'
-                cell.innerHTML = `<span class="live-info-label">Licht</span><span class="live-info-light">✦ ${esc(effectiveLightScene)}</span>`
-                infoBarEl.appendChild(cell)
+            if (hasDevices) {
+                for (const item of effectiveDeviceStates) {
+                    const devColor = safeColor(deviceColors?.[(item.type === 'midi' ? 'midi:' : 'osc:') + item.device] || '')
+                    const colorStyle = devColor ? ` style="color:${devColor}"` : ''
+                    let msgSummary = ''
+                    if (item.type === 'midi') {
+                        msgSummary = (item.messages || []).map(m => {
+                            if (m.comment) return esc(m.comment)
+                            if (m.type === 'note') return `N${m.note}`
+                            if (m.type === 'cc')   return `CC${m.cc}=${m.value}`
+                            if (m.type === 'pc')   return `PC${m.program}`
+                            return 'SysEx'
+                        }).join(', ')
+                    } else {
+                        msgSummary = (item.messages || []).map(m => {
+                            if (m.comment) return esc(m.comment)
+                            let s = esc(m.path || '')
+                            if (m.arg !== undefined && String(m.arg).trim() !== '') s += ' ' + esc(String(m.arg))
+                            return s
+                        }).join(', ')
+                    }
+                    const cell = document.createElement('div')
+                    cell.className = 'live-info-cell'
+                    cell.innerHTML = `<span class="live-info-label"${colorStyle}>${esc(item.device)}</span><span class="live-info-device-state"${colorStyle}>${msgSummary}</span>`
+                    infoBarEl.appendChild(cell)
+                }
             }
 
             if (hasMic) {
@@ -521,6 +552,7 @@
                 liveFrames = null; tcEl.textContent = '--:--:--:--'
             }
 
+            if (state.deviceColors) _deviceColors = state.deviceColors
             renderScript(blocks, nextCue, currentCue ?? 0, selectedVariant)
             syncAudio(audioProgress || [])
             updateInfoBar(state)

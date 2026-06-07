@@ -172,31 +172,13 @@ let mtc = null
 let oscEnabled = false
 let oscHost = '127.0.0.1'
 let oscPort = 8000
-let midiOutputDevices = []   // [{name, device, sendTriggerNote}]
+let outputDevices     = []   // unified [{name, type:'midi'|'osc', ...}]
+let midiOutputDevices = []   // [{name, device, sendTriggerNote, color}]  — derived from outputDevices
 let midiOutputPorts   = []   // resolved MIDI output ports (parallel array)
-let oscOutputDevices  = []   // [{name, enabled, host, port, sendTriggerNote}]
-let emLightEnabled       = true
-let emLightDevice        = null  // device name
-let emLightDeviceKind    = null  // 'midi' | 'osc'
-let emLightMidiType      = 'note'
-let emLightMidiCh        = 1
-let emLightMidiNote      = 60
-let emLightMidiOnVel     = 127
-let emLightMidiOffVel    = 0
-let emLightMidiCc        = 0
-let emLightMidiOnValue   = 127
-let emLightMidiOffValue  = 0
-let emLightMidiOnProgram  = 0
-let emLightMidiOffProgram = 127
-let emLightMidiOnBytes    = ''
-let emLightMidiOffBytes   = ''
-let emLightOscAddress    = null
-let emLightOscArgType    = 'int'
-let emLightOscOnArg      = '1'
-let emLightOscOffArg     = '0'
+let oscOutputDevices  = []   // [{name, enabled, host, port, sendTriggerNote, color}] — derived from outputDevices
 let appLanguage = 'de'
 let micGroupDisplay = true      // whether to bundle mic roles into group boxes in the UI
-let effectiveLightScene = null  // light: value of last fired cue that had one
+let effectiveDeviceStates = new Map()  // device key → {type, device, messages}
 let effectiveMics       = null  // mic: value of last fired cue that had one
 let micDevices = []   // array of device config objects (from settings.micDevices)
 
@@ -2652,6 +2634,7 @@ function groupRootOf(idx) {
 
 function markTriggers(cue) {
     const cueRoot = groupRootOf(cue)
+    const historyRoots = new Set(cueHistory.map(h => groupRootOf(h)))
     for (let index = 1; index < triggers.length; index++) {
         if (!triggers[index]) continue
         const root = groupRootOf(index)
@@ -2660,8 +2643,8 @@ function markTriggers(cue) {
             // Same group as current cue: only the clicked trigger gets marked
             shouldMark = index === cue
         } else if (root < cueRoot) {
-            // Past group: only mark the group root (shows "this position was passed")
-            shouldMark = index === root
+            // Past group: only mark if it was actually triggered (in history)
+            shouldMark = index === root && historyRoots.has(root)
         } else {
             shouldMark = false
         }
@@ -2786,7 +2769,7 @@ function rerender(newText) {
     slfDerivedTcBadges.clear()
     fileToTriggers.clear()
     config = {}
-    effectiveLightScene = null
+    effectiveDeviceStates = new Map()
     effectiveMics       = null
     loopOutroPending.clear()
     loopOutroInitialRemaining.clear()
@@ -3728,10 +3711,6 @@ function buildTrigger(codeblockYaml, index) {
     triggerMic.classList.add("trigger-mic")
     const triggerMusic = document.createElement("div")
     triggerMusic.classList.add("trigger-music")
-    const triggerLight = document.createElement("div")
-    triggerLight.classList.add("trigger-light")
-
-    if (codeblockYaml.light) triggerInfo.appendChild(triggerLight)
     const triggerMoveDiv = document.createElement("div")
     triggerMoveDiv.classList.add("trigger-move-btns")
     const triggerUpBtn   = document.createElement("button")
@@ -3819,14 +3798,7 @@ function buildTrigger(codeblockYaml, index) {
                 triggerMusic.appendChild(document.createTextNode(`⇢ ${adjRef} ${t('adj.display.volume.pre')} ${Math.round(codeblockYaml.music.adjust.volume * 100)}%`))
             }
         }
-        // Insert after mic (if present), before light
-        const lightEl = triggerInfo.querySelector('.trigger-light')
-        triggerInfo.insertBefore(triggerMusic, lightEl ?? null)
-    }
-
-    // light scene
-    if (codeblockYaml.light) {
-        triggerLight.textContent = '✦ ' + codeblockYaml.light
+        triggerInfo.appendChild(triggerMusic)
     }
 
     // OSC path badge
@@ -3848,16 +3820,22 @@ function buildTrigger(codeblockYaml, index) {
         for (const msg of codeblockYaml.cue_midi) {
             const chip = document.createElement('span')
             chip.classList.add('cue-msg-chip', 'cue-msg-chip--midi')
+            const devName = msg.device || midiOutputDevices[0]?.name || ''
+            const _rawColor = midiOutputDevices.find(d => d.name === devName)?.color || ''
+            const devColor = /^#[0-9a-f]{3,8}$/i.test(_rawColor) ? _rawColor : ''
+            if (devColor) {
+                chip.style.cssText = `border-color:${devColor}55;background:${devColor}12`
+            }
             const badge = document.createElement('span')
             badge.className = 'cue-type-badge'
-            badge.textContent = 'MIDI'
+            badge.textContent = devName || 'MIDI'
+            if (devColor) badge.style.cssText = `background:${devColor}30;color:${devColor}`
             let text
             if (msg.comment) { text = msg.comment }
             else if (msg.type === 'note')  { text = `N${msg.note}` }
             else if (msg.type === 'cc')    { text = `CC${msg.cc}=${msg.value}` }
             else if (msg.type === 'pc')    { text = `PC${msg.program}` }
             else                           { text = 'SysEx' }
-            if (msg.device) text += ` → ${msg.device}`
             const content = document.createElement('span')
             content.className = 'cue-msg-content'
             content.textContent = text
@@ -3875,16 +3853,21 @@ function buildTrigger(codeblockYaml, index) {
         for (const msg of codeblockYaml.cue_osc) {
             const chip = document.createElement('span')
             chip.classList.add('cue-msg-chip', 'cue-msg-chip--osc')
+            const oscDevName = msg.device || oscOutputDevices[0]?.name || ''
+            const oscDevColor = (oscOutputDevices.find(d => d.name === oscDevName) ?? oscOutputDevices[0])?.color || ''
+            if (oscDevColor) {
+                chip.style.cssText = `border-color:${oscDevColor}55;background:${oscDevColor}12`
+            }
             const badge = document.createElement('span')
             badge.className = 'cue-type-badge'
-            badge.textContent = 'OSC'
+            badge.textContent = oscDevName || 'OSC'
+            if (oscDevColor) badge.style.cssText = `background:${oscDevColor}30;color:${oscDevColor}`
             let text
             if (msg.comment) { text = msg.comment }
             else {
                 text = msg.path || ''
                 if (msg.arg !== undefined && String(msg.arg).trim() !== '') text += ` ${msg.arg}`
             }
-            if (msg.device) text += ` → ${msg.device}`
             const content = document.createElement('span')
             content.className = 'cue-msg-content'
             content.textContent = text
@@ -4262,7 +4245,6 @@ function buildTrigger(codeblockYaml, index) {
 
         function _nonAudioActions(nextIdx, nextTa) {
             const ty = triggerYamls[nextIdx]
-            if (ty?.light) effectiveLightScene = ty.light
             const _mic = getMicForCue(nextIdx)
             if (_mic !== undefined && _mic !== null) effectiveMics = _mic
             x32UnmuteChannels(_mic)
@@ -4297,7 +4279,6 @@ function buildTrigger(codeblockYaml, index) {
         function fireGaplessTransition(nextIdx) {
             const nextTa = triggerAudio.get(nextIdx)
             const ty = triggerYamls[nextIdx]
-            if (ty?.light) effectiveLightScene = ty.light
             const _micGap = getMicForCue(nextIdx)
             if (_micGap !== undefined && _micGap !== null) effectiveMics = _micGap
             if (!nextTa || !ty?.music) {
@@ -5039,6 +5020,15 @@ function buildTrigger(codeblockYaml, index) {
         }
     }
 
+    // Capture phase: intercept button/control clicks while locked before their own handlers fire
+    triggerDiv.addEventListener("mousedown", (e) => {
+        if (showLock && !pickModeCallback && e.target.closest('button, select, input')) {
+            e.stopPropagation()
+            e.preventDefault()
+            showLockHint(e)
+        }
+    }, true)
+
     triggerDiv.addEventListener("mousedown", (e) => {
         if (pickModeCallback) {
             e.stopPropagation()
@@ -5053,13 +5043,19 @@ function buildTrigger(codeblockYaml, index) {
             return
         }
         if (liveViewOpen) {
-            // Arm the trigger as next cue instead of firing it immediately
+            // Arm the trigger as next cue — allowed even when locked (body click only;
+            // button clicks are already blocked in capture phase above)
             setArmedCue(index)
-            // If it's part of a variant group (sibling or root with siblings), also select it
             const isSibling = !!triggerYamls[index]?.sibling
             const hasNextSibling = !!(triggerYamls[index + 1]?.sibling)
             if (isSibling || hasNextSibling) selectedVariant = index
             broadcastLiveState()
+            return
+        }
+        if (showLock) {
+            e.stopPropagation()
+            e.preventDefault()
+            showLockHint(e)
             return
         }
         currentCue = index
@@ -5817,35 +5813,31 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     if ((isEdit || isCopy) && existingYaml?.note) noteInput.value = existingYaml.note
     box.appendChild(noteWrap)
 
-    // ── Lichtszene ───────────────────────────────────────────────────
-    const { wrap: lightWrap, input: lightInput } = mkDialogField(t('dlg.trigger.light'), 'text', '')
-    lightInput.placeholder = t('dlg.trigger.light.ph')
-    if ((isEdit || isCopy) && existingYaml?.light && typeof existingYaml.light === 'string') {
-        lightInput.value = existingYaml.light
-    }
-    box.appendChild(lightWrap)
+    // ── Geräte-Nachrichten (cue_midi + cue_osc unified) ──────────────────
+    const cueMsgSection = document.createElement('div')
+    cueMsgSection.classList.add('dialog-field')
+    const cueMsgHeaderRow = document.createElement('div')
+    cueMsgHeaderRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem'
+    const cueMsgLabel = document.createElement('label')
+    cueMsgLabel.textContent = 'Nachrichten'
+    cueMsgLabel.style.marginBottom = '0'
+    const addMsgBtn = document.createElement('button')
+    addMsgBtn.type = 'button'
+    addMsgBtn.classList.add('dialog-btn')
+    addMsgBtn.textContent = '+ Nachricht'
+    addMsgBtn.style.cssText = 'padding:0.2rem 0.6rem;font-size:0.82rem'
+    cueMsgHeaderRow.append(cueMsgLabel, addMsgBtn)
+    cueMsgSection.appendChild(cueMsgHeaderRow)
+    const cueMsgList = document.createElement('div')
+    cueMsgSection.appendChild(cueMsgList)
+    box.appendChild(cueMsgSection)
 
-    // ── MIDI-Nachrichten (cue_midi) ────────────────────────────────────
-    const cueMidiSection = document.createElement('div')
-    cueMidiSection.classList.add('dialog-field')
-    const cueMidiHeaderRow = document.createElement('div')
-    cueMidiHeaderRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem'
-    const cueMidiLabel = document.createElement('label')
-    cueMidiLabel.textContent = 'MIDI-Nachrichten'
-    cueMidiLabel.style.marginBottom = '0'
-    const addMidiBtn = document.createElement('button')
-    addMidiBtn.type = 'button'
-    addMidiBtn.classList.add('dialog-btn')
-    addMidiBtn.textContent = '+ MIDI'
-    addMidiBtn.style.cssText = 'padding:0.2rem 0.6rem;font-size:0.82rem'
-    cueMidiHeaderRow.append(cueMidiLabel, addMidiBtn)
-    cueMidiSection.appendChild(cueMidiHeaderRow)
-    const cueMidiList = document.createElement('div')
-    cueMidiSection.appendChild(cueMidiList)
-    box.appendChild(cueMidiSection)
-
-    function buildMidiMsgCard(cfg) {
+    function buildMsgCard(cfg, defaultDevType) {
         cfg = cfg || {}
+        // Determine which device this belongs to
+        const matchedDev = outputDevices.find(d => d.name === cfg.device)
+        const devType = matchedDev?.type || defaultDevType || (outputDevices[0]?.type ?? 'midi')
+
         const card = document.createElement('div')
         card.className = 'cue-msg-card'
 
@@ -5866,16 +5858,22 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         cardHeader.append(commentIn, removeBtn)
         card.appendChild(cardHeader)
 
-        // Device select
-        const devRow = document.createElement('div')
-        devRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:0.4rem;margin-bottom:0.4rem'
+        // Device select — all outputDevices
         const devSel = document.createElement('select')
         devSel.classList.add('dialog-select')
-        for (const d of midiOutputDevices) {
+        devSel.style.marginBottom = '0.4rem'
+        for (const d of outputDevices) {
             const o = new Option(d.name, d.name)
             if (d.name === cfg.device) o.selected = true
             devSel.appendChild(o)
         }
+        if (!devSel.value && outputDevices.length) devSel.value = outputDevices.find(d => d.type === devType)?.name || outputDevices[0].name
+        card.appendChild(devSel)
+
+        // ─ MIDI fields ─
+        const midiSection = document.createElement('div')
+        const devRow = document.createElement('div')
+        devRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:0.4rem;margin-bottom:0.4rem'
         const typeSel = document.createElement('select')
         typeSel.classList.add('dialog-select')
         for (const [v, lbl] of [['note','Note'],['cc','CC'],['pc','Program Change'],['sysex','SysEx']]) {
@@ -5883,12 +5881,9 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
             if (v === (cfg.type || 'note')) o.selected = true
             typeSel.appendChild(o)
         }
-        devRow.append(devSel, typeSel)
-        card.appendChild(devRow)
+        devRow.appendChild(typeSel)
+        midiSection.appendChild(devRow)
 
-        // Type-specific fields
-        const noteDiv = document.createElement('div')
-        noteDiv.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.4rem;margin-bottom:0.4rem'
         const mkNumIn = (ph, min, max, val) => {
             const el = document.createElement('input'); el.type = 'number'
             el.placeholder = ph; el.min = min; el.max = max
@@ -5896,144 +5891,66 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
             el.classList.add('dialog-select'); el.style.width = '100%'
             return el
         }
-        const noteCh  = mkNumIn('Kanal', 1, 16, cfg.ch || 1)
+        const mkLbl = txt => { const l = document.createElement('div'); l.style.cssText = 'font-size:0.72rem;color:#5c6370'; l.textContent = txt; return l }
+
+        const noteDiv = document.createElement('div')
+        noteDiv.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.4rem;margin-bottom:0.4rem'
+        const noteCh   = mkNumIn('Kanal', 1, 16, cfg.ch || 1)
         const noteNote = mkNumIn('Note', 0, 127, cfg.note !== undefined ? cfg.note : '')
         const noteVel  = mkNumIn('Velocity', 0, 127, cfg.vel !== undefined ? cfg.vel : 100)
-        const mkLbl = txt => { const l = document.createElement('div'); l.style.cssText = 'font-size:0.72rem;color:#5c6370'; l.textContent = txt; return l }
-        const noteChWrap = document.createElement('div'); noteChWrap.append(mkLbl('Kanal (1–16)'), noteCh)
-        const noteNoteWrap = document.createElement('div'); noteNoteWrap.append(mkLbl('Note (0–127)'), noteNote)
-        const noteVelWrap = document.createElement('div'); noteVelWrap.append(mkLbl('Velocity'), noteVel)
-        noteDiv.append(noteChWrap, noteNoteWrap, noteVelWrap)
+        const nChW = document.createElement('div'); nChW.append(mkLbl('Kanal (1–16)'), noteCh)
+        const nNoW = document.createElement('div'); nNoW.append(mkLbl('Note (0–127)'), noteNote)
+        const nVlW = document.createElement('div'); nVlW.append(mkLbl('Velocity'), noteVel)
+        noteDiv.append(nChW, nNoW, nVlW)
 
         const ccDiv = document.createElement('div')
         ccDiv.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.4rem;margin-bottom:0.4rem'
         const ccCh  = mkNumIn('Kanal', 1, 16, cfg.ch || 1)
         const ccNum = mkNumIn('CC-Nummer', 0, 127, cfg.cc !== undefined ? cfg.cc : '')
         const ccVal = mkNumIn('Wert', 0, 127, cfg.value !== undefined ? cfg.value : '')
-        const ccChWrap = document.createElement('div'); ccChWrap.append(mkLbl('Kanal (1–16)'), ccCh)
-        const ccNumWrap = document.createElement('div'); ccNumWrap.append(mkLbl('CC (0–127)'), ccNum)
-        const ccValWrap = document.createElement('div'); ccValWrap.append(mkLbl('Wert (0–127)'), ccVal)
-        ccDiv.append(ccChWrap, ccNumWrap, ccValWrap)
+        const ccChW = document.createElement('div'); ccChW.append(mkLbl('Kanal (1–16)'), ccCh)
+        const ccNuW = document.createElement('div'); ccNuW.append(mkLbl('CC (0–127)'), ccNum)
+        const ccVlW = document.createElement('div'); ccVlW.append(mkLbl('Wert (0–127)'), ccVal)
+        ccDiv.append(ccChW, ccNuW, ccVlW)
 
         const pcDiv = document.createElement('div')
         pcDiv.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:0.4rem;margin-bottom:0.4rem'
         const pcCh  = mkNumIn('Kanal', 1, 16, cfg.ch || 1)
         const pcPgm = mkNumIn('Programm', 0, 127, cfg.program !== undefined ? cfg.program : '')
-        const pcChWrap = document.createElement('div'); pcChWrap.append(mkLbl('Kanal (1–16)'), pcCh)
-        const pcPgmWrap = document.createElement('div'); pcPgmWrap.append(mkLbl('Programm (0–127)'), pcPgm)
-        pcDiv.append(pcChWrap, pcPgmWrap)
+        const pcChW = document.createElement('div'); pcChW.append(mkLbl('Kanal (1–16)'), pcCh)
+        const pcPgW = document.createElement('div'); pcPgW.append(mkLbl('Programm (0–127)'), pcPgm)
+        pcDiv.append(pcChW, pcPgW)
 
         const sysexDiv = document.createElement('div')
         sysexDiv.style.marginBottom = '0.4rem'
         const sysexIn = document.createElement('input'); sysexIn.type = 'text'
         sysexIn.placeholder = 'z.B. F0 41 F7'; sysexIn.value = cfg.bytes || ''
         sysexIn.classList.add('dialog-select'); sysexIn.style.width = '100%'
-        const sysexLbl = mkLbl('Hex-Bytes (Leerzeichen-getrennt)')
-        sysexDiv.append(sysexLbl, sysexIn)
+        sysexDiv.append(mkLbl('Hex-Bytes (Leerzeichen-getrennt)'), sysexIn)
 
-        card.append(noteDiv, ccDiv, pcDiv, sysexDiv)
+        midiSection.append(noteDiv, ccDiv, pcDiv, sysexDiv)
+        card.appendChild(midiSection)
 
-        function updateTypeDivs() {
-            const t = typeSel.value
-            noteDiv.style.display   = t === 'note'   ? '' : 'none'
-            ccDiv.style.display     = t === 'cc'     ? '' : 'none'
-            pcDiv.style.display     = t === 'pc'     ? '' : 'none'
-            sysexDiv.style.display  = t === 'sysex'  ? '' : 'none'
+        function updateMidiTypeDivs() {
+            const tv = typeSel.value
+            noteDiv.style.display  = tv === 'note'  ? '' : 'none'
+            ccDiv.style.display    = tv === 'cc'    ? '' : 'none'
+            pcDiv.style.display    = tv === 'pc'    ? '' : 'none'
+            sysexDiv.style.display = tv === 'sysex' ? '' : 'none'
         }
-        typeSel.addEventListener('change', updateTypeDivs)
-        updateTypeDivs()
+        typeSel.addEventListener('change', updateMidiTypeDivs)
+        updateMidiTypeDivs()
 
-        card.getValues = () => {
-            const t = typeSel.value
-            const out = { type: t, device: devSel.value || midiOutputDevices[0]?.name || '' }
-            if (commentIn.value.trim()) out.comment = commentIn.value.trim()
-            if (t === 'note') {
-                out.ch = parseInt(noteCh.value) || 1
-                out.note = parseInt(noteNote.value) || 0
-                out.vel = parseInt(noteVel.value) ?? 100
-            } else if (t === 'cc') {
-                out.ch = parseInt(ccCh.value) || 1
-                out.cc = parseInt(ccNum.value) || 0
-                out.value = parseInt(ccVal.value) ?? 0
-            } else if (t === 'pc') {
-                out.ch = parseInt(pcCh.value) || 1
-                out.program = parseInt(pcPgm.value) || 0
-            } else if (t === 'sysex') {
-                out.bytes = sysexIn.value.trim()
-            }
-            return out
-        }
-
-        cueMidiList.appendChild(card)
-    }
-
-    if ((isEdit || isCopy) && Array.isArray(existingYaml?.cue_midi)) {
-        for (const m of existingYaml.cue_midi) buildMidiMsgCard(m)
-    }
-    addMidiBtn.addEventListener('click', () => buildMidiMsgCard({}))
-
-    // ── OSC-Nachrichten (cue_osc) ───────────────────────────────────────
-    const cueOscSection = document.createElement('div')
-    cueOscSection.classList.add('dialog-field')
-    const cueOscHeaderRow = document.createElement('div')
-    cueOscHeaderRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem'
-    const cueOscLabel = document.createElement('label')
-    cueOscLabel.textContent = 'OSC-Nachrichten'
-    cueOscLabel.style.marginBottom = '0'
-    const addOscBtn = document.createElement('button')
-    addOscBtn.type = 'button'
-    addOscBtn.classList.add('dialog-btn')
-    addOscBtn.textContent = '+ OSC'
-    addOscBtn.style.cssText = 'padding:0.2rem 0.6rem;font-size:0.82rem'
-    cueOscHeaderRow.append(cueOscLabel, addOscBtn)
-    cueOscSection.appendChild(cueOscHeaderRow)
-    const cueOscList = document.createElement('div')
-    cueOscSection.appendChild(cueOscList)
-    box.appendChild(cueOscSection)
-
-    function buildOscMsgCard(cfg) {
-        cfg = cfg || {}
-        const card = document.createElement('div')
-        card.className = 'cue-msg-card'
-
-        const cardHeader = document.createElement('div')
-        cardHeader.className = 'cue-msg-card-header'
-
-        const commentIn = document.createElement('input')
-        commentIn.type = 'text'; commentIn.placeholder = 'Kommentar (optional)'
-        commentIn.value = cfg.comment || ''
-        commentIn.style.flex = '1'
-
-        const removeBtn = document.createElement('button')
-        removeBtn.type = 'button'
-        removeBtn.className = 'cue-msg-card-remove'
-        removeBtn.textContent = '✕'
-        removeBtn.addEventListener('click', () => card.remove())
-
-        cardHeader.append(commentIn, removeBtn)
-        card.appendChild(cardHeader)
-
-        const devRow = document.createElement('div')
-        devRow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:0.4rem;margin-bottom:0.4rem'
-        const devSel = document.createElement('select')
-        devSel.classList.add('dialog-select')
-        for (const d of oscOutputDevices) {
-            const o = new Option(d.name, d.name)
-            if (d.name === cfg.device) o.selected = true
-            devSel.appendChild(o)
-        }
+        // ─ OSC fields ─
+        const oscSection = document.createElement('div')
         const pathIn = document.createElement('input')
         pathIn.type = 'text'; pathIn.placeholder = '/pfad/zum/ziel'
         pathIn.value = cfg.path || ''
-        pathIn.classList.add('dialog-select'); pathIn.style.width = '100%'
-        devRow.append(devSel, pathIn)
-        card.appendChild(devRow)
-
+        pathIn.classList.add('dialog-select'); pathIn.style.width = '100%'; pathIn.style.marginBottom = '0.4rem'
         const argRow = document.createElement('div')
         argRow.style.cssText = 'display:flex;gap:0.4rem;margin-bottom:0.4rem'
         const argTypeSel = document.createElement('select')
-        argTypeSel.classList.add('dialog-select')
-        argTypeSel.style.cssText = 'width:auto;flex-shrink:0'
+        argTypeSel.classList.add('dialog-select'); argTypeSel.style.cssText = 'width:auto;flex-shrink:0'
         for (const [v, lbl] of [['none','— kein Argument —'],['string','string'],['int','int'],['float','float']]) {
             const o = new Option(lbl, v)
             if (v === (cfg.arg !== undefined && cfg.arg !== '' ? (cfg.arg_type || 'string') : 'none')) o.selected = true
@@ -6046,25 +5963,52 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         argTypeSel.addEventListener('change', updateArgVis)
         updateArgVis()
         argRow.append(argTypeSel, argIn)
-        card.appendChild(argRow)
+        oscSection.append(pathIn, argRow)
+        card.appendChild(oscSection)
+
+        function updateDevSections() {
+            const selectedDev = outputDevices.find(d => d.name === devSel.value)
+            const isMidi = selectedDev ? selectedDev.type === 'midi' : true
+            midiSection.style.display = isMidi ? '' : 'none'
+            oscSection.style.display  = isMidi ? 'none' : ''
+        }
+        devSel.addEventListener('change', updateDevSections)
+        updateDevSections()
 
         card.getValues = () => {
-            const out = { device: devSel.value || oscOutputDevices[0]?.name || '', path: pathIn.value.trim() }
-            if (commentIn.value.trim()) out.comment = commentIn.value.trim()
-            if (argTypeSel.value !== 'none' && argIn.value.trim() !== '') {
-                out.arg = argIn.value.trim()
-                out.arg_type = argTypeSel.value
+            const selectedDev = outputDevices.find(d => d.name === devSel.value)
+            const isMidi = selectedDev ? selectedDev.type === 'midi' : true
+            if (isMidi) {
+                const tv = typeSel.value
+                const out = { type: tv, device: devSel.value || midiOutputDevices[0]?.name || '' }
+                if (commentIn.value.trim()) out.comment = commentIn.value.trim()
+                if (tv === 'note') { out.ch = parseInt(noteCh.value) || 1; out.note = parseInt(noteNote.value) || 0; out.vel = parseInt(noteVel.value) ?? 100 }
+                else if (tv === 'cc') { out.ch = parseInt(ccCh.value) || 1; out.cc = parseInt(ccNum.value) || 0; out.value = parseInt(ccVal.value) ?? 0 }
+                else if (tv === 'pc') { out.ch = parseInt(pcCh.value) || 1; out.program = parseInt(pcPgm.value) || 0 }
+                else if (tv === 'sysex') { out.bytes = sysexIn.value.trim() }
+                out._isMidi = true
+                return out
+            } else {
+                const out = { device: devSel.value || oscOutputDevices[0]?.name || '', path: pathIn.value.trim() }
+                if (commentIn.value.trim()) out.comment = commentIn.value.trim()
+                if (argTypeSel.value !== 'none' && argIn.value.trim() !== '') { out.arg = argIn.value.trim(); out.arg_type = argTypeSel.value }
+                out._isOsc = true
+                return out
             }
-            return out
         }
 
-        cueOscList.appendChild(card)
+        cueMsgList.appendChild(card)
     }
 
-    if ((isEdit || isCopy) && Array.isArray(existingYaml?.cue_osc)) {
-        for (const m of existingYaml.cue_osc) buildOscMsgCard(m)
+    // Load existing MIDI messages (tagged as midi)
+    if ((isEdit || isCopy) && Array.isArray(existingYaml?.cue_midi)) {
+        for (const m of existingYaml.cue_midi) buildMsgCard(m, 'midi')
     }
-    addOscBtn.addEventListener('click', () => buildOscMsgCard({}))
+    // Load existing OSC messages (tagged as osc)
+    if ((isEdit || isCopy) && Array.isArray(existingYaml?.cue_osc)) {
+        for (const m of existingYaml.cue_osc) buildMsgCard(m, 'osc')
+    }
+    addMsgBtn.addEventListener('click', () => buildMsgCard({}))
 
     // ── Start-Timecode ───────────────────────────────────────────────
     let tcInput = null
@@ -6230,10 +6174,6 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         const noteVal = noteInput.value.trim()
         if (noteVal) newYaml.note = noteVal
 
-        // light scene
-        const lightVal = lightInput.value.trim()
-        if (lightVal) newYaml.light = lightVal
-
         // OSC-Pfad: bestehende Felder beim Bearbeiten erhalten (UI-Feld wurde entfernt)
         if (isEdit && !isCopy && existingYaml?.osc) {
             newYaml.osc = existingYaml.osc
@@ -6241,19 +6181,14 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
             if (existingYaml.osc_arg_type) newYaml.osc_arg_type = existingYaml.osc_arg_type
         }
 
-        // cue_midi messages
-        const midiMsgs = [...cueMidiList.querySelectorAll('.cue-msg-card')]
+        // cue_midi + cue_osc messages (split from unified list)
+        const allMsgs = [...cueMsgList.querySelectorAll('.cue-msg-card')]
             .filter(c => typeof c.getValues === 'function')
             .map(c => c.getValues())
-            .filter(m => m.type !== 'sysex' || m.bytes)
+        const midiMsgs = allMsgs.filter(m => m._isMidi).map(({ _isMidi, ...m }) => m).filter(m => m.type !== 'sysex' || m.bytes)
+        const oscMsgs  = allMsgs.filter(m => m._isOsc).map(({ _isOsc, ...m }) => m).filter(m => m.path)
         if (midiMsgs.length) newYaml.cue_midi = midiMsgs
-
-        // cue_osc messages
-        const oscMsgs = [...cueOscList.querySelectorAll('.cue-msg-card')]
-            .filter(c => typeof c.getValues === 'function')
-            .map(c => c.getValues())
-            .filter(m => m.path)
-        if (oscMsgs.length) newYaml.cue_osc = oscMsgs
+        if (oscMsgs.length)  newYaml.cue_osc  = oscMsgs
 
         // start_tc (only for root SLF cues; non-root members use derived TC)
         const tcVal = tcInput?.value.trim() ?? ''
@@ -6496,6 +6431,22 @@ function setShowLock(locked) {
     if (locked && inlineEditor) closeEditor(false)
 }
 
+let _lockHintTimer = null
+function showLockHint(e) {
+    let hint = document.getElementById('lock-hint')
+    if (!hint) {
+        hint = document.createElement('div')
+        hint.id = 'lock-hint'
+        hint.textContent = t('lock.hint') || 'Gesperrt'
+        document.body.appendChild(hint)
+    }
+    hint.style.left = (e.clientX + 14) + 'px'
+    hint.style.top  = (e.clientY + 6)  + 'px'
+    hint.style.opacity = '1'
+    clearTimeout(_lockHintTimer)
+    _lockHintTimer = setTimeout(() => { hint.style.opacity = '0' }, 1200)
+}
+
 // Returns list of trigger indices whose loop_outro points to idx
 function loopSourcesOf(idx) {
     const sources = []
@@ -6704,7 +6655,6 @@ function triggerAction(cue) {
     }
 
     const _ty = triggerYamls[cue]
-    if (_ty?.light)  effectiveLightScene = _ty.light
     const _micFire = getMicForCue(cue)
     if (_micFire !== undefined && _micFire !== null) effectiveMics = _micFire
 
@@ -6923,7 +6873,6 @@ function broadcastLiveState() {
                 micColors,
                 muteall: muteallCue,
                 musicLabel, musicAdjust,
-                lightScene: ty.light || null,
                 oscPath: ty.osc || null,
                 oscArg: (ty.osc && ty.osc_arg !== undefined && ty.osc_arg !== '') ? String(ty.osc_arg) : null,
                 oscArgType: ty.osc_arg_type || null,
@@ -6989,6 +6938,15 @@ function broadcastLiveState() {
         effectiveMicColors = groupRolesForDisplay(effectiveMics, micGroupDisplay)
     }
 
+    // Compute per-device effective states from cue history
+    const _devStatesMap = computeEffectiveDeviceStates(cueHistory)
+    const effectiveDeviceStatesArr = Array.from(_devStatesMap.values())
+
+    // Build device color lookup
+    const deviceColors = {}
+    for (const d of midiOutputDevices) { if (d.color) deviceColors['midi:' + d.name] = d.color }
+    for (const d of oscOutputDevices)  { if (d.color) deviceColors['osc:'  + d.name] = d.color }
+
     window.electronAPI.sendLiveState({
         blocks: liveBlocks,
         currentCue: liveCurrent,
@@ -6997,7 +6955,8 @@ function broadcastLiveState() {
         timecodeFrames: tcFrames,
         audioProgress,
         appLanguage,
-        effectiveLightScene,
+        effectiveDeviceStates: effectiveDeviceStatesArr,
+        deviceColors,
         effectiveMuteall: effectiveMics === 'muteall',
         effectiveMicColors: effectiveMics === 'muteall' ? null : (effectiveMicColors ?? undefined),
         hasMicState: effectiveMics !== null,
@@ -7098,11 +7057,27 @@ function backAction() {
         }
     }
 
+    // Collect device keys touched by the popped cues
+    const poppedDeviceKeys = new Set()
+    for (const pIdx of popped) {
+        const ty = triggerYamls[pIdx]
+        if (ty?.cue_midi?.length) {
+            for (const msg of ty.cue_midi) {
+                poppedDeviceKeys.add('midi:' + (msg.device || midiOutputDevices[0]?.name || ''))
+            }
+        }
+        if (ty?.cue_osc?.length) {
+            for (const msg of ty.cue_osc) {
+                const dev = oscOutputDevices.find(d => d.name === (msg.device || '')) ?? oscOutputDevices[0]
+                poppedDeviceKeys.add('osc:' + (dev?.name || ''))
+            }
+        }
+    }
+
     const prev = cueHistory.length > 0 ? cueHistory[cueHistory.length - 1] : null
 
     if (prev !== null) {
         x32UnmuteChannels(getMicForCue(prev))
-        if (popped.some(p => triggerYamls[p]?.light)) sendTriggerNote(prev)
         // Restart prev's audio if it was a loop (simple mp.loop or managed loop_outro)
         const prevTa = triggerAudio.get(prev)
         const prevIsLoop = prevTa?.mp?.loop || !!triggerYamls[prev]?.loop_outro
@@ -7115,19 +7090,22 @@ function backAction() {
         markTriggers(0)
     }
 
-    // Recompute effectiveLightScene and effectiveMics from the remaining history
-    // so the live view always shows the correct state after Back.
-    effectiveLightScene = null
-    effectiveMics       = null
+    // Recompute effectiveMics from remaining history
+    effectiveMics = null
     for (let i = cueHistory.length - 1; i >= 0; i--) {
-        const idx = cueHistory[i]
-        const ty  = triggerYamls[idx]
-        if (effectiveLightScene === null && ty?.light) effectiveLightScene = ty.light
-        if (effectiveMics === null) {
-            const m = getMicForCue(idx)
-            if (m !== undefined && m !== null) effectiveMics = m
+        const m = getMicForCue(cueHistory[i])
+        if (m !== undefined && m !== null) { effectiveMics = m; break }
+    }
+
+    // Resend previous device messages for any device touched by the popped cues
+    if (poppedDeviceKeys.size > 0) {
+        const prevDevStates = computeEffectiveDeviceStates(cueHistory)
+        for (const key of poppedDeviceKeys) {
+            const state = prevDevStates.get(key)
+            if (!state) continue
+            if (state.type === 'midi') _sendMidiMsgArray(state.messages)
+            else if (state.type === 'osc') _sendOscMsgArray(state.messages)
         }
-        if (effectiveLightScene !== null && effectiveMics !== null) break
     }
 
     broadcastLiveState()
@@ -7138,6 +7116,7 @@ function sendTriggerNote(cue) {
     if (!tn) return
     for (let i = 0; i < midiOutputDevices.length; i++) {
         if (!midiOutputDevices[i].sendTriggerNote) continue
+        if (midiOutputDevices[i].enabled === false) continue
         const port = midiOutputPorts[i]
         if (!port) continue
         port.send([0x90 | (tn.ch - 1), tn.note, 100])
@@ -7170,11 +7149,45 @@ function sendOscMessage(cue) {
     }
 }
 
-function sendCueMidiMessages(cue) {
-    const ty = triggerYamls[cue]
-    if (!ty?.cue_midi?.length) return
-    for (const msg of ty.cue_midi) {
+function computeEffectiveDeviceStates(history) {
+    const result = new Map()
+    for (let i = history.length - 1; i >= 0; i--) {
+        const ty = triggerYamls[history[i]]
+        if (!ty) continue
+        if (ty.cue_midi?.length) {
+            const byDev = new Map()
+            for (const msg of ty.cue_midi) {
+                const dName = msg.device || midiOutputDevices[0]?.name || ''
+                if (!byDev.has(dName)) byDev.set(dName, [])
+                byDev.get(dName).push(msg)
+            }
+            for (const [dName, msgs] of byDev) {
+                const key = 'midi:' + dName
+                if (!result.has(key)) result.set(key, { type: 'midi', device: dName, messages: msgs })
+            }
+        }
+        if (ty.cue_osc?.length) {
+            const byDev = new Map()
+            for (const msg of ty.cue_osc) {
+                const dev = oscOutputDevices.find(d => d.name === (msg.device || '')) ?? oscOutputDevices[0]
+                const dName = dev?.name || ''
+                if (!byDev.has(dName)) byDev.set(dName, [])
+                byDev.get(dName).push(msg)
+            }
+            for (const [dName, msgs] of byDev) {
+                const key = 'osc:' + dName
+                if (!result.has(key)) result.set(key, { type: 'osc', device: dName, messages: msgs })
+            }
+        }
+    }
+    return result
+}
+
+function _sendMidiMsgArray(messages) {
+    for (const msg of messages) {
         const devIdx = midiOutputDevices.findIndex(d => d.name === (msg.device || ''))
+        const dev  = devIdx >= 0 ? midiOutputDevices[devIdx] : midiOutputDevices[0]
+        if (dev && dev.enabled === false) continue
         const port = (devIdx >= 0 ? midiOutputPorts[devIdx] : null) ?? midiOutputPorts[0]
         if (!port) continue
         if (msg.type === 'note') {
@@ -7200,10 +7213,9 @@ function sendCueMidiMessages(cue) {
     }
 }
 
-function sendCueOscMessages(cue) {
-    const ty = triggerYamls[cue]
-    if (!ty?.cue_osc?.length || !window.electronAPI?.sendOsc) return
-    for (const msg of ty.cue_osc) {
+function _sendOscMsgArray(messages) {
+    if (!window.electronAPI?.sendOsc) return
+    for (const msg of messages) {
         const dev = oscOutputDevices.find(d => d.name === (msg.device || '')) ?? oscOutputDevices[0]
         if (!dev?.enabled) continue
         const oscPath = String(msg.path || '').trim()
@@ -7217,6 +7229,18 @@ function sendCueOscMessages(cue) {
         }
         window.electronAPI.sendOsc({ path: oscPath, args, host: dev.host || '127.0.0.1', port: dev.port ?? 8000 })
     }
+}
+
+function sendCueMidiMessages(cue) {
+    const ty = triggerYamls[cue]
+    if (!ty?.cue_midi?.length) return
+    _sendMidiMsgArray(ty.cue_midi)
+}
+
+function sendCueOscMessages(cue) {
+    const ty = triggerYamls[cue]
+    if (!ty?.cue_osc?.length) return
+    _sendOscMsgArray(ty.cue_osc)
 }
 
 async function playMusic(cue) {
@@ -7472,71 +7496,7 @@ function colorText() {
     }
 }
 
-function _applyEmLightSettings(s) {
-    emLightEnabled       = s.emLightEnabled ?? true
-    emLightDevice        = s.emLightDevice        || s.emLightMidiDevice || null
-    emLightDeviceKind    = s.emLightDeviceKind    || (emLightDevice ? 'midi' : null)
-    emLightMidiType      = s.emLightMidiType      || 'note'
-    emLightMidiCh        = s.emLightMidiCh        ?? 1
-    emLightMidiNote      = s.emLightMidiNote      ?? 60
-    emLightMidiOnVel     = s.emLightMidiOnVel     ?? 127
-    emLightMidiOffVel    = s.emLightMidiOffVel    ?? 0
-    emLightMidiCc        = s.emLightMidiCc        ?? 0
-    emLightMidiOnValue   = s.emLightMidiOnValue   ?? 127
-    emLightMidiOffValue  = s.emLightMidiOffValue  ?? 0
-    emLightMidiOnProgram  = s.emLightMidiOnProgram  ?? 0
-    emLightMidiOffProgram = s.emLightMidiOffProgram ?? 127
-    emLightMidiOnBytes    = s.emLightMidiOnBytes    || ''
-    emLightMidiOffBytes   = s.emLightMidiOffBytes   || ''
-    emLightOscAddress    = s.emLightOscAddress    || null
-    emLightOscArgType    = s.emLightOscArgType    || 'int'
-    emLightOscOnArg      = s.emLightOscOnArg      ?? '1'
-    emLightOscOffArg     = s.emLightOscOffArg     ?? '0'
-}
-
-function fireEmLight(on) {
-    if (!emLightDevice) return
-    if (emLightDeviceKind === 'midi') {
-        const devIdx = midiOutputDevices.findIndex(d => d.name === emLightDevice)
-        const port   = (devIdx >= 0 ? midiOutputPorts[devIdx] : null) ?? midiOutputPorts[0]
-        if (!port) return
-        const ch = ((emLightMidiCh || 1) - 1) & 0xF
-        if (emLightMidiType === 'note') {
-            const vel = on ? (emLightMidiOnVel ?? 127) : (emLightMidiOffVel ?? 0)
-            port.send([0x90 | ch, emLightMidiNote ?? 60, vel])
-        } else if (emLightMidiType === 'cc') {
-            const val = on ? (emLightMidiOnValue ?? 127) : (emLightMidiOffValue ?? 0)
-            port.send([0xB0 | ch, emLightMidiCc ?? 0, val])
-        } else if (emLightMidiType === 'pc') {
-            const pgm = on ? (emLightMidiOnProgram ?? 0) : (emLightMidiOffProgram ?? 127)
-            port.send([0xC0 | ch, pgm])
-        } else if (emLightMidiType === 'sysex') {
-            const bytesStr = on ? emLightMidiOnBytes : emLightMidiOffBytes
-            const bytes = String(bytesStr || '').trim().split(/\s+/)
-                .map(h => parseInt(h, 16)).filter(n => !isNaN(n) && n >= 0 && n <= 255)
-            if (bytes.length) port.send(bytes)
-        }
-    } else if (emLightDeviceKind === 'osc') {
-        const dev = oscOutputDevices.find(d => d.name === emLightDevice) ?? oscOutputDevices[0]
-        if (!dev?.enabled) return
-        const path = emLightOscAddress || ''
-        if (!/^\/[\x20-\x7e]*$/.test(path)) return
-        const argStr = on ? emLightOscOnArg : emLightOscOffArg
-        const args = []
-        if (argStr !== undefined && String(argStr).trim() !== '') {
-            if (emLightOscArgType === 'int')        args.push(parseInt(argStr) || 0)
-            else if (emLightOscArgType === 'float') args.push(parseFloat(argStr) || 0)
-            else if (emLightOscArgType === 'bool')  args.push(argStr === 'true' || argStr === '1')
-            else                                     args.push(String(argStr))
-        }
-        window.electronAPI?.sendOsc({ path, args, host: dev.host || '127.0.0.1', port: dev.port ?? 8000 })
-    }
-}
-
 function initButtons() {
-    const emLightBtn = document.querySelector('.em-light')
-    emLightBtn.addEventListener('mousedown', () => fireEmLight(true))
-    emLightBtn.addEventListener('mouseup',   () => fireEmLight(false))
     document.querySelector(".em-music").addEventListener("mousedown", stopall)
     document.querySelector(".em-mic").addEventListener("mousedown", () => x32UnmuteChannels("muteall"))
     document.querySelector(".live-window-button").addEventListener("mousedown", () => window.electronAPI.openLiveWindow())
@@ -7555,8 +7515,13 @@ function initButtons() {
         if (e.target.closest('.dialog-overlay')) return
         const triggerEl = e.target.closest('[data-trigger-index]')
         if (triggerEl) {
-            const index = parseInt(triggerEl.dataset.triggerIndex)
             e.stopImmediatePropagation()
+            if (e.target.closest('button, select, input')) {
+                e.preventDefault()
+                showLockHint(e)
+                return
+            }
+            const index = parseInt(triggerEl.dataset.triggerIndex)
             if (liveViewOpen) {
                 setArmedCue(index)
                 const isSibling = !!triggerYamls[index]?.sibling
@@ -7569,6 +7534,15 @@ function initButtons() {
                 triggerAction(index)
             }
         } else {
+            e.stopImmediatePropagation()
+            e.preventDefault()
+        }
+    }, true)
+    // Capture-phase click listener: block button/control clicks inside triggers while locked
+    document.getElementById('script-content').addEventListener('click', (e) => {
+        if (!showLock || pickModeCallback) return
+        if (e.target.closest('.dialog-overlay')) return
+        if (e.target.closest('[data-trigger-index]') && e.target.closest('button, select, input')) {
             e.stopImmediatePropagation()
             e.preventDefault()
         }
@@ -7592,23 +7566,26 @@ function initButtons() {
     document.getElementById('search-close').addEventListener('click', closeSearch)
 }
 
-// Migrate flat settings to midiOutputDevices array (backwards compat)
-function _migrateMidiOutputDevices(settings) {
-    if (settings.midiOutputDevices?.length > 0) {
-        // Ensure every entry has sendTriggerNote; default first device to true if missing
-        return settings.midiOutputDevices.map((d, i) =>
-            'sendTriggerNote' in d ? d : { ...d, sendTriggerNote: i === 0 })
+// Migrate to unified outputDevices array (backwards compat)
+function _migrateOutputDevices(settings) {
+    if (settings.outputDevices?.length > 0) {
+        return settings.outputDevices.map((d, i) => ({
+            enabled: true,
+            sendTriggerNote: i === 0,
+            ...d,
+        }))
     }
-    return [{ name: 'Gerät 1', device: settings.midiTriggerDevice || null, sendTriggerNote: true }]
-}
-
-// Migrate flat OSC settings to oscOutputDevices array (backwards compat)
-function _migrateOscOutputDevices(settings) {
-    if (settings.oscOutputDevices?.length > 0) {
-        return settings.oscOutputDevices.map((d, i) =>
-            'sendTriggerNote' in d ? d : { ...d, sendTriggerNote: i === 0 })
-    }
-    return [{ name: 'Gerät 1', enabled: settings.oscEnabled ?? false, host: settings.oscHost || '127.0.0.1', port: settings.oscPort ?? 8000, sendTriggerNote: true }]
+    // Migrate old separate arrays
+    const midiDevs = settings.midiOutputDevices?.length > 0
+        ? settings.midiOutputDevices
+        : [{ name: 'Gerät 1', device: settings.midiTriggerDevice || null, sendTriggerNote: true }]
+    const oscDevs = settings.oscOutputDevices?.length > 0
+        ? settings.oscOutputDevices
+        : [{ name: 'Gerät 1', enabled: settings.oscEnabled ?? false, host: settings.oscHost || '127.0.0.1', port: settings.oscPort ?? 8000, sendTriggerNote: false }]
+    return [
+        ...midiDevs.map((d, i) => ({ enabled: true, sendTriggerNote: i === 0, ...d, type: 'midi' })),
+        ...oscDevs.map(d => ({ sendTriggerNote: false, ...d, type: 'osc' })),
+    ]
 }
 
 // Migrate flat settings to micDevices array (backwards compat)
@@ -7841,10 +7818,10 @@ async function initApp() {
     monitorChannelL = monitorEnabled ? (savedSettings.monitorChannelL ?? mainChannelL) : mainChannelL
     monitorChannelR = monitorEnabled ? (savedSettings.monitorChannelR ?? mainChannelR) : mainChannelR
     editorApp       = savedSettings.editorApp || null
-    midiOutputDevices = _migrateMidiOutputDevices(savedSettings)
+    outputDevices     = _migrateOutputDevices(savedSettings)
+    midiOutputDevices = outputDevices.filter(d => d.type === 'midi')
     midiOutputPorts   = midiOutputDevices.map(() => null)
-    oscOutputDevices  = _migrateOscOutputDevices(savedSettings)
-    _applyEmLightSettings(savedSettings)
+    oscOutputDevices  = outputDevices.filter(d => d.type === 'osc')
     // Keep compat vars (used by sendOscMessage and other places) from first device
     const _firstOsc = oscOutputDevices[0] || {}
     oscEnabled = _firstOsc.enabled ?? false
@@ -7928,7 +7905,6 @@ async function initApp() {
     annotateBlocks()
     buildInsertZones()
     initButtons()
-    document.querySelector('.em-light').style.display = emLightEnabled ? '' : 'none'
     setupAutoTriggers()
     buildSidebar()
 
@@ -7968,11 +7944,10 @@ async function initApp() {
             monitorEnabled  = monEn
             monitorChannelL = newMoL; monitorChannelR = newMoR
             editorApp       = newSettings.editorApp || null
-            midiOutputDevices = _migrateMidiOutputDevices(newSettings)
+            outputDevices     = _migrateOutputDevices(newSettings)
+            midiOutputDevices = outputDevices.filter(d => d.type === 'midi')
             midiOutputPorts   = midiOutputDevices.map(() => null)
-            oscOutputDevices  = _migrateOscOutputDevices(newSettings)
-            _applyEmLightSettings(newSettings)
-            document.querySelector('.em-light').style.display = emLightEnabled ? '' : 'none'
+            oscOutputDevices  = outputDevices.filter(d => d.type === 'osc')
             const _newFirstOsc = oscOutputDevices[0] || {}
             oscEnabled = _newFirstOsc.enabled ?? false
             oscHost    = _newFirstOsc.host    || '127.0.0.1'
@@ -8109,7 +8084,6 @@ function buildExportData(withCues, withColors, withGroupedMics = true) {
                     }
                 }
             }
-            if (parsed.light)      cue.light      = String(parsed.light)
             if (parsed.qlcplus)    cue.qlcplus    = String(parsed.qlcplus)
             if (parsed.projection) cue.projection = String(parsed.projection)
             if (parsed.start_tc)   cue.start_tc   = String(parsed.start_tc)
@@ -8225,7 +8199,6 @@ function generateExportHtml(data) {
                 }
                 rows.push(`<tr><td class="cfl">♬</td><td class="cfv">${ms}</td></tr>`)
             }
-            if (item.light)      rows.push(`<tr><td class="cfl">Licht</td><td class="cfv">${_esc(item.light)}</td></tr>`)
             if (item.qlcplus)    rows.push(`<tr><td class="cfl">QLC+</td><td class="cfv">${_esc(item.qlcplus)}</td></tr>`)
             if (item.projection) rows.push(`<tr><td class="cfl">Proj.</td><td class="cfv">${_esc(item.projection)}</td></tr>`)
             if (item.note)       rows.push(`<tr><td class="cfl">Notiz</td><td class="cfv">${_esc(item.note)}</td></tr>`)

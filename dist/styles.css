@@ -542,10 +542,28 @@ body.trigger-pick-mode .waveform-wrapper { pointer-events: none; }
     border-color: #e5c07b;
     color: #e5c07b;
 }
-body.show-locked .trigger-actions  { pointer-events: none !important; }
 body.show-locked .trigger-move-btns { pointer-events: none !important; }
 body.show-locked .insert-zone      { pointer-events: none !important; }
-body.show-locked .trigger          { cursor: pointer; user-select: none; }
+body.show-locked .insert-hotspot   { pointer-events: none !important; }
+body.show-locked .trigger          { user-select: none; }
+body.show-locked .trigger button,
+body.show-locked .trigger input,
+body.show-locked .trigger select   { cursor: not-allowed !important; }
+
+#lock-hint {
+    position: fixed;
+    background: #21252b;
+    color: #e5c07b;
+    border: 1px solid #e5c07b44;
+    border-radius: 6px;
+    padding: 0.35rem 0.65rem;
+    font-size: 0.82rem;
+    pointer-events: none;
+    z-index: 9999;
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity 0.12s;
+}
 
 /* ── Filtered pick mode (Auto-Cue: only eligible triggers highlight) ── */
 body.trigger-pick-mode-filtered .trigger-pick-eligible {
