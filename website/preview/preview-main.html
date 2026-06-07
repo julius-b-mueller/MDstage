@@ -26,7 +26,15 @@
             z-index: 25;
         }
         #preview-notice strong { color: #e5c07b; }
-        .preview-lang-toggle { display:flex; gap:2px; margin-left:auto; flex-shrink:0; }
+        .preview-lang-toggle { display:flex; gap:2px; margin-left:auto; flex-shrink:0; align-items:center; }
+        .preview-dl-btn {
+            background: #1e3a52; border: 1px solid #61afef55; color: #61afef;
+            cursor: pointer; padding: 2px 10px; border-radius: 4px;
+            font-size: 0.72rem; font-weight: 700; font-family: inherit;
+            text-decoration: none; white-space: nowrap; margin-right: 6px;
+            transition: background 0.15s;
+        }
+        .preview-dl-btn:hover { background: #61afef33; }
         .plang-btn {
             background: none; border: 1px solid #5c637055; color: #5c6370;
             cursor: pointer; padding: 2px 8px; border-radius: 4px;
@@ -172,6 +180,7 @@
         <strong>⚠ Vorschau-Modus</strong>
         MIDI und OSC sind nicht verfügbar. Änderungen am Skript werden nicht gespeichert.
         <div class="preview-lang-toggle">
+            <a class="preview-dl-btn" href="../#download" target="_blank" rel="noopener">↓ Download</a>
             <button class="plang-btn" data-lang="de" onclick="window.__previewSetLanguage('de')">DE</button>
             <button class="plang-btn" data-lang="en" onclick="window.__previewSetLanguage('en')">EN</button>
         </div>
