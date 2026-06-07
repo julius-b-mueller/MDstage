@@ -880,32 +880,32 @@ footer a:hover{text-decoration:underline}
       <div class="dl-card">
         <div class="dl-card-icon">🍎</div>
         <div class="dl-card-info"><h3>macOS</h3><div class="dl-sub">Apple Silicon</div></div>
-        <a href="https://github.com/julius-b-mueller/MainDesk/releases/latest/download/MainDesk-macos-arm64.dmg" class="dl-btn primary">↓ .dmg</a>
+        <a href="https://github.com/julius-b-mueller/MainDesk/releases/latest/download/MainDesk-macos-arm64.dmg" class="dl-btn" data-dl-platform="mac">↓ .dmg</a>
       </div>
       <div class="dl-card">
         <div class="dl-card-icon">🍎</div>
         <div class="dl-card-info"><h3>macOS</h3><div class="dl-sub">Intel (x64)</div></div>
-        <a href="https://github.com/julius-b-mueller/MainDesk/releases/latest/download/MainDesk-macos-x64.dmg" class="dl-btn">↓ .dmg</a>
+        <a href="https://github.com/julius-b-mueller/MainDesk/releases/latest/download/MainDesk-macos-x64.dmg" class="dl-btn" data-dl-platform="mac">↓ .dmg</a>
       </div>
       <div class="dl-card">
         <div class="dl-card-icon">🪟</div>
         <div class="dl-card-info"><h3>Windows</h3><div class="dl-sub">64-bit</div></div>
-        <a href="https://github.com/julius-b-mueller/MainDesk/releases/latest/download/MainDesk-windows-x64.exe" class="dl-btn">↓ .exe</a>
+        <a href="https://github.com/julius-b-mueller/MainDesk/releases/latest/download/MainDesk-windows-x64.exe" class="dl-btn" data-dl-platform="win">↓ .exe</a>
       </div>
       <div class="dl-card">
         <div class="dl-card-icon">🐧</div>
         <div class="dl-card-info"><h3>Linux</h3><div class="dl-sub">AppImage</div></div>
-        <a href="https://github.com/julius-b-mueller/MainDesk/releases/latest/download/MainDesk-linux-x64.AppImage" class="dl-btn">↓ AppImage</a>
+        <a href="https://github.com/julius-b-mueller/MainDesk/releases/latest/download/MainDesk-linux-x64.AppImage" class="dl-btn" data-dl-platform="lin">↓ AppImage</a>
       </div>
       <div class="dl-card">
         <div class="dl-card-icon">🐧</div>
         <div class="dl-card-info"><h3>Linux</h3><div class="dl-sub">Debian / Ubuntu</div></div>
-        <a href="https://github.com/julius-b-mueller/MainDesk/releases/latest/download/MainDesk-linux-x64.deb" class="dl-btn">↓ .deb</a>
+        <a href="https://github.com/julius-b-mueller/MainDesk/releases/latest/download/MainDesk-linux-x64.deb" class="dl-btn" data-dl-platform="lin">↓ .deb</a>
       </div>
       <div class="dl-card">
         <div class="dl-card-icon">🐧</div>
         <div class="dl-card-info"><h3>Linux</h3><div class="dl-sub">Fedora / RHEL</div></div>
-        <a href="https://github.com/julius-b-mueller/MainDesk/releases/latest/download/MainDesk-linux-x64.rpm" class="dl-btn">↓ .rpm</a>
+        <a href="https://github.com/julius-b-mueller/MainDesk/releases/latest/download/MainDesk-linux-x64.rpm" class="dl-btn" data-dl-platform="lin">↓ .rpm</a>
       </div>
     </div>
 
@@ -986,6 +986,17 @@ footer a:hover{text-decoration:underline}
     })
   }
   setLang(currentLang)
+
+  // ── Highlight download buttons for current OS ──────────────
+  ;(function() {
+    const ua = navigator.userAgent
+    let platform = null
+    if (/Mac OS X/.test(ua))  platform = 'mac'
+    else if (/Win/.test(ua))  platform = 'win'
+    else if (/Linux/.test(ua)) platform = 'lin'
+    if (!platform) return
+    document.querySelectorAll('[data-dl-platform="' + platform + '"]').forEach(el => el.classList.add('primary'))
+  })()
 
   function showWarn(id) {
     ['mac','win','lin','why'].forEach(k=>{

@@ -1,6 +1,6 @@
 ```yaml
 config:
-    app_version: 1.0.0
+    app_version: 1.7.0
     roles:
         Frank:
             color: blue
@@ -34,22 +34,75 @@ config:
             monitorChannelL: null
             monitorChannelR: null
             monitorEnabled: false
-            midiX32Device: null
-            midiTriggerDevice: null
+            outputDevices:
+                -
+                    name: Licht
+                    type: midi
+                    enabled: true
+                    sendTriggerNote: true
+                    color: '#61afef'
+                    device: null
+                -
+                    name: Mischpult (FX)
+                    type: osc
+                    enabled: false
+                    sendTriggerNote: false
+                    color: '#e06c75'
+                    host: 127.0.0.1
+                    port: 8000
             midiTCDevice: null
             midiGoNote: null
             midiBackNote: null
             midiLiveDevice: null
             appLanguage: de
-            oscEnabled: false
-            oscHost: 127.0.0.1
-            oscPort: 8000
-            micMuteMethod: x32
-            micMuteMidiUnmute: B1 {ch} 00
-            micMuteMidiMute: B1 {ch} 7F
-            micMuteOscPath: /ch/{ch}/mix/on
-            micMuteOscUnmute: '1'
-            micMuteOscMute: '0'
+            emLightEnabled: true
+            emLightDevice: null
+            emLightDeviceKind: null
+            emLightMidiType: note
+            emLightMidiCh: 1
+            emLightMidiNote: 60
+            emLightMidiOnVel: 127
+            emLightMidiOffVel: 0
+            emLightMidiCc: 0
+            emLightMidiOnValue: 127
+            emLightMidiOffValue: 0
+            emLightMidiOnProgram: 0
+            emLightMidiOffProgram: 127
+            emLightMidiOnBytes: ''
+            emLightMidiOffBytes: ''
+            emLightOscAddress: null
+            emLightOscArgType: int
+            emLightOscOnArg: '1'
+            emLightOscOffArg: '0'
+            micDevices:
+                -
+                    name: Mischpult (Mic)
+                    micMuteMethod: x32
+                    midiX32Device: null
+                    x32OscHost: 192.168.1.1
+                    x32OscPort: 10023
+                    micMuteMidiType: sysex
+                    micMuteMidiUnmute: B1 {ch} 00
+                    micMuteMidiMute: B1 {ch} 7F
+                    micMuteMidiNoteCh: '1'
+                    micMuteMidiNoteNum: '{ch}'
+                    micMuteMidiVelOn: 127
+                    micMuteMidiVelOff: 0
+                    micMuteMidiCcCh: '2'
+                    micMuteMidiCcNum: '{ch}'
+                    micMuteMidiCcValOn: 0
+                    micMuteMidiCcValOff: 127
+                    micMuteMidiPcCh: '1'
+                    micMuteMidiPcOn: 0
+                    micMuteMidiPcOff: 1
+                    micMuteOscOnPath: /ch/{ch}/mix/on
+                    micMuteOscOnArgType: float
+                    micMuteOscOnArg: '1'
+                    micMuteOscOffPath: /ch/{ch}/mix/on
+                    micMuteOscOffArgType: float
+                    micMuteOscOffArg: '0'
+            micGroupDisplay: true
+            openLocked: false
     groups:
         Gäste:
             color: darkgreen

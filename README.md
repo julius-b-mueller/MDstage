@@ -68,8 +68,19 @@ config:
             mainAudioDevice: "Blackmagic Audio"
             monitorAudioDevice: "Built-in Output"
             monitorOffsetMs: 0
+            outputDevices:
+                - name: "Licht"
+                  type: midi
+                  device: "IAC Driver"
+                  color: yellow
+                  sendTriggerNote: true
+                - name: "QLab"
+                  type: osc
+                  enabled: true
+                  host: 192.168.1.5
+                  port: 53000
+                  sendTriggerNote: false
             midiX32Device: "X32"
-            midiTriggerDevice: "IAC Driver"
             midiTCDevice: "IAC Driver"
             midiGoNote: {ch: 1, note: 36}
             midiBackNote: {ch: 1, note: 37}
@@ -144,7 +155,9 @@ Every YAML block (except the config block) is a **cue** (trigger). It is display
 | `light: "Scene A"` | Free-text note for the lighting operator (documentation only). |
 | `note: "Note"` | Internal note displayed on the trigger panel. |
 | `start_tc: "01:00:00:00"` | Start timecode (HH:MM:SS:FF, 25 fps) sent as MTC when the cue fires. |
-| `osc: "/path/{ch}"` | OSC message path sent when the cue fires (see [OSC Output](#osc-output)). |
+| `osc: "/path/{ch}"` | OSC message path sent when the cue fires (legacy — see [OSC Output](#osc-output)). |
+| `cue_midi: [...]` | List of MIDI messages sent when the cue fires (see [MIDI](#midi)). |
+| `cue_osc: [...]` | List of OSC messages sent when the cue fires (see [OSC Output](#osc-output)). |
 | `sibling: true` | Marks the cue as a **variant** of the preceding cue (alternative audio/mic assignment). |
 
 ### Audio Object (Extended Format)
@@ -328,13 +341,46 @@ music:
 
 ## MIDI
 
-Three configurable MIDI output devices:
+### Output Devices
 
-| Device | Function |
-|---|---|
-| **X32** | Microphone muting: sends CC on channel 2 for each role channel (0 = active, 127 = muted) |
-| **Trigger** | Sends Note On / Off when a cue fires (according to `trigger_note`) |
-| **TC** | MIDI Timecode output (MTC, 25 fps) |
+MIDI (and OSC) output devices are configured in **Settings** as a unified list of named **output devices**. Each device has a name, type (`midi` or `osc`), an optional colour (shown as a badge on the trigger panel), and a `sendTriggerNote` flag.
+
+Every MIDI device with `sendTriggerNote: true` sends the cue's `trigger_note` (Note On/Off) when a cue fires. Additional per-cue MIDI messages are defined via `cue_midi` (see below).
+
+### Per-Cue MIDI Messages (`cue_midi`)
+
+A cue can send arbitrary MIDI messages to any configured MIDI device when it fires. Supported message types: **Note**, **CC**, **Program Change**, **SysEx**.
+
+```yaml
+cue_midi:
+    - device: "Licht"
+      type: note
+      ch: 1
+      note: 42
+      vel: 100
+    - device: "Licht"
+      type: cc
+      ch: 2
+      cc: 7
+      value: 64
+    - device: "Licht"
+      type: pc
+      ch: 1
+      program: 5
+    - device: "Licht"
+      type: sysex
+      bytes: "F0 41 F7"
+```
+
+If `device` is omitted, the first MIDI device is used. The **Back** function restores device states — see [Cue History (Back)](#cue-history-back).
+
+### Mic Control (X32 / Custom)
+
+Microphone muting is configured separately under **Mixer Remote Control** in Settings (not part of the output device list). See [Settings](#settings).
+
+### Timecode (MTC)
+
+A dedicated **TC** MIDI device can be set in Settings for MTC output. See [Timecode (MTC)](#timecode-mtc).
 
 ### MIDI Input
 
@@ -344,32 +390,35 @@ Two configurable MIDI notes for **Go** and **Back** — received on all MIDI inp
 
 ## OSC Output
 
-The app can send OSC (Open Sound Control) messages over UDP when a cue fires.
+OSC (Open Sound Control) output devices are part of the same unified device list as MIDI devices (see [MIDI](#midi)). Each OSC device has a name, host, port, and optional colour.
 
-### Enabling OSC
+### Per-Cue OSC Messages (`cue_osc`)
 
-In **Settings**, enable the **OSC** toggle and configure the target **host** and **port**.
-
-### Per-Cue OSC
-
-Add the `osc` field to a cue to send an OSC message when it fires:
+A cue can send OSC messages to any configured OSC device when it fires:
 
 ```yaml
-trigger_note: {ch: 1, note: 10}
+cue_osc:
+    - device: "QLab"
+      path: /cue/42/start
+    - device: "QLab"
+      path: /volume/set
+      arg: 0.8
+      arg_type: float   # int | float | string
+```
+
+If `device` is omitted, the first OSC device is used. The **Back** function restores device states — see [Cue History (Back)](#cue-history-back).
+
+### Legacy: `osc` field
+
+The older single-path format is still supported:
+
+```yaml
 osc: /show/cue/go
-```
-
-An optional argument can be attached:
-
-```yaml
-osc: /show/volume/set
 osc_arg: 0.8
-osc_arg_type: float   # int | float | string
+osc_arg_type: float
 ```
 
-The `{ch}` placeholder in the OSC path is replaced with the role's channel number (two digits, 1-based).
-
-The OSC badge `⌁ /path …` is shown on the trigger panel.
+The `{ch}` placeholder in the path is replaced with the role's channel number (two digits, 1-based). The OSC badge `⌁ /path …` is shown on the trigger panel. This field does **not** participate in Back's device state restoration.
 
 ---
 
@@ -433,7 +482,11 @@ Double-clicking a playing cue **stops** it immediately (undo function).
 
 Back fades the last-fired audio out over 500 ms, restores the previous cue state, and undoes mic changes.
 
-**Behavior after a jump:** Back always follows the actual trigger history, not the script order. If a cue was reached by jumping (clicking it directly), Back returns to the cue that was active before the jump — not to the cue that precedes it in the script. MIDI/OSC device states are also restored according to this history: for each device that received a new message in the popped cue, the previously active message for that device is resent.
+**Behavior after a jump:** Back always follows the actual trigger history, not the script order. If a cue was reached by jumping (clicking it directly), Back returns to the cue that was active before the jump — not to the cue that precedes it in the script.
+
+**Device state restoration (MIDI/OSC):** When Back pops a cue, the app checks which output devices that cue addressed via `cue_midi` / `cue_osc`. For each such device, it scans backwards through the remaining cue history and resends the message set from the most recent earlier cue that addressed the same device. If no earlier cue addressed that device, nothing is sent — the device is left in its current state.
+
+The old `osc:` field and `trigger_note` are **not** part of this restoration mechanism. Only `cue_midi` and `cue_osc` messages participate in device state tracking.
 
 ---
 
@@ -508,22 +561,26 @@ Mic assignments are shown as grouped chips by default. The display can be switch
 | Channel routing table | Assigns main L/R and monitor L/R to specific output channels of the device (for multi-channel interfaces or Aggregate Devices) |
 | Monitor Offset (ms) | Time offset of the monitor signal relative to the main signal |
 
-### MIDI
+### Output Devices (MIDI + OSC)
+
+The unified device list manages all MIDI and OSC output devices. Each device has:
+
+| Property | Description |
+|---|---|
+| Name | Display name — used in `cue_midi` / `cue_osc` to target the device |
+| Type | `midi` or `osc` |
+| Colour | Optional colour shown as a badge on trigger panels |
+| Send trigger note | If enabled, this MIDI device receives the cue's `trigger_note` when a cue fires |
+| Device (MIDI) | System MIDI port name |
+| Host / Port (OSC) | UDP target address |
+
+### MIDI Input
 
 | Setting | Description |
 |---|---|
-| Trigger MIDI device | MIDI output for cue notes |
-| MIDI Timecode device | MIDI output for MTC |
+| MIDI Timecode device | MIDI output for MTC (separate from output devices) |
 | Input device (Go / Back) | Filter MIDI input to a specific device, or receive from all |
 | Go note / Back note | MIDI notes for Go and Back — can be assigned via **MIDI Learn** |
-
-### OSC
-
-| Setting | Description |
-|---|---|
-| OSC enabled | Activates OSC output |
-| Target address | IP address of the OSC receiver |
-| Port | UDP port of the OSC receiver |
 
 ### Mixer Remote Control
 
