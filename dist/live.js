@@ -31,6 +31,8 @@
         function safeColor(c) { return /^#[0-9a-f]{3,8}$/i.test(c) ? c : '' }
 
         let _deviceColors = {}
+        let _knownMidiDevices = new Set()
+        let _knownOscDevices  = new Set()
         function fmt(s) {
             s = Math.max(0, s | 0)
             return `${s / 60 | 0}:${(s % 60).toString().padStart(2,'0')}`
@@ -105,7 +107,9 @@
                     const devColor = safeColor(_deviceColors['midi:' + devName] || '')
                     const chipStyle = devColor ? ` style="border-color:${devColor}55;background:${devColor}12"` : ''
                     const badgeStyle = devColor ? ` style="background:${devColor}30;color:${devColor}"` : ''
-                    return `<span class="cue-msg-chip cue-msg-chip--midi"${chipStyle}><span class="cue-type-badge"${badgeStyle}>${esc(devName) || 'MIDI'}</span><span class="cue-msg-content">${text}</span></span>`
+                    const unknown = devName && !_knownMidiDevices.has(devName)
+                    const badgeLabel = (unknown ? '! ' : '') + (esc(devName) || 'MIDI')
+                    return `<span class="cue-msg-chip cue-msg-chip--midi${unknown ? ' cue-msg-chip--unknown' : ''}"${chipStyle}><span class="cue-type-badge"${badgeStyle}>${badgeLabel}</span><span class="cue-msg-content">${text}</span></span>`
                 }).join('')
                 cueMidiRow = `<div class="trigger-cue-midi">${chips}</div>`
             }
@@ -119,7 +123,9 @@
                     const devColor = safeColor(_deviceColors['osc:' + devName] || '')
                     const chipStyle = devColor ? ` style="border-color:${devColor}55;background:${devColor}12"` : ''
                     const badgeStyle = devColor ? ` style="background:${devColor}30;color:${devColor}"` : ''
-                    return `<span class="cue-msg-chip cue-msg-chip--osc"${chipStyle}><span class="cue-type-badge"${badgeStyle}>${esc(devName) || 'OSC'}</span><span class="cue-msg-content">${text}</span></span>`
+                    const unknown = devName && !_knownOscDevices.has(devName)
+                    const badgeLabel = (unknown ? '! ' : '') + (esc(devName) || 'OSC')
+                    return `<span class="cue-msg-chip cue-msg-chip--osc${unknown ? ' cue-msg-chip--unknown' : ''}"${chipStyle}><span class="cue-type-badge"${badgeStyle}>${badgeLabel}</span><span class="cue-msg-content">${text}</span></span>`
                 }).join('')
                 cueOscRow = `<div class="trigger-cue-osc">${chips}</div>`
             }
@@ -375,8 +381,10 @@
 
         // ── Info bar: device states + mics ──────────────────────────────
         function updateInfoBar(state) {
-            const { effectiveDeviceStates, deviceColors, effectiveMuteall, effectiveMicColors, hasMicState } = state
+            const { effectiveDeviceStates, deviceColors, knownMidiDevices, knownOscDevices, effectiveMuteall, effectiveMicColors, hasMicState } = state
             if (deviceColors) _deviceColors = deviceColors
+            if (knownMidiDevices) _knownMidiDevices = new Set(knownMidiDevices)
+            if (knownOscDevices)  _knownOscDevices  = new Set(knownOscDevices)
             const hasDevices = Array.isArray(effectiveDeviceStates) && effectiveDeviceStates.length > 0
             const hasMic     = !!hasMicState
 

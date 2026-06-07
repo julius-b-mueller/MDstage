@@ -223,6 +223,23 @@ p {
     align-items: center;
 }
 
+.cue-msg-chip--unknown.cue-msg-chip--midi {
+    border-color: rgba(224, 108, 117, 0.5);
+    background: rgba(224, 108, 117, 0.07);
+}
+.cue-msg-chip--unknown.cue-msg-chip--midi .cue-type-badge {
+    background: rgba(224, 108, 117, 0.28);
+    color: #e06c75;
+}
+.cue-msg-chip--unknown.cue-msg-chip--osc {
+    border-color: rgba(224, 108, 117, 0.5);
+    background: rgba(224, 108, 117, 0.07);
+}
+.cue-msg-chip--unknown.cue-msg-chip--osc .cue-type-badge {
+    background: rgba(224, 108, 117, 0.28);
+    color: #e06c75;
+}
+
 /* ── Cue message dialog cards ──────────────────────────────────────── */
 .cue-msg-card {
     border: 1px solid #383c44;

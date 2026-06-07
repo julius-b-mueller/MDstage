@@ -3821,14 +3821,16 @@ function buildTrigger(codeblockYaml, index) {
             const chip = document.createElement('span')
             chip.classList.add('cue-msg-chip', 'cue-msg-chip--midi')
             const devName = msg.device || midiOutputDevices[0]?.name || ''
+            const isUnknownMidi = !!msg.device && !midiOutputDevices.some(d => d.name === msg.device)
             const _rawColor = midiOutputDevices.find(d => d.name === devName)?.color || ''
             const devColor = /^#[0-9a-f]{3,8}$/i.test(_rawColor) ? _rawColor : ''
+            if (isUnknownMidi) chip.classList.add('cue-msg-chip--unknown')
             if (devColor) {
                 chip.style.cssText = `border-color:${devColor}55;background:${devColor}12`
             }
             const badge = document.createElement('span')
             badge.className = 'cue-type-badge'
-            badge.textContent = devName || 'MIDI'
+            badge.textContent = (isUnknownMidi ? '! ' : '') + (devName || 'MIDI')
             if (devColor) badge.style.cssText = `background:${devColor}30;color:${devColor}`
             let text
             if (msg.comment) { text = msg.comment }
@@ -3854,13 +3856,15 @@ function buildTrigger(codeblockYaml, index) {
             const chip = document.createElement('span')
             chip.classList.add('cue-msg-chip', 'cue-msg-chip--osc')
             const oscDevName = msg.device || oscOutputDevices[0]?.name || ''
+            const isUnknownOsc = !!msg.device && !oscOutputDevices.some(d => d.name === msg.device)
             const oscDevColor = (oscOutputDevices.find(d => d.name === oscDevName) ?? oscOutputDevices[0])?.color || ''
+            if (isUnknownOsc) chip.classList.add('cue-msg-chip--unknown')
             if (oscDevColor) {
                 chip.style.cssText = `border-color:${oscDevColor}55;background:${oscDevColor}12`
             }
             const badge = document.createElement('span')
             badge.className = 'cue-type-badge'
-            badge.textContent = oscDevName || 'OSC'
+            badge.textContent = (isUnknownOsc ? '! ' : '') + (oscDevName || 'OSC')
             if (oscDevColor) badge.style.cssText = `background:${oscDevColor}30;color:${oscDevColor}`
             let text
             if (msg.comment) { text = msg.comment }
@@ -6940,12 +6944,25 @@ function broadcastLiveState() {
 
     // Compute per-device effective states from cue history
     const _devStatesMap = computeEffectiveDeviceStates(cueHistory)
+    // Sort by settings order: MIDI devices first (in settings order), then OSC devices
+    const _deviceOrder = new Map()
+    midiOutputDevices.forEach((d, i) => _deviceOrder.set('midi:' + d.name, i))
+    oscOutputDevices.forEach((d, i)  => _deviceOrder.set('osc:'  + d.name, midiOutputDevices.length + i))
     const effectiveDeviceStatesArr = Array.from(_devStatesMap.values())
+        .sort((a, b) => {
+            const ka = (a.type === 'midi' ? 'midi:' : 'osc:') + a.device
+            const kb = (b.type === 'midi' ? 'midi:' : 'osc:') + b.device
+            return (_deviceOrder.get(ka) ?? 9999) - (_deviceOrder.get(kb) ?? 9999)
+        })
 
     // Build device color lookup
     const deviceColors = {}
     for (const d of midiOutputDevices) { if (d.color) deviceColors['midi:' + d.name] = d.color }
     for (const d of oscOutputDevices)  { if (d.color) deviceColors['osc:'  + d.name] = d.color }
+
+    // Known device name sets for unknown-device warnings in live view
+    const knownMidiDevices = midiOutputDevices.map(d => d.name)
+    const knownOscDevices  = oscOutputDevices.map(d => d.name)
 
     window.electronAPI.sendLiveState({
         blocks: liveBlocks,
@@ -6957,6 +6974,8 @@ function broadcastLiveState() {
         appLanguage,
         effectiveDeviceStates: effectiveDeviceStatesArr,
         deviceColors,
+        knownMidiDevices,
+        knownOscDevices,
         effectiveMuteall: effectiveMics === 'muteall',
         effectiveMicColors: effectiveMics === 'muteall' ? null : (effectiveMicColors ?? undefined),
         hasMicState: effectiveMics !== null,
