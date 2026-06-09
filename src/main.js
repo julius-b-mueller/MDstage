@@ -7138,7 +7138,7 @@ function sendOscMessage(cue) {
         }
     } else if (ty.trigger_note) {
         const { ch, note } = ty.trigger_note
-        oscPath = `/maindesk/triggernote/${ch}/${note}`
+        oscPath = `/mdstage/triggernote/${ch}/${note}`
     } else {
         return
     }

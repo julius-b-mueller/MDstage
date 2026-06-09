@@ -33,7 +33,7 @@ if (!fs.existsSync(iconSrc)) {
     process.exit(0)
 }
 
-const tmpIconset = path.join(os.tmpdir(), 'MainDesk.iconset')
+const tmpIconset = path.join(os.tmpdir(), 'MDstage.iconset')
 try {
     fs.mkdirSync(tmpIconset, { recursive: true })
     const sizes = [16, 32, 128, 256, 512]

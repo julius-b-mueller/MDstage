@@ -1,11 +1,11 @@
 {
-  "name": "maindeskapp",
-  "productName": "MainDesk",
-  "version": "1.7.6",
+  "name": "mdstageapp",
+  "productName": "MDstage",
+  "version": "1.8.0",
   "description": "Das interaktive Inspizientenbuch",
   "author": {
     "name": "Julius Müller",
-    "email": "info@maindesk.org"
+    "email": "hello@mdstage.org"
   },
   "homepage": "https://essener-volksbuehne.github.io/evb-ai",
   "main": "electron/main.js",
@@ -32,8 +32,8 @@
     "webpack-cli": "^7.0.3"
   },
   "build": {
-    "appId": "de.maindesk.app",
-    "productName": "MainDesk",
+    "appId": "de.mdstage.app",
+    "productName": "MDstage",
     "icon": "dist/assets/icon.png",
     "asar": true,
     "npmRebuild": false,

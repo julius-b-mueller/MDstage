@@ -56,9 +56,9 @@ jobs:
       - run: npx electron-builder --linux AppImage deb rpm --publish never
       - run: |
           mkdir -p artifacts
-          find release -name "*.AppImage" -exec cp {} artifacts/MainDesk-linux-x64.AppImage \; 2>/dev/null || true
-          find release -name "*.deb"      -exec cp {} artifacts/MainDesk-linux-x64.deb \;      2>/dev/null || true
-          find release -name "*.rpm"      -exec cp {} artifacts/MainDesk-linux-x64.rpm \;      2>/dev/null || true
+          find release -name "*.AppImage" -exec cp {} artifacts/MDstage-linux-x64.AppImage \; 2>/dev/null || true
+          find release -name "*.deb"      -exec cp {} artifacts/MDstage-linux-x64.deb \;      2>/dev/null || true
+          find release -name "*.rpm"      -exec cp {} artifacts/MDstage-linux-x64.rpm \;      2>/dev/null || true
           ls -lh artifacts/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -86,7 +86,7 @@ jobs:
       - run: npx electron-builder --win nsis --publish never
       - run: |
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-          Get-ChildItem -Recurse release -Filter "*Setup*.exe" | Select-Object -First 1 | Copy-Item -Destination artifacts/MainDesk-windows-x64.exe
+          Get-ChildItem -Recurse release -Filter "*Setup*.exe" | Select-Object -First 1 | Copy-Item -Destination artifacts/MDstage-windows-x64.exe
           Get-ChildItem artifacts/
         shell: pwsh
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -115,8 +115,8 @@ jobs:
       - run: npx electron-builder --mac dmg --arm64 --x64 --publish never
       - run: |
           mkdir -p artifacts
-          find release -name "*arm64.dmg"                    -exec cp {} artifacts/MainDesk-macos-arm64.dmg \; 2>/dev/null || true
-          find release -name "*.dmg" ! -name "*arm64*" -exec cp {} artifacts/MainDesk-macos-x64.dmg \;        2>/dev/null || true
+          find release -name "*arm64.dmg"                    -exec cp {} artifacts/MDstage-macos-arm64.dmg \; 2>/dev/null || true
+          find release -name "*.dmg" ! -name "*arm64*" -exec cp {} artifacts/MDstage-macos-x64.dmg \;        2>/dev/null || true
           ls -lh artifacts/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

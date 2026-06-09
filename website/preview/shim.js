@@ -17,7 +17,7 @@ navigator.requestMIDIAccess = () => Promise.resolve({
 
 // ── BroadcastChannel (replaces postMessage routing through wrapper) ────────────
 // Works across iframes AND separate windows as long as they share the same origin.
-const _ch = new BroadcastChannel('maindesk-preview')
+const _ch = new BroadcastChannel('mdstage-preview')
 
 let _liveWindowStateListeners = []
 let _livePopupWin = null
@@ -136,7 +136,7 @@ window.electronAPI = {
     onLiveWindowState: (cb) => { _liveWindowStateListeners.push(cb) },
 
     openRoleEditor: () => {
-        window.open('preview-role-editor.html', 'maindesk-roles', 'width=560,height=700,menubar=no,toolbar=no,location=no,status=no')
+        window.open('preview-role-editor.html', 'mdstage-roles', 'width=560,height=700,menubar=no,toolbar=no,location=no,status=no')
     },
 
     // Opens the live view in a separate browser window
@@ -144,7 +144,7 @@ window.electronAPI = {
         if (_livePopupWin && !_livePopupWin.closed) { _livePopupWin.focus(); return }
         _livePopupWin = window.open(
             'preview-live.html',
-            'maindesk-live',
+            'mdstage-live',
             'width=960,height=720,menubar=no,toolbar=no,location=no,status=no'
         )
         if (!_livePopupWin) return

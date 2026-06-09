@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>MainDesk – Vorschau</title>
+    <title>MDstage – Vorschau</title>
     <link rel="stylesheet" href="../app/styles.css">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta charset="UTF-8">
@@ -194,7 +194,7 @@
     </script>
 
     <nav id="web-menubar" aria-label="Anwendungsmenü">
-        <button class="wmenu-item" id="wmenu-about">Über MainDesk</button>
+        <button class="wmenu-item" id="wmenu-about">Über MDstage</button>
         <button class="wmenu-item" id="wmenu-new">Neue Datei</button>
         <button class="wmenu-item" id="wmenu-live">Liveansicht</button>
         <button class="wmenu-item" id="wmenu-settings">Einstellungen</button>
@@ -436,16 +436,16 @@
         const POP_SM = 'width=420,height=580,menubar=no,toolbar=no,location=no,status=no'
 
         document.getElementById('wmenu-about').onclick = () =>
-            window.open('../app/about.html', 'maindesk-about', POP_SM)
+            window.open('../app/about.html', 'mdstage-about', POP_SM)
 
         document.getElementById('wmenu-live').onclick = () =>
             window.electronAPI.openLiveWindow()
 
         document.getElementById('wmenu-settings').onclick = () =>
-            window.open('preview-settings.html', 'maindesk-settings', POP)
+            window.open('preview-settings.html', 'mdstage-settings', POP)
 
         document.getElementById('wmenu-roles').onclick = () =>
-            window.open('preview-role-editor.html', 'maindesk-roles', POP)
+            window.open('preview-role-editor.html', 'mdstage-roles', POP)
 
         document.getElementById('wmenu-new').onclick = async () => {
             let ver = '1.0.0'

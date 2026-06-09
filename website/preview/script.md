@@ -133,7 +133,7 @@ trigger_note:
 
 **Mathilda**
 Hello everyone!
-I am Mathilda and today, I want you to introduce to MainDesk.
+I am Mathilda and today, I want you to introduce to MDstage.
 To add role text, SHIFT+CLICK between two lines and just type the first few letters of a role name and press TAB when the correct role name is shown.
 To edit a text, you can just SHIFT+CLICK a line.
 
@@ -173,7 +173,7 @@ Just add a line and type your stage direction without typing the role name and T
 *Annabel writes some stage directions.*
 
 **Mathilda**
-Yeah, you did it *(proudly thinking about how cool MainDesk actually is)* Easy, huh?
+Yeah, you did it *(proudly thinking about how cool MDstage actually is)* Easy, huh?
 
 **Julie**
 Oh, do you see that?
