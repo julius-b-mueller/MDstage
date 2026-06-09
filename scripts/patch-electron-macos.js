@@ -20,9 +20,9 @@ if (!fs.existsSync(plist)) {
 
 // ── Name ────────────────────────────────────────────────────────────────────
 try {
-    execSync(`/usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Main Desk" "${plist}"`)
-    execSync(`/usr/libexec/PlistBuddy -c "Set :CFBundleName Main Desk" "${plist}"`)
-    console.log('patch-electron: bundle name → Main Desk')
+    execSync(`/usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName MDstage" "${plist}"`)
+    execSync(`/usr/libexec/PlistBuddy -c "Set :CFBundleName MDstage" "${plist}"`)
+    console.log('patch-electron: bundle name → MDstage')
 } catch (e) {
     console.warn('patch-electron: could not patch bundle name:', e.message)
 }
@@ -45,7 +45,7 @@ try {
     }
     execSync(`iconutil -c icns "${tmpIconset}" -o "${icnsDest}"`)
     fs.rmSync(tmpIconset, { recursive: true })
-    console.log('patch-electron: icon → Main Desk icon')
+    console.log('patch-electron: icon → MDstage icon')
 } catch (e) {
     console.warn('patch-electron: could not replace icon:', e.message)
     try { fs.rmSync(tmpIconset, { recursive: true, force: true }) } catch {}

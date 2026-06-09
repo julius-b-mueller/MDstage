@@ -1,4 +1,4 @@
-# Main Desk
+# MDstage
 
 Electron-based stage manager app for live shows and theatre productions. The script is stored as a Markdown file; cues are embedded directly as YAML blocks. The app provides audio playback, MIDI control, timecode output, OSC output, and a live view — all from a single file.
 

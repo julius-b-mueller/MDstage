@@ -177,7 +177,7 @@
             's.route.mon.r':              'Mon R',
             's.route.ch':                 'Kanal',   // prefix "Kanal 1", "Kanal 2"…
             // ── Electron-Menü ────────────────────────────────────────
-            'm.about':                    'Über Main Desk…',
+            'm.about':                    'Über MDstage…',
             'm.newfile':                  'Neue Datei…',
             'm.open':                     'Datei öffnen…',
             'm.open.win':                 'Öffnen…',
@@ -379,7 +379,7 @@
             's.route.mon.r':              'Mon R',
             's.route.ch':                 'Channel',
             // ── Electron-Menü ────────────────────────────────────────
-            'm.about':                    'About Main Desk…',
+            'm.about':                    'About MDstage…',
             'm.newfile':                  'New File…',
             'm.open':                     'Open File…',
             'm.open.win':                 'Open…',

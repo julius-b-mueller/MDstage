@@ -1,6 +1,6 @@
 const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron')
 const { execFile } = require('child_process')
-app.setName('Main Desk')
+app.setName('MDstage')
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
@@ -169,7 +169,7 @@ function createMainWindow() {
     mainWindow = new BrowserWindow({
         width: 1200,
         height: 900,
-        title: 'Main Desk',
+        title: 'MDstage',
         icon: path.join(__dirname, '../dist/assets/icon.png'),
         acceptFirstMouse: true,
         webPreferences: {
@@ -284,7 +284,7 @@ function createAboutWindow() {
     aboutWindow = new BrowserWindow({
         width: 520,
         height: 700,
-        title: 'Über Main Desk',
+        title: 'Über MDstage',
         resizable: false,
         minimizable: false,
         webPreferences: {
@@ -321,7 +321,7 @@ function menuT(key) {
     // Minimal inline lookup — avoids pulling in the browser-side i18n.js
     const M = {
         de: {
-            about: 'Über Main Desk…', newfile: 'Neue Datei…', open: 'Datei öffnen…',
+            about: 'Über MDstage…', newfile: 'Neue Datei…', open: 'Datei öffnen…',
             openwin: 'Öffnen…', settings: 'Einstellungen…', roleeditor: 'Rolleneditor…',
             liveview: 'Live-Ansicht…', export: 'Exportieren…', hide: 'Ausblenden',
             hideothers: 'Andere ausblenden', quit: 'Beenden',
@@ -332,7 +332,7 @@ function menuT(key) {
             copy: 'Kopieren', paste: 'Einfügen', selectall: 'Alles auswählen',
         },
         en: {
-            about: 'About Main Desk…', newfile: 'New File…', open: 'Open File…',
+            about: 'About MDstage…', newfile: 'New File…', open: 'Open File…',
             openwin: 'Open…', settings: 'Settings…', roleeditor: 'Role Editor…',
             liveview: 'Live View…', export: 'Export…', hide: 'Hide',
             hideothers: 'Hide Others', quit: 'Quit',
@@ -434,8 +434,8 @@ function buildMenu() {
                 label: menuT('about'),
                 click: () => dialog.showMessageBox(mainWindow ?? null, {
                     type: 'info',
-                    title: 'Main Desk',
-                    message: 'Main Desk',
+                    title: 'MDstage',
+                    message: 'MDstage',
                     detail: `Version ${app.getVersion()}${buildInfo.date ? '  ·  ' + buildInfo.date : ''}\nCommit: ${buildInfo.commit}`,
                     buttons: ['OK'],
                 }),
@@ -678,7 +678,7 @@ function buildDocx(data) {
     }
 
     return new Document({
-        creator: 'Main Desk',
+        creator: 'MDstage',
         title: title,
         features: { updateFields: true },
         sections: [{

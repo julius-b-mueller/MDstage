@@ -7862,7 +7862,7 @@ async function initApp() {
     // Show current file name in title bar
     if (window.__webPreview) {
         audioBasePath = 'audio/'
-        document.title = 'Main Desk – Vorschau'
+        document.title = 'MDstage – Vorschau'
     } else {
         const scriptPath = await window.electronAPI.getScriptPath()
         document.title = scriptPath.split(/[\\/]/).pop()
