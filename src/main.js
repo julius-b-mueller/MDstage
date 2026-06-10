@@ -21,6 +21,9 @@ const loopGroups = new Map()
 
 // triggerIndex -> { ws, mainAudioEl, monitorFile, musicFile, overlay, getX, autoMarkerState }
 const triggerAudio = new Map()
+// musicFile → { playbackGain, activeSource, startedAt, startOffset, decodedBuffer, volume }
+// Populated in rerender() so buildTrigger can adopt a running audio graph without interrupting it.
+const pendingAudioAdoptions = new Map()
 const slfDerivedTcBadges = new Map()  // triggerIndex → span element for derived TC badges
 // musicFile -> triggerIndex[]  (for cross-trigger fade lookups)
 const fileToTriggers = new Map()
@@ -2731,9 +2734,29 @@ function moveTriggerGroupInScript(rootIndex, lastIndex, direction) {
 
     if (direction === 'up') {
         if (rootPos <= configIdx + 1) { blocks.splice(rootPos, 0, ...group); return }
+        // Adjust cue tracking when the block above the group is also a yaml trigger
+        if (blocks[rootPos - 1]?.type === 'yaml') {
+            const adjust = (h) => {
+                if (h >= rootIndex && h <= lastIndex) return h - 1
+                if (h === rootIndex - 1) return lastIndex
+                return h
+            }
+            currentCue = adjust(currentCue)
+            cueHistory = cueHistory.map(adjust)
+        }
         blocks.splice(rootPos - 1, 0, ...group)
     } else {
         if (rootPos >= blocks.length) { blocks.splice(rootPos, 0, ...group); return }
+        // After the splice, blocks[rootPos] is what was originally just after the group
+        if (blocks[rootPos]?.type === 'yaml') {
+            const adjust = (h) => {
+                if (h >= rootIndex && h <= lastIndex) return h + 1
+                if (h === lastIndex + 1) return rootIndex
+                return h
+            }
+            currentCue = adjust(currentCue)
+            cueHistory = cueHistory.map(adjust)
+        }
         blocks.splice(rootPos + 1, 0, ...group)
     }
 
@@ -2750,6 +2773,22 @@ function rerender(newText) {
         inlineEditor = null
     }
     const scrollY = window.scrollY
+
+    // For each playing cue, save the running audio graph so buildTrigger can adopt it
+    // after the DOM rebuild — the AudioBufferSourceNode never stops.
+    pendingAudioAdoptions.clear()
+    for (const [, ta] of triggerAudio) {
+        if (!ta.isAudioActive?.()) continue
+        const srcInfo = ta.getActiveSourceInfo?.() ?? {}
+        pendingAudioAdoptions.set(ta.musicFile, {
+            playbackGain:            ta.getPlaybackGain(),
+            activeSource:            srcInfo.src         ?? null,
+            activeSourceStartedAt:   srcInfo.startedAt   ?? null,
+            activeSourceStartOffset: srcInfo.startOffset ?? null,
+            decodedBuffer:           ta.decodedBuffer    ?? null,
+            volume:                  ta.getCurrentVolume?.() ?? null,
+        })
+    }
 
     // Teardown auto-trigger listeners before destroying WaveSurfer instances
     for (const [, setup] of autoTriggerSetup) {
@@ -2786,9 +2825,11 @@ function rerender(newText) {
     groupSiblingTriggers()
     annotateBlocks()
     buildInsertZones()
-    setupAutoTriggers()
+
+setupAutoTriggers()
     buildSidebar()
     clearSearchHighlights()
+    markTriggers(currentCue)
 
     requestAnimationFrame(() => {
         window.scrollTo({ top: scrollY, behavior: 'instant' })
@@ -3246,10 +3287,21 @@ function moveTriggerInScript(triggerIndex, direction) {
     if (direction === 'up') {
         const prev = pos - 1
         if (prev < 0 || prev === configIdx) return
+        // Adjust cue tracking only when the adjacent block is also a yaml trigger
+        if (blocks[prev].type === 'yaml') {
+            if (currentCue === triggerIndex) currentCue--
+            else if (currentCue === triggerIndex - 1) currentCue++
+            cueHistory = cueHistory.map(h => h === triggerIndex ? h - 1 : h === triggerIndex - 1 ? h + 1 : h)
+        }
         ;[blocks[prev], blocks[pos]] = [blocks[pos], blocks[prev]]
     } else {
         const next = pos + 1
         if (next >= blocks.length) return
+        if (blocks[next].type === 'yaml') {
+            if (currentCue === triggerIndex) currentCue++
+            else if (currentCue === triggerIndex + 1) currentCue--
+            cueHistory = cueHistory.map(h => h === triggerIndex ? h + 1 : h === triggerIndex + 1 ? h - 1 : h)
+        }
         ;[blocks[pos], blocks[next]] = [blocks[next], blocks[pos]]
     }
 
@@ -3265,6 +3317,17 @@ function insertTriggerInScript(insertAfterBlockIdx, newYaml) {
     if (!scriptText) return
     const blocks = tokenizeScript(scriptText)
     if (insertAfterBlockIdx < 0 || insertAfterBlockIdx >= blocks.length) return
+
+    // Count yaml blocks (including config) up to and including insertAfterBlockIdx —
+    // that count is the 1-based trigger index of the newly inserted block.
+    let yamlCountUpTo = 0
+    for (let i = 0; i <= insertAfterBlockIdx; i++) {
+        if (blocks[i].type === 'yaml') yamlCountUpTo++
+    }
+    // All triggers at index >= yamlCountUpTo shift up by 1
+    if (currentCue >= yamlCountUpTo) currentCue++
+    cueHistory = cueHistory.map(h => h >= yamlCountUpTo ? h + 1 : h)
+
     const newBlock = { type: 'yaml', content: '```yaml\n' + inlineNoteObjects(yaml.dump(newYaml, { indent: 4 }).trimEnd()) + '\n```' }
     blocks.splice(insertAfterBlockIdx + 1, 0, newBlock)
     let updated = blocks.map(b => b.content).join('\n\n') + '\n'
@@ -3278,6 +3341,15 @@ function insertTriggerInScript(insertAfterBlockIdx, newYaml) {
 // Splits the text block at blockIdx into two halves and inserts a trigger between them.
 function splitBlockAndInsertTrigger(blockIdx, mdBefore, mdAfter, newYaml) {
     const blocks = tokenizeScript(scriptText)
+
+    // blockIdx is a text block — count yamls strictly before it to get new trigger's index
+    let yamlCountBefore = 0
+    for (let i = 0; i < blockIdx; i++) {
+        if (blocks[i].type === 'yaml') yamlCountBefore++
+    }
+    if (currentCue >= yamlCountBefore) currentCue++
+    cueHistory = cueHistory.map(h => h >= yamlCountBefore ? h + 1 : h)
+
     const newYamlBlock = { type: 'yaml', content: '```yaml\n' + inlineNoteObjects(yaml.dump(newYaml, { indent: 4 }).trimEnd()) + '\n```' }
     const replacements = []
     if (mdBefore.trim()) replacements.push({ type: 'text', content: mdBefore.trim() })
@@ -3983,6 +4055,20 @@ function buildTrigger(codeblockYaml, index) {
         let suppressSeekRestart  = false
         let suppressPauseStop    = false  // prevents ws.on("pause") from killing a group source
         let forceFullBuffer      = false  // play button: ignore trim region, use full buffer
+
+        // If this cue was playing during a rerender, adopt the running audio graph so the
+        // AudioBufferSourceNode is never interrupted.  The new playbackGain (just created
+        // above, nothing connected yet) is discarded in favour of the still-live old one.
+        const _adoption = pendingAudioAdoptions.get(musicFile)
+        if (_adoption) {
+            pendingAudioAdoptions.delete(musicFile)
+            try { playbackGain.disconnect() } catch {}
+            playbackGain            = _adoption.playbackGain
+            activeSource            = _adoption.activeSource
+            activeSourceStartedAt   = _adoption.activeSourceStartedAt
+            activeSourceStartOffset = _adoption.activeSourceStartOffset
+            if (_adoption.volume !== null) currentVolume = _adoption.volume
+        }
 
         // Copy [startSec, endSec] out of srcBuf into a fresh AudioBuffer.
         // The result can be looped with loopStart=0/loopEnd=duration for gapless region looping.
@@ -4889,6 +4975,17 @@ function buildTrigger(codeblockYaml, index) {
             enableLoop:  () => { loopEnabled = mp.loop },
             // Called by another trigger's fireGaplessTransition to start this trigger's source
             getPlaybackGain:    () => playbackGain,
+            stopActiveSource:   () => stopSource(),
+            getActiveSourceInfo: () => ({ src: activeSource, startedAt: activeSourceStartedAt, startOffset: activeSourceStartOffset }),
+            // True as long as the AudioBufferSourceNode is running, even if WaveSurfer's
+            // media element isn't playing yet (e.g. during the adoption cursor-sync gap).
+            isAudioActive: () => activeSource !== null || ws.isPlaying(),
+            // Returns playback position from AudioContext arithmetic when mainAudioEl lags.
+            getPlaybackTime: () => {
+                if (activeSource && activeSourceStartedAt !== null && sharedAudioCtx)
+                    return Math.max(0, activeSourceStartOffset + (sharedAudioCtx.currentTime - activeSourceStartedAt))
+                return mainAudioEl?.currentTime ?? 0
+            },
             // Starts the AudioBufferSourceNode only — no mainAudioEl interaction.
             // The caller is responsible for all cursor/media element handling.
             startGaplessSource: (offset, when) => {
@@ -4976,6 +5073,31 @@ function buildTrigger(codeblockYaml, index) {
             },
         })
         fileToTriggers.set(musicFile, [...(fileToTriggers.get(musicFile) || []), index])
+
+        // Finish adoption: inject the decoded buffer and sync the cursor element to the
+        // current playback position so the UI reflects the running source.
+        if (_adoption) {
+            const ta = triggerAudio.get(index)
+            if (ta && _adoption.decodedBuffer) ta.decodedBuffer = _adoption.decodedBuffer
+            if (_adoption.activeSource && _adoption.activeSourceStartedAt !== null) {
+                const syncCursor = () => {
+                    if (activeSource !== _adoption.activeSource) return
+                    const ctx = sharedAudioCtx
+                    if (!ctx) return
+                    const pos = Math.max(0, Math.min(
+                        ws.getDuration() || Infinity,
+                        _adoption.activeSourceStartOffset + (ctx.currentTime - _adoption.activeSourceStartedAt)
+                    ))
+                    mainAudioEl.loop = mp.loop
+                    suppressSeekRestart = true
+                    mainAudioEl.currentTime = pos
+                    setTimeout(() => { suppressSeekRestart = false }, 50)
+                    mainAudioEl.play().catch(() => {})
+                }
+                if (ws.getDuration()) syncCursor()
+                else ws.once('ready', syncCursor)
+            }
+        }
     }
 
     triggerYamls[index] = codeblockYaml
@@ -6853,7 +6975,7 @@ function broadcastLiveState() {
                 isCurrent: cueIdx === liveCurrent,
                 isNext: cueIdx === nextCue,
                 isSibling: !!ty.sibling,
-                isPlaying: triggerAudio.get(cueIdx)?.ws.isPlaying() ?? false,
+                isPlaying: triggerAudio.get(cueIdx)?.isAudioActive?.() ?? false,
                 micColors,
                 muteall: muteallCue,
                 musicLabel, musicAdjust,
@@ -6895,7 +7017,7 @@ function broadcastLiveState() {
     // Audio progress for all playing cues
     const audioProgress = []
     for (const [cueIdx, ta] of triggerAudio) {
-        if (!ta.ws.isPlaying()) continue
+        if (!ta.isAudioActive?.()) continue
         const ty = triggerYamls[cueIdx]
         const { mp } = ta
         const totalDuration = ta.ws.getDuration() ?? 0
@@ -6905,7 +7027,7 @@ function broadcastLiveState() {
         audioProgress.push({
             cueIdx,
             label: (typeof ty?.music === 'string' ? ty.music : ty?.music?.file) || ('Cue ' + cueIdx),
-            currentTime: ta.mainAudioEl?.currentTime ?? 0,
+            currentTime: ta.getPlaybackTime?.() ?? (ta.mainAudioEl?.currentTime ?? 0),
             loopStart,
             loopEnd,
             isLoop,

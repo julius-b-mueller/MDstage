@@ -99,9 +99,9 @@
                 const chips = b.cueMidi.map(msg => {
                     let text
                     if (msg.comment) { text = esc(msg.comment) }
-                    else if (msg.type === 'note')  { text = `N${msg.note}` }
-                    else if (msg.type === 'cc')    { text = `CC${msg.cc}=${msg.value}` }
-                    else if (msg.type === 'pc')    { text = `PC${msg.program}` }
+                    else if (msg.type === 'note')  { text = `N${esc(String(msg.note))}` }
+                    else if (msg.type === 'cc')    { text = `CC${esc(String(msg.cc))}=${esc(String(msg.value))}` }
+                    else if (msg.type === 'pc')    { text = `PC${esc(String(msg.program))}` }
                     else                           { text = 'SysEx' }
                     const devName = msg.device || ''
                     const devColor = safeColor(_deviceColors['midi:' + devName] || '')
