@@ -24,6 +24,71 @@ const triggerAudio = new Map()
 // musicFile → { playbackGain, activeSource, startedAt, startOffset, decodedBuffer, volume }
 // Populated in rerender() so buildTrigger can adopt a running audio graph without interrupting it.
 const pendingAudioAdoptions = new Map()
+let versionMismatchIgnored = false
+let versionMismatchFileVersion = null
+let _versionBumpAppVersion = null
+
+// Valid top-level keys for each YAML block type — unknown keys are surfaced as parse errors.
+const CONFIG_BLOCK_KEYS = new Set([
+    'roles', 'groups', 'settings', 'app_version', 'emLightNote',
+])
+const TRIGGER_BLOCK_KEYS = new Set([
+    'sibling', 'trigger_note', 'note', 'auto_mic', 'mic',
+    'music', 'osc', 'osc_arg', 'osc_arg_type',
+    'qlcplus', 'projection', 'start_tc',
+    'auto_trigger', 'chain_end', 'loop_outro',
+    'cue_midi', 'cue_osc',
+])
+
+// Returns [{block, key}] for every YAML key not in the current spec.
+function findUnknownYamlKeys(text) {
+    const results = []
+    const re = /```yaml\n([\s\S]*?)```/g
+    let blockIndex = 0, m
+    while ((m = re.exec(text)) !== null) {
+        blockIndex++
+        let parsed
+        try { parsed = yaml.load(m[1]) } catch { continue }
+        if (!parsed || typeof parsed !== 'object') continue
+        if (blockIndex === 1) {
+            if (parsed.config && typeof parsed.config === 'object') {
+                for (const k of Object.keys(parsed.config).filter(k => !CONFIG_BLOCK_KEYS.has(k)))
+                    results.push({ block: blockIndex, key: `config.${k}` })
+            }
+        } else {
+            for (const k of Object.keys(parsed).filter(k => !TRIGGER_BLOCK_KEYS.has(k)))
+                results.push({ block: blockIndex, key: k })
+        }
+    }
+    return results
+}
+
+async function writeScriptMd(content) {
+    if (versionMismatchIgnored) {
+        versionMismatchIgnored = false
+        window.electronAPI.setSuppressVersionBump(false)
+
+        const backupName = await window.electronAPI.backupScriptMdVersioned(versionMismatchFileVersion || 'old')
+        const body = t('ver.upgrade.body')
+            .replace('%1', _versionBumpAppVersion || '')
+            .replace('%2', versionMismatchFileVersion || '?')
+            .replace('%3', backupName || '')
+
+        const proceed = await showConfirmDialog({
+            title: t('ver.upgrade.title'),
+            body,
+            confirmLabel: t('ver.upgrade.ok'),
+            cancelLabel: t('ver.upgrade.cancel'),
+            img: 'assets/version-mismatch.png',
+        })
+        if (!proceed) {
+            versionMismatchIgnored = true
+            window.electronAPI.setSuppressVersionBump(true)
+            return
+        }
+    }
+    return window.electronAPI.writeScriptMd(content)
+}
 const slfDerivedTcBadges = new Map()  // triggerIndex → span element for derived TC badges
 // musicFile -> triggerIndex[]  (for cross-trigger fade lookups)
 const fileToTriggers = new Map()
@@ -652,17 +717,19 @@ function showConfirmDialog({ title, body, confirmLabel = 'Ja', cancelLabel = 'Ab
         actions.className = 'dialog-actions'
 
         const close = (val) => { overlay.remove(); resolve(val) }
-        const cancelBtn  = document.createElement('button')
-        cancelBtn.className  = 'dialog-btn'
-        cancelBtn.textContent = cancelLabel
-        cancelBtn.addEventListener('click', () => close(false))
+        const cancelBtn = cancelLabel ? document.createElement('button') : null
+        if (cancelBtn) {
+            cancelBtn.className  = 'dialog-btn'
+            cancelBtn.textContent = cancelLabel
+            cancelBtn.addEventListener('click', () => close(false))
+        }
 
         const confirmBtn = document.createElement('button')
         confirmBtn.className  = 'dialog-btn dialog-btn-primary'
         confirmBtn.textContent = confirmLabel
         confirmBtn.addEventListener('click', () => close(true))
 
-        actions.append(cancelBtn, confirmBtn)
+        actions.append(...(cancelBtn ? [cancelBtn] : []), confirmBtn)
         const imgEl = img ? Object.assign(document.createElement('img'), {
             src: img,
             style: 'width:75%;border-radius:4px;margin:0 auto 0.8rem;display:block',
@@ -670,7 +737,125 @@ function showConfirmDialog({ title, body, confirmLabel = 'Ja', cancelLabel = 'Ab
         box.append(...(imgEl ? [imgEl] : []), h3, bodyEl, actions)
         overlay.append(box)
         document.body.appendChild(overlay)
-        cancelBtn.focus()
+        ;(cancelBtn ?? confirmBtn).focus()
+    })
+}
+
+const GITHUB_RELEASES = 'https://github.com/julius-b-mueller/MDstage/releases'
+
+function showUpdateInfoDialog(appVersion) {
+    return new Promise(resolve => {
+        const overlay = document.createElement('div')
+        overlay.className = 'dialog-overlay'
+        overlay.style.zIndex = '9999'
+        overlay.addEventListener('mousedown', e => e.stopPropagation())
+
+        const box = document.createElement('div')
+        box.className = 'dialog-box'
+
+        const imgEl = document.createElement('img')
+        imgEl.src = 'assets/update.png'
+        imgEl.style.cssText = 'width:75%;border-radius:4px;margin:0 auto 0.8rem;display:block'
+
+        const h3 = document.createElement('h3')
+        h3.textContent = t('upd.title')
+
+        const bodyEl = document.createElement('p')
+        bodyEl.style.cssText = 'color:#abb2bf;font-size:0.9rem;margin:0 0 0.4rem;line-height:1.6'
+        bodyEl.textContent = t('upd.body')
+
+        const hintEl = document.createElement('p')
+        hintEl.style.cssText = 'color:#abb2bf;font-size:0.9rem;margin:0 0 0.8rem;line-height:1.6'
+        hintEl.textContent = t('upd.hint')
+
+        const versionEl = document.createElement('p')
+        versionEl.style.cssText = 'color:#5c6370;font-size:0.85rem;margin:0 0 1rem'
+        versionEl.textContent = t('upd.version') + ': ' + appVersion
+
+        const linkBtn = document.createElement('button')
+        linkBtn.className = 'dialog-btn'
+        linkBtn.textContent = t('upd.link')
+        linkBtn.style.cssText = 'margin-bottom:1.2rem;width:100%'
+        linkBtn.addEventListener('click', () => window.electronAPI.openExternalUrl(GITHUB_RELEASES))
+
+        const checkRow = document.createElement('label')
+        checkRow.style.cssText = 'display:flex;align-items:center;gap:0.5rem;font-size:0.88rem;color:#5c6370;margin-bottom:1.2rem;cursor:pointer'
+        const checkbox = document.createElement('input')
+        checkbox.type = 'checkbox'
+        const checkLabel = document.createElement('span')
+        checkLabel.textContent = t('upd.dismiss')
+        checkRow.append(checkbox, checkLabel)
+
+        const actions = document.createElement('div')
+        actions.className = 'dialog-actions'
+        actions.style.justifyContent = 'flex-end'
+        const okBtn = document.createElement('button')
+        okBtn.className = 'dialog-btn dialog-btn-primary'
+        okBtn.textContent = t('upd.ok')
+        okBtn.addEventListener('click', () => { overlay.remove(); resolve(checkbox.checked) })
+        actions.append(okBtn)
+
+        box.append(imgEl, h3, bodyEl, hintEl, versionEl, linkBtn, checkRow, actions)
+        overlay.append(box)
+        document.body.appendChild(overlay)
+        okBtn.focus()
+    })
+}
+
+function showVersionMismatchDialog(fileVersion, appVersion) {
+    return new Promise(resolve => {
+        const overlay = document.createElement('div')
+        overlay.className = 'dialog-overlay'
+        overlay.style.zIndex = '9999'
+        overlay.addEventListener('mousedown', e => e.stopPropagation())
+
+        const box = document.createElement('div')
+        box.className = 'dialog-box'
+
+        const imgEl = document.createElement('img')
+        imgEl.src = 'assets/version-mismatch.png'
+        imgEl.style.cssText = 'width:75%;border-radius:4px;margin:0 auto 0.8rem;display:block'
+
+        const h3 = document.createElement('h3')
+        h3.textContent = t('ver.mismatch.title')
+
+        const createdEl = document.createElement('p')
+        createdEl.style.cssText = 'color:#abb2bf;font-size:0.9rem;margin:0 0 0.2rem;line-height:1.6'
+        createdEl.textContent = t('ver.mismatch.created').replace('%1', fileVersion)
+
+        const currentEl = document.createElement('p')
+        currentEl.style.cssText = 'color:#abb2bf;font-size:0.9rem;margin:0 0 0.8rem;line-height:1.6'
+        currentEl.textContent = t('ver.mismatch.current').replace('%1', appVersion)
+
+        const hintEl = document.createElement('p')
+        hintEl.style.cssText = 'color:#5c6370;font-size:0.85rem;margin:0 0 1rem;line-height:1.6'
+        hintEl.textContent = t('ver.mismatch.hint')
+
+        const actions = document.createElement('div')
+        actions.className = 'dialog-actions'
+        const close = () => { overlay.remove(); resolve(false) }
+
+        const okBtn = document.createElement('button')
+        okBtn.className = 'dialog-btn dialog-btn-primary'
+        okBtn.textContent = t('ver.mismatch.ok')
+        okBtn.addEventListener('click', () => close())
+
+        const els = [imgEl, h3, createdEl, currentEl, hintEl]
+        if (/^\d+\.\d+\.\d+$/.test(fileVersion)) {
+            const linkBtn = document.createElement('button')
+            linkBtn.className = 'dialog-btn'
+            linkBtn.textContent = t('ver.mismatch.link').replace('%1', fileVersion)
+            linkBtn.style.cssText = 'margin-bottom:1.2rem;width:100%'
+            linkBtn.addEventListener('click', () =>
+                window.electronAPI.openExternalUrl(GITHUB_RELEASES + '/tag/' + fileVersion)
+            )
+            els.push(linkBtn)
+        }
+        actions.append(okBtn)
+        box.append(...els, actions)
+        overlay.append(box)
+        document.body.appendChild(overlay)
+        okBtn.focus()
     })
 }
 
@@ -1407,7 +1592,7 @@ function saveCurrentEdit(isClosing = false) {
             while (removeFrom > 0 && lines[removeFrom - 1].trim() === '') removeFrom--
             lines.splice(removeFrom, lineEnd - removeFrom + 1)
             scriptText = lines.join('\n')
-            window.electronAPI.writeScriptMd(scriptText)
+            writeScriptMd(scriptText)
             inlineEditor.deleted = true
         }
         return
@@ -1417,7 +1602,7 @@ function saveCurrentEdit(isClosing = false) {
     const lines = scriptText.split('\n')
     lines.splice(lineStart, lineEnd - lineStart + 1, ...newLines)
     scriptText = lines.join('\n')
-    window.electronAPI.writeScriptMd(scriptText)
+    writeScriptMd(scriptText)
     inlineEditor.lineEnd = lineStart + newLines.length - 1
 }
 
@@ -1438,7 +1623,7 @@ function closeEditor(save) {
         const formatted = formatScriptText(scriptText)
         if (formatted !== scriptText) {
             scriptText = formatted
-            window.electronAPI.writeScriptMd(scriptText)
+            writeScriptMd(scriptText)
         }
     }
     rerender(scriptText)
@@ -1463,7 +1648,7 @@ function deleteBlock() {
     while (removeFrom > 0 && lines[removeFrom - 1].trim() === '') removeFrom--
     lines.splice(removeFrom, lineEnd - removeFrom + 1)
     scriptText = lines.join('\n')
-    window.electronAPI.writeScriptMd(scriptText)
+    writeScriptMd(scriptText)
     rerender(scriptText)
 
     if (prevIdx >= 0) {
@@ -1507,7 +1692,7 @@ function moveBlock(direction) {
     text = text.slice(0, pos[lo]) + hiC + text.slice(pos[lo] + loC.length)
 
     scriptText = text
-    window.electronAPI.writeScriptMd(scriptText)
+    writeScriptMd(scriptText)
 
     // After swap: the block we were editing is now at index targetK
     const editIdx = targetK
@@ -2276,7 +2461,7 @@ function commitNewBlock(asRole, skipNavigate = false) {
     const lines = scriptText.split('\n')
     lines.splice(lineStart, 0, ...insertLines)
     scriptText = lines.join('\n')
-    window.electronAPI.writeScriptMd(scriptText)
+    writeScriptMd(scriptText)
     rerender(scriptText)
     if (!skipNavigate) requestAnimationFrame(() => openNextBlockAfterLine(_target, _afterRole))
 }
@@ -2391,6 +2576,7 @@ document.addEventListener('keyup', (e) => {
 }, { capture: true })
 window.addEventListener('blur', () => { shiftHeld = false; document.body.classList.remove('shift-held') })
 window.addEventListener('scroll', updateSidebarActive, { passive: true })
+window.addEventListener('scroll', updateGutterState, { passive: true })
 
 // Prevent Electron from navigating to dropped files (default browser/Electron behaviour).
 // Individual drop targets handle the files themselves.
@@ -2762,7 +2948,7 @@ function moveTriggerGroupInScript(rootIndex, lastIndex, direction) {
 
     const updated = blocks.map(b => b.content).join('\n\n') + '\n'
     scriptText = updated
-    window.electronAPI.writeScriptMd(updated)
+    writeScriptMd(updated)
     rerender(updated)
 }
 
@@ -2824,6 +3010,7 @@ function rerender(newText) {
     markControlledTriggers()
     groupSiblingTriggers()
     annotateBlocks()
+    annotateLineNumbers()
     buildInsertZones()
 
 setupAutoTriggers()
@@ -2930,6 +3117,17 @@ function validateYamlBlocks(text) {
     }
 }
 
+function getYamlBlockStartLine(blockNum) {
+    if (!scriptText || blockNum == null) return null
+    const re = /```yaml\n/g
+    let count = 0, m
+    while ((m = re.exec(scriptText)) !== null) {
+        if (++count === blockNum)
+            return (scriptText.slice(0, m.index).match(/\n/g) || []).length + 1
+    }
+    return null
+}
+
 function showParseErrors() {
     const existing = document.getElementById('parse-error-banner')
     if (existing) existing.remove()
@@ -2939,16 +3137,20 @@ function showParseErrors() {
     banner.className = 'parse-error-banner'
     const closeBtn = document.createElement('button')
     closeBtn.className = 'parse-error-close'
-    closeBtn.textContent = '×'
-    closeBtn.addEventListener('click', () => banner.remove())
+    closeBtn.textContent = t('parse.error.dismiss')
+    closeBtn.addEventListener('click', () => { banner.remove(); updateGutterState() })
     banner.appendChild(closeBtn)
     let html = ''
     if (parseErrors.length) {
-        const items = parseErrors.map(({ blockNum, line, message }) => {
-            const loc = blockNum != null
-                ? `Block ${blockNum}${line != null ? `, Zeile ${line}` : ''}`
+        const items = parseErrors.map(({ blockNum, line, message, unknownKey }) => {
+            const mdLine = getYamlBlockStartLine(blockNum)
+            const locHtml = mdLine != null
+                ? `<button class="parse-error-line-btn" data-md-line="${mdLine}" type="button">Zeile ${mdLine}</button>${line != null ? `, YAML-Zeile ${line}` : ''}`
+                : (line != null ? `YAML-Zeile ${line}` : '')
+            const deleteHtml = unknownKey != null
+                ? ` <button class="parse-error-delete-btn" data-block-num="${blockNum}" data-key="${escapeHtml(unknownKey)}" type="button">${escapeHtml(t('parse.error.delete.key'))}</button>`
                 : ''
-            return `<li>${loc ? loc + ': ' : ''}${escapeHtml(message)}</li>`
+            return `<li>${locHtml ? locHtml + ': ' : ''}${escapeHtml(message)}${deleteHtml}</li>`
         }).join('')
         html += `<strong>${parseErrors.length} YAML-Fehler</strong><ul>${items}</ul>`
     }
@@ -2966,8 +3168,54 @@ function showParseErrors() {
     }
     const content = document.createElement('div')
     content.innerHTML = html
+    content.querySelectorAll('.parse-error-line-btn').forEach(btn => {
+        btn.addEventListener('click', () => scrollToMdLine(parseInt(btn.dataset.mdLine)))
+    })
+    content.querySelectorAll('.parse-error-delete-btn').forEach(btn => {
+        btn.addEventListener('click', () => deleteUnknownYamlKey(parseInt(btn.dataset.blockNum), btn.dataset.key))
+    })
     banner.appendChild(content)
     document.body.prepend(banner)
+}
+
+function scrollToMdLine(mdLine) {
+    const el = document.querySelector(`#script-content > [data-md-line="${mdLine}"]`)
+    if (!el) return
+    const banner = document.getElementById('parse-error-banner')
+    const bannerH = banner ? banner.offsetHeight : 0
+    // Find the nearest preceding h1/h2 — it will be sticky at the top after scrolling
+    let stickyH = 0
+    let prev = el.previousElementSibling
+    while (prev) {
+        if (prev.tagName === 'H1' || prev.tagName === 'H2') { stickyH = prev.offsetHeight; break }
+        prev = prev.previousElementSibling
+    }
+    const targetTop = el.getBoundingClientRect().top + window.scrollY - bannerH - stickyH - 8
+    window.scrollTo({ top: targetTop, behavior: 'smooth' })
+}
+
+function deleteUnknownYamlKey(blockNum, key) {
+    let count = 0
+    const newText = scriptText.replace(/```yaml\n([\s\S]*?)```/g, (match, content) => {
+        count++
+        if (count !== blockNum) return match
+        let parsed
+        try { parsed = yaml.load(content) } catch { return match }
+        if (!parsed || typeof parsed !== 'object') return match
+        if (key.startsWith('config.')) {
+            if (parsed.config && typeof parsed.config === 'object') delete parsed.config[key.slice(7)]
+        } else {
+            delete parsed[key]
+        }
+        const newYaml = yaml.dump(parsed, { indent: 4, lineWidth: -1, noRefs: true })
+        return count === 1
+            ? `\`\`\`yaml\n${newYaml.trimEnd()}\n\`\`\``
+            : `\`\`\`yaml\n${inlineNoteObjects(newYaml.trimEnd())}\n\`\`\``
+    })
+    parseErrors = parseErrors.filter(e => !(e.unknownKey === key && e.blockNum === blockNum))
+    scriptText = newText
+    showParseErrors()
+    writeScriptMd(newText)
 }
 
 function tokenizeScript(text) {
@@ -3003,6 +3251,53 @@ function annotateBlocks() {
     const firstBlock = content.querySelector(':scope > :not(.insert-zone):not(.empty-script-state)')
     const isFirstCue = !!(firstBlock?.classList.contains('trigger') || firstBlock?.classList.contains('trigger-group'))
     content.classList.toggle('first-block-is-cue', isFirstCue)
+}
+
+function annotateLineNumbers() {
+    const content = document.getElementById('script-content')
+    let maxLine = 0
+    for (const child of content.children) {
+        if (child.dataset.blockIdx === undefined) continue
+        const info = getBlockInfo(parseInt(child.dataset.blockIdx))
+        if (!info) continue
+        child.dataset.mdLine = info.lineStart + 1
+        if (info.lineStart + 1 > maxLine) maxLine = info.lineStart + 1
+    }
+    // Number box ends 0.5rem before separator: gutter = digits*~0.5rem + 1.4rem overhead
+    const digits = maxLine > 0 ? String(maxLine).length : 1
+    const widths = [0, 1.8, 2.3, 2.8, 3.3, 3.9]
+    const w = widths[Math.min(digits, widths.length - 1)]
+    const wStr = w + 'rem'
+    content.style.setProperty('--md-gutter-w', wStr)
+    document.documentElement.style.setProperty('--md-gutter-w', wStr)
+    updateGutterState()
+}
+
+function updateGutterState() {
+    const content = document.getElementById('script-content')
+    if (!content) return
+    const headings = Array.from(content.querySelectorAll(':scope > h1, :scope > h2'))
+    const showNumbers = content.classList.contains('show-md-line-numbers')
+    if (!showNumbers) {
+        headings.forEach(h => h.classList.remove('md-heading-inactive'))
+        content.querySelectorAll(':scope > .md-line-hidden').forEach(el => el.classList.remove('md-line-hidden'))
+        return
+    }
+    // Among headings stuck at top: 0, only the last (DOM-order) one is visually on top.
+    let lastStuck = null
+    for (const h of headings) {
+        if (h.getBoundingClientRect().top <= 1) lastStuck = h
+    }
+    for (const h of headings) {
+        h.classList.toggle('md-heading-inactive', h.getBoundingClientRect().top <= 1 && h !== lastStuck)
+    }
+    // Hide line numbers for non-heading blocks whose top is above the sticky area.
+    const banner = document.getElementById('parse-error-banner')
+    const cutoff = (banner ? banner.offsetHeight : 0) + (lastStuck ? lastStuck.offsetHeight : 0)
+    for (const block of content.querySelectorAll(':scope > [data-md-line]')) {
+        if (block.tagName === 'H1' || block.tagName === 'H2') continue
+        block.classList.toggle('md-line-hidden', block.getBoundingClientRect().top < cutoff)
+    }
 }
 
 function findTriggerByNote(tn) {
@@ -3307,7 +3602,7 @@ function moveTriggerInScript(triggerIndex, direction) {
 
     const updated = blocks.map(b => b.content).join('\n\n') + '\n'
     scriptText = updated
-    window.electronAPI.writeScriptMd(updated)
+    writeScriptMd(updated)
     rerender(updated)
 }
 
@@ -3334,7 +3629,7 @@ function insertTriggerInScript(insertAfterBlockIdx, newYaml) {
     const { text: assigned, changed } = assignTriggerNotes(updated)
     if (changed) updated = assigned
     scriptText = updated
-    window.electronAPI.writeScriptMd(updated)
+    writeScriptMd(updated)
     rerender(updated)
 }
 
@@ -3360,7 +3655,7 @@ function splitBlockAndInsertTrigger(blockIdx, mdBefore, mdAfter, newYaml) {
     const { text: assigned, changed } = assignTriggerNotes(updated)
     if (changed) updated = assigned
     scriptText = updated
-    window.electronAPI.writeScriptMd(updated)
+    writeScriptMd(updated)
     rerender(updated)
 }
 
@@ -3393,7 +3688,7 @@ function updateMusicPropsInScript(triggerIndex, mp) {
         return `\`\`\`yaml\n${c}\`\`\``
     })
     scriptText = updated
-    window.electronAPI.writeScriptMd(updated)
+    writeScriptMd(updated)
     if (triggerYamls[triggerIndex]) {
         if (typeof triggerYamls[triggerIndex].music === 'string') {
             triggerYamls[triggerIndex].music = { file: triggerYamls[triggerIndex].music }
@@ -3419,7 +3714,7 @@ function updateAutoTriggerInScript(targetIndex, autoYaml) {
         return `\`\`\`yaml\n${c}\`\`\``
     })
     scriptText = updated
-    window.electronAPI.writeScriptMd(updated)
+    writeScriptMd(updated)
     if (triggerYamls[targetIndex]) {
         if (autoYaml !== null) {
             triggerYamls[targetIndex].auto_trigger = autoYaml
@@ -3648,7 +3943,7 @@ function removeAllManualMicsFromScript() {
     if (!changed) return
     const updated = blocks.map(b => b.content).join('\n\n') + '\n'
     scriptText = updated
-    window.electronAPI.writeScriptMd(updated)
+    writeScriptMd(updated)
     for (const ty of triggerYamls) {
         if (ty) delete ty.mic
     }
@@ -3705,7 +4000,7 @@ function _applyAutoMicInScript(triggerIndex, enabled) {
         return `\`\`\`yaml\n${c}\`\`\``
     })
     scriptText = updated
-    window.electronAPI.writeScriptMd(updated)
+    writeScriptMd(updated)
     if (triggerYamls[triggerIndex]) {
         if (enabled) triggerYamls[triggerIndex].auto_mic = true
         else delete triggerYamls[triggerIndex].auto_mic
@@ -5611,7 +5906,7 @@ function editTriggerInScript(triggerIndex, newYaml, oldTriggerNote = null) {
     const { text: assigned, changed } = assignTriggerNotes(updated)
     if (changed) updated = assigned
     scriptText = updated
-    window.electronAPI.writeScriptMd(updated)
+    writeScriptMd(updated)
     rerender(updated)
 }
 
@@ -5649,7 +5944,7 @@ function deleteTriggerInScript(triggerIndex) {
     }
     const updated = blocks.map(b => b.content).join('\n\n') + '\n'
     scriptText = updated
-    window.electronAPI.writeScriptMd(updated)
+    writeScriptMd(updated)
     rerender(updated)
 }
 
@@ -6627,7 +6922,7 @@ function updateLoopGroupInScript(triggerIndex, key, value) {
         return `\`\`\`yaml\n${c}\`\`\``
     })
     scriptText = updated
-    window.electronAPI.writeScriptMd(updated)
+    writeScriptMd(updated)
     if (triggerYamls[triggerIndex]) {
         if (value !== null) triggerYamls[triggerIndex][key] = value
         else delete triggerYamls[triggerIndex][key]
@@ -6645,7 +6940,7 @@ function updateLoopGroupInScript(triggerIndex, key, value) {
                 const c = content.replace(startTcRe, '').replace(/\n{3,}/g, '\n\n')
                 return `\`\`\`yaml\n${c}\`\`\``
             })
-            window.electronAPI.writeScriptMd(scriptText)
+            writeScriptMd(scriptText)
             if (triggerYamls[targetIdx]) delete triggerYamls[targetIdx].start_tc
         }
     }
@@ -7934,6 +8229,7 @@ async function initApp() {
     monitorEnabled  = savedSettings.monitorEnabled  ?? false
     appLanguage     = savedSettings.appLanguage     || 'de'
     micGroupDisplay = savedSettings.micGroupDisplay ?? true
+    document.getElementById('script-content').classList.toggle('show-md-line-numbers', !!(savedSettings.showMdLineNumbers))
     if (savedSettings.openLocked) { lockAutoActivated = false; setShowLock(true) }
     window.applyI18n?.(appLanguage)
     monitorChannelL = monitorEnabled ? (savedSettings.monitorChannelL ?? mainChannelL) : mainChannelL
@@ -7955,7 +8251,7 @@ async function initApp() {
 
     const { text: modifiedText, changed } = assignTriggerNotes(text)
     if (changed) {
-        await window.electronAPI.writeScriptMd(modifiedText)
+        await writeScriptMd(modifiedText)
         text = modifiedText
     }
 
@@ -7976,7 +8272,7 @@ async function initApp() {
         if (yes) {
             await window.electronAPI.backupScriptMd()
             const formatted = formatScriptText(text)
-            await window.electronAPI.writeScriptMd(formatted)
+            await writeScriptMd(formatted)
             text = formatted
         }
     }
@@ -7998,17 +8294,26 @@ async function initApp() {
     convertCodeblocks()
 
     if (!window.__webPreview) {
+        for (const { block, key } of findUnknownYamlKeys(text)) {
+            parseErrors.push({ blockNum: block, line: null, message: `Unbekanntes YAML-Feld: „${key}"`, unknownKey: key })
+        }
+
         const appVersion = await window.electronAPI.getAppVersion()
+        _versionBumpAppVersion = appVersion
+
         const fileVersion = config?.app_version
         if (fileVersion && String(fileVersion) !== appVersion) {
-            showConfirmDialog({
-                title: 'Versionshinweis',
-                body: `Diese Datei wurde mit <strong>Version ${escapeHtml(String(fileVersion))}</strong> erstellt.<br>` +
-                      `Aktuelle Version: <strong>${escapeHtml(appVersion)}</strong><br><br>` +
-                      `Die Datei kann trotzdem verwendet werden. Beim nächsten Speichern der Einstellungen wird die Version aktualisiert.`,
-                confirmLabel: 'OK',
-                cancelLabel: 'Ignorieren',
-            })
+            await showVersionMismatchDialog(String(fileVersion), appVersion)
+            versionMismatchIgnored = true
+            versionMismatchFileVersion = String(fileVersion)
+            window.electronAPI.setSuppressVersionBump(true)
+        }
+
+        if (!savedSettings.dismissedUpdatePopup) {
+            const dismissed = await showUpdateInfoDialog(appVersion)
+            if (dismissed) {
+                window.electronAPI.saveSettings({ ...savedSettings, dismissedUpdatePopup: true })
+            }
         }
     }
 
@@ -8024,6 +8329,7 @@ async function initApp() {
     markControlledTriggers()
     groupSiblingTriggers()
     annotateBlocks()
+    annotateLineNumbers()
     buildInsertZones()
     initButtons()
     setupAutoTriggers()
@@ -8081,6 +8387,8 @@ async function initApp() {
                 window.applyI18n?.(appLanguage)
             }
             micGroupDisplay = newSettings.micGroupDisplay ?? true
+            document.getElementById('script-content').classList.toggle('show-md-line-numbers', !!(newSettings.showMdLineNumbers))
+            updateGutterState()
             if (changed)
                 for (const ta of triggerAudio.values()) { ta.decodedBuffer = null; ta._decoding = false }
             applyAudioDevices()
@@ -8552,7 +8860,7 @@ window.__handleRolesSaved = ({ roles, renames, groups }) => {
             }
         } catch {}
     }
-    window.electronAPI.writeScriptMd(text)
+    writeScriptMd(text)
 }
 
 window.electronAPI.onLiveWindowState((isOpen) => {

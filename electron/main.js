@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron')
+const { app, BrowserWindow, Menu, ipcMain, dialog, shell } = require('electron')
 const { execFile } = require('child_process')
 app.setName('MDstage')
 const path = require('path')
@@ -82,7 +82,9 @@ function encodeOscMessage(address, args = []) {
 }
 
 // Keys that are personal/per-user and must not be stored in the shared markdown file
-const EDITOR_PREF_KEYS = ['editorApp']
+const EDITOR_PREF_KEYS = ['editorApp', 'dismissedUpdatePopup']
+
+let suppressVersionBump = false
 
 function editorPrefsPath() {
     return path.join(app.getPath('userData'), 'editor-prefs.json')
@@ -93,7 +95,8 @@ function loadEditorPrefs() {
 }
 
 function saveEditorPrefs(settings) {
-    const prefs = {}
+    const existing = loadEditorPrefs()
+    const prefs = { ...existing }
     for (const k of EDITOR_PREF_KEYS) if (k in settings) prefs[k] = settings[k]
     fs.writeFileSync(editorPrefsPath(), JSON.stringify(prefs, null, 2), 'utf8')
 }
@@ -152,7 +155,7 @@ function persistSettings(settings) {
     if ('mainAudioDevice' in existing) existing = {}
     existing[hostname] = mdSettings
     parsed.config.settings = existing
-    parsed.config.app_version = app.getVersion()
+    if (!suppressVersionBump) parsed.config.app_version = app.getVersion()
 
     const newYaml = yaml.dump(parsed, { indent: 4, lineWidth: -1, noRefs: true })
     const newBlock = '```yaml\n' + newYaml.trimEnd() + '\n```'
@@ -209,7 +212,7 @@ function createSettingsWindow() {
         return
     }
     settingsWindow = new BrowserWindow({
-        width: 440,
+        width: 460,
         height: 780,
         title: 'Einstellungen',
         resizable: false,
@@ -735,6 +738,10 @@ app.whenReady().then(async () => {
     ipcMain.handle('get-app-version', () => app.getVersion())
     ipcMain.handle('get-build-info',  () => buildInfo)
     ipcMain.handle('get-settings', () => loadSettings())
+    ipcMain.handle('open-external-url', (_, url) => {
+        if (typeof url === 'string' && /^https:\/\/github\.com\//.test(url)) shell.openExternal(url)
+    })
+    ipcMain.handle('set-suppress-version-bump', (_, val) => { suppressVersionBump = !!val })
 
     ipcMain.handle('save-settings', (_, settings) => {
         persistSettings(settings)
@@ -776,6 +783,32 @@ app.whenReady().then(async () => {
         const backupPath = scriptMdPath.replace(/\.md$/, '~unformatted.md')
         fs.copyFileSync(scriptMdPath, backupPath)
         return path.basename(backupPath)
+    })
+
+    ipcMain.handle('backup-script-md-versioned', (_, version) => {
+        if (!scriptMdPath) throw new Error('No file open')
+        const safe = String(version).replace(/[^0-9a-zA-Z.\-]/g, '_')
+        const backupPath = scriptMdPath.replace(/\.md$/, `~v${safe}.md`)
+        fs.copyFileSync(scriptMdPath, backupPath)
+        return path.basename(backupPath)
+    })
+
+    ipcMain.handle('write-incompatibility-log', (_, { entries, fromVersion, toVersion }) => {
+        if (!scriptMdPath) throw new Error('No file open')
+        const version = app.getVersion()
+        const logPath = scriptMdPath.replace(/\.md$/, `-incompatibility-log-v${version}.txt`)
+        const lines = [
+            `MDstage Incompatibility Log`,
+            `Script:   ${path.basename(scriptMdPath)}`,
+            `Upgraded: v${fromVersion} → v${toVersion}`,
+            `Date:     ${new Date().toLocaleString()}`,
+            '',
+            'The following YAML keys were not part of the current spec and were removed:',
+            '',
+            ...entries.map(e => `  alt Zeile ${e.oldLine}, neu Zeile ${e.newLine}:  ${e.key}  =  ${JSON.stringify(e.value)}`),
+        ]
+        fs.writeFileSync(logPath, lines.join('\n') + '\n', 'utf8')
+        return path.basename(logPath)
     })
 
     ipcMain.handle('list-audio-files', () => {

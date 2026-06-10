@@ -1,3 +1,21 @@
+        // ── Tab switching ─────────────────────────────────────────────
+        const TAB_STORAGE_KEY = 'settings-active-tab'
+        const _tabBtns   = document.querySelectorAll('.tab-btn')
+        const _tabPanels = document.querySelectorAll('.tab-panel')
+
+        function activateTab(tabId) {
+            _tabBtns.forEach(b => b.classList.toggle('active', b.dataset.tab === tabId))
+            _tabPanels.forEach(p => p.classList.toggle('active', p.id === 'tab-' + tabId))
+            try { localStorage.setItem(TAB_STORAGE_KEY, tabId) } catch {}
+        }
+
+        _tabBtns.forEach(btn => btn.addEventListener('click', () => activateTab(btn.dataset.tab)))
+
+        try {
+            const _savedTab = localStorage.getItem(TAB_STORAGE_KEY)
+            if (_savedTab && document.getElementById('tab-' + _savedTab)) activateTab(_savedTab)
+        } catch {}
+
         let deviceIdMap = new Map()  // label → deviceId
 
         function esc(s) {
@@ -180,7 +198,8 @@
                 const p = document.createElement('p')
                 p.className = 'error'
                 p.textContent = message
-                document.body.appendChild(p)
+                // Append inside the Geräte panel so it's visible when the tab is open
+                ;(document.getElementById('tab-geraete') || document.body).appendChild(p)
             }
 
             try {
@@ -917,6 +936,8 @@
             micGroupDisplayEl.checked = settings.micGroupDisplay ?? true
             const openLockedEl = document.getElementById('open-locked')
             openLockedEl.checked = settings.openLocked ?? false
+            const showMdLinesEl = document.getElementById('show-md-line-numbers')
+            showMdLinesEl.checked = settings.showMdLineNumbers ?? false
 
             // ── Text-Editor ───────────────────────────────────────────
             const editorAppSel   = document.getElementById('editor-app')
@@ -1001,6 +1022,7 @@
                     micDevices: micDeviceStates.map(s => s.getValues()),
                     micGroupDisplay: micGroupDisplayEl.checked,
                     openLocked: openLockedEl.checked,
+                    showMdLineNumbers: showMdLinesEl.checked,
                 })
                 window.close()
             })

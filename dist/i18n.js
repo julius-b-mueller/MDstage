@@ -167,6 +167,7 @@
             's.display':                  'Anzeige',
             's.mic.grouped':              'Mikrofone in Gruppen bündeln',
             's.open.locked':              'Gesperrt öffnen',
+            's.show.md.lines':            'Markdown-Zeilennummern anzeigen',
             'lock.hint':                  'Gesperrt – Klick blockiert',
             's.save':                     'Speichern',
             's.no.device':                '— kein Gerät —',
@@ -202,6 +203,33 @@
             'welcome.body':               'Es gibt keine letzte Datei, die automatisch geöffnet werden kann.',
             'welcome.open':               'Datei öffnen',
             'welcome.new':                'Neue Datei',
+            // ── Einstellungen Tabs ───────────────────────────────────
+            's.tab.audio':                'Audio',
+            's.tab.devices':              'Geräte',
+            's.tab.live':                 'Live',
+            's.tab.general':              'Allgemein',
+            // ── Update-Dialog ────────────────────────────────────────
+            'upd.title':                  'Updates',
+            'upd.body':                   'MDstage prüft nicht automatisch auf Updates – die Software verwendet kein Internet.',
+            'upd.hint':                   'Schau gelegentlich auf GitHub nach, ob eine neue Version verfügbar ist.',
+            'upd.version':                'Installierte Version',
+            'upd.link':                   'GitHub Releases öffnen',
+            'upd.dismiss':                'Nicht mehr anzeigen',
+            'upd.ok':                     'OK',
+            // ── Versionshinweis-Dialog ───────────────────────────────
+            'ver.mismatch.title':         'Ältere Version',
+            'ver.mismatch.created':       'Diese Datei wurde mit Version %1 erstellt.',
+            'ver.mismatch.current':       'Aktuelle Version: %1',
+            'ver.mismatch.hint':          'Die Datei kann weiterhin verwendet werden. Wird sie bearbeitet, wird sie mit der aktuellen Version gespeichert. Falls die aktuelle Version nicht korrekt mit dem Script funktioniert, findest du die Version, mit der es erstellt wurde, hier:',
+            'ver.mismatch.link':          'Release %1 auf GitHub ansehen',
+            'ver.mismatch.ok':            'OK',
+            // ── Versions-Upgrade-Warnung ─────────────────────────────
+            'ver.upgrade.title':          'Skript wird aktualisiert',
+            'ver.upgrade.body':           'Dieses Skript wurde mit Version <strong>%2</strong> erstellt und wird jetzt mit Version <strong>%1</strong> gespeichert.<br><br>Bestehende Cues und Einstellungen können davon betroffen sein.<br><br>Eine Sicherheitskopie wird als <strong>%3</strong> gespeichert.',
+            'ver.upgrade.ok':             'Trotzdem speichern',
+            'ver.upgrade.cancel':         'Änderung verwerfen',
+            'parse.error.dismiss':        'Ignorieren',
+            'parse.error.delete.key':     'unbekannte Eigenschaft löschen',
         },
         en: {
             // ── Trigger-Aktions-Buttons ──────────────────────────────
@@ -369,6 +397,7 @@
             's.display':                  'Display',
             's.mic.grouped':              'Bundle microphones into groups',
             's.open.locked':              'Open locked',
+            's.show.md.lines':            'Show Markdown line numbers',
             'lock.hint':                  'Locked – click blocked',
             's.save':                     'Save',
             's.no.device':                '— no device —',
@@ -404,6 +433,33 @@
             'welcome.body':               'There is no recent file that can be opened automatically.',
             'welcome.open':               'Open File',
             'welcome.new':                'New File',
+            // ── Settings tabs ────────────────────────────────────────
+            's.tab.audio':                'Audio',
+            's.tab.devices':              'Devices',
+            's.tab.live':                 'Live',
+            's.tab.general':              'General',
+            // ── Update dialog ────────────────────────────────────────
+            'upd.title':                  'Updates',
+            'upd.body':                   'MDstage does not check for updates automatically – the software does not use the internet.',
+            'upd.hint':                   'Occasionally check GitHub to see if a new version is available.',
+            'upd.version':                'Installed version',
+            'upd.link':                   'Open GitHub Releases',
+            'upd.dismiss':                'Don\'t show again',
+            'upd.ok':                     'OK',
+            // ── Version mismatch dialog ──────────────────────────────
+            'ver.mismatch.title':         'Older version',
+            'ver.mismatch.created':       'This file was created with version %1.',
+            'ver.mismatch.current':       'Current version: %1',
+            'ver.mismatch.hint':          'The file can still be used. If edited, it will be saved with the current version. If the current version doesn\'t work correctly with the script, you can find the version it was created with here:',
+            'ver.mismatch.link':          'View release %1 on GitHub',
+            'ver.mismatch.ok':            'OK',
+            // ── Version upgrade warning ──────────────────────────────
+            'ver.upgrade.title':          'Script will be updated',
+            'ver.upgrade.body':           'This script was created with version <strong>%2</strong> and will now be saved with version <strong>%1</strong>.<br><br>Existing cues and settings may be affected.<br><br>A backup will be saved as <strong>%3</strong>.',
+            'ver.upgrade.ok':             'Save anyway',
+            'ver.upgrade.cancel':         'Discard changes',
+            'parse.error.dismiss':        'Dismiss',
+            'parse.error.delete.key':     'Delete unknown property',
         },
     }
 

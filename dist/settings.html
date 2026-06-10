@@ -7,7 +7,49 @@
     <meta charset="UTF-8">
     <script src="i18n.js"></script>
     <style>
-        body { padding: 1.5rem; padding-bottom: 5rem; }
+        * { box-sizing: border-box; }
+        body { margin: 0; padding: 0; padding-bottom: 4rem; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+
+        /* ── Tab bar ──────────────────────────────────────────────── */
+        .tab-bar {
+            display: flex;
+            background: #21252b;
+            border-bottom: 1px solid #383c44;
+            flex-shrink: 0;
+            padding: 0 0.5rem;
+        }
+        .tab-btn {
+            background: none;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: #5c6370;
+            padding: 0.7rem 1rem;
+            font-size: 0.88rem;
+            font-family: inherit;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: color 0.15s, border-color 0.15s;
+            margin-bottom: -1px;
+        }
+        .tab-btn:hover { color: #abb2bf; }
+        .tab-btn.active { color: #61afef; border-bottom-color: #61afef; }
+
+        /* ── Hostname chip ────────────────────────────────────────── */
+        .hostname-bar {
+            font-size: 0.75rem;
+            color: #3e4451;
+            padding: 0.3rem 1.5rem;
+            background: #21252b;
+            border-bottom: 1px solid #2c313a;
+            flex-shrink: 0;
+        }
+
+        /* ── Tab panels ───────────────────────────────────────────── */
+        .tab-panels { flex: 1; overflow-y: auto; }
+        .tab-panel { display: none; padding: 1.2rem 1.5rem; }
+        .tab-panel.active { display: block; }
+
+        /* ── Fields & sections ────────────────────────────────────── */
         .field { margin-bottom: 1.2rem; }
         label { display: block; margin-bottom: 0.4rem; font-size: 0.85rem; color: #5c6370; text-transform: uppercase; letter-spacing: 0.05em; }
         select, input[type="number"], input[type="text"] {
@@ -19,7 +61,6 @@
             border-radius: 5px;
             font-size: 1rem;
             font-family: inherit;
-            box-sizing: border-box;
         }
         select { cursor: pointer; }
         select:focus, input[type="number"]:focus, input[type="text"]:focus { outline: none; border-color: #61afef; }
@@ -29,17 +70,19 @@
             color: #5c6370;
             text-transform: uppercase;
             letter-spacing: 0.08em;
-            margin: 1.5rem 0 0.8rem;
+            margin: 1.4rem 0 0.8rem;
             padding-bottom: 0.3rem;
             border-bottom: 1px solid #383c44;
         }
         .section-title:first-child { margin-top: 0; }
         .offset-row { display: flex; gap: 0.5rem; align-items: flex-end; }
         .offset-row input { flex: 1; }
+
+        /* ── Action bar ───────────────────────────────────────────── */
         .actions {
             position: fixed;
             bottom: 0; left: 0; right: 0;
-            padding: 0.75rem 1.5rem;
+            padding: 0.65rem 1.5rem;
             background: #282c34;
             border-top: 1px solid #383c44;
             display: flex;
@@ -64,6 +107,8 @@
         .btn-active { background: #e5c07b; color: #282c34; }
         .btn-active:hover { background: #f5d08b; }
         .error { color: #e06c75; font-size: 0.9rem; margin-top: 1rem; }
+
+        /* ── Routing table ────────────────────────────────────────── */
         .routing-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
         .routing-table th { padding: 0.3rem 0.4rem; font-size: 0.78rem; text-align: center; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
         .routing-table th:first-child { text-align: left; color: #5c6370; width: 5.5rem; }
@@ -85,11 +130,15 @@
         .test-btn:hover { background: #4b5263; color: #abb2bf; }
         .test-btn.playing { background: #61afef; border-color: #61afef; color: #282c34; }
         .device-warning { color: #e06c75; font-size: 0.8rem; margin: 0.3rem 0 0; }
+
+        /* ── MIDI learn ───────────────────────────────────────────── */
         .midi-learn-row { display: flex; gap: 0.5rem; align-items: center; }
         .midi-learn-row span { flex: 1; background: #383c44; border: 1px solid #4b5263; padding: 0.5rem 0.75rem; border-radius: 5px; font-size: 0.92rem; color: #7c8898; }
         .midi-learn-row span.assigned { color: #abb2bf; }
         input.invalid, select.invalid { border-color: #e06c75 !important; box-shadow: 0 0 0 2px rgba(224,108,117,0.22) !important; }
         .save-block-hint { color: #e06c75; font-size: 0.82rem; align-self: center; margin-right: auto; }
+
+        /* ── Device cards ─────────────────────────────────────────── */
         .mic-device-card {
             border: 1px solid #383c44;
             border-radius: 6px;
@@ -108,127 +157,162 @@
     </style>
 </head>
 <body>
-    <div id="hostname-label" style="font-size:0.78rem;color:#5c6370;margin-bottom:1rem;"></div>
-    <div class="section-title" data-i18n="s.audio">Audio-Ausgabe</div>
-    <div class="field">
-        <label data-i18n="s.audio.device">Audio-Gerät</label>
-        <select id="main-audio-device">
-            <option value="" data-i18n="s.default.device">— Standard —</option>
-        </select>
-        <p class="hint" data-i18n="s.audio.hint">Für Monitor-Mix: Aggregate Device in macOS Audio-MIDI-Setup anlegen (Haupt + Monitor als ein Gerät), dann die Kanalpaare unten wählen.</p>
-    </div>
-    <div class="field">
-        <label style="display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf;margin-bottom:0.5rem">
-            <input type="checkbox" id="monitor-enable" style="width:auto">
-            <span data-i18n="s.monitor.enable">Monitor-Mix aktiviert</span>
-        </label>
-        <p class="hint" id="monitor-hint" style="margin:0 0 0.6rem"></p>
-        <table class="routing-table" id="routing-table">
-            <thead>
-                <tr>
-                    <th></th>
-                    <th class="col-main">Main L</th>
-                    <th class="col-main">Main R</th>
-                    <th class="col-mon" id="mon-th-l">Mon L</th>
-                    <th class="col-mon" id="mon-th-r">Mon R</th>
-                    <th class="col-test"></th>
-                </tr>
-            </thead>
-            <tbody id="routing-body"></tbody>
-        </table>
+
+    <!-- Tab bar -->
+    <div class="tab-bar">
+        <button class="tab-btn active" data-tab="audio" data-i18n="s.tab.audio">Audio</button>
+        <button class="tab-btn" data-tab="geraete" data-i18n="s.tab.devices">Geräte</button>
+        <button class="tab-btn" data-tab="live" data-i18n="s.tab.live">Live</button>
+        <button class="tab-btn" data-tab="allgemein" data-i18n="s.tab.general">Allgemein</button>
     </div>
 
-    <div class="section-title">Ausgabe-Geräte</div>
-    <p class="hint" style="color:#e06c75;margin-bottom:0.8rem">MDstage darf nicht zur Steuerung von Geräten eingesetzt werden, die Menschen gefährden können. Es ist nicht immer offensichtlich, welche Zustände der Back-Button wiederherstellt. Außerdem kann für eine Fehlerfreiheit der Software nicht garantiert werden.</p>
-    <div id="output-devices-list"></div>
-    <button class="add-device-btn" id="add-output-device-btn">+ Gerät hinzufügen</button>
+    <!-- Hostname -->
+    <div class="hostname-bar" id="hostname-label"></div>
 
-    <div class="section-title" data-i18n="s.midi">MIDI</div>
-    <div class="field">
-        <label data-i18n="s.midi.tc">MIDI-Timecode</label>
-        <select id="tc-device">
-            <option value="" data-i18n="s.no.device">— kein Gerät —</option>
-        </select>
-    </div>
+    <!-- Tab panels -->
+    <div class="tab-panels">
 
-    <div class="section-title" data-i18n="s.mischpult">Mischpult Fernbedienung</div>
-    <div id="mic-devices-list"></div>
-    <button class="add-device-btn" id="add-mic-device-btn">+ Gerät hinzufügen</button>
-
-    <div class="section-title" data-i18n="s.midi.live">Live-Tasten (MIDI-Eingang)</div>
-    <div class="field">
-        <label data-i18n="s.midi.live.device">Eingangs-Gerät (Go / Back)</label>
-        <select id="live-input-device">
-            <option value="" data-i18n="s.midi.live.device.all">— alle Geräte —</option>
-        </select>
-    </div>
-    <div class="field">
-        <label data-i18n="s.midi.go">Go</label>
-        <div class="midi-learn-row">
-            <span id="go-midi-label">— nicht belegt —</span>
-            <button class="btn" id="go-learn-btn" data-i18n="s.midi.learn">Lernen</button>
-            <button class="btn" id="go-clear-btn">✕</button>
+        <!-- ── Audio ─────────────────────────────────────────────── -->
+        <div id="tab-audio" class="tab-panel active">
+            <div class="section-title" data-i18n="s.audio">Audio-Ausgabe</div>
+            <div class="field">
+                <label data-i18n="s.audio.device">Audio-Gerät</label>
+                <select id="main-audio-device">
+                    <option value="" data-i18n="s.default.device">— Standard —</option>
+                </select>
+                <p class="hint" data-i18n="s.audio.hint">Für Monitor-Mix: Aggregate Device in macOS Audio-MIDI-Setup anlegen (Haupt + Monitor als ein Gerät), dann die Kanalpaare unten wählen.</p>
+            </div>
+            <div class="field">
+                <label style="display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf;margin-bottom:0.5rem">
+                    <input type="checkbox" id="monitor-enable" style="width:auto">
+                    <span data-i18n="s.monitor.enable">Monitor-Mix aktiviert</span>
+                </label>
+                <p class="hint" id="monitor-hint" style="margin:0 0 0.6rem"></p>
+                <table class="routing-table" id="routing-table">
+                    <thead>
+                        <tr>
+                            <th></th>
+                            <th class="col-main">Main L</th>
+                            <th class="col-main">Main R</th>
+                            <th class="col-mon" id="mon-th-l">Mon L</th>
+                            <th class="col-mon" id="mon-th-r">Mon R</th>
+                            <th class="col-test"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="routing-body"></tbody>
+                </table>
+            </div>
         </div>
-    </div>
-    <div class="field">
-        <label data-i18n="s.midi.back">Back</label>
-        <div class="midi-learn-row">
-            <span id="back-midi-label">— nicht belegt —</span>
-            <button class="btn" id="back-learn-btn" data-i18n="s.midi.learn">Lernen</button>
-            <button class="btn" id="back-clear-btn">✕</button>
+
+        <!-- ── Geräte ─────────────────────────────────────────────── -->
+        <div id="tab-geraete" class="tab-panel">
+            <div class="section-title" data-i18n="s.midi">MIDI-Timecode</div>
+            <div class="field">
+                <label data-i18n="s.midi.tc">MIDI-Timecode-Gerät</label>
+                <select id="tc-device">
+                    <option value="" data-i18n="s.no.device">— kein Gerät —</option>
+                </select>
+            </div>
+
+            <div class="section-title">Ausgabe-Geräte</div>
+            <p class="hint" style="color:#e06c75;margin-bottom:0.8rem">MDstage darf nicht zur Steuerung von Geräten eingesetzt werden, die Menschen gefährden können. Es ist nicht immer offensichtlich, welche Zustände der Back-Button wiederherstellt. Außerdem kann für eine Fehlerfreiheit der Software nicht garantiert werden.</p>
+            <div id="output-devices-list"></div>
+            <button class="add-device-btn" id="add-output-device-btn">+ Gerät hinzufügen</button>
+
+            <div class="section-title" data-i18n="s.mischpult">Mischpult Fernbedienung</div>
+            <div id="mic-devices-list"></div>
+            <button class="add-device-btn" id="add-mic-device-btn">+ Gerät hinzufügen</button>
         </div>
-    </div>
 
-    <div class="section-title" data-i18n="s.emlight">Notfall-Licht</div>
-    <div class="field">
-        <label style="display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf">
-            <input type="checkbox" id="em-light-enabled" style="width:auto" checked>
-            <span data-i18n="s.emlight.enabled">Notfall-Licht-Button anzeigen</span>
-        </label>
-    </div>
-    <div class="field">
-        <label data-i18n="s.emlight.device">Gerät (MIDI/OSC)</label>
-        <select id="em-light-device"></select>
-    </div>
-    <div id="em-light-midi-panel" style="display:none"></div>
-    <div id="em-light-osc-panel" style="display:none"></div>
+        <!-- ── Live ───────────────────────────────────────────────── -->
+        <div id="tab-live" class="tab-panel">
+            <div class="section-title" data-i18n="s.midi.live">Live-Tasten (MIDI-Eingang)</div>
+            <div class="field">
+                <label data-i18n="s.midi.live.device">Eingangs-Gerät (Go / Back)</label>
+                <select id="live-input-device">
+                    <option value="" data-i18n="s.midi.live.device.all">— alle Geräte —</option>
+                </select>
+            </div>
+            <div class="field">
+                <label data-i18n="s.midi.go">Go</label>
+                <div class="midi-learn-row">
+                    <span id="go-midi-label">— nicht belegt —</span>
+                    <button class="btn" id="go-learn-btn" data-i18n="s.midi.learn">Lernen</button>
+                    <button class="btn" id="go-clear-btn">✕</button>
+                </div>
+            </div>
+            <div class="field">
+                <label data-i18n="s.midi.back">Back</label>
+                <div class="midi-learn-row">
+                    <span id="back-midi-label">— nicht belegt —</span>
+                    <button class="btn" id="back-learn-btn" data-i18n="s.midi.learn">Lernen</button>
+                    <button class="btn" id="back-clear-btn">✕</button>
+                </div>
+            </div>
 
-    <div class="section-title" data-i18n="s.display">Anzeige</div>
-    <div class="field">
-        <label style="display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf">
-            <input type="checkbox" id="mic-group-display" style="width:auto" checked>
-            <span data-i18n="s.mic.grouped">Mikrofone in Gruppen bündeln</span>
-        </label>
-    </div>
-    <div class="field">
-        <label style="display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf">
-            <input type="checkbox" id="open-locked" style="width:auto">
-            <span data-i18n="s.open.locked">Gesperrt öffnen</span>
-        </label>
-    </div>
+            <div class="section-title" data-i18n="s.emlight">Notfall-Licht</div>
+            <div class="field">
+                <label style="display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf">
+                    <input type="checkbox" id="em-light-enabled" style="width:auto" checked>
+                    <span data-i18n="s.emlight.enabled">Notfall-Licht-Button anzeigen</span>
+                </label>
+            </div>
+            <div class="field">
+                <label data-i18n="s.emlight.device">Gerät (MIDI/OSC)</label>
+                <select id="em-light-device"></select>
+            </div>
+            <div id="em-light-midi-panel" style="display:none"></div>
+            <div id="em-light-osc-panel" style="display:none"></div>
+        </div>
 
-    <div class="section-title" data-i18n="s.lang">Sprache</div>
-    <div class="field">
-        <select id="app-language">
-            <option value="de">Deutsch</option>
-            <option value="en">English</option>
-        </select>
-    </div>
+        <!-- ── Allgemein ──────────────────────────────────────────── -->
+        <div id="tab-allgemein" class="tab-panel">
+            <div class="section-title" data-i18n="s.display">Anzeige</div>
+            <div class="field">
+                <label style="display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf">
+                    <input type="checkbox" id="mic-group-display" style="width:auto" checked>
+                    <span data-i18n="s.mic.grouped">Mikrofone in Gruppen bündeln</span>
+                </label>
+            </div>
+            <div class="field">
+                <label style="display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf">
+                    <input type="checkbox" id="open-locked" style="width:auto">
+                    <span data-i18n="s.open.locked">Gesperrt öffnen</span>
+                </label>
+            </div>
+            <div class="field">
+                <label style="display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf">
+                    <input type="checkbox" id="show-md-line-numbers" style="width:auto">
+                    <span data-i18n="s.show.md.lines">Markdown-Zeilennummern anzeigen</span>
+                </label>
+            </div>
 
-    <div class="section-title" data-i18n="s.editor">Text-Editor</div>
-    <div class="field">
-        <label data-i18n="s.editor.app">In Editor öffnen (Rechtsklick)</label>
-        <select id="editor-app">
-            <option value="" data-i18n="s.editor.app.none">— deaktiviert —</option>
-            <option value="vscode">VS Code</option>
-            <option value="zed">Zed</option>
-        </select>
-    </div>
+            <div class="section-title" data-i18n="s.lang">Sprache</div>
+            <div class="field">
+                <select id="app-language">
+                    <option value="de">Deutsch</option>
+                    <option value="en">English</option>
+                </select>
+            </div>
+
+            <div class="section-title" data-i18n="s.editor">Text-Editor</div>
+            <div class="field">
+                <label data-i18n="s.editor.app">In Editor öffnen (Rechtsklick)</label>
+                <select id="editor-app">
+                    <option value="" data-i18n="s.editor.app.none">— deaktiviert —</option>
+                    <option value="vscode">VS Code</option>
+                    <option value="zed">Zed</option>
+                </select>
+            </div>
+        </div>
+
+    </div><!-- .tab-panels -->
 
     <div class="actions">
         <button class="btn" id="cancel" data-i18n="s.cancel">Abbrechen</button>
         <button class="btn btn-primary" id="save" data-i18n="s.save">Speichern</button>
     </div>
+
     <script src="settings.js"></script>
 </body>
 </html>
