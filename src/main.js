@@ -5962,7 +5962,7 @@ function buildTrigger(codeblockYaml, index) {
             getActiveSourceInfo: () => ({ src: activeSource, startedAt: activeSourceStartedAt, startOffset: activeSourceStartOffset }),
             // True as long as the AudioBufferSourceNode is running, even if WaveSurfer's
             // media element isn't playing yet (e.g. during the adoption cursor-sync gap).
-            isAudioActive: () => !visuallyDone && (activeSource !== null || ws.isPlaying()),
+            isAudioActive: () => !visuallyDone && (activeSource !== null || ws.isPlaying() || (triggerSeqSlots.get(index)?.idx ?? 0) > 0),
             // Returns playback position from AudioContext arithmetic when mainAudioEl lags.
             getPlaybackTime: () => {
                 if (activeSource && activeSourceStartedAt !== null && sharedAudioCtx)
@@ -8008,13 +8008,13 @@ function triggerAction(cue) {
             setOutroPendingIndicator(cue, false)
         } else {
             // Record how much loop time remains right now (= full bar duration)
-            const lmp = loopTa.mp
-            const lStart = lmp?.start ?? 0
-            const lEnd   = lmp?.end ?? loopTa.ws.getDuration() ?? 0
-            const range  = lEnd - lStart
-            const ct     = loopTa.mainAudioEl?.currentTime ?? 0
-            const pos    = range > 0 ? ((ct - lStart) % range + range) % range : 0
-            loopOutroInitialRemaining.set(i, Math.max(0, range - pos))
+            const _armInfo = getLoopSlotInfo(i)
+            if (_armInfo) {
+                const { loopStart: lStart, loopEnd: lEnd, currentTime: ct } = _armInfo
+                const range = lEnd - lStart
+                const pos   = range > 0 ? ((ct - lStart) % range + range) % range : 0
+                loopOutroInitialRemaining.set(i, Math.max(0, range - pos))
+            }
             loopOutroPending.set(i, cue)
             setOutroPendingIndicator(cue, true)
             loopTa.armOutroTimer?.()
@@ -8106,6 +8106,38 @@ function applyRoleColorsToHtml(html) {
     return div.innerHTML
 }
 
+// Returns { currentTime, loopStart, loopEnd } for the active slot of a loop cue.
+// For seq-loops with a non-primary slot playing, derives position from AudioContext arithmetic.
+// loopEnd = fading_point when set, so progress bars cycle start→fading_point.
+function getLoopSlotInfo(loopIdx) {
+    const loopTa  = triggerAudio.get(loopIdx)
+    if (!loopTa) return null
+    const seqData = triggerSeqSlots.get(loopIdx)
+    const slotIdx = seqData?.idx ?? 0
+
+    if (seqData && slotIdx > 0) {
+        const slot = seqData.slots[slotIdx]
+        const { startedAt, startOffset } = slot.getActiveSourceInfo()
+        const ct = (startedAt !== null && sharedAudioCtx)
+            ? startOffset + (sharedAudioCtx.currentTime - startedAt)
+            : (slot.mp.start ?? 0)
+        const fp = slot.mp.fading_point ?? 0
+        return {
+            currentTime: Math.max(0, ct),
+            loopStart:   slot.mp.start ?? 0,
+            loopEnd:     fp > 0 ? fp : (slot.mp.end ?? (slot.decodedBuffer?.duration ?? 0)),
+        }
+    }
+
+    const lmp = loopTa.mp
+    const fp  = lmp?.fading_point ?? 0
+    return {
+        currentTime: loopTa.getPlaybackTime?.() ?? (loopTa.mainAudioEl?.currentTime ?? 0),
+        loopStart:   lmp?.start ?? 0,
+        loopEnd:     fp > 0 ? fp : (lmp?.end ?? (loopTa.ws.getDuration() ?? 0)),
+    }
+}
+
 function broadcastLiveState() {
     if (!window.electronAPI?.sendLiveState) return
 
@@ -8165,15 +8197,11 @@ function broadcastLiveState() {
             let outroPending = null
             for (const [loopIdx, outroIdx] of loopOutroPending) {
                 if (outroIdx === cueIdx) {
-                    const loopTa = triggerAudio.get(loopIdx)
-                    if (loopTa) {
-                        const lmp = loopTa.mp
-                        const lStart = lmp?.start ?? 0
-                        const lEnd   = lmp?.end ?? loopTa.ws.getDuration() ?? 0
-                        const range  = lEnd - lStart
-                        const ct     = loopTa.mainAudioEl?.currentTime ?? 0
-                        const pos    = range > 0 ? ((ct - lStart) % range + range) % range : 0
-                        // remaining = time left in current iteration when bar was last sampled
+                    const slotInfo = getLoopSlotInfo(loopIdx)
+                    if (slotInfo) {
+                        const { loopStart: lStart, loopEnd: lEnd, currentTime: ct } = slotInfo
+                        const range = lEnd - lStart
+                        const pos   = range > 0 ? ((ct - lStart) % range + range) % range : 0
                         outroPending = { remaining: Math.max(0, range - pos), initialRemaining: loopOutroInitialRemaining.get(loopIdx) ?? range }
                     }
                     break
@@ -8283,20 +8311,18 @@ function broadcastLiveState() {
         if (!ta.isAudioActive?.()) continue
         const ty = triggerYamls[cueIdx]
         const { mp } = ta
-        const totalDuration = ta.ws.getDuration() ?? 0
-        const loopStart = mp?.start ?? 0
-        const loopEnd   = mp?.end   ?? totalDuration
-        const isLoop    = !!(ty?.loop_outro || mp?.loop)
+        const seqData  = triggerSeqSlots.get(cueIdx)
+        const slotInfo = getLoopSlotInfo(cueIdx)
+        const isLoop   = !!(ty?.loop_outro || mp?.loop || (seqData?.total > 1))
         const tailInfo = ta.getTailInfo?.()
         audioProgress.push({
             cueIdx,
             label: (typeof ty?.music === 'string' ? ty.music : ty?.music?.file) || ('Cue ' + cueIdx),
-            currentTime: ta.getPlaybackTime?.() ?? (ta.mainAudioEl?.currentTime ?? 0),
-            loopStart,
-            loopEnd,
+            currentTime: slotInfo?.currentTime ?? (ta.getPlaybackTime?.() ?? (ta.mainAudioEl?.currentTime ?? 0)),
+            loopStart:   slotInfo?.loopStart   ?? (mp?.start ?? 0),
+            loopEnd:     slotInfo?.loopEnd      ?? (mp?.end   ?? (ta.ws.getDuration() ?? 0)),
             isLoop,
             volume: ta.getCurrentVolume?.() ?? (mp?.volume ?? 0.8),
-            fadingPoint: mp?.fading_point ?? 0,
             tailRemaining: tailInfo?.active ? tailInfo.remaining : null,
         })
     }
