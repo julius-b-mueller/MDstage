@@ -19,6 +19,12 @@ const slfGripUpdaters = new Map()   // triggerIdx → updateSlfGrips fn
 // loopVirtualStartTime: AudioContext time at which the loop was at position mp.start
 const loopGroups = new Map()
 
+// Multi-file SLF Loop sequence state
+// index → { idx: 0, total: N, slots: [null, slot1, slot2, ...], fireNext: fn|null, boundaryTimer: null, transitionInProgress: false }
+// slots[0] = null (primary slot, handled by buildTrigger closure vars)
+// slots[1..N] = objects returned by buildSeqSlot()
+const triggerSeqSlots = new Map()
+
 // triggerIndex -> { ws, mainAudioEl, monitorFile, musicFile, overlay, getX, autoMarkerState }
 const triggerAudio = new Map()
 // musicFile → { playbackGain, activeSource, startedAt, startOffset, decodedBuffer, volume }
@@ -34,7 +40,7 @@ const CONFIG_BLOCK_KEYS = new Set([
 ])
 const TRIGGER_BLOCK_KEYS = new Set([
     'sibling', 'trigger_note', 'note', 'auto_mic', 'mic',
-    'music', 'osc', 'osc_arg', 'osc_arg_type',
+    'music', 'music_seq', 'osc', 'osc_arg', 'osc_arg_type',
     'qlcplus', 'projection', 'start_tc',
     'auto_trigger', 'chain_end', 'loop_outro',
     'cue_midi', 'cue_osc',
@@ -111,6 +117,17 @@ let editorApp = null
 let audioBasePath = 'audio/'
 let sharedAudioCtx = null
 
+// Prevent path traversal from user-supplied YAML filenames (e.g. ../../etc/passwd).
+// Preserves legitimate subdirectory paths like "subfolder/song.mp3".
+function sanitizeAudioPath(filename) {
+    if (typeof filename !== 'string' || !filename) return null
+    return filename
+        .replace(/\0/g, '')
+        .split(/[\\/]/)
+        .filter(seg => seg !== '..' && seg !== '.' && seg !== '')
+        .join('/')
+}
+
 function getAudioCtx() {
     if (!sharedAudioCtx) sharedAudioCtx = new AudioContext()
     if (sharedAudioCtx.state === 'suspended') sharedAudioCtx.resume().catch(() => {})
@@ -177,10 +194,35 @@ async function preDecodeForGapless(targetIdx) {
         }
         ta.decodedBuffer = mergeToMultichannel(mainBuf, monBuf)
         tryBuildLoopGroups()
+        preDecodeSeqSlots(targetIdx)
     } catch (e) {
         console.warn('[gapless] pre-decode failed:', e)
     } finally {
         ta._decoding = false
+    }
+}
+
+async function preDecodeSeqSlots(targetIdx) {
+    const seqData = triggerSeqSlots.get(targetIdx)
+    if (!seqData) return
+    const ctx = getAudioCtx()
+    for (let i = 1; i < seqData.total; i++) {
+        const slot = seqData.slots[i]
+        if (!slot || slot.decodedBuffer || slot._decoding) continue
+        slot._decoding = true
+        try {
+            const mainAb  = await (await fetch(audioBasePath + slot.musicFile)).arrayBuffer()
+            const mainBuf = await ctx.decodeAudioData(mainAb)
+            let monBuf = null
+            if (slot.monitorFile) {
+                try {
+                    const monAb = await (await fetch(audioBasePath + slot.monitorFile)).arrayBuffer()
+                    monBuf = await ctx.decodeAudioData(monAb)
+                } catch (e) { console.warn('[seq] monitor decode failed slot', i, e) }
+            }
+            slot.decodedBuffer = mergeToMultichannel(mainBuf, monBuf)
+        } catch (e) { console.warn('[seq] decode failed slot', i, e) }
+        finally { slot._decoding = false }
     }
 }
 
@@ -195,6 +237,171 @@ function tryBuildLoopGroups() {
         loopGroups.set(i, { outroIdx, loopVirtualStartTime: null })
         console.log('[loopGroup] registered', i, '→', outroIdx)
     }
+}
+
+// Creates a minimal WaveSurfer + audio closure for one additional seq slot.
+// Returns the slot API object that is stored in triggerSeqSlots.get(index).slots[k].
+function buildSeqSlot({ index, seqSlotIdx, musicFile, monitorFile, mp, parentContainer }) {
+    const wrapper = document.createElement('div')
+    wrapper.classList.add('waveform-wrapper', 'seq-slot')
+
+    // Label (1-based slot number)
+    const slotLabel = document.createElement('div')
+    slotLabel.className = 'seq-slot-label'
+    slotLabel.textContent = String(seqSlotIdx + 1)
+    wrapper.appendChild(slotLabel)
+
+    const waveformContainer = document.createElement('div')
+    waveformContainer.classList.add('waveform-container')
+    wrapper.appendChild(waveformContainer)
+
+    // Outro marker overlay
+    const overlay = document.createElement('div')
+    overlay.classList.add('waveform-overlay')
+    waveformContainer.appendChild(overlay)
+    const outroBar = document.createElement('div')
+    outroBar.className = 'ws-bar ws-bar-outro'
+    overlay.appendChild(outroBar)
+
+    parentContainer.appendChild(wrapper)
+
+    // Cursor media element (silenced — audio comes from AudioBufferSourceNode)
+    const seqAudioEl = new Audio()
+    if (mainAudioDevice) seqAudioEl.setSinkId(mainAudioDevice).catch(() => {})
+
+    const ws = WaveSurfer.create({
+        container: waveformContainer,
+        media: seqAudioEl,
+        waveColor: '#4b5263', progressColor: '#61afef', cursorColor: '#e5c07b',
+        height: 64, interact: false, normalize: true, minPxPerSec: 20,
+    })
+    ws.load(audioBasePath + musicFile)
+    ws.setVolume(mp.volume ?? 0.8)
+
+    // Silence the media element via AudioContext, create own playback gain
+    let seqPlaybackGain = null
+    try {
+        const ctx = getAudioCtx()
+        const mediaSource = ctx.createMediaElementSource(seqAudioEl)
+        const muteGain = ctx.createGain()
+        muteGain.gain.value = 0
+        mediaSource.connect(muteGain)
+        muteGain.connect(ctx.destination)
+        seqPlaybackGain = ctx.createGain()
+        seqPlaybackGain.gain.value = mp.volume ?? 0.8
+        seqPlaybackGain.connect(ctx.destination)
+    } catch (e) { console.warn('[seq] audio setup failed slot', seqSlotIdx, e) }
+
+    // Update outro bar on waveform ready
+    ws.on('ready', () => {
+        const dur = ws.getDuration()
+        if (!dur) return
+        const effEnd = mp.end ?? dur
+        if (mp.fading_point > 0 && effEnd > mp.fading_point) {
+            const markerPos = mp.fading_point
+            outroBar.style.left = (markerPos / dur * 100) + '%'
+            outroBar.style.display = 'block'
+        } else {
+            outroBar.style.display = 'none'
+        }
+    })
+
+    // Audio state
+    let slotSrc = null
+    let slotStartedAt = null
+    let slotStartOffset = null
+
+    const slot = {
+        ws,
+        mp,
+        musicFile,
+        monitorFile: monitorFile ?? null,
+        decodedBuffer: null,
+        _decoding: false,
+
+        getActiveSourceInfo() {
+            return { src: slotSrc, startedAt: slotStartedAt, startOffset: slotStartOffset }
+        },
+
+        startGaplessSource(offset, when) {
+            const ctx = sharedAudioCtx
+            if (!ctx || !this.decodedBuffer || !seqPlaybackGain) return false
+            if (slotSrc) { try { slotSrc.stop() } catch {} ; slotSrc = null }
+            const src = ctx.createBufferSource()
+            src.buffer = this.decodedBuffer
+            src.loop = false
+            src.connect(seqPlaybackGain)
+            const safeOff = Math.max(0, offset)
+            src.start(when, safeOff)
+            slotSrc = src
+            slotStartedAt   = when
+            slotStartOffset = safeOff
+            src.addEventListener('ended', () => { if (slotSrc === src) slotSrc = null })
+            return true
+        },
+
+        startCursor(offset, delayMs) {
+            setTimeout(() => {
+                seqAudioEl.currentTime = Math.max(0, offset)
+                seqAudioEl.play().catch(() => {})
+            }, Math.max(0, delayMs))
+        },
+
+        pauseCursor() {
+            seqAudioEl.pause()
+        },
+
+        resetCursor() {
+            seqAudioEl.currentTime = mp.start ?? 0
+        },
+
+        setActive(active) {
+            wrapper.classList.toggle('seq-slot-active', active)
+        },
+
+        stopSourceAt(when) {
+            if (slotSrc) {
+                try { if (when != null) slotSrc.stop(when); else slotSrc.stop() } catch {}
+                slotSrc = null
+            }
+        },
+
+        startTailCursor(effTrans, outroLen) {
+            const dur = ws.getDuration()
+            if (!dur || outroLen <= 0) return
+            const tw = ws.getWrapper()?.clientWidth ?? waveformContainer.clientWidth
+            const getX_s = (t) => tw > 0 ? (t / dur) * tw - ws.getScroll() : 0
+            const tailCurEl = document.createElement('div')
+            tailCurEl.classList.add('ws-tail-cursor')
+            tailCurEl.style.left = getX_s(effTrans) + 'px'
+            overlay.appendChild(tailCurEl)
+            slot._activeTailCurEl = tailCurEl
+            requestAnimationFrame(() => { requestAnimationFrame(() => {
+                tailCurEl.style.transitionDuration = outroLen + 's'
+                tailCurEl.style.left = getX_s(effTrans + outroLen) + 'px'
+            }) })
+            setTimeout(() => { if (slot._activeTailCurEl === tailCurEl) slot._activeTailCurEl = null; tailCurEl.remove() }, outroLen * 1000 + 150)
+        },
+
+        clearTailCursor() {
+            if (slot._activeTailCurEl) { slot._activeTailCurEl.remove(); slot._activeTailCurEl = null }
+        },
+
+        fadeOut(durationSec) {
+            const ctx = sharedAudioCtx
+            if (!ctx || !seqPlaybackGain) return
+            seqPlaybackGain.gain.cancelScheduledValues(ctx.currentTime)
+            seqPlaybackGain.gain.setValueAtTime(seqPlaybackGain.gain.value, ctx.currentTime)
+            seqPlaybackGain.gain.linearRampToValueAtTime(0, ctx.currentTime + durationSec)
+        },
+    }
+
+    // Prevent ws.on("play") from causing issues — source is managed externally
+    ws.on('play', () => {
+        if (slotSrc) return  // source already started by seq transition
+    })
+
+    return slot
 }
 
 function resolveDeviceId(label) {
@@ -2987,6 +3194,16 @@ function rerender(newText) {
     for (const { ws } of triggerAudio.values()) {
         try { ws.destroy() } catch (e) {}
     }
+    for (const seqData of triggerSeqSlots.values()) {
+        clearTimeout(seqData.boundaryTimer)
+        for (const slot of seqData.slots) {
+            if (!slot) continue
+            try { slot.ws?.destroy() } catch {}
+            const info = slot.getActiveSourceInfo?.()
+            if (info?.src) try { info.src.stop() } catch {}
+        }
+    }
+    triggerSeqSlots.clear()
 
     triggers = []
     triggerYamls = []
@@ -3054,12 +3271,32 @@ function validateCueFields(y, blockNum, lineNum) {
     }
 
     if (y.music && typeof y.music === 'object') {
-        const { volume, start, end, fadein, fadeout } = y.music
+        const { volume, start, end, fadein, fadeout, fading_point } = y.music
         if (volume != null && (typeof volume !== 'number' || !isFinite(volume) || volume < 0 || volume > 1))
             parseErrors.push({ blockNum, line: lineNum, message: `music.volume ungültig: ${volume} (erwartet 0.0–1.0)` })
-        for (const [k, v] of [['start', start], ['end', end], ['fadein', fadein], ['fadeout', fadeout]]) {
+        for (const [k, v] of [['start', start], ['end', end], ['fadein', fadein], ['fadeout', fadeout], ['fading_point', fading_point]]) {
             if (v != null && (typeof v !== 'number' || !isFinite(v) || v < 0))
                 parseErrors.push({ blockNum, line: lineNum, message: `music.${k} ungültig: ${v} (nicht-negative Zahl erwartet)` })
+        }
+    }
+
+    if (y.music_seq != null) {
+        if (!Array.isArray(y.music_seq)) {
+            parseErrors.push({ blockNum, line: lineNum, message: 'music_seq muss eine Liste sein' })
+        } else {
+            y.music_seq.forEach((item, i) => {
+                if (!item || typeof item !== 'object' || typeof item.file !== 'string' || !item.file)
+                    parseErrors.push({ blockNum, line: lineNum, message: `music_seq[${i}]: 'file' (String) fehlt` })
+                else {
+                    const { volume, start, end, fadein, fadeout, fading_point } = item
+                    if (volume != null && (typeof volume !== 'number' || !isFinite(volume) || volume < 0 || volume > 1))
+                        parseErrors.push({ blockNum, line: lineNum, message: `music_seq[${i}].volume ungültig: ${volume}` })
+                    for (const [k, v] of [['start', start], ['end', end], ['fadein', fadein], ['fadeout', fadeout], ['fading_point', fading_point]]) {
+                        if (v != null && (typeof v !== 'number' || !isFinite(v) || v < 0))
+                            parseErrors.push({ blockNum, line: lineNum, message: `music_seq[${i}].${k} ungültig: ${v}` })
+                    }
+                }
+            })
         }
     }
 
@@ -3678,9 +3915,10 @@ function updateMusicPropsInScript(triggerIndex, mp) {
         if (mp.volume  != null)    lines.push('    volume: '  + fmt(mp.volume))
         if (mp.start   > 0)        lines.push('    start: '   + fmt(mp.start))
         if (mp.end     != null)    lines.push('    end: '     + fmt(mp.end))
-        if (mp.fadein  > 0)        lines.push('    fadein: '  + fmt(mp.fadein))
-        if (mp.fadeout > 0)        lines.push('    fadeout: ' + fmt(mp.fadeout))
+        if (mp.fadein     > 0)     lines.push('    fadein: '    + fmt(mp.fadein))
+        if (mp.fadeout    > 0)     lines.push('    fadeout: '   + fmt(mp.fadeout))
         if (mp.loop)               lines.push('    loop: true')
+        if (mp.fading_point  > 0)     lines.push('    fading_point: ' + fmt(mp.fading_point))
 
         // Replace the entire music: block (all consecutively indented lines)
         c = c.replace(/^music:(?:\n    [^\n]*)*/m, 'music:\n' + lines.join('\n'))
@@ -4252,9 +4490,11 @@ function buildTrigger(codeblockYaml, index) {
     // Derived TC badge for non-root SLF members: filled in after triggerYamls[index] is set below
 
     // ── waveform (only when a music file is set) ─────────────────────────
-    const musicFile = codeblockYaml.music
-        ? (typeof codeblockYaml.music === "string" ? codeblockYaml.music : codeblockYaml.music.file)
-        : null
+    const musicFile = sanitizeAudioPath(
+        codeblockYaml.music
+            ? (typeof codeblockYaml.music === "string" ? codeblockYaml.music : codeblockYaml.music.file)
+            : null
+    )
 
     if (musicFile) {
         const waveformWrapper = document.createElement("div")
@@ -4269,12 +4509,13 @@ function buildTrigger(codeblockYaml, index) {
         // Music properties (start/end/fade/loop/volume)
         const musicObj = typeof codeblockYaml.music === 'object' ? codeblockYaml.music : {}
         const mp = {
-            volume:  musicObj.volume  ?? 0.8,
-            start:   musicObj.start   ?? 0,
-            end:     musicObj.end     ?? null,
-            fadein:  musicObj.fadein  ?? 0,
-            fadeout: musicObj.fadeout ?? 0,
-            loop:    !!musicObj.loop,
+            volume:    musicObj.volume    ?? 0.8,
+            start:     musicObj.start     ?? 0,
+            end:       musicObj.end       ?? null,
+            fadein:    musicObj.fadein    ?? 0,
+            fadeout:   musicObj.fadeout   ?? 0,
+            loop:      !!musicObj.loop,
+            fading_point: musicObj.fading_point ?? 0,
         }
         let currentVolume = mp.volume
         let loopEnabled = mp.loop
@@ -4347,6 +4588,10 @@ function buildTrigger(codeblockYaml, index) {
         let activeSource            = null   // currently playing AudioBufferSourceNode
         let activeSourceStartedAt   = null   // AudioContext time when source was started
         let activeSourceStartOffset = null   // buffer offset (seconds) where source began
+        let activeTailSrc           = null   // one-shot outro-tail source during loop overlap
+        let activeTailCurEl         = null   // ghost cursor DOM element during loop overlap
+        let tailEndTime             = null   // AudioContext time when the current tail ends
+        let visuallyDone            = false  // hide from live-view bar after loop→finish handoff
         let suppressSeekRestart  = false
         let suppressPauseStop    = false  // prevents ws.on("pause") from killing a group source
         let forceFullBuffer      = false  // play button: ignore trim region, use full buffer
@@ -4384,6 +4629,7 @@ function buildTrigger(codeblockYaml, index) {
         }
 
         function startSource(offset, when) {
+            visuallyDone = false
             const ta_ = triggerAudio.get(index)
             if (!sharedAudioCtx || !playbackGain) {
                 if (mainAudioCtxGain) mainAudioCtxGain.gain.value = 1
@@ -4417,7 +4663,8 @@ function buildTrigger(codeblockYaml, index) {
                 src.buffer        = loopBuf
                 src.loop          = true
                 src.loopStart     = 0
-                src.loopEnd       = loopBuf.duration
+                // fading_point is the absolute clip position of the loop boundary; tail plays on last pass
+                src.loopEnd       = (mp.fading_point ?? 0) > 0 ? (mp.fading_point ?? 0) - regionStart : loopBuf.duration
                 src.connect(playbackGain)
                 const regionOff = Math.max(0, Math.min(offset - regionStart, loopBuf.duration))
                 src.start(when, regionOff)
@@ -4437,7 +4684,7 @@ function buildTrigger(codeblockYaml, index) {
                     src.buffer     = loopBuf
                     src.loop       = true
                     src.loopStart  = 0
-                    src.loopEnd    = loopBuf.duration
+                    src.loopEnd    = (mp.fading_point ?? 0) > 0 ? (mp.fading_point ?? 0) - regionStart : loopBuf.duration
                     src.connect(playbackGain)
                     const regionOff = Math.max(0, Math.min(safeOffset - regionStart, loopBuf.duration))
                     src.start(when, regionOff)
@@ -4451,7 +4698,7 @@ function buildTrigger(codeblockYaml, index) {
                     if (isLoopTrigger) {
                         src.loop      = true
                         src.loopStart = regionStart
-                        src.loopEnd   = mp.end ?? ta_.decodedBuffer.duration
+                        src.loopEnd   = (mp.fading_point ?? 0) > 0 ? (mp.fading_point ?? 0) : (mp.end ?? ta_.decodedBuffer.duration)
                     }
                     src.connect(playbackGain)
                     src.start(when, safeOffset)
@@ -4476,6 +4723,10 @@ function buildTrigger(codeblockYaml, index) {
             const ta_ = triggerAudio.get(index)
             if (!activeSource && ta_?.forceStop) {
                 ta_.forceStop(when); ta_.forceStop = null; ta_.playbackGainOverride = null; return
+            }
+            if (activeTailSrc) {
+                const ts = activeTailSrc; activeTailSrc = null
+                try { ts.stop(when ?? sharedAudioCtx?.currentTime ?? 0) } catch (_) {}
             }
             if (!activeSource) return
             const src = activeSource
@@ -4509,11 +4760,20 @@ function buildTrigger(codeblockYaml, index) {
         const mkGrip = (p, s) => { const g = document.createElement("div"); g.classList.add("ws-grip", "ws-grip-" + p, "ws-grip-" + s); return g }
         const startBar     = mkBar("start")
         const endBar       = mkBar("end")
+        const outroBar     = mkBar("outro")
         const startBotGrip = mkGrip("bot", "start")
         const startTopGrip = mkGrip("top", "start")
         const endBotGrip   = mkGrip("bot", "end")
         const endTopGrip   = mkGrip("top", "end")
-        overlay.append(preRegion, postRegion, fadeinReg, fadeoutReg, startBar, endBar, startBotGrip, startTopGrip, endBotGrip, endTopGrip)
+        overlay.append(preRegion, postRegion, fadeinReg, fadeoutReg, startBar, endBar, outroBar, startBotGrip, startTopGrip, endBotGrip, endTopGrip)
+        // Disable In/Out/Fadein/Fadeout grips for cues that use multiple loop files or fading_point.
+        const _isComplexLoop = mp.fading_point > 0
+            || (Array.isArray(codeblockYaml.music_seq) && codeblockYaml.music_seq.length > 0)
+        if (_isComplexLoop) {
+            for (const g of [startBotGrip, startTopGrip, endBotGrip, endTopGrip]) g.style.display = 'none'
+            fadeinReg.style.display = 'none'
+            fadeoutReg.style.display = 'none'
+        }
 
         function updateMarkers() {
             const dur = ws.getDuration()
@@ -4534,6 +4794,9 @@ function buildTrigger(codeblockYaml, index) {
             fadeoutReg.style.width  = Math.max(0, ex - fox) + "px"
             startBar.style.left     = sx  + "px"
             endBar.style.left       = ex  + "px"
+            const outroX = mp.fading_point > 0 ? px(mp.fading_point) : null
+            outroBar.style.left    = outroX !== null ? outroX + "px" : "0"
+            outroBar.style.display = outroX !== null ? "block" : "none"
             startBotGrip.style.left = sx  + "px"
             startTopGrip.style.left = fix + "px"
             endBotGrip.style.left   = ex  + "px"
@@ -4676,10 +4939,13 @@ function buildTrigger(codeblockYaml, index) {
 
             if (isGroupOutro && ctx && activeSource) {
                 // ── Sample-accurate Loop→Outro transition ──────────────────────────────
-                const ta_  = triggerAudio.get(index)
-                const sr   = ctx.sampleRate
-                const loopStartSec     = mp.start ?? 0
-                const loopEndSec       = mp.end ?? (ta_?.decodedBuffer?.duration ?? ws.getDuration())
+                const ta_       = triggerAudio.get(index)
+                const sr        = ctx.sampleRate
+                const outroAt   = mp.fading_point ?? 0
+                const loopStartSec = mp.start ?? 0
+                const clipEnd   = mp.end ?? (ta_?.decodedBuffer?.duration ?? ws.getDuration())
+                const loopEndSec = outroAt > 0 ? outroAt : clipEnd
+                const tailLen   = outroAt > 0 ? clipEnd - outroAt : 0
                 // Use Math.round(x*sr) for each endpoint separately — matches how browsers
                 // quantise loopStart/loopEnd to sample frames internally.
                 const loopEndSamples   = Math.round(loopEndSec * sr)
@@ -4699,60 +4965,103 @@ function buildTrigger(codeblockYaml, index) {
                 }
                 const msToTransition = Math.max(0, transitionTime - ctx.currentTime) * 1000
 
-                // ① Stop loop source at exact loop boundary
-                stopSource(transitionTime)
+                if (outroAt > 0) {
+                    // ① fading_point: disable looping so the source plays the decay tail naturally
+                    if (activeSource) activeSource.loop = false
+                } else {
+                    // ① No tail: stop loop source at the exact musical boundary
+                    stopSource(transitionTime)
 
-                // ② Stop cursor shortly before the audio boundary — avoids a visible cursor
-                // freeze when the timer fires well before the boundary (increased lead time).
-                // gaplessActive (set below) protects against spurious "finish" events meanwhile.
+                    // ② Stop cursor shortly before the audio boundary
+                    setTimeout(() => {
+                        suppressPauseStop = true
+                        mainAudioEl.loop = false
+                        mainAudioEl.pause()
+                        setTimeout(() => { suppressPauseStop = false }, 0)
+                    }, Math.max(0, msToTransition - 15))
+                }
+
+                // ③ Start outro audio source at the musical boundary
+                const nextPg = nextTa.getPlaybackGain?.()
+                cancelWsFade(nextTa.ws)
+                nextTa.setCurrentVolume(vol)
+                if (nextPg) nextPg.gain.value = fadein > 0 ? 0 : vol
+                nextTa.startGaplessSource(ns, transitionTime)
+
+                // ④ At the musical boundary: stop Loop cursor, show ghost cursor for the tail,
+                //    start Finish cursor immediately. Cleanup cursor state after the tail.
+                const tailMs = tailLen * 1000
+                gaplessActive = true
+                setTimeout(() => {
+                    visuallyDone = true  // hide loop bar immediately as finish takes over
+                    if (outroAt > 0) {
+                        // Stop the Loop cursor immediately; the audio tail continues playing.
+                        suppressPauseStop = true
+                        mainAudioEl.loop = false
+                        mainAudioEl.pause()
+                        setTimeout(() => { suppressPauseStop = false }, 0)
+                        // Ghost cursor slides from outro point to end over tailLen seconds
+                        const _dur = ws.getDuration()
+                        if (_dur > 0) {
+                            if (activeTailCurEl) { activeTailCurEl.remove(); activeTailCurEl = null }
+                            const tailCurEl = document.createElement('div')
+                            tailCurEl.classList.add('ws-tail-cursor')
+                            tailCurEl.style.left = getX(loopEndSec) + 'px'
+                            overlay.appendChild(tailCurEl)
+                            activeTailCurEl = tailCurEl
+                            requestAnimationFrame(() => { requestAnimationFrame(() => {
+                                tailCurEl.style.transitionDuration = tailLen + 's'
+                                tailCurEl.style.left = getX(effEnd) + 'px'
+                            }) })
+                            setTimeout(() => { if (activeTailCurEl === tailCurEl) { activeTailCurEl = null } tailCurEl.remove() }, tailLen * 1000 + 150)
+                        }
+                    }
+                    nextTa.startCursor(ns, 0)
+                }, Math.max(0, msToTransition))
                 setTimeout(() => {
                     suppressPauseStop = true
                     mainAudioEl.loop = false
                     mainAudioEl.pause()
                     setTimeout(() => { suppressPauseStop = false }, 0)
-                }, Math.max(0, msToTransition - 15))
-
-                // ③ Start outro audio source at the same instant — pure WebAudio, no media element
-                const nextPg = nextTa.getPlaybackGain?.()
-                cancelWsFade(nextTa.ws)
-                nextTa.setCurrentVolume(vol)
-                if (nextPg) nextPg.gain.value = fadein > 0 ? 0 : vol
-                nextTa.startGaplessSource(ns, transitionTime)
-
-                // ④ Swap cursors: seek loop cursor to start, launch outro cursor
-                gaplessActive = true
-                setTimeout(() => {
                     mainAudioEl.currentTime = mp.start
                     if (mtc && mtc.activeTcIndex === index) mtc.stopAndClear()
                     gaplessActive = false
-                    nextTa.startCursor(ns, 0)
-                }, msToTransition + 10)
+                }, msToTransition + 10 + tailMs)
 
                 _nonAudioActions(nextIdx, nextTa)
 
             } else if (ctx && nextTa.decodedBuffer && nextTa.startGaplessSource) {
                 // ── Pure AudioBufferSourceNode transition (e.g. Intro → Loop) ──────────
+                // With fading_point: transition fires at the absolute fading_point position from clip start.
+                const outroAt2       = mp.fading_point ?? 0
+                const effTransition2 = outroAt2 > 0 ? outroAt2 : effEnd
+                const timeUntilTrans = Math.max(0, effTransition2 - mainAudioEl.currentTime)
                 let transitionTime
                 if (activeSourceStartedAt !== null && activeSourceStartOffset !== null) {
-                    transitionTime = activeSourceStartedAt + (effEnd - activeSourceStartOffset)
+                    transitionTime = activeSourceStartedAt + (effTransition2 - activeSourceStartOffset)
                 } else {
-                    transitionTime = ctx.currentTime + timeUntilEnd
+                    transitionTime = ctx.currentTime + timeUntilTrans
                 }
                 transitionTime = Math.max(ctx.currentTime, transitionTime)
                 const msToTransition = Math.max(0, transitionTime - ctx.currentTime) * 1000
 
-                // ① Stop current source at transitionTime
-                stopSource(transitionTime)
+                // ① Without tail: stop current source at transition; with tail: let it play out
+                if (outroAt2 > 0) {
+                    // current source continues to its natural end (the decay tail)
+                } else {
+                    stopSource(transitionTime)
+                }
                 gaplessActive = true
 
-                // ② Start next audio source at transitionTime
+                // ② Start next audio source at the musical boundary (transition point)
                 const nextPg = nextTa.getPlaybackGain?.()
                 cancelWsFade(nextTa.ws)
                 nextTa.setCurrentVolume(vol)
                 if (nextPg) nextPg.gain.value = fadein > 0 ? 0 : vol
                 nextTa.startGaplessSource(ns, transitionTime)
 
-                // ③ Swap cursors at transition
+                // ③ Swap cursors after the tail finishes (immediately if no tail)
+                const tailMs2 = outroAt2 > 0 ? (effEnd - outroAt2) * 1000 : 0
                 setTimeout(() => {
                     gaplessActive = false
                     suppressPauseStop = true
@@ -4761,7 +5070,7 @@ function buildTrigger(codeblockYaml, index) {
                     if (mtc && mtc.activeTcIndex === index) mtc.stopAndClear()
                     setTimeout(() => { suppressPauseStop = false }, 0)
                     nextTa.startCursor(ns, 0)
-                }, msToTransition + 5)
+                }, msToTransition + 5 + tailMs2)
 
                 _nonAudioActions(nextIdx, nextTa)
 
@@ -4798,6 +5107,87 @@ function buildTrigger(codeblockYaml, index) {
             markTriggers(outroIdx)
             fireGaplessTransition(outroIdx)
         }
+        // Shared helper for loopGroups and loopEnabled restart with fading_point > 0.
+        // Plays the outro tail simultaneously with the new pass (true audio overlap).
+        function _fireLoopOverlap(outroLen_, ctx_, ta_l) {
+            const sr             = ctx_.sampleRate
+            const loopStartSec   = mp.start ?? 0
+            const effTransSec    = (mp.end ?? ta_l.decodedBuffer.duration) - outroLen_
+            const loopEndSamples   = Math.round(effTransSec * sr)
+            const loopStartSamples = Math.round(loopStartSec * sr)
+            const loopDurSamples   = Math.max(1, loopEndSamples - loopStartSamples)
+            const startOffSamples  = Math.round(activeSourceStartOffset * sr)
+            const firstBoundaryTime = activeSourceStartedAt + (loopEndSamples - startOffSamples) / sr
+            const n = Math.max(0, Math.ceil((ctx_.currentTime - firstBoundaryTime) * sr / loopDurSamples))
+            let transitionTime = firstBoundaryTime + n * loopDurSamples / sr
+            if (transitionTime - ctx_.currentTime > (effTransSec - loopStartSec) * 0.5) {
+                transitionTime = ctx_.currentTime
+            }
+            const msToTransition = Math.max(0, transitionTime - ctx_.currentTime) * 1000
+
+            const srcBuf     = activeSource.buffer
+            const tailOffset = (srcBuf === ta_l.decodedBuffer) ? effTransSec : (srcBuf.duration - outroLen_)
+
+            // Stop the looping source at the boundary; play the outro portion as a one-shot
+            // so the tail overlaps with the fresh pass starting from mp.start.
+            stopSource(transitionTime)
+            const tailSrc = ctx_.createBufferSource()
+            tailSrc.buffer = srcBuf
+            tailSrc.connect(playbackGain)
+            tailSrc.start(transitionTime, tailOffset, outroLen_)
+            activeTailSrc = tailSrc
+            tailSrc.addEventListener('ended', () => { if (activeTailSrc === tailSrc) activeTailSrc = null })
+
+            // New loop source starts from mp.start at the same boundary time
+            const newSrc = ctx_.createBufferSource()
+            newSrc.buffer = srcBuf
+            newSrc.loop   = true
+            if (srcBuf === ta_l.decodedBuffer) {
+                newSrc.loopStart = loopStartSec
+                newSrc.loopEnd   = effTransSec
+                newSrc.start(transitionTime, loopStartSec)
+            } else {
+                newSrc.loopStart = 0
+                newSrc.loopEnd   = srcBuf.duration - outroLen_
+                newSrc.start(transitionTime, 0)
+            }
+            newSrc.connect(playbackGain)
+            activeSource            = newSrc
+            activeSourceStartedAt   = transitionTime
+            activeSourceStartOffset = loopStartSec
+            newSrc.addEventListener('ended', () => { if (activeSource === newSrc) activeSource = null })
+            const loopGroup_ = loopGroups.get(index)
+            if (loopGroup_) loopGroup_.loopVirtualStartTime = transitionTime
+
+            // Ghost second playhead: slides from effTransition → mp.end so the overlap is
+            // visually obvious while the main cursor resets to mp.start.
+            const _tailDur = ws.getDuration()
+            if (_tailDur > 0) {
+                if (activeTailCurEl) { activeTailCurEl.remove(); activeTailCurEl = null }
+                const tailCurEl = document.createElement('div')
+                tailCurEl.classList.add('ws-tail-cursor')
+                tailCurEl.style.left = getX(effTransSec) + 'px'
+                overlay.appendChild(tailCurEl)
+                activeTailCurEl = tailCurEl
+                requestAnimationFrame(() => { requestAnimationFrame(() => {
+                    tailCurEl.style.transitionDuration  = outroLen_ + 's'
+                    tailCurEl.style.transitionDelay     = (msToTransition / 1000).toFixed(3) + 's'
+                    tailCurEl.style.left = getX(mp.end ?? _tailDur) + 'px'
+                }) })
+                setTimeout(() => { if (activeTailCurEl === tailCurEl) { activeTailCurEl = null } tailCurEl.remove() }, msToTransition + outroLen_ * 1000 + 150)
+            }
+            tailEndTime = transitionTime + outroLen_
+            setTimeout(() => { if (tailEndTime !== null && sharedAudioCtx && sharedAudioCtx.currentTime >= tailEndTime - 0.1) tailEndTime = null }, msToTransition + outroLen_ * 1000 + 200)
+
+            gaplessActive = true
+            setTimeout(() => {
+                suppressSeekRestart = true
+                mainAudioEl.currentTime = loopStartSec
+                gaplessActive = false
+                setTimeout(() => { suppressSeekRestart = false }, 50)
+            }, msToTransition)
+        }
+
         function fireLoopRestart(effEnd) {
             if (!ws.isPlaying()) return
             // Outro may have been armed after the loop-restart timer was scheduled — fire it now.
@@ -4810,26 +5200,45 @@ function buildTrigger(codeblockYaml, index) {
             preSeekArmed = false
 
             if (loopGroups.has(index)) {
-                // src.loop=true handles audio gaplessly; cursor must be reset here, not in
-                // ws.on("finish"), because mainAudioEl plays past mp.end to the file end which
-                // creates an audible tail before the cursor jumps back.
+                // Multi-file sequence: delegate to fireSeqNext for cross-file gapless transition
+                const seqData_ = triggerSeqSlots.get(index)
+                if (seqData_ && seqData_.total > 1) {
+                    fireSeqNext()
+                    return
+                }
                 if (!activeSource) return  // outro transition killed source — don't touch cursor
-                clearTimeout(loopJumpTimer); loopJumpTimer = null  // cancel any stale timer
-                suppressSeekRestart = true
-                mainAudioEl.currentTime = mp.start
-                setTimeout(() => { suppressSeekRestart = false }, 50)
+                clearTimeout(loopJumpTimer); loopJumpTimer = null
+
+                const _ctx = sharedAudioCtx
+                const _ta  = triggerAudio.get(index)
+                const _outroAt = mp.fading_point ?? 0
+                const _clipEnd = mp.end ?? _ta?.decodedBuffer?.duration ?? ws.getDuration()
+                const _tailLen = _outroAt > 0 ? _clipEnd - _outroAt : 0
+                if (_outroAt > 0 && _ctx && _ta?.decodedBuffer && playbackGain) {
+                    _fireLoopOverlap(_tailLen, _ctx, _ta)
+                } else {
+                    suppressSeekRestart = true
+                    mainAudioEl.currentTime = mp.start
+                    setTimeout(() => { suppressSeekRestart = false }, 50)
+                }
                 return
             }
             if (activeSource && loopEnabled) {
-                // AudioBufferSourceNode loops the region sample-accurately via src.loop.
-                // Reset the media-element cursor to mp.start so the fadein/fadeout envelope
-                // stays in sync, and clear preSeekArmed so the pre-boundary timer is
-                // re-scheduled for the next iteration (without this it only fires once).
                 preSeekArmed = false
                 clearTimeout(loopJumpTimer); loopJumpTimer = null
-                suppressSeekRestart = true
-                mainAudioEl.currentTime = mp.start
-                setTimeout(() => { suppressSeekRestart = false }, 50)
+
+                const _ctx = sharedAudioCtx
+                const _ta  = triggerAudio.get(index)
+                const _outroAt = mp.fading_point ?? 0
+                const _clipEnd = mp.end ?? _ta?.decodedBuffer?.duration ?? ws.getDuration()
+                const _tailLen = _outroAt > 0 ? _clipEnd - _outroAt : 0
+                if (_outroAt > 0 && _ctx && _ta?.decodedBuffer && playbackGain) {
+                    _fireLoopOverlap(_tailLen, _ctx, _ta)
+                } else {
+                    suppressSeekRestart = true
+                    mainAudioEl.currentTime = mp.start
+                    setTimeout(() => { suppressSeekRestart = false }, 50)
+                }
                 return
             }
 
@@ -4870,19 +5279,268 @@ function buildTrigger(codeblockYaml, index) {
             }
         }
 
+        // ── Multi-file sequence transition ──────────────────────────────────────────────
+        // Called when the current seq slot reaches its effTransition boundary.
+        // Handles both slot 0 (primary closure) and slots 1..N (minimal closures).
+        function fireSeqNext() {
+            const seqData = triggerSeqSlots.get(index)
+            if (!seqData || seqData.total <= 1 || seqData.transitionInProgress) return
+            // Primary slot active: use normal outro path (ws.isPlaying() = true there)
+            if (loopOutroPending.has(index) && seqData.idx === 0) { fireLoopOutro(); return }
+
+            const curSlotIdx  = seqData.idx
+            const nextSlotIdx = (curSlotIdx + 1) % seqData.total
+            const nextSlot    = seqData.slots[nextSlotIdx]
+
+            const ctx = sharedAudioCtx
+            if (!ctx) return
+
+            if (nextSlotIdx !== 0 && !nextSlot?.decodedBuffer) {
+                preDecodeSeqSlots(index)
+                return
+            }
+
+            seqData.transitionInProgress = true
+            clearTimeout(seqData.boundaryTimer); seqData.boundaryTimer = null
+
+            const nextNs  = nextSlotIdx === 0 ? (mp.start ?? 0) : (nextSlot?.mp.start ?? 0)
+
+            if (curSlotIdx === 0) {
+                // ── Primary slot → next slot (primary src.loop=true → manual single-play) ──
+                if (!activeSource) { seqData.transitionInProgress = false; return }
+                const ta_        = triggerAudio.get(index)
+                const sr         = ctx.sampleRate
+                const outroAt    = mp.fading_point ?? 0
+                const clipEnd_   = mp.end ?? (ta_?.decodedBuffer?.duration ?? ws.getDuration())
+                const loopStart  = mp.start ?? 0
+                const loopEnd    = outroAt > 0 ? outroAt : clipEnd_
+                const tailLen    = outroAt > 0 ? clipEnd_ - outroAt : 0
+                const loopEndSamp  = Math.round(loopEnd * sr)
+                const loopStartSamp = Math.round(loopStart * sr)
+                const loopDurSamp  = Math.max(1, loopEndSamp - loopStartSamp)
+                const startOffSamp = Math.round(activeSourceStartOffset * sr)
+                const firstBound   = activeSourceStartedAt + (loopEndSamp - startOffSamp) / sr
+                const n = Math.max(0, Math.ceil((ctx.currentTime - firstBound) * sr / loopDurSamp))
+                let transitionTime = firstBound + n * loopDurSamp / sr
+                if (transitionTime - ctx.currentTime > (loopEnd - loopStart) * 0.5) {
+                    transitionTime = ctx.currentTime
+                }
+                const msToTransition = Math.max(0, transitionTime - ctx.currentTime) * 1000
+
+                if (outroAt > 0) {
+                    if (activeSource) activeSource.loop = false
+                } else {
+                    stopSource(transitionTime)
+                    setTimeout(() => {
+                        suppressPauseStop = true
+                        mainAudioEl.loop = false
+                        mainAudioEl.pause()
+                        setTimeout(() => { suppressPauseStop = false }, 0)
+                    }, Math.max(0, msToTransition - 15))
+                }
+
+                nextSlot.startGaplessSource(nextNs, transitionTime)
+
+                const tailMs = tailLen * 1000
+                gaplessActive = true
+                clearTimeout(loopJumpTimer); loopJumpTimer = null
+
+                // At boundary: stop A cursor, show ghost tail, hand cursor to next slot
+                setTimeout(() => {
+                    if (outroAt > 0) {
+                        suppressPauseStop = true
+                        mainAudioEl.loop = false
+                        mainAudioEl.pause()
+                        setTimeout(() => { suppressPauseStop = false }, 0)
+                        // Ghost cursor slides from effTransition to mp.end over tailLen seconds
+                        const _dur = ws.getDuration()
+                        if (_dur > 0) {
+                            if (activeTailCurEl) { activeTailCurEl.remove(); activeTailCurEl = null }
+                            const tailCurEl = document.createElement('div')
+                            tailCurEl.classList.add('ws-tail-cursor')
+                            tailCurEl.style.left = getX(loopEnd) + 'px'
+                            overlay.appendChild(tailCurEl)
+                            activeTailCurEl = tailCurEl
+                            requestAnimationFrame(() => { requestAnimationFrame(() => {
+                                tailCurEl.style.transitionDuration = tailLen + 's'
+                                tailCurEl.style.left = getX(loopEnd + tailLen) + 'px'
+                            }) })
+                            setTimeout(() => { if (activeTailCurEl === tailCurEl) { activeTailCurEl = null } tailCurEl.remove() }, tailLen * 1000 + 150)
+                        }
+                    }
+                    seqData.idx = nextSlotIdx
+                    seqData.transitionInProgress = false
+                    seqData.slots[0]?.setActive?.(false)
+                    nextSlot.setActive?.(true)
+                    nextSlot.startCursor(nextNs, 0)
+                    armSeqBoundaryTimer(nextSlotIdx)
+                }, Math.max(0, msToTransition))
+                // After tail: reset primary cursor and clear gapless flag.
+                // Guard: skip media reset if seqData.idx moved on (wrap-back already happened)
+                // OR if a new transition is already in progress (wrap-back fired between
+                // startGaplessSource and its own timeout — seqData.idx not yet updated).
+                setTimeout(() => {
+                    preSeekArmed = false
+                    gaplessActive = false
+                    if (seqData.idx !== nextSlotIdx || seqData.transitionInProgress) return
+                    suppressPauseStop = true
+                    mainAudioEl.loop = false
+                    mainAudioEl.pause()
+                    setTimeout(() => { suppressPauseStop = false }, 0)
+                    mainAudioEl.currentTime = mp.start ?? 0
+                }, msToTransition + 10 + tailMs)
+
+            } else {
+                // ── Non-primary slot → next slot ──────────────────────────────────────────
+                const curSlot  = seqData.slots[curSlotIdx]
+                const { src: curSrc, startedAt, startOffset } = curSlot.getActiveSourceInfo()
+                const curMp    = curSlot.mp
+                const effEnd   = curMp.end ?? curSlot.decodedBuffer?.duration ?? 0
+                const outroAt  = curMp.fading_point ?? 0
+                const outroLen = outroAt > 0 ? effEnd - outroAt : 0
+                const effTrans = outroAt > 0 ? outroAt : effEnd
+
+                let transitionTime
+                if (curSrc && startedAt !== null && startOffset !== null) {
+                    transitionTime = startedAt + (effTrans - startOffset)
+                } else {
+                    transitionTime = ctx.currentTime
+                }
+                transitionTime = Math.max(ctx.currentTime, transitionTime)
+                const msToTransition = Math.max(0, transitionTime - ctx.currentTime) * 1000
+
+                // Finish triggered while this non-primary slot is active: fire outro inline
+                if (loopOutroPending.has(index)) {
+                    const outroIdx = loopOutroPending.get(index)
+                    loopOutroPending.delete(index)
+                    loopOutroInitialRemaining.delete(index)
+                    setOutroPendingIndicator(outroIdx, false)
+
+                    const nextTa = triggerAudio.get(outroIdx)
+                    if (!nextTa) { seqData.transitionInProgress = false; return }
+
+                    // Let tail play if outroLen > 0; otherwise stop source at boundary
+                    if (!outroLen && curSrc) curSlot.stopSourceAt(transitionTime)
+
+                    // Start Finish audio at boundary
+                    const vol    = nextTa.mp?.volume ?? 0.8
+                    const fadein = nextTa.mp?.fadein ?? 0
+                    const ns     = nextTa.mp?.start  ?? 0
+                    cancelWsFade(nextTa.ws)
+                    nextTa.setCurrentVolume(vol)
+                    const nextPg = nextTa.getPlaybackGain?.()
+                    if (nextPg) nextPg.gain.value = fadein > 0 ? 0 : vol
+                    nextTa.startGaplessSource(ns, transitionTime)
+
+                    const tailMs = outroLen * 1000
+                    gaplessActive = true
+
+                    setTimeout(() => {
+                        visuallyDone = true
+                        if (outroLen > 0) curSlot.startTailCursor(effTrans, outroLen)
+                        curSlot.pauseCursor()
+                        curSlot.setActive?.(false)
+                        seqData.idx = 0
+                        seqData.transitionInProgress = false
+                        nextTa.startCursor(ns, 0)
+                    }, Math.max(0, msToTransition))
+                    setTimeout(() => {
+                        gaplessActive = false
+                        mainAudioEl.currentTime = mp.start ?? 0
+                        curSlot.resetCursor()
+                    }, msToTransition + 10 + tailMs)
+
+                    currentCue = outroIdx
+                    markTriggers(outroIdx)
+                    _nonAudioActions(outroIdx, nextTa)
+                    return
+                }
+
+                if (outroLen > 0 && curSrc) {
+                    curSrc.loop = false
+                } else if (curSrc) {
+                    curSlot.stopSourceAt(transitionTime)
+                }
+
+                if (nextSlotIdx === 0) {
+                    // Wrap back to primary: start primary source, then start primary cursor
+                    const ta_ = triggerAudio.get(index)
+                    ta_?.startGaplessSource(nextNs, transitionTime)
+                } else {
+                    nextSlot.startGaplessSource(nextNs, transitionTime)
+                }
+
+                // At boundary: hand cursor to next slot immediately
+                setTimeout(() => {
+                    if (outroLen > 0) curSlot.startTailCursor(effTrans, outroLen)
+                    curSlot.pauseCursor()
+                    curSlot.setActive?.(false)
+                    seqData.idx = nextSlotIdx
+                    seqData.transitionInProgress = false
+
+                    if (nextSlotIdx === 0) {
+                        // Wrap back to primary: start primary cursor now
+                        seqData.slots[0]?.setActive?.(true)
+                        suppressSeekRestart = true
+                        mainAudioEl.currentTime = nextNs
+                        setTimeout(() => { suppressSeekRestart = false }, 50)
+                        // Guard ws.on("play") from starting a duplicate source.
+                        // gaplessSwitchActive tells the play handler the source was
+                        // already started by startGaplessSource — skip startSource().
+                        const _ta_wb = triggerAudio.get(index)
+                        if (_ta_wb) _ta_wb.gaplessSwitchActive = true
+                        mainAudioEl.play().catch(() => {})
+                    } else {
+                        nextSlot.setActive?.(true)
+                        nextSlot.startCursor(nextNs, 0)
+                        armSeqBoundaryTimer(nextSlotIdx)
+                    }
+                }, Math.max(0, msToTransition))
+                // After tail: reset cursor to start so waveform goes gray (matches primary behaviour)
+                if (outroLen > 0) {
+                    setTimeout(() => curSlot.resetCursor(), Math.max(0, msToTransition) + outroLen * 1000 + 150)
+                }
+            }
+        }
+
+        // Schedules the boundary timer for a non-primary seq slot.
+        // When it fires, calls fireSeqNext() if we're still on that slot.
+        function armSeqBoundaryTimer(slotIdx) {
+            const seqData = triggerSeqSlots.get(index)
+            if (!seqData || slotIdx === 0 || slotIdx >= seqData.total) return
+            const slot = seqData.slots[slotIdx]
+            if (!slot || !sharedAudioCtx) return
+
+            const { src: slotSrc, startedAt, startOffset } = slot.getActiveSourceInfo()
+            if (!slotSrc || startedAt === null || startOffset === null) return
+
+            const effEnd   = slot.mp.end ?? slot.decodedBuffer?.duration ?? 0
+            const outroAt  = slot.mp.fading_point ?? 0
+            const effTrans = outroAt > 0 ? outroAt : effEnd
+            const transitionTime = startedAt + (effTrans - startOffset)
+            const msToFire = Math.max(0, (transitionTime - sharedAudioCtx.currentTime) * 1000 - 50)
+
+            clearTimeout(seqData.boundaryTimer)
+            seqData.boundaryTimer = setTimeout(() => {
+                seqData.boundaryTimer = null
+                if (seqData.idx === slotIdx && !seqData.transitionInProgress) fireSeqNext()
+            }, msToFire)
+        }
+
         ws.on("timeupdate", (ct) => {
-            const effEnd = mp.end ?? ws.getDuration()
-            if (ct >= effEnd) {
+            const effEnd        = mp.end ?? ws.getDuration()
+            const effTransition = (mp.fading_point ?? 0) > 0 ? (mp.fading_point ?? 0) : effEnd
+            if (ct >= effTransition) {
                 if (gaplessActive) { ws.setVolume(currentVolume); return }
                 const isManaged = !!triggerYamls[index]?.loop_outro
                 if (isManaged) {
                     if (loopOutroPending.has(index)) {
                         fireLoopOutro()   // fallback if timer missed
                     } else {
-                        fireLoopRestart(effEnd)
+                        fireLoopRestart(effTransition)
                     }
                 } else if (loopEnabled) {
-                    fireLoopRestart(effEnd)
+                    fireLoopRestart(effTransition)
                 } else {
                     const chainEnd = triggerYamls[index]?.chain_end
                     if (chainEnd && !chainEndArmed) {
@@ -4903,8 +5561,11 @@ function buildTrigger(codeblockYaml, index) {
             // Pre-seek next audio and schedule gapless transition via setTimeout
             // (fires at the precise end time instead of waiting for next timeupdate)
             if (!preSeekArmed) {
+                // effTransition = musical boundary (absolute position from clip start)
+                const outroLen      = mp.fading_point ?? 0
+                const effTransition = outroLen > 0 ? outroLen : effEnd
                 const chainEnd = triggerYamls[index]?.chain_end
-                if (chainEnd && effEnd - ct < 0.35) {
+                if (chainEnd && effTransition - ct < 0.35) {
                     preSeekArmed = true
                     const nextIdx = findTriggerByNote(chainEnd)
                     const nextTa  = nextIdx !== null ? triggerAudio.get(nextIdx) : null
@@ -4915,13 +5576,13 @@ function buildTrigger(codeblockYaml, index) {
                         chainEndTimer = setTimeout(() => {
                             chainEndTimer = null
                             fireChainEnd(nextIdx)
-                        }, Math.max(0, (effEnd - ct) * 1000 - 50))
+                        }, Math.max(0, (effTransition - ct) * 1000 - 50))
                     }
                 }
                 if (!chainEnd) {
                     const loopOutro = triggerYamls[index]?.loop_outro
                     const isManaged = !!loopOutro
-                    if (isManaged && effEnd - ct < 0.35) {
+                    if (isManaged && effTransition - ct < 0.35) {
                         preSeekArmed = true
                         if (loopOutroPending.has(index)) {
                             // Outro armed: pre-seek outro and schedule its start
@@ -4934,25 +5595,25 @@ function buildTrigger(codeblockYaml, index) {
                                 loopJumpTimer = setTimeout(() => {
                                     loopJumpTimer = null
                                     fireLoopOutro()
-                                }, Math.max(0, (effEnd - ct) * 1000 - 50))
+                                }, Math.max(0, (effTransition - ct) * 1000 - 50))
                             }
                         } else {
-                            // No outro: schedule gapless loop restart
+                            // No outro: schedule gapless loop restart at musical boundary
                             preDecodeForGapless(index)
                             clearTimeout(loopJumpTimer)
                             loopJumpTimer = setTimeout(() => {
                                 loopJumpTimer = null
-                                fireLoopRestart(effEnd)
-                            }, Math.max(0, (effEnd - ct) * 1000 - 5))
+                                fireLoopRestart(effTransition)
+                            }, Math.max(0, (effTransition - ct) * 1000 - 5))
                         }
-                    } else if (loopEnabled && effEnd - ct < 0.35) {
+                    } else if (loopEnabled && effTransition - ct < 0.35) {
                         preSeekArmed = true
                         preDecodeForGapless(index)
                         clearTimeout(loopJumpTimer)
                         loopJumpTimer = setTimeout(() => {
                             loopJumpTimer = null
-                            fireLoopRestart(effEnd)
-                        }, Math.max(0, (effEnd - ct) * 1000 - 5))
+                            fireLoopRestart(effTransition)
+                        }, Math.max(0, (effTransition - ct) * 1000 - 5))
                     }
                 }
             }
@@ -4975,6 +5636,9 @@ function buildTrigger(codeblockYaml, index) {
             // If a gapless transition is in progress, a cursor restart (e.g. mainAudioEl.loop=true
             // looping back after stopSource cleared activeSource) must not start a new source or
             // clear timers — the transition's setTimeout owns state until gaplessActive=false.
+            // Show the amber active-slot indicator on the primary slot whenever it starts playing.
+            const _sdPlay = triggerSeqSlots.get(index)
+            if (_sdPlay && _sdPlay.idx === 0) _sdPlay.slots[0]?.setActive?.(true)
             if (gaplessActive) return
             pauseBtn.textContent = "⏸"
             chainEndArmed = false
@@ -5078,7 +5742,7 @@ function buildTrigger(codeblockYaml, index) {
             wsStopAndReset()
         })
         ws.on("seeking", (t) => {
-            if (suppressSeekRestart || mainAudioEl.paused) return
+            if (suppressSeekRestart || gaplessActive || mainAudioEl.paused) return
             // AudioBufferSourceNode loops internally; cursor seek must not restart the source.
             // Only restart on explicit user scrub (scrubbingSet tracks drag state).
             if ((loopEnabled || loopGroups.has(index)) && activeSource && !scrubbingSet.has(index)) return
@@ -5086,7 +5750,26 @@ function buildTrigger(codeblockYaml, index) {
         })
 
         // ws.stop() is overridden above to reset to mp.start instead of file position 0.
-        function wsStopAndReset() { ws.stop() }
+        function wsStopAndReset() {
+            if (activeTailCurEl) { activeTailCurEl.remove(); activeTailCurEl = null }
+            tailEndTime = null
+            const seqData_ = triggerSeqSlots.get(index)
+            if (seqData_) {
+                if (seqData_.idx > 0) {
+                    const activeSlot = seqData_.slots[seqData_.idx]
+                    if (activeSlot) { activeSlot.stopSourceAt(); activeSlot.pauseCursor(); activeSlot.resetCursor(); activeSlot.setActive?.(false) }
+                    seqData_.idx = 0
+                    seqData_.transitionInProgress = false
+                    clearTimeout(seqData_.boundaryTimer); seqData_.boundaryTimer = null
+                }
+                // Clear ghost cursors on ALL non-primary slots — a slot's tail cursor may
+                // still be running even after it already handed playback back to the primary.
+                for (let si = 1; si < seqData_.total; si++) seqData_.slots[si]?.clearTailCursor?.()
+                // Remove active-slot indicator so waveform is visually idle after stop.
+                seqData_.slots[0]?.setActive?.(false)
+            }
+            ws.stop()
+        }
 
         // ── Controls ────────────────────────────────────────────────────
         volSlider.addEventListener("input", () => {
@@ -5232,7 +5915,7 @@ function buildTrigger(codeblockYaml, index) {
             document.addEventListener("mouseup", onUp)
         })
 
-        const monitorFile = typeof codeblockYaml.music === 'object' ? codeblockYaml.music.monitor ?? null : null
+        const monitorFile = sanitizeAudioPath(typeof codeblockYaml.music === 'object' ? codeblockYaml.music.monitor ?? null : null)
 
         // ── Common patches ────────────────────────────────────────────────
         const _wsSetVol = ws.setVolume.bind(ws)
@@ -5255,6 +5938,11 @@ function buildTrigger(codeblockYaml, index) {
 
         triggerAudio.set(index, {
             ws, mainAudioEl, monitorFile, musicFile, overlay, getX, autoMarkerState, mp,
+            stopAndReset: () => wsStopAndReset(),
+            fadeOutActiveSeqSlot: (durationSec) => {
+                const sd = triggerSeqSlots.get(index)
+                if (sd && sd.idx > 0) sd.slots[sd.idx]?.fadeOut?.(durationSec)
+            },
             getTimeAtClientX: (clientX) => {
                 const rect = waveformContainer.getBoundingClientRect()
                 const tw = totalWaveWidth(), dur = ws.getDuration()
@@ -5274,12 +5962,17 @@ function buildTrigger(codeblockYaml, index) {
             getActiveSourceInfo: () => ({ src: activeSource, startedAt: activeSourceStartedAt, startOffset: activeSourceStartOffset }),
             // True as long as the AudioBufferSourceNode is running, even if WaveSurfer's
             // media element isn't playing yet (e.g. during the adoption cursor-sync gap).
-            isAudioActive: () => activeSource !== null || ws.isPlaying(),
+            isAudioActive: () => !visuallyDone && (activeSource !== null || ws.isPlaying()),
             // Returns playback position from AudioContext arithmetic when mainAudioEl lags.
             getPlaybackTime: () => {
                 if (activeSource && activeSourceStartedAt !== null && sharedAudioCtx)
                     return Math.max(0, activeSourceStartOffset + (sharedAudioCtx.currentTime - activeSourceStartedAt))
                 return mainAudioEl?.currentTime ?? 0
+            },
+            getTailInfo: () => {
+                if (!sharedAudioCtx || tailEndTime === null) return { active: false, remaining: 0 }
+                const remaining = Math.max(0, tailEndTime - sharedAudioCtx.currentTime)
+                return { active: remaining > 0, remaining }
             },
             // Starts the AudioBufferSourceNode only — no mainAudioEl interaction.
             // The caller is responsible for all cursor/media element handling.
@@ -5300,7 +5993,7 @@ function buildTrigger(codeblockYaml, index) {
                     src.buffer     = loopBuf
                     src.loop       = true
                     src.loopStart  = 0
-                    src.loopEnd    = loopBuf.duration
+                    src.loopEnd    = (mp.fading_point ?? 0) > 0 ? (mp.fading_point ?? 0) - regionStart : loopBuf.duration
                     src.connect(playbackGain)
                     const regionOff = Math.max(0, Math.min(actualOffset - regionStart, loopBuf.duration))
                     src.start(when, regionOff)
@@ -5315,7 +6008,7 @@ function buildTrigger(codeblockYaml, index) {
                     if (isLoopTrigger) {
                         src.loop      = true
                         src.loopStart = regionStart
-                        src.loopEnd   = mp.end ?? ta_.decodedBuffer.duration
+                        src.loopEnd   = (mp.fading_point ?? 0) > 0 ? (mp.fading_point ?? 0) : (mp.end ?? ta_.decodedBuffer.duration)
                     }
                     src.connect(playbackGain)
                     src.start(when, actualOffset)
@@ -5339,7 +6032,7 @@ function buildTrigger(codeblockYaml, index) {
                 if (!ctx || !loopGroups.has(index) || !activeSource || activeSourceStartedAt === null) return
                 const sr = ctx.sampleRate
                 const loopStartSec     = mp.start ?? 0
-                const loopEndSec       = mp.end ?? (triggerAudio.get(index)?.decodedBuffer?.duration ?? ws.getDuration())
+                const loopEndSec       = (mp.fading_point ?? 0) > 0 ? (mp.fading_point ?? 0) : (mp.end ?? (triggerAudio.get(index)?.decodedBuffer?.duration ?? ws.getDuration()))
                 const loopEndSamples   = Math.round(loopEndSec * sr)
                 const loopStartSamples = Math.round(loopStartSec * sr)
                 const loopDurSamples   = loopEndSamples - loopStartSamples
@@ -5392,6 +6085,54 @@ function buildTrigger(codeblockYaml, index) {
                 if (ws.getDuration()) syncCursor()
                 else ws.once('ready', syncCursor)
             }
+        }
+
+        // ── Multi-file sequence slot rendering (SLF Loop with music_seq) ──────────────
+        const musicSeqArr = codeblockYaml.music_seq
+        if (Array.isArray(musicSeqArr) && musicSeqArr.length > 0 && codeblockYaml.loop_outro) {
+            // Wrap the primary waveformWrapper inside a horizontal flex row
+            const seqRow = document.createElement('div')
+            seqRow.classList.add('seq-slots-row')
+            waveformWrapper.parentElement.insertBefore(seqRow, waveformWrapper)
+            seqRow.appendChild(waveformWrapper)
+            waveformWrapper.classList.add('seq-slot')
+
+            // Label on primary slot
+            const label0 = document.createElement('div')
+            label0.className = 'seq-slot-label'
+            label0.textContent = '1'
+            waveformWrapper.insertBefore(label0, waveformWrapper.firstChild)
+
+            const total = 1 + musicSeqArr.length
+            // slot 0 = primary — minimal wrapper so setActive() can toggle the CSS class
+            const primarySlotProxy = { setActive: (active) => waveformWrapper.classList.toggle('seq-slot-active', active) }
+            const slots = [primarySlotProxy]
+
+            for (const [si, seqEntry] of musicSeqArr.entries()) {
+                if (!seqEntry?.file) continue
+                const slotMp = {
+                    volume:    seqEntry.volume    ?? mp.volume,
+                    start:     seqEntry.start     ?? 0,
+                    end:       seqEntry.end       ?? null,
+                    fadein:    seqEntry.fadein     ?? 0,
+                    fadeout:   seqEntry.fadeout    ?? 0,
+                    fading_point: seqEntry.fading_point  ?? 0,
+                }
+                slots.push(buildSeqSlot({
+                    index, seqSlotIdx: si + 1,
+                    musicFile: sanitizeAudioPath(seqEntry.file),
+                    monitorFile: sanitizeAudioPath(seqEntry.monitor ?? null),
+                    mp: slotMp, parentContainer: seqRow,
+                }))
+            }
+
+            triggerSeqSlots.set(index, {
+                idx: 0, total, slots,
+                fireNext: () => fireSeqNext(),
+                boundaryTimer: null,
+                transitionInProgress: false,
+            })
+            preDecodeSeqSlots(index)
         }
     }
 
@@ -6162,7 +6903,9 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         mfHint.textContent = 'Aus vorhandenen auswählen oder neue Datei per Drag & Drop hinzufügen'
         mfWrap.appendChild(mfHint)
     }
-    box.appendChild(mfWrap)
+    // For seq-loop cues the primary file will be shown inside the seq group — hide standalone fields
+    const isSeqLoop = isEdit && !!existingYaml?.loop_outro
+    // mfWrap is superseded by the seq-card display below for all cue types
 
     if ((isEdit || isCopy) && existingYaml?.music) {
         const currentFile = typeof existingYaml.music === 'string' ? existingYaml.music : existingYaml.music.file
@@ -6184,7 +6927,7 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         monHint.textContent = 'Aus vorhandenen auswählen oder neue Datei per Drag & Drop hinzufügen'
         monWrap.appendChild(monHint)
     }
-    box.appendChild(monWrap)
+    // monWrap is superseded by the seq-card display below
 
     if ((isEdit || isCopy) && existingYaml?.music && typeof existingYaml.music === 'object' && existingYaml.music.monitor) {
         monComp.setValue(existingYaml.music.monitor)
@@ -6208,6 +6951,201 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     mfComp.onChange(checkMonitorDuration)
     monComp.onChange(checkMonitorDuration)
     checkMonitorDuration()
+
+    // ── Ausklingpunkt (fading_point) ────────────────────────────────────
+    // Shown only for SLF Loop / SLF Start / SLF Bridge / normal Loop cues when editing
+    const showOutroLen = isEdit && (
+        !!existingYaml?.loop_outro ||
+        !!existingYaml?.chain_end  ||
+        (typeof existingYaml?.music === 'object' && !!existingYaml.music.loop)
+    )
+    let outroLenInput = null
+    if (showOutroLen) {
+        const olWrap = document.createElement('div')
+        olWrap.classList.add('dialog-field')
+        const olLabel = document.createElement('label')
+        olLabel.textContent = t('dlg.trigger.fading_point')
+        const olRow = document.createElement('div')
+        olRow.style.cssText = 'display:flex;gap:0.5rem;align-items:center'
+        outroLenInput = document.createElement('input')
+        outroLenInput.type = 'number'; outroLenInput.min = '0'; outroLenInput.step = '0.001'
+        outroLenInput.style.cssText = 'width:7rem'
+        outroLenInput.value = (typeof existingYaml?.music === 'object' && existingYaml.music.fading_point > 0)
+            ? existingYaml.music.fading_point : ''
+
+        // BPM + Beats → auto-calculate seconds
+        const bpmInput   = document.createElement('input')
+        bpmInput.type = 'number'; bpmInput.min = '1'; bpmInput.step = '1'; bpmInput.placeholder = t('dlg.trigger.fading_point.bpm')
+        bpmInput.style.cssText = 'width:6rem'
+        const beatsInput = document.createElement('input')
+        beatsInput.type = 'number'; beatsInput.min = '1'; beatsInput.step = '1'; beatsInput.placeholder = t('dlg.trigger.fading_point.beats')
+        beatsInput.style.cssText = 'width:5rem'
+        const calcOutroLen = async () => {
+            const bpm = parseFloat(bpmInput.value), beats = parseFloat(beatsInput.value)
+            if (bpm <= 0 || beats <= 0) return
+            const tailDur = (beats / bpm) * 60
+            const filename = mfComp.getValue()
+            if (!filename) return
+            const fileDur = await new Promise(res => {
+                const a = new Audio(audioBasePath + filename)
+                a.addEventListener('loadedmetadata', () => res(a.duration))
+                a.addEventListener('error', () => res(null))
+            })
+            if (fileDur != null && fileDur > tailDur)
+                outroLenInput.value = parseFloat((fileDur - tailDur).toFixed(4))
+        }
+        bpmInput.addEventListener('input', calcOutroLen)
+        beatsInput.addEventListener('input', calcOutroLen)
+
+        olRow.append(outroLenInput, bpmInput, beatsInput)
+        olWrap.append(olLabel, olRow)
+        // fading_point lives inside the seq card for all cue types — standalone field not shown
+    }
+
+    // ── Audiodateien (Sequenz, alle Slots) / Weitere Dateien ────────
+    const seqSection = document.createElement('div')
+    seqSection.classList.add('dialog-field')
+    const seqHeaderRow = document.createElement('div')
+    seqHeaderRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem'
+    const seqLabel = document.createElement('label')
+    seqLabel.textContent = isSeqLoop ? t('dlg.trigger.music_seq.all') : t('dlg.trigger.music')
+    seqLabel.style.marginBottom = '0'
+    const addSeqBtn = document.createElement('button')
+    addSeqBtn.type = 'button'; addSeqBtn.classList.add('dialog-btn')
+    addSeqBtn.textContent = t('dlg.trigger.music_seq.add')
+    addSeqBtn.style.cssText = 'padding:0.2rem 0.6rem;font-size:0.82rem'
+    if (isSeqLoop) seqHeaderRow.append(seqLabel, addSeqBtn)
+    else seqHeaderRow.append(seqLabel)
+    seqSection.appendChild(seqHeaderRow)
+    const seqList = document.createElement('div')
+    seqSection.appendChild(seqList)
+    box.appendChild(seqSection)
+
+    function buildSeqCard(cfg, { isPrimary = false, showOutroLen = true } = {}) {
+        cfg = cfg || {}
+        const card = document.createElement('div')
+        card.className = 'seq-entry-card'
+
+        // File selector row
+        const fileRow = document.createElement('div')
+        fileRow.style.cssText = 'display:flex;gap:0.4rem;align-items:center;margin-bottom:0.3rem'
+        const fileComp = createAudioSelect(audioFiles, t('dlg.trigger.music.none'))
+        if (cfg.file) fileComp.setValue(cfg.file)
+        fileComp.element.style.flex = '1'
+        if (isPrimary) {
+            const numBadge = document.createElement('span')
+            numBadge.textContent = '1'
+            numBadge.style.cssText = 'font-size:0.78rem;font-weight:700;color:#7a8394;width:1.4rem;text-align:center;flex-shrink:0'
+            fileRow.append(fileComp.element, numBadge)
+        } else {
+            const removeBtn = document.createElement('button')
+            removeBtn.type = 'button'; removeBtn.className = 'cue-msg-card-remove'
+            removeBtn.textContent = '✕'
+            removeBtn.addEventListener('click', () => card.remove())
+            fileRow.append(fileComp.element, removeBtn)
+        }
+
+        // Monitor selector row
+        const monRow = document.createElement('div')
+        monRow.style.cssText = 'display:flex;gap:0.4rem;align-items:center;margin-bottom:0.3rem'
+        const monLabel = document.createElement('span')
+        monLabel.textContent = t('dlg.trigger.monitor')
+        monLabel.style.cssText = 'font-size:0.82rem;white-space:nowrap;color:#7a8394'
+        const monComp2 = createAudioSelect(audioFiles, t('dlg.trigger.monitor.none'))
+        if (cfg.monitor) monComp2.setValue(cfg.monitor)
+        monComp2.element.style.flex = '1'
+        monRow.append(monLabel, monComp2.element)
+
+        // fading_point row
+        const olRow = document.createElement('div')
+        olRow.style.cssText = 'display:flex;gap:0.4rem;align-items:center'
+        const olLabel2 = document.createElement('span')
+        olLabel2.textContent = t('dlg.trigger.fading_point')
+        olLabel2.style.cssText = 'font-size:0.82rem;white-space:nowrap;color:#7a8394'
+        const olInput2 = document.createElement('input')
+        olInput2.type = 'number'; olInput2.min = '0'; olInput2.step = '0.001'
+        olInput2.className = 'no-spin'; olInput2.style.cssText = 'width:6rem'
+        olInput2.value = cfg.fading_point > 0 ? cfg.fading_point : ''
+        const bpm2 = document.createElement('input')
+        bpm2.type = 'number'; bpm2.min = '1'; bpm2.step = '1'
+        bpm2.className = 'no-spin'
+        bpm2.placeholder = t('dlg.trigger.fading_point.bpm'); bpm2.style.cssText = 'width:5rem'
+        const beats2 = document.createElement('input')
+        beats2.type = 'number'; beats2.min = '1'; beats2.step = '1'
+        beats2.className = 'no-spin'
+        beats2.placeholder = t('dlg.trigger.fading_point.beats'); beats2.style.cssText = 'width:5rem'
+        const calc2 = async () => {
+            const b = parseFloat(bpm2.value), n = parseFloat(beats2.value)
+            if (!(b > 0 && n > 0)) return
+            const tailDur = (n / b) * 60
+            const filename = fileComp.getValue() || cfg.file
+            if (!filename) return
+            const fileDur = await new Promise(res => {
+                const a = new Audio(audioBasePath + filename)
+                a.addEventListener('loadedmetadata', () => res(a.duration))
+                a.addEventListener('error', () => res(null))
+            })
+            if (fileDur != null && fileDur > tailDur)
+                olInput2.value = parseFloat((fileDur - tailDur).toFixed(4))
+        }
+        bpm2.addEventListener('input', calc2); beats2.addEventListener('input', calc2)
+        olRow.append(olLabel2, olInput2, bpm2, beats2)
+
+        if (showOutroLen) card.append(fileRow, monRow, olRow)
+        else card.append(fileRow, monRow)
+
+        card._fileComp = fileComp
+        card._monComp  = monComp2
+
+        card.getValues = () => ({
+            file:      fileComp.getValue() || null,
+            monitor:   monComp2.getValue() || null,
+            fading_point: showOutroLen ? (parseFloat(olInput2.value) || 0) : 0,
+        })
+        return card
+    }
+
+    // Populate seq entries — primary file card first (isPrimary), then music_seq entries
+    {
+        const primaryCfg = {
+            file:         typeof existingYaml?.music === 'string' ? existingYaml.music : (existingYaml?.music?.file ?? ''),
+            monitor:      typeof existingYaml?.music === 'object' ? (existingYaml.music.monitor ?? '') : '',
+            fading_point: typeof existingYaml?.music === 'object' && existingYaml.music.fading_point > 0 ? existingYaml.music.fading_point : 0,
+        }
+        const primaryCard = buildSeqCard(primaryCfg, { isPrimary: true, showOutroLen })
+        seqList.appendChild(primaryCard)
+
+        // Wire monitor duration check to the card's selects (replaces standalone monWarning)
+        if (primaryCard._fileComp && primaryCard._monComp) {
+            const warnEl = document.createElement('div')
+            warnEl.style.cssText = 'color:#e5c07b;font-size:0.82rem;margin-top:0.3rem;display:none'
+            primaryCard.appendChild(warnEl)
+            const checkDur = async () => {
+                const f1 = primaryCard._fileComp.getValue(), f2 = primaryCard._monComp.getValue()
+                if (!f1 || !f2) { warnEl.style.display = 'none'; return }
+                const [d1, d2] = await Promise.all([
+                    new Promise(r => { const a = new Audio('audio/' + f1); a.addEventListener('loadedmetadata', () => r(a.duration)); a.addEventListener('error', () => r(null)) }),
+                    new Promise(r => { const a = new Audio('audio/' + f2); a.addEventListener('loadedmetadata', () => r(a.duration)); a.addEventListener('error', () => r(null)) }),
+                ])
+                if (d1 && d2 && Math.abs(d1 - d2) > 0.1) {
+                    warnEl.textContent = `⚠ Unterschiedliche Längen: ${d1.toFixed(2)}s vs ${d2.toFixed(2)}s`
+                    warnEl.style.display = 'block'
+                } else { warnEl.style.display = 'none' }
+            }
+            primaryCard._fileComp.onChange(checkDur)
+            primaryCard._monComp.onChange(checkDur)
+            checkDur()
+        }
+
+        if (isSeqLoop && Array.isArray(existingYaml?.music_seq)) {
+            for (const entry of existingYaml.music_seq) {
+                seqList.appendChild(buildSeqCard(entry))
+            }
+        }
+    }
+    addSeqBtn.addEventListener('click', () => {
+        seqList.appendChild(buildSeqCard({}))
+    })
 
     // ── Hinweis ─────────────────────────────────────────────────────
     const { wrap: noteWrap, input: noteInput } = mkDialogField(t('dlg.trigger.note'), 'text', '')
@@ -6549,16 +7487,17 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
             newYaml.mic = existingYaml.mic
         }
 
-        // music (preserve existing object props like volume/start/end when editing or copying)
-        const mf = mfComp.getValue()
-        const mf2 = monComp.getValue()
+        // music: always read from the primary seq card
+        const primaryCard = seqList.querySelector('.seq-entry-card')
+        const pv = primaryCard?.getValues?.() ?? {}
+        let mf = pv.file || '', mf2 = pv.monitor || '', resolvedOlVal = pv.fading_point ?? 0
         if (mf) {
             if ((isEdit || isCopy) && existingYaml?.music && typeof existingYaml.music === 'object') {
                 newYaml.music = { ...existingYaml.music, file: mf }
             } else {
                 newYaml.music = mf
             }
-            // monitor: expand to object form if needed
+            // monitor
             if (mf2) {
                 if (typeof newYaml.music === 'string') newYaml.music = { file: newYaml.music }
                 newYaml.music.monitor = mf2
@@ -6566,9 +7505,15 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
                 delete newYaml.music.monitor
             }
         } else if (isEdit && existingYaml?.music && typeof existingYaml.music === 'object' && existingYaml.music.adjust) {
-            // No audio file selected but an adjust reference exists — preserve it
             const { file, monitor, ...rest } = existingYaml.music
             newYaml.music = rest
+        }
+        // fading_point
+        if (resolvedOlVal > 0) {
+            if (typeof newYaml.music === 'string') newYaml.music = { file: newYaml.music }
+            if (typeof newYaml.music === 'object') newYaml.music.fading_point = resolvedOlVal
+        } else if (typeof newYaml.music === 'object') {
+            delete newYaml.music.fading_point
         }
 
         // note
@@ -6650,6 +7595,25 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         // preserve S/L/F links — managed by the S/L/F button, not the edit dialog
         if (isEdit && existingYaml?.chain_end)  newYaml.chain_end  = existingYaml.chain_end
         if (isEdit && existingYaml?.loop_outro) newYaml.loop_outro = existingYaml.loop_outro
+        // music_seq: collect additional cards (skip first = primary) when seq-loop, else preserve
+        if (isSeqLoop) {
+            const allCards = [...seqList.querySelectorAll('.seq-entry-card')]
+                .filter(c => typeof c.getValues === 'function')
+            // First card = primary (already saved to music:), rest = music_seq
+            const seqEntries = allCards.slice(1)
+                .map(c => c.getValues())
+                .filter(e => e.file)
+                .map(e => {
+                    const obj = { file: e.file }
+                    if (e.monitor) obj.monitor = e.monitor
+                    if (e.fading_point > 0) obj.fading_point = e.fading_point
+                    return obj
+                })
+            if (seqEntries.length > 0) newYaml.music_seq = seqEntries
+            // if seqEntries is empty, music_seq key is omitted → removes it from YAML
+        } else if (isEdit && existingYaml?.music_seq) {
+            newYaml.music_seq = existingYaml.music_seq
+        }
         // cue_midi and cue_osc are already collected from the UI above; no separate preservation needed
 
         close()
@@ -7020,8 +7984,10 @@ function showLoopGroupDialog(index, anchorBtn) {
 function triggerAction(cue) {
     // Second press while playing → stop (undo accidental trigger)
     const ta = triggerAudio.get(cue)
-    if (ta && ta.ws.isPlaying()) {
-        ta.ws.stop()
+    const _seqData = triggerSeqSlots.get(cue)
+    const _seqActive = _seqData && _seqData.total > 1 && _seqData.idx > 0
+    if (ta && (ta.ws.isPlaying() || _seqActive)) {
+        ta.stopAndReset()
         if (mtc && mtc.activeTcIndex === cue) mtc.stopAndClear()
         return
     }
@@ -7032,7 +7998,9 @@ function triggerAction(cue) {
         if (!triggerYamls[i]?.loop_outro) continue
         if (findTriggerByNote(triggerYamls[i].loop_outro) !== cue) continue
         const loopTa = triggerAudio.get(i)
-        if (!loopTa?.ws.isPlaying()) continue
+        const _seqData = triggerSeqSlots.get(i)
+        const _loopActive = loopTa?.ws.isPlaying() || (_seqData && _seqData.total > 1 && _seqData.idx > 0)
+        if (!_loopActive) continue
         if (loopOutroPending.get(i) === cue) {
             // Second click → cancel pending
             loopOutroPending.delete(i)
@@ -7319,6 +8287,7 @@ function broadcastLiveState() {
         const loopStart = mp?.start ?? 0
         const loopEnd   = mp?.end   ?? totalDuration
         const isLoop    = !!(ty?.loop_outro || mp?.loop)
+        const tailInfo = ta.getTailInfo?.()
         audioProgress.push({
             cueIdx,
             label: (typeof ty?.music === 'string' ? ty.music : ty?.music?.file) || ('Cue ' + cueIdx),
@@ -7327,6 +8296,8 @@ function broadcastLiveState() {
             loopEnd,
             isLoop,
             volume: ta.getCurrentVolume?.() ?? (mp?.volume ?? 0.8),
+            fadingPoint: mp?.fading_point ?? 0,
+            tailRemaining: tailInfo?.active ? tailInfo.remaining : null,
         })
     }
 
@@ -7757,6 +8728,8 @@ function fadeAdjustVolume(ta, targetVol, fadeTime) {
 function fadeAdjustAudio(ta, fadeTime) {
     cancelWsFade(ta.ws)
     ta.disableLoop()
+    // If a non-primary seq slot is active, fade its gain node via WebAudio scheduling.
+    ta.fadeOutActiveSeqSlot?.(fadeTime)
     const startVol = ta.getCurrentVolume()
     const steps = 50
     const stepInterval = (fadeTime * 1000) / steps
@@ -7768,7 +8741,8 @@ function fadeAdjustAudio(ta, fadeTime) {
         if (step >= steps) {
             clearInterval(id)
             activeFades.delete(ta.ws)
-            ta.ws.stop()
+            if (ta.stopAndReset) ta.stopAndReset()
+            else ta.ws.stop()
             if (mtc && mtc.wsRef === ta.ws) mtc.stopAndClear()
             ta.enableLoop()
             ta.setCurrentVolume(startVol)
@@ -7779,8 +8753,10 @@ function fadeAdjustAudio(ta, fadeTime) {
 }
 
 function stopall() {
-    for (const ta of triggerAudio.values()) {
-        if (ta.ws.isPlaying()) fadeAdjustAudio(ta, 0.5)
+    for (const [idx, ta] of triggerAudio.entries()) {
+        const _sd = triggerSeqSlots.get(idx)
+        const _seqActive = _sd && _sd.total > 1 && _sd.idx > 0
+        if (ta.ws.isPlaying() || _seqActive) fadeAdjustAudio(ta, 0.5)
     }
     if (mtc) mtc.stopAndClear()
 }

@@ -752,6 +752,59 @@ body.trigger-pick-mode-filtered .waveform-wrapper { pointer-events: none; }
 }
 .ws-bar-start { background: rgba(97,175,239,0.9); }
 .ws-bar-end   { background: rgba(224,108,117,0.9); }
+.ws-bar-outro { background: rgba(198,120,221,0.9); display: none; }
+
+.ws-tail-cursor {
+    position: absolute;
+    top: 0; height: 100%;
+    width: 2px;
+    transform: translateX(-50%);
+    background: rgba(198,120,221,0.45);
+    pointer-events: none;
+    transition-property: left;
+    transition-timing-function: linear;
+}
+
+/* Multi-file SLF Loop sequence slot display */
+.seq-slots-row {
+    display: flex;
+    gap: 0.5rem;
+    overflow-x: auto;
+    align-items: flex-start;
+    margin-top: 0.5rem;
+    padding-bottom: 0.2rem;
+}
+.seq-slots-row > .waveform-wrapper { margin-top: 0; flex: 1; min-width: 200px; }
+.seq-slot { position: relative; }
+.seq-slot-label {
+    position: absolute;
+    top: 2px; left: 4px;
+    z-index: 10;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #7a8394;
+    background: rgba(30,34,40,0.75);
+    border-radius: 2px;
+    padding: 0 3px;
+    pointer-events: none;
+}
+.seq-slot-active .seq-slot-label { color: #e5c07b; }
+.seq-slot:not(.seq-slot-active) wavesurfer, .seq-slot:not(.seq-slot-active) .waveform-container {
+    opacity: 0.45;
+}
+.seq-slot-active .waveform-container { box-shadow: 0 0 0 2px rgba(229,192,123,0.5); border-radius: 3px; }
+
+/* Dialog: seq entry cards */
+.seq-entry-card {
+    background: rgba(255,255,255,0.04);
+    border-radius: 4px;
+    padding: 0.5rem;
+    margin-bottom: 0.4rem;
+    border: 1px solid rgba(255,255,255,0.08);
+}
+.seq-entry-card:first-child {
+    border-color: rgba(255,255,255,0.08);
+}
 
 .ws-grip {
     position: absolute;
@@ -1564,3 +1617,7 @@ body.shift-held #script-content [data-block-idx]:not(.trigger):not(.trigger-grou
 .role-name-sep {
     color: #5c6370;
 }
+
+.no-spin::-webkit-inner-spin-button,
+.no-spin::-webkit-outer-spin-button { display: none; }
+.no-spin { -moz-appearance: textfield; appearance: textfield; }

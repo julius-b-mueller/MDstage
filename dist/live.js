@@ -253,16 +253,19 @@
         const autoCuePendingBars = new Map()
 
         function calcProgress(item) {
-            const now     = performance.now()
-            const elapsed = (now - item.receivedAt) / 1000
+            const elapsed = (performance.now() - item.receivedAt) / 1000
             const ct      = item.currentTime + elapsed
             const start   = item.loopStart
-            const end     = item.loopEnd
-            const range   = end - start
+            const outroLen = item.outroLen ?? 0
+            // Treat the loop as if it ends at effEnd (ignoring the tail).
+            const end   = outroLen > 0 ? item.loopEnd - outroLen : item.loopEnd
+            const range = end - start
+
             if (item.isLoop) {
-                const pos = range > 0 ? ((ct - start) % range + range) % range : 0
-                const pct = range > 0 ? Math.min(1, pos / range) : 0
-                return { pct, remaining: range > 0 ? range - pos : 0 }
+                const pos       = range > 0 ? ((ct - start) % range + range) % range : 0
+                const pct       = range > 0 ? Math.min(1, pos / range) : 0
+                const remaining = range > 0 ? range - pos : 0
+                return { pct, remaining }
             } else {
                 const pct = range > 0 ? Math.min(1, (ct - start) / range) : 0
                 return { pct, remaining: range > 0 ? Math.max(0, end - ct) : 0 }
