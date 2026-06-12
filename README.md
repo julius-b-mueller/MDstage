@@ -1,4 +1,4 @@
-<img src="dist/assets/icon.png" width="80" alt="MDstage Icon">
+<img src="dist/assets/icon.png" width="120" alt="MDstage Icon">
 
 # MDstage
 

@@ -262,6 +262,7 @@
             const range = end - start
 
             if (item.isLoop) {
+                if (item.inTail) return { pct: 1, remaining: 0 }
                 const pos       = range > 0 ? ((ct - start) % range + range) % range : 0
                 const pct       = range > 0 ? Math.min(1, pos / range) : 0
                 const remaining = range > 0 ? range - pos : 0
@@ -289,7 +290,9 @@
             for (const { fillEl, timeEl, volFill, item } of audioRows.values()) {
                 const { pct, remaining } = calcProgress(item)
                 fillEl.style.width = (pct * 100).toFixed(2) + '%'
-                timeEl.textContent = '-' + fmt(remaining)
+                if (!item.inTail) fillEl.style.opacity = ''
+                timeEl.style.visibility = item.inTail ? 'hidden' : ''
+                timeEl.textContent = item.inTail ? timeEl.textContent : '-' + fmt(remaining)
                 // Volume bar: absolute volume 0–100 % (default 80 % if unset)
                 const volPct = Math.min(100, (item.volume ?? 0.8) * 100)
                 volFill.style.width = volPct.toFixed(1) + '%'
@@ -321,7 +324,12 @@
                 item.receivedAt = now
 
                 if (audioRows.has(item.cueIdx)) {
-                    audioRows.get(item.cueIdx).item = item
+                    const row = audioRows.get(item.cueIdx)
+                    if (item.inTail && !row.item.inTail && item.tailDuration > 0) {
+                        row.fillEl.style.transition = `opacity ${item.tailDuration}s linear`
+                        row.fillEl.style.opacity = '0'
+                    }
+                    row.item = item
                 } else {
                     const row = document.createElement('div')
                     row.className = 'audio-row entering'

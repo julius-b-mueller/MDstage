@@ -4592,6 +4592,8 @@ function buildTrigger(codeblockYaml, index) {
         let activeTailCurEl         = null   // ghost cursor DOM element during loop overlap
         let tailEndTime             = null   // AudioContext time when the current tail ends
         let visuallyDone            = false  // hide from live-view bar after loop→finish handoff
+        let inTail                  = false  // true while tail (post-fading_point) is playing
+        let inTailDuration          = 0     // duration of the tail in seconds
         let suppressSeekRestart  = false
         let suppressPauseStop    = false  // prevents ws.on("pause") from killing a group source
         let forceFullBuffer      = false  // play button: ignore trim region, use full buffer
@@ -4992,8 +4994,9 @@ function buildTrigger(codeblockYaml, index) {
                 //    start Finish cursor immediately. Cleanup cursor state after the tail.
                 const tailMs = tailLen * 1000
                 gaplessActive = true
+                inTail = tailLen > 0
+                inTailDuration = tailLen
                 setTimeout(() => {
-                    visuallyDone = true  // hide loop bar immediately as finish takes over
                     if (outroAt > 0) {
                         // Stop the Loop cursor immediately; the audio tail continues playing.
                         suppressPauseStop = true
@@ -5026,6 +5029,9 @@ function buildTrigger(codeblockYaml, index) {
                     mainAudioEl.currentTime = mp.start
                     if (mtc && mtc.activeTcIndex === index) mtc.stopAndClear()
                     gaplessActive = false
+                    inTail = false
+                    inTailDuration = 0
+                    visuallyDone = true
                 }, msToTransition + 10 + tailMs)
 
                 _nonAudioActions(nextIdx, nextTa)
@@ -5434,9 +5440,10 @@ function buildTrigger(codeblockYaml, index) {
 
                     const tailMs = outroLen * 1000
                     gaplessActive = true
+                    inTail = outroLen > 0
+                    inTailDuration = outroLen
 
                     setTimeout(() => {
-                        visuallyDone = true
                         if (outroLen > 0) curSlot.startTailCursor(effTrans, outroLen)
                         curSlot.pauseCursor()
                         curSlot.setActive?.(false)
@@ -5446,6 +5453,9 @@ function buildTrigger(codeblockYaml, index) {
                     }, Math.max(0, msToTransition))
                     setTimeout(() => {
                         gaplessActive = false
+                        inTail = false
+                        inTailDuration = 0
+                        visuallyDone = true
                         mainAudioEl.currentTime = mp.start ?? 0
                         curSlot.resetCursor()
                     }, msToTransition + 10 + tailMs)
@@ -5962,7 +5972,9 @@ function buildTrigger(codeblockYaml, index) {
             getActiveSourceInfo: () => ({ src: activeSource, startedAt: activeSourceStartedAt, startOffset: activeSourceStartOffset }),
             // True as long as the AudioBufferSourceNode is running, even if WaveSurfer's
             // media element isn't playing yet (e.g. during the adoption cursor-sync gap).
-            isAudioActive: () => !visuallyDone && (activeSource !== null || ws.isPlaying() || (triggerSeqSlots.get(index)?.idx ?? 0) > 0),
+            isAudioActive: () => !visuallyDone && (activeSource !== null || ws.isPlaying() || (triggerSeqSlots.get(index)?.idx ?? 0) > 0 || inTail),
+            getInTail: () => inTail,
+            getInTailDuration: () => inTailDuration,
             // Returns playback position from AudioContext arithmetic when mainAudioEl lags.
             getPlaybackTime: () => {
                 if (activeSource && activeSourceStartedAt !== null && sharedAudioCtx)
@@ -8322,6 +8334,8 @@ function broadcastLiveState() {
             loopStart:   slotInfo?.loopStart   ?? (mp?.start ?? 0),
             loopEnd:     slotInfo?.loopEnd      ?? (mp?.end   ?? (ta.ws.getDuration() ?? 0)),
             isLoop,
+            inTail: ta.getInTail?.() ?? false,
+            tailDuration: ta.getInTailDuration?.() ?? 0,
             volume: ta.getCurrentVolume?.() ?? (mp?.volume ?? 0.8),
             tailRemaining: tailInfo?.active ? tailInfo.remaining : null,
         })
