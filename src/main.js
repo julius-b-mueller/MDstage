@@ -5064,12 +5064,10 @@ function buildTrigger(codeblockYaml, index) {
                 transitionTime = Math.max(ctx.currentTime, transitionTime)
                 const msToTransition = Math.max(0, transitionTime - ctx.currentTime) * 1000
 
-                // ① Without tail: stop current source at transition; with tail: let it play out
-                if (outroAt2 > 0) {
-                    // current source continues to its natural end (the decay tail)
-                } else {
-                    stopSource(transitionTime)
-                }
+                // ① Without tail: stop current source at transition; with tail let it play out.
+                // The current cue's (non-looping) source plays its decay tail to the natural end.
+                const tailMs2 = outroAt2 > 0 ? (effEnd - outroAt2) * 1000 : 0
+                if (outroAt2 <= 0) stopSource(transitionTime)
                 gaplessActive = true
 
                 // ② Start next audio source at the musical boundary (transition point)
@@ -5079,16 +5077,51 @@ function buildTrigger(codeblockYaml, index) {
                 if (nextPg) nextPg.gain.value = fadein > 0 ? 0 : vol
                 nextTa.startGaplessSource(ns, transitionTime)
 
-                // ③ Swap cursors after the tail finishes (immediately if no tail)
-                const tailMs2 = outroAt2 > 0 ? (effEnd - outroAt2) * 1000 : 0
+                // ③ At the musical boundary: hand the cursor to the next cue IMMEDIATELY so its
+                //    loop/seq machinery starts running right away (it's driven by the cursor's
+                //    timeupdate). The current cue's decay tail keeps playing and is shown as a
+                //    ghost cursor sliding to the end. Delaying the handoff until the tail ends
+                //    would let the next loop run "blind" (no boundary detection) and then hard-cut
+                //    when it catches up. Mirrors the isGroupOutro (Loop→Outro) path.
+                setTimeout(() => {
+                    if (outroAt2 > 0) {
+                        suppressPauseStop = true
+                        mainAudioEl.loop = false
+                        mainAudioEl.pause()
+                        setTimeout(() => { suppressPauseStop = false }, 0)
+                        inTail = true
+                        inTailDuration = tailMs2 / 1000
+                        // Ghost cursor slides from the fading point to the end over the tail.
+                        const _dur = ws.getDuration()
+                        if (_dur > 0) {
+                            if (activeTailCurEl) { activeTailCurEl.remove(); activeTailCurEl = null }
+                            const tailCurEl = document.createElement('div')
+                            tailCurEl.classList.add('ws-tail-cursor')
+                            tailCurEl.style.left = getX(effTransition2) + 'px'
+                            overlay.appendChild(tailCurEl)
+                            activeTailCurEl = tailCurEl
+                            requestAnimationFrame(() => { requestAnimationFrame(() => {
+                                tailCurEl.style.transitionDuration = (tailMs2 / 1000) + 's'
+                                tailCurEl.style.left = getX(effEnd) + 'px'
+                            }) })
+                            setTimeout(() => { if (activeTailCurEl === tailCurEl) { activeTailCurEl = null } tailCurEl.remove() }, tailMs2 + 150)
+                        }
+                        broadcastLiveState()
+                    }
+                    nextTa.startCursor(ns, 0)
+                }, Math.max(0, msToTransition))
+
+                // ④ After the tail finishes: clean up the current cue's transport state.
                 setTimeout(() => {
                     gaplessActive = false
+                    inTail = false
+                    inTailDuration = 0
                     suppressPauseStop = true
+                    mainAudioEl.loop = false
                     mainAudioEl.pause()
+                    setTimeout(() => { suppressPauseStop = false }, 0)
                     mainAudioEl.currentTime = mp.start
                     if (mtc && mtc.activeTcIndex === index) mtc.stopAndClear()
-                    setTimeout(() => { suppressPauseStop = false }, 0)
-                    nextTa.startCursor(ns, 0)
                 }, msToTransition + 5 + tailMs2)
 
                 _nonAudioActions(nextIdx, nextTa)
@@ -8267,8 +8300,9 @@ function broadcastLiveState() {
                     }
                 }
             }
-            // Check if this cue is the chain_end target of a currently playing Start cue (S→L transition)
-            if (!autoCuePending) {
+            // Check if this cue is the chain_end target of a currently playing Start cue (S→L transition).
+            // Skip if already current — the transition already fired (tail may still be playing).
+            if (!autoCuePending && cueIdx !== liveCurrent) {
                 for (let i = 1; i < triggerYamls.length; i++) {
                     const srcTy = triggerYamls[i]
                     if (!srcTy?.chain_end) continue
@@ -8276,7 +8310,8 @@ function broadcastLiveState() {
                     const srcTa = triggerAudio.get(i)
                     if (srcTa?.ws.isPlaying()) {
                         const ct  = srcTa.mainAudioEl?.currentTime ?? 0
-                        const end = srcTa.mp?.end ?? srcTa.ws.getDuration() ?? 0
+                        const fp  = srcTa.mp?.fading_point ?? 0
+                        const end = fp > 0 ? fp : (srcTa.mp?.end ?? srcTa.ws.getDuration() ?? 0)
                         autoCuePending = { currentTime: ct, at: end }
                     }
                     break

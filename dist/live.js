@@ -305,12 +305,23 @@
                     : 100
                 fillEl.style.width = pct.toFixed(1) + '%'
             }
-            for (const { fillEl, item } of autoCuePendingBars.values()) {
+            const _acDone = []
+            for (const [_acIdx, { fillEl, item }] of autoCuePendingBars.entries()) {
                 const elapsed = (performance.now() - item.receivedAt) / 1000
                 const pct = item.at > 0
                     ? Math.min(100, (item.currentTime + elapsed) / item.at * 100)
                     : 100
                 fillEl.style.width = pct.toFixed(1) + '%'
+                if (pct >= 100) _acDone.push(_acIdx)
+            }
+            for (const k of _acDone) {
+                const entry = autoCuePendingBars.get(k)
+                if (entry) {
+                    const wrap = entry.fillEl.parentElement
+                    wrap.style.transition = 'opacity 0.25s'
+                    wrap.style.opacity = '0'
+                }
+                autoCuePendingBars.delete(k)
             }
         }
         requestAnimationFrame(rafUpdate)
