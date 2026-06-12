@@ -4968,8 +4968,21 @@ function buildTrigger(codeblockYaml, index) {
                 const msToTransition = Math.max(0, transitionTime - ctx.currentTime) * 1000
 
                 if (outroAt > 0) {
-                    // ① fading_point: disable looping so the source plays the decay tail naturally
-                    if (activeSource) activeSource.loop = false
+                    // ① fading_point: stop the looping source at the boundary and play its
+                    // decay tail as a scheduled one-shot. `activeSource.loop = false` is racy —
+                    // a late JS timer lets the audio thread wrap back to mp.start first, then
+                    // the source plays a full pass from the top instead of just the tail (same
+                    // bug as the seq A→B transition). A sample-accurate stop()/one-shot can't be
+                    // outrun by the audio thread (mirrors _fireLoopOverlap).
+                    const srcBuf     = activeSource.buffer
+                    const tailOffset = (srcBuf === ta_?.decodedBuffer) ? loopEndSec : (srcBuf.duration - tailLen)
+                    stopSource(transitionTime)
+                    const tailSrc = ctx.createBufferSource()
+                    tailSrc.buffer = srcBuf
+                    tailSrc.connect(playbackGain)
+                    tailSrc.start(transitionTime, tailOffset, tailLen)
+                    activeTailSrc = tailSrc
+                    tailSrc.addEventListener('ended', () => { if (activeTailSrc === tailSrc) activeTailSrc = null })
                 } else {
                     // ① No tail: stop loop source at the exact musical boundary
                     stopSource(transitionTime)
@@ -5334,7 +5347,23 @@ function buildTrigger(codeblockYaml, index) {
                 const msToTransition = Math.max(0, transitionTime - ctx.currentTime) * 1000
 
                 if (outroAt > 0) {
-                    if (activeSource) activeSource.loop = false
+                    // Stop the looping primary source exactly at the musical boundary and play
+                    // its decay tail as a scheduled one-shot. Using `activeSource.loop = false`
+                    // here is racy: the boundary is detected by a JS timer (~5ms early), and if
+                    // it fires late the audio thread has already wrapped the loop back to
+                    // mp.start. Disabling loop then only stops *future* wraps — the source keeps
+                    // playing a full pass from the top, so A and B both restart from their
+                    // beginning. A sample-accurate stop()/one-shot can't be outrun by the audio
+                    // thread (mirrors _fireLoopOverlap).
+                    const srcBuf     = activeSource.buffer
+                    const tailOffset = (srcBuf === ta_?.decodedBuffer) ? loopEnd : (srcBuf.duration - tailLen)
+                    stopSource(transitionTime)
+                    const tailSrc = ctx.createBufferSource()
+                    tailSrc.buffer = srcBuf
+                    tailSrc.connect(playbackGain)
+                    tailSrc.start(transitionTime, tailOffset, tailLen)
+                    activeTailSrc = tailSrc
+                    tailSrc.addEventListener('ended', () => { if (activeTailSrc === tailSrc) activeTailSrc = null })
                 } else {
                     stopSource(transitionTime)
                     setTimeout(() => {
