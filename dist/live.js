@@ -64,6 +64,7 @@
         }
 
         // ── Trigger card HTML ────────────────────────────────────────────
+        function safeColorClass(c) { return c && /^[a-zA-Z0-9-]+$/.test(c) ? ' color-' + c : '' }
         function buildTriggerHtml(b) {
             let micRow = ''
             if (b.muteall) {
@@ -72,13 +73,13 @@
                 let inner = ''
                 for (const item of b.micColors) {
                     if (item.isGroup) {
-                        const nameHtml = `<span class="mic-group-name${item.color ? ' color-' + item.color : ''}">${esc(item.name)}</span>`
+                        const nameHtml = `<span class="mic-group-name${safeColorClass(item.color)}">${esc(item.name)}</span>`
                         const membersHtml = (item.members || []).map(m =>
-                            `<span class="mic-chip${m.color ? ' color-' + m.color : ''}">${esc(m.name)}</span>`
+                            `<span class="mic-chip${safeColorClass(m.color)}">${esc(m.name)}</span>`
                         ).join('')
                         inner += `<span class="mic-group">${nameHtml}${membersHtml}</span> `
                     } else {
-                        inner += `<span class="${'mic-chip' + (item.color ? ' color-' + item.color : '')}">${esc(item.name)}</span> `
+                        inner += `<span class="mic-chip${safeColorClass(item.color)}">${esc(item.name)}</span> `
                     }
                 }
                 micRow = `<div class="trigger-mic">${MIC_SVG} ${inner}</div>`

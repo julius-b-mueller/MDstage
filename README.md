@@ -4,6 +4,8 @@
 
 Electron-based stage manager app for live shows and theatre productions. The script is stored as a Markdown file; cues are embedded directly as YAML blocks. The app provides audio playback, MIDI control, timecode output, OSC output, and a live view — all from a single file.
 
+However, there is no need to open a text editor. Roletext, stage directions, cues and everything else can be added and edited via the graphical user interface.
+
 ---
 
 ## Table of Contents
@@ -259,6 +261,8 @@ MP3 and AAC files contain encoder padding (silent frames at the beginning/end) t
 
 Seamless transitions between audio clips without silence or clicks, using `AudioBufferSourceNode` (sample-accurate).
 
+In musical theatre terms: the **Loop** is the **Vamp**, and the **Finish** (Outro) is the **Devamp**.
+
 ### Transition at End (`chain_end`)
 
 ```yaml
@@ -276,29 +280,31 @@ loop: true
 
 The start cue plays through and at the end automatically and seamlessly starts the follow-on cue.
 
-### Managed Loop with Outro (`loop_outro`)
+### Managed Loop with Outro / Vamp & Devamp (`loop_outro`)
 
 ```yaml
-# Loop cue
+# Loop cue (Vamp)
 music: loop.wav
 loop_outro: {ch: 1, note: 6}   # note of the outro cue
 
 ---
 
-# Outro cue
+# Outro cue (Devamp)
 trigger_note: {ch: 1, note: 6}
 music: outro.wav
 ```
 
-The loop cue loops indefinitely. Clicking the outro cue **queues** it — it then starts exactly at the next loop end, seamlessly. A second click cancels the queue.
+The loop cue (Vamp) loops indefinitely. Clicking the outro cue (Devamp) **queues** it — it then starts exactly at the next loop end, seamlessly. A second click cancels the queue.
 
-### Outro Point (`fading_point`)
+### Outro Point / Smooth Devamp Tail (`fading_point`)
 
-`fading_point` (seconds) defines where a loop stops cycling. Without it, the transition happens at `end` (or the file boundary). With it:
+`fading_point` (seconds) defines where a loop (Vamp) stops cycling. Without it, the transition happens at `end` (or the file boundary). With it:
 
 - The loop iterates from `start` to `fading_point`.
-- Audio from `fading_point` to `end` plays as a tail — an outgoing overlap while the next cue starts.
+- Audio from `fading_point` to `end` plays as a tail — an outgoing overlap while the next cue (Devamp) starts.
 - When a Finish or Bridge is queued (Go pressed), the app waits for the current iteration to reach `fading_point` before starting the transition.
+
+This allows the Vamp or Devamp to ring out naturally — for example, if a cymbal is struck just before the loop boundary, the tail carries it through into the Devamp without cutting it off.
 
 ```yaml
 music:
@@ -310,9 +316,9 @@ loop_outro: {ch: 1, note: 7}
 
 The waveform editor shows an orange marker at `fading_point`. The progress bar in the live view cycles between `start` and `fading_point`.
 
-### Multi-File Loop (`music_seq`)
+### Multi-File Loop / Multi-Part Vamp (`music_seq`)
 
-A loop can span multiple audio files that play in sequence. The primary file is defined in `music:`, additional files in `music_seq:`. Each file transitions seamlessly to the next at its `fading_point` (or `end`), and the sequence loops back to the first file.
+A loop (Vamp) can span multiple audio files that play in sequence. The primary file is defined in `music:`, additional files in `music_seq:`. Each file transitions seamlessly to the next at its `fading_point` (or `end`), and the sequence loops back to the first file. This allows a long, varied Vamp that still devamps quickly — the Devamp fires at the next `fading_point` in the currently active file, not at the end of the full sequence.
 
 ```yaml
 music:

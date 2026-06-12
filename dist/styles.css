@@ -38,7 +38,8 @@ p {
     margin: .4rem 1rem;
 }
 
-#script-content.first-block-is-cue {
+#script-content.first-block-is-cue,
+#script-content.first-block-is-text {
     padding-top: var(--first-cue-padding, 4rem);
 }
 

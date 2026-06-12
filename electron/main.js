@@ -117,9 +117,15 @@ function openLineInEditor(settings, line) {
 function readConfigBlock() {
     if (!scriptMdPath) return { text: '', parsed: null, block: '' }
     const text = fs.readFileSync(scriptMdPath, 'utf8')
-    const m = text.match(/```yaml\n([\s\S]*?)\n```/)
-    if (!m) return { text, parsed: null, block: '' }
-    return { text, parsed: yaml.load(m[1]), block: m[0] }
+    const re = /```yaml\n([\s\S]*?)\n```/g
+    let m
+    while ((m = re.exec(text)) !== null) {
+        try {
+            const parsed = yaml.load(m[1])
+            if (parsed?.config) return { text, parsed, block: m[0] }
+        } catch {}
+    }
+    return { text, parsed: null, block: '' }
 }
 
 function loadSettings() {
@@ -159,7 +165,7 @@ function persistSettings(settings) {
 
     const newYaml = yaml.dump(parsed, { indent: 4, lineWidth: -1, noRefs: true })
     const newBlock = '```yaml\n' + newYaml.trimEnd() + '\n```'
-    fs.writeFileSync(scriptMdPath, text.replace(block, newBlock), 'utf8')
+    fs.writeFileSync(scriptMdPath, text.replace(block, () => newBlock), 'utf8')
 }
 
 let mainWindow = null
@@ -311,7 +317,8 @@ async function createNewFile() {
         defaultPath: 'skript.md',
     })
     if (!result.canceled && result.filePath) {
-        const template = `\`\`\`yaml\nconfig:\n    app_version: "${app.getVersion()}"\n    roles: {}\n\`\`\`\n`
+        const name = path.basename(result.filePath, '.md')
+        const template = `# ${name}\n\n\`\`\`yaml\nconfig:\n    app_version: "${app.getVersion()}"\n    roles: {}\n\`\`\`\n`
         fs.writeFileSync(result.filePath, template, 'utf8')
         scriptMdPath = result.filePath
         saveLastFilePath(scriptMdPath)
@@ -762,7 +769,22 @@ app.whenReady().then(async () => {
         if (!scriptMdPath) throw new Error('No file open')
         if (typeof content !== 'string') throw new Error('Invalid content')
         if (content.length > 10 * 1024 * 1024) throw new Error('File too large')
-        fs.writeFileSync(scriptMdPath, content, 'utf8')
+        if (!/```yaml[\s\S]*?config:[\s\S]*?```/.test(content)) throw new Error('Invalid content: missing config block')
+        let toWrite = content
+        if (!suppressVersionBump) {
+            const m = content.match(/```yaml\n([\s\S]*?)\n```/)
+            if (m) {
+                try {
+                    const parsed = yaml.load(m[1])
+                    if (parsed?.config) {
+                        parsed.config.app_version = app.getVersion()
+                        const newYaml = yaml.dump(parsed, { indent: 4, lineWidth: -1, noRefs: true })
+                        toWrite = content.replace(m[0], () => '```yaml\n' + newYaml.trimEnd() + '\n```')
+                    }
+                } catch (e) { /* ignore yaml parse error, write as-is */ }
+            }
+        }
+        fs.writeFileSync(scriptMdPath, toWrite, 'utf8')
     })
 
     ipcMain.handle('get-script-path', () => scriptMdPath ?? '')
@@ -875,7 +897,7 @@ app.whenReady().then(async () => {
                     }
                     const newYaml = yaml.dump(parsed, { indent: 4, lineWidth: -1, noRefs: true })
                     const newBlock = '```yaml\n' + newYaml.trimEnd() + '\n```'
-                    text = text.replace(m[0], newBlock)
+                    text = text.replace(m[0], () => newBlock)
                 }
             } catch (e) {
                 console.warn('save-roles YAML error:', e.message)
@@ -901,7 +923,7 @@ app.whenReady().then(async () => {
         else delete parsed.config.emLightNote
         const newYaml = yaml.dump(parsed, { indent: 4, lineWidth: -1, noRefs: true })
         const newBlock = '```yaml\n' + newYaml.trimEnd() + '\n```'
-        fs.writeFileSync(scriptMdPath, text.replace(block, newBlock), 'utf8')
+        fs.writeFileSync(scriptMdPath, text.replace(block, () => newBlock), 'utf8')
         BrowserWindow.getAllWindows().forEach(win => win.webContents.send('script-changed'))
     })
 

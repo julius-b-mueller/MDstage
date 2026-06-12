@@ -460,7 +460,7 @@
             // Migrate or load devices
             let initialDevices = settings.micDevices && settings.micDevices.length > 0
                 ? settings.micDevices
-                : [{
+                : (settings.midiX32Device || settings.micMuteMethod) ? [{
                     name: 'Gerät 1',
                     micMuteMethod:       settings.micMuteMethod    || 'x32',
                     midiX32Device:       settings.midiX32Device     || null,
@@ -486,7 +486,7 @@
                     micMuteOscOffPath:   settings.micMuteOscOffPath  || settings.micMuteOscPath || '/ch/{ch}/mix/on',
                     micMuteOscOffArgType:settings.micMuteOscOffArgType || 'float',
                     micMuteOscOffArg:    settings.micMuteOscOffArg !== undefined ? String(settings.micMuteOscOffArg) : (settings.micMuteOscMute !== undefined ? String(settings.micMuteOscMute) : '0'),
-                }]
+                }] : []
 
             // Need midiOutNames before building cards — gather it first (built below in MIDI section)
             // We defer card building until after MIDI enumeration; use a placeholder:
@@ -655,10 +655,14 @@
             } else {
                 const midiDevs = settings.midiOutputDevices?.length > 0
                     ? settings.midiOutputDevices
-                    : [{ name: 'Gerät 1', device: settings.midiTriggerDevice || null, sendTriggerNote: true }]
+                    : settings.midiTriggerDevice
+                        ? [{ name: 'Gerät 1', device: settings.midiTriggerDevice, sendTriggerNote: true }]
+                        : []
                 const oscDevs = settings.oscOutputDevices?.length > 0
                     ? settings.oscOutputDevices
-                    : [{ name: 'OSC', enabled: settings.oscEnabled ?? false, host: settings.oscHost || '127.0.0.1', port: settings.oscPort ?? 8000, sendTriggerNote: false }]
+                    : settings.oscEnabled
+                        ? [{ name: 'OSC', enabled: true, host: settings.oscHost || '127.0.0.1', port: settings.oscPort ?? 8000, sendTriggerNote: false }]
+                        : []
                 initialOutputDevices = [
                     ...midiDevs.map(d => ({ sendTriggerNote: true, ...d, type: 'midi' })),
                     ...oscDevs.map(d => ({ sendTriggerNote: false, ...d, type: 'osc' })),

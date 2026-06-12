@@ -56,11 +56,9 @@ function findUnknownYamlKeys(text) {
         let parsed
         try { parsed = yaml.load(m[1]) } catch { continue }
         if (!parsed || typeof parsed !== 'object') continue
-        if (blockIndex === 1) {
-            if (parsed.config && typeof parsed.config === 'object') {
-                for (const k of Object.keys(parsed.config).filter(k => !CONFIG_BLOCK_KEYS.has(k)))
-                    results.push({ block: blockIndex, key: `config.${k}` })
-            }
+        if (parsed.config && typeof parsed.config === 'object') {
+            for (const k of Object.keys(parsed.config).filter(k => !CONFIG_BLOCK_KEYS.has(k)))
+                results.push({ block: blockIndex, key: `config.${k}` })
         } else {
             for (const k of Object.keys(parsed).filter(k => !TRIGGER_BLOCK_KEYS.has(k)))
                 results.push({ block: blockIndex, key: k })
@@ -83,6 +81,7 @@ async function writeScriptMd(content) {
         const proceed = await showConfirmDialog({
             title: t('ver.upgrade.title'),
             body,
+            hint: t('ver.security.hint'),
             confirmLabel: t('ver.upgrade.ok'),
             cancelLabel: t('ver.upgrade.cancel'),
             img: 'assets/version-mismatch.png',
@@ -903,7 +902,7 @@ function wrapSentences(text) {
 }
 
 // Custom confirm dialog — returns a Promise<boolean>.
-function showConfirmDialog({ title, body, confirmLabel = 'Ja', cancelLabel = 'Abbrechen', img = null }) {
+function showConfirmDialog({ title, body, hint = null, confirmLabel = 'Ja', cancelLabel = 'Abbrechen', img = null }) {
     return new Promise(resolve => {
         const overlay = document.createElement('div')
         overlay.className = 'dialog-overlay'
@@ -917,8 +916,14 @@ function showConfirmDialog({ title, body, confirmLabel = 'Ja', cancelLabel = 'Ab
         h3.textContent = title
 
         const bodyEl = document.createElement('p')
-        bodyEl.style.cssText = 'color:#abb2bf;font-size:0.9rem;margin:0 0 1.5rem;line-height:1.6'
+        bodyEl.style.cssText = 'color:#abb2bf;font-size:0.9rem;margin:0 0 1rem;line-height:1.6'
         bodyEl.innerHTML = DOMPurify.sanitize(body, { ALLOWED_TAGS: ['strong', 'br'], ALLOWED_ATTR: [] })
+
+        const hintEl = hint ? document.createElement('p') : null
+        if (hintEl) {
+            hintEl.style.cssText = 'color:#e06c75;font-size:0.85rem;margin:0 0 1.5rem;line-height:1.6'
+            hintEl.textContent = hint
+        }
 
         const actions = document.createElement('div')
         actions.className = 'dialog-actions'
@@ -941,7 +946,7 @@ function showConfirmDialog({ title, body, confirmLabel = 'Ja', cancelLabel = 'Ab
             src: img,
             style: 'width:75%;border-radius:4px;margin:0 auto 0.8rem;display:block',
         }) : null
-        box.append(...(imgEl ? [imgEl] : []), h3, bodyEl, actions)
+        box.append(...(imgEl ? [imgEl] : []), h3, bodyEl, ...(hintEl ? [hintEl] : []), actions)
         overlay.append(box)
         document.body.appendChild(overlay)
         ;(cancelBtn ?? confirmBtn).focus()
@@ -1035,8 +1040,12 @@ function showVersionMismatchDialog(fileVersion, appVersion) {
         currentEl.textContent = t('ver.mismatch.current').replace('%1', appVersion)
 
         const hintEl = document.createElement('p')
-        hintEl.style.cssText = 'color:#5c6370;font-size:0.85rem;margin:0 0 1rem;line-height:1.6'
+        hintEl.style.cssText = 'color:#5c6370;font-size:0.85rem;margin:0 0 0.8rem;line-height:1.6'
         hintEl.textContent = t('ver.mismatch.hint')
+
+        const securityEl = document.createElement('p')
+        securityEl.style.cssText = 'color:#e06c75;font-size:0.85rem;margin:0 0 1rem;line-height:1.6'
+        securityEl.textContent = t('ver.security.hint')
 
         const actions = document.createElement('div')
         actions.className = 'dialog-actions'
@@ -1047,7 +1056,7 @@ function showVersionMismatchDialog(fileVersion, appVersion) {
         okBtn.textContent = t('ver.mismatch.ok')
         okBtn.addEventListener('click', () => close())
 
-        const els = [imgEl, h3, createdEl, currentEl, hintEl]
+        const els = [imgEl, h3, createdEl, currentEl, hintEl, securityEl]
         if (/^\d+\.\d+\.\d+$/.test(fileVersion)) {
             const linkBtn = document.createElement('button')
             linkBtn.className = 'dialog-btn'
@@ -1975,14 +1984,15 @@ function openNewBlock(afterBlockEl, forceAfterRole) {
 function checkEmptyScript() {
     if (inlineEditor) return
     const blocks = tokenizeScript(scriptText)
-    const hasContent = blocks.some(b => {
-        if (b.type === 'text') return true
-        if (b.type === 'yaml') {
-            const m = b.content.match(/^```yaml\n([\s\S]*?)\n```$/)
-            try { const y = yaml.load(m?.[1]); return y && !y.config } catch {}
-        }
+    const textBlocks = blocks.filter(b => b.type === 'text')
+    const hasCue = blocks.some(b => {
+        if (b.type !== 'yaml') return false
+        const m = b.content.match(/^```yaml\n([\s\S]*?)\n```$/)
+        try { const y = yaml.load(m?.[1]); return y && !y.config } catch {}
         return false
     })
+    const isOnlyHeading = textBlocks.length === 1 && /^#{1,2}/.test(textBlocks[0].content)
+    const hasContent = hasCue || (textBlocks.length > 0 && !isOnlyHeading)
     showEmptyState(!hasContent)
 }
 
@@ -2002,7 +2012,7 @@ function showEmptyState(show) {
     const btnCue = document.createElement('button')
     btnCue.className = 'empty-script-btn'
     btnCue.innerHTML = '+ Cue'
-    btnCue.addEventListener('click', (e) => { e.stopPropagation(); showTriggerDialog({ insertAfterBlockIdx: 0 }) })
+    btnCue.addEventListener('click', (e) => { e.stopPropagation(); showTriggerDialog({ insertAfterBlockIdx: tokenizeScript(scriptText).length - 1 }) })
 
     const btnText = document.createElement('button')
     btnText.className = 'empty-script-btn'
@@ -2656,13 +2666,6 @@ function commitNewBlock(asRole, skipNavigate = false) {
         }
         insertLines = ['', mdLine]
         _target = lineStart + 1
-    }
-
-    // Auto-prepend an empty heading when this is the very first text block and isn't a heading.
-    // The sticky h1 acts as a spacer below the fixed controls bar.
-    if (!tokenizeScript(scriptText).some(b => b.type === 'text') && !/^#(?!#)/.test(insertLines[1] || '')) {
-        insertLines = ['', '# ', ...insertLines]
-        _target += 2
     }
 
     const lines = scriptText.split('\n')
@@ -3475,8 +3478,14 @@ function annotateBlocks() {
     const blocks = tokenizeScript(scriptText)
     let ti = 0
     for (const child of content.children) {
-        // Skip yaml tokens with no DOM representation (config yaml is removed by convertCodeblocks)
-        while (ti < blocks.length && blocks[ti].type === 'yaml' && !isTriggerEl(child)) ti++
+        // Skip yaml tokens with no DOM representation (config yaml is removed by convertCodeblocks).
+        // Always skip config yaml (detected by leading "config:" key), even for trigger children.
+        while (ti < blocks.length) {
+            const b = blocks[ti]
+            if (b.type !== 'yaml') break
+            if (isTriggerEl(child) && !/^```yaml\nconfig:/.test(b.content)) break
+            ti++
+        }
         if (ti >= blocks.length) break
         child.dataset.blockIdx = ti
         if (child.classList.contains('trigger-group')) {
@@ -3487,7 +3496,9 @@ function annotateBlocks() {
     }
     const firstBlock = content.querySelector(':scope > :not(.insert-zone):not(.empty-script-state)')
     const isFirstCue = !!(firstBlock?.classList.contains('trigger') || firstBlock?.classList.contains('trigger-group'))
+    const isFirstText = firstBlock?.tagName === 'P'
     content.classList.toggle('first-block-is-cue', isFirstCue)
+    content.classList.toggle('first-block-is-text', !!isFirstText)
 }
 
 function annotateLineNumbers() {
@@ -9071,13 +9082,17 @@ function _migrateOutputDevices(settings) {
             ...d,
         }))
     }
-    // Migrate old separate arrays
+    // Migrate old separate arrays — only if old data actually exists
     const midiDevs = settings.midiOutputDevices?.length > 0
         ? settings.midiOutputDevices
-        : [{ name: 'Gerät 1', device: settings.midiTriggerDevice || null, sendTriggerNote: true }]
+        : settings.midiTriggerDevice
+            ? [{ name: 'Gerät 1', device: settings.midiTriggerDevice, sendTriggerNote: true }]
+            : []
     const oscDevs = settings.oscOutputDevices?.length > 0
         ? settings.oscOutputDevices
-        : [{ name: 'Gerät 1', enabled: settings.oscEnabled ?? false, host: settings.oscHost || '127.0.0.1', port: settings.oscPort ?? 8000, sendTriggerNote: false }]
+        : settings.oscEnabled
+            ? [{ name: 'Gerät 1', enabled: true, host: settings.oscHost || '127.0.0.1', port: settings.oscPort ?? 8000, sendTriggerNote: false }]
+            : []
     return [
         ...midiDevs.map((d, i) => ({ enabled: true, sendTriggerNote: i === 0, ...d, type: 'midi' })),
         ...oscDevs.map(d => ({ sendTriggerNote: false, ...d, type: 'osc' })),
@@ -9087,6 +9102,7 @@ function _migrateOutputDevices(settings) {
 // Migrate flat settings to micDevices array (backwards compat)
 function _migrateMicDevices(s) {
     if (s.micDevices && s.micDevices.length > 0) return s.micDevices
+    if (!s.midiX32Device && !s.micMuteMethod) return []
     return [{
         name:                'Gerät 1',
         micMuteMethod:       s.micMuteMethod        || 'x32',

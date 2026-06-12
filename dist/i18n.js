@@ -229,6 +229,7 @@
             'ver.mismatch.hint':          'Die Datei kann weiterhin verwendet werden. Wird sie bearbeitet, wird sie mit der aktuellen Version gespeichert. Falls die aktuelle Version nicht korrekt mit dem Script funktioniert, findest du die Version, mit der es erstellt wurde, hier:',
             'ver.mismatch.link':          'Release %1 auf GitHub ansehen',
             'ver.mismatch.ok':            'OK',
+            'ver.security.hint':          'Empfehlung: Skripte immer auf die aktuelle Version aktualisieren, anstatt ältere App-Versionen zu installieren – neue Versionen enthalten auch Sicherheitsupdates. Besonders wichtig ist das, wenn MD-Dateien von unbekannten Quellen geöffnet werden.',
             // ── Versions-Upgrade-Warnung ─────────────────────────────
             'ver.upgrade.title':          'Skript wird aktualisiert',
             'ver.upgrade.body':           'Dieses Skript wurde mit Version <strong>%2</strong> erstellt und wird jetzt mit Version <strong>%1</strong> gespeichert.<br><br>Bestehende Cues und Einstellungen können davon betroffen sein.<br><br>Eine Sicherheitskopie wird als <strong>%3</strong> gespeichert.',
@@ -465,6 +466,7 @@
             'ver.mismatch.hint':          'The file can still be used. If edited, it will be saved with the current version. If the current version doesn\'t work correctly with the script, you can find the version it was created with here:',
             'ver.mismatch.link':          'View release %1 on GitHub',
             'ver.mismatch.ok':            'OK',
+            'ver.security.hint':          'Recommendation: always update scripts to the current version instead of installing older app versions – new versions also include security fixes. This is especially important when opening MD files from unknown sources.',
             // ── Version upgrade warning ──────────────────────────────
             'ver.upgrade.title':          'Script will be updated',
             'ver.upgrade.body':           'This script was created with version <strong>%2</strong> and will now be saved with version <strong>%1</strong>.<br><br>Existing cues and settings may be affected.<br><br>A backup will be saved as <strong>%3</strong>.',
