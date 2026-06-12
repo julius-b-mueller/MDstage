@@ -1,3 +1,5 @@
+<img src="dist/assets/icon.png" width="80" alt="MDstage Icon">
+
 # MDstage
 
 Electron-based stage manager app for live shows and theatre productions. The script is stored as a Markdown file; cues are embedded directly as YAML blocks. The app provides audio playback, MIDI control, timecode output, OSC output, and a live view — all from a single file.
@@ -170,6 +172,7 @@ music:
     end: 120.0
     fadein: 1.0
     fadeout: 2.0
+    fading_point: 96.0
     loop: true
     monitor: loop-monitor.wav
 ```
@@ -288,6 +291,51 @@ music: outro.wav
 ```
 
 The loop cue loops indefinitely. Clicking the outro cue **queues** it — it then starts exactly at the next loop end, seamlessly. A second click cancels the queue.
+
+### Outro Point (`fading_point`)
+
+`fading_point` (seconds) defines where a loop stops cycling. Without it, the transition happens at `end` (or the file boundary). With it:
+
+- The loop iterates from `start` to `fading_point`.
+- Audio from `fading_point` to `end` plays as a tail — an outgoing overlap while the next cue starts.
+- When a Finish or Bridge is queued (Go pressed), the app waits for the current iteration to reach `fading_point` before starting the transition.
+
+```yaml
+music:
+    file: loop.wav
+    end: 64.0
+    fading_point: 32.0   # loop cycles 0→32 s; tail 32→64 s plays on outro
+loop_outro: {ch: 1, note: 7}
+```
+
+The waveform editor shows an orange marker at `fading_point`. The progress bar in the live view cycles between `start` and `fading_point`.
+
+### Multi-File Loop (`music_seq`)
+
+A loop can span multiple audio files that play in sequence. The primary file is defined in `music:`, additional files in `music_seq:`. Each file transitions seamlessly to the next at its `fading_point` (or `end`), and the sequence loops back to the first file.
+
+```yaml
+music:
+    file: loop-a.wav
+    fading_point: 32.0
+loop_outro: {ch: 1, note: 7}
+music_seq:
+    - file: loop-b.wav
+      fading_point: 28.0
+    - file: loop-c.wav
+      fading_point: 30.0
+```
+
+Each `music_seq` entry supports the same fields as the `music` object: `file`, `volume`, `start`, `end`, `fadein`, `fadeout`, `fading_point`, `monitor`.
+
+**Behavior:**
+- Files play in order: A → B → C → A → B → …
+- Each transition fires at the `fading_point` of the current file (sample-accurate; audio between `fading_point` and `end` plays as an overlap tail into the next file).
+- When a Finish or Bridge is queued, it waits for the next `fading_point` in the currently active file.
+- The live view progress bar shows the active file's progress (`start` → `fading_point`) and resets on each transition.
+- All files are pre-decoded in the background as soon as the cue becomes visible.
+
+Use WAV files for all files in the sequence to avoid encoder padding artefacts at transition points.
 
 ### S/L/F Button
 
