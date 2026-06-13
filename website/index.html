@@ -129,6 +129,15 @@ pre{background:var(--bg3);border:1px solid var(--border);padding:.65rem .9rem;bo
 .preview-card-text h3{font-size:.95rem;font-weight:700;color:#fff;margin-bottom:.25rem}
 .preview-card-text p{font-size:.82rem;color:var(--dim);line-height:1.6}
 
+/* ── YouTube Facade ─────────────────────────────────── */
+.yt-facade{position:relative;max-width:800px;border-radius:12px;overflow:hidden;cursor:pointer;background:#000;aspect-ratio:16/9}
+.yt-thumb{width:100%;height:100%;object-fit:cover;display:block;opacity:.85;transition:opacity .2s}
+.yt-facade:hover .yt-thumb{opacity:1}
+.yt-play{position:absolute;top:50%;left:50%;transform:translate(-50%,-60%);background:rgba(0,0,0,.55);border:none;border-radius:10px;padding:.5rem .7rem;cursor:pointer;transition:background .15s,transform .15s;line-height:0}
+.yt-facade:hover .yt-play{background:rgba(0,0,0,.75);transform:translate(-50%,-60%) scale(1.08)}
+.yt-notice{position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.72);color:#7a818f;font-size:.73rem;padding:.45rem .9rem;line-height:1.5;text-align:center;pointer-events:none}
+.yt-facade iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+
 /* ── Footer ──────────────────────────────── */
 footer{background:var(--bg2);border-top:1px solid var(--border);padding:2.2rem 2rem;text-align:center}
 footer p{font-size:.82rem;color:var(--dim);margin-bottom:.35rem}
@@ -184,6 +193,7 @@ footer a:hover{text-decoration:underline}
   <div class="nav-links">
     <a href="#concept" data-de="Konzept" data-en="Concept">Konzept</a>
     <a href="#features" data-de="Features" data-en="Features">Features</a>
+    <a href="#tutorial" data-de="Tutorial" data-en="Tutorial">Tutorial</a>
     <a href="#download" data-de="Download" data-en="Download">Download</a>
     <a href="about.html" data-de="Über" data-en="About">Über</a>
   </div>
@@ -855,6 +865,24 @@ footer a:hover{text-decoration:underline}
   </div>
 </section>
 
+<!-- ── Tutorial ──────────────────────────────────────────── -->
+<section class="feat-section" id="tutorial">
+  <div class="feat-inner">
+    <p class="section-label" data-de="Tutorial" data-en="Tutorial">Tutorial</p>
+    <h2 class="section-title" data-de="MDstage in Aktion sehen" data-en="See MDstage in action">MDstage in Aktion sehen</h2>
+    <p class="section-sub" data-de="In diesem Video siehst du, wie du in MDstage ein Skript aufbaust, Cues einfügst und die Show fährst." data-en="This video shows you how to set up a script in MDstage, add cues, and run the show.">
+      In diesem Video siehst du, wie du in MDstage ein Skript aufbaust, Cues einfügst und die Show fährst.
+    </p>
+    <div class="yt-facade" data-videoid="yrokna8dZcA">
+      <img class="yt-thumb" src="assets/MDstage-open-graph.png" alt="MDstage Tutorial" loading="lazy" width="1200" height="630">
+      <button class="yt-play" aria-label="Video abspielen">
+        <svg viewBox="0 0 68 48" width="68" height="48"><path d="M66.52 7.74c-.78-2.93-2.49-5.41-5.42-6.19C55.79.13 34 0 34 0S12.21.13 6.9 1.55c-2.93.78-4.63 3.26-5.42 6.19C.06 13.05 0 24 0 24s.06 10.95 1.48 16.26c.78 2.93 2.49 5.41 5.42 6.19C12.21 47.87 34 48 34 48s21.79-.13 27.1-1.55c2.93-.78 4.64-3.26 5.42-6.19C67.94 34.95 68 24 68 24s-.06-10.95-1.48-16.26z" fill="#f00"/><path d="M45 24L27 14v20" fill="#fff"/></svg>
+      </button>
+      <p class="yt-notice" data-de="Klicken lädt das Video – YouTube (Google LLC). Erst nach dem Klick werden Daten an YouTube übertragen." data-en="Click to load – YouTube video (Google LLC). Data is only sent to YouTube after clicking.">Klicken lädt das Video – YouTube (Google LLC). Erst nach dem Klick werden Daten an YouTube übertragen.</p>
+    </div>
+  </div>
+</section>
+
 <!-- ── Download ──────────────────────────────────────────── -->
 <section class="dl-section" id="download">
   <div class="feat-inner">
@@ -1038,6 +1066,15 @@ footer a:hover{text-decoration:underline}
     document.getElementById('cb-mail').href = 'mailto:hello@mdstage.org?subject=' + encodeURIComponent(sub)
   }
   setLang(currentLang)
+
+  // ── YouTube click-to-load ──────────────────────────────────
+  document.querySelectorAll('.yt-facade').forEach(el => {
+    el.addEventListener('click', () => {
+      const id = el.dataset.videoid
+      el.innerHTML = `<iframe src="https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>`
+      el.style.cursor = 'default'
+    }, { once: true })
+  })
 </script>
 </body>
 </html>
