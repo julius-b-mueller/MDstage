@@ -6,6 +6,7 @@ dist/version.json
 dist/audio/
 release/
 artifacts/
+BACKLOG.md
 public/
 website/app/
 **/.DS_Store

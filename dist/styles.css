@@ -9,29 +9,28 @@ body {
 h1,
 h2 {
     background-color: #383c44;
-    padding: 1rem 1rem 1rem 4rem;
-    position: sticky;
-    top: 0;
+    padding: 1rem;
     font-size: 1.5rem;
-    z-index: 10;
     transition: padding-left 0.2s ease;
+    /* A bit more breathing room between preceding text and a heading. */
+    margin-top: 2rem;
 }
+/* Headings are no longer sticky — the current one is shown as text in the
+   fixed top bar (#header-shield); in-text headings simply scroll out. */
 
 h1 {
-    margin-top: 0;
-    box-shadow: black 0 0 10px;
     min-height: 2rem;
+}
+
+/* The very first heading sits flush at the top — no gap above it.
+   (Class set in annotateBlocks; :first-child fails due to leading .insert-zone.) */
+#script-content > h1.first-heading,
+#script-content > h2.first-heading {
+    margin-top: 0;
 }
 
 em {
     color: #abb2bf;
-}
-
-@media only screen and (max-width: 768px) {
-
-    h1, h2, h3 {
-        top: var(--btns-bottom, 4rem);
-    }
 }
 
 p {
@@ -76,11 +75,6 @@ p {
 #script-content.show-md-line-numbers > [data-md-line] {
     position: relative;
 }
-/* Restore sticky for headings (overridden by position: relative above) */
-#script-content.show-md-line-numbers > h1[data-md-line],
-#script-content.show-md-line-numbers > h2[data-md-line] {
-    position: sticky;
-}
 #script-content.show-md-line-numbers > [data-md-line]::before {
     content: attr(data-md-line);
     position: absolute;
@@ -110,10 +104,6 @@ p {
 #script-content.show-md-line-numbers > h2 {
     margin-left: -0.4rem;
     padding-left: 4.4rem;
-}
-/* h1: top + bottom shadow only; spread = -blur cancels horizontal bleed entirely */
-#script-content.show-md-line-numbers > h1 {
-    box-shadow: 0 8px 8px -8px rgba(0,0,0,0.85), 0 -8px 8px -8px rgba(0,0,0,0.5);
 }
 /* Heading ::before: compensate for the -0.4rem margin, align with heading text */
 #script-content.show-md-line-numbers > h1[data-md-line]::before,
@@ -419,8 +409,23 @@ p {
     right: 0;
     height: 0;
     background: #383c44;
+    /* The single section-header shadow (headings themselves no longer cast one,
+       so stacked headings can't add their shadows up any more). */
+    box-shadow: 0 3px 9px rgba(0, 0, 0, 0.55);
     z-index: 11;
     pointer-events: none;
+    overflow: hidden;
+}
+/* Current section heading, shown as text inside the top bar. Vertical position,
+   line-height and the left/right reserves are driven by updateHeaderShield(). */
+#header-heading {
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: #cfd5df;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    box-sizing: border-box;
 }
 
 .buttons {
@@ -467,6 +472,13 @@ p {
 .emoji-button {
     font-size: 2rem;
     line-height: 3rem;
+}
+
+/* Keep the 3 emergency buttons together so they wrap to the next line as one
+   group (right-aligned), never individually. */
+.emergency-group {
+    display: flex;
+    align-items: center;
 }
 
 .emergency {
@@ -719,6 +731,18 @@ body.trigger-pick-mode-filtered .waveform-wrapper { pointer-events: none; }
     width: 100%;
     position: relative;
 }
+/* No focus ring when clicking the waveform (the container is focusable via
+   tabindex="-1" — Chromium would otherwise draw a two-tone outline). */
+.waveform-container:focus,
+.waveform-container:focus-visible {
+    outline: none;
+}
+/* Force the native scrollbar of the zoomed waveform dark on every platform —
+   on Windows it would otherwise follow the OS theme and appear light. */
+.waveform-container::part(scroll) {
+    color-scheme: dark;
+    scrollbar-color: #3e4451 transparent;
+}
 
 .waveform-overlay {
     position: absolute;
@@ -794,6 +818,8 @@ body.trigger-pick-mode-filtered .waveform-wrapper { pointer-events: none; }
     opacity: 0.45;
 }
 .seq-slot-active .waveform-container { box-shadow: 0 0 0 2px rgba(229,192,123,0.5); border-radius: 3px; }
+/* A lone slot needs no "active part" indicator — drop the amber outline. */
+.seq-slot:only-child.seq-slot-active .waveform-container { box-shadow: none; }
 
 /* Dialog: seq entry cards */
 .seq-entry-card {
@@ -1159,7 +1185,20 @@ body.shift-held .insert-hotspot:hover .insert-btn { background: #61afef; }
 .shift-held .ws-auto-marker {
     pointer-events: auto;
     cursor: ew-resize;
-    width: 8px;
+    /* Signal editability via full opacity + glow instead of extra thickness,
+       so the exact position stays readable while dragging. */
+    background: rgba(152, 195, 121, 1);
+    box-shadow: 0 0 5px 1px rgba(152, 195, 121, 0.85);
+}
+/* Keep the visible line 2px wide while dragging (so the exact position stays
+   readable) but widen the invisible grab area so it's still easy to catch. */
+.shift-held .ws-auto-marker::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -5px;
+    right: -5px;
 }
 .ws-auto-marker-label {
     position: absolute;
@@ -1285,15 +1324,6 @@ body:has(#script-content.show-md-line-numbers) .sidebar-toggle-button {
 #scene-sidebar.open ~ .sidebar-toggle-button {
     opacity: 0;
     pointer-events: none;
-}
-#scene-sidebar.open ~ #script-content h1,
-#scene-sidebar.open ~ #script-content h2 {
-    padding-left: calc(240px + 1rem);
-}
-/* When sidebar open + line numbers: compensate heading for the gutter margin */
-#scene-sidebar.open ~ #script-content.show-md-line-numbers h1,
-#scene-sidebar.open ~ #script-content.show-md-line-numbers h2 {
-    padding-left: calc(240px + 1rem - var(--md-gutter-w, 3.8rem) + 0.4rem);
 }
 #scene-sidebar {
     position: fixed;

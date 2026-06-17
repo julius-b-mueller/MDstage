@@ -492,6 +492,7 @@ function buildSidebar() {
 
 function toggleSidebar() {
     document.getElementById('scene-sidebar').classList.toggle('open')
+    updateHeaderShield()  // left reserve of the heading text depends on sidebar state
 }
 
 // Highlight active scene in sidebar based on scroll position
@@ -1114,6 +1115,10 @@ function formatScriptText(text) {
 
         const prevBlankNow = () => out.length === 0 || out[out.length - 1].trim() === ''
         const nextIsBlank  = () => i + 1 >= lines.length || lines[i + 1].trim() === ''
+        const prevIsRole   = () => {
+            const p = out.length ? out[out.length - 1].trim() : ''
+            return /^\*\*[^*]/.test(p) && /\*\*$/.test(p)
+        }
 
         if (isHeading) {
             out.push(line)
@@ -1122,7 +1127,9 @@ function formatScriptText(text) {
         }
 
         if (isStage) {
-            if (!prevBlankNow()) out.push('')
+            // A stage direction directly under a role name is that role's inline
+            // stage direction — keep it attached (no separating blank line above).
+            if (!prevIsRole() && !prevBlankNow()) out.push('')
             out.push(line)
             if (!nextIsBlank()) out.push('')
             continue
@@ -1847,7 +1854,8 @@ function closeEditor(save) {
 
 function deleteBlock() {
     if (!inlineEditor) return
-    const { blockEl, lineStart, lineEnd } = inlineEditor
+    const { blockEl } = inlineEditor
+    const blockIdx = parseInt(blockEl.dataset.blockIdx)
 
     // Remember the previous editable block in the DOM before any changes
     let prevEl = blockEl.previousElementSibling
@@ -1856,16 +1864,21 @@ function deleteBlock() {
     }
     const prevIdx = prevEl ? parseInt(prevEl.dataset.blockIdx) : -1
 
-    closeEditor(false)
+    closeEditor(false)  // may reformat scriptText and shift line numbers
 
-    // Remove block lines plus the blank separator line(s) that precede them
-    const lines = scriptText.split('\n')
-    let removeFrom = lineStart
-    while (removeFrom > 0 && lines[removeFrom - 1].trim() === '') removeFrom--
-    lines.splice(removeFrom, lineEnd - removeFrom + 1)
-    scriptText = lines.join('\n')
-    writeScriptMd(scriptText)
-    rerender(scriptText)
+    // Re-read the block's line range from the (possibly reformatted) text so we
+    // never splice with stale numbers.
+    const info = getBlockInfo(blockIdx)
+    if (info) {
+        // Remove block lines plus the blank separator line(s) that precede them
+        const lines = scriptText.split('\n')
+        let removeFrom = info.lineStart
+        while (removeFrom > 0 && lines[removeFrom - 1].trim() === '') removeFrom--
+        lines.splice(removeFrom, info.lineEnd - removeFrom + 1)
+        scriptText = lines.join('\n')
+        writeScriptMd(scriptText)
+        rerender(scriptText)
+    }
 
     if (prevIdx >= 0) {
         requestAnimationFrame(() => {
@@ -2145,10 +2158,13 @@ function onNewBlockKey(e) {
     if (e.key === 'Escape') {
         e.preventDefault()
         const hasConfirmed = inlineEditor?.confirmedRole || inlineEditor?.confirmedRoles?.length
-        if (inlineEditor?.isPersistent && !getTyped(e.currentTarget).trim() && !hasConfirmed) {
+        const hasTyped = !!getTyped(e.currentTarget).trim()
+        if (inlineEditor?.isPersistent && !hasTyped && !hasConfirmed) {
             return
         }
-        if (hasConfirmed) {
+        // Escape commits whatever has been entered (like ArrowUp/Down) instead of
+        // discarding it — only a truly empty block is thrown away.
+        if (hasConfirmed || hasTyped) {
             if (inlineEditor?.el === e.currentTarget) commitNewBlock()
         } else {
             clearGhost()
@@ -2664,7 +2680,11 @@ function commitNewBlock(asRole, skipNavigate = false) {
             mdLine = `*${text}*`
             _afterRole = false
         }
-        insertLines = ['', mdLine]
+        // Parenthetical-only text right after a role-only block is that role's
+        // inline stage direction — attach it to the role block (no blank line)
+        // instead of dropping it into a separate block on the next line.
+        const attachToRole = isAfterRole && /^\s*(?:\([^)]*\)\s*)+$/.test(text)
+        insertLines = attachToRole ? [mdLine] : ['', mdLine]
         _target = lineStart + 1
     }
 
@@ -2763,6 +2783,7 @@ document.addEventListener('keydown', (e) => {
         const bar = document.getElementById('search-bar')
         if (!bar.classList.contains('hidden')) { closeSearch(); return }
         document.getElementById('scene-sidebar').classList.remove('open')
+        updateHeaderShield()
         return
     }
     // Enter / Shift+Enter in search bar → navigate
@@ -2787,6 +2808,7 @@ document.addEventListener('keyup', (e) => {
 window.addEventListener('blur', () => { shiftHeld = false; document.body.classList.remove('shift-held') })
 window.addEventListener('scroll', updateSidebarActive, { passive: true })
 window.addEventListener('scroll', updateGutterState, { passive: true })
+window.addEventListener('scroll', updateHeaderShield, { passive: true })
 
 // Prevent Electron from navigating to dropped files (default browser/Electron behaviour).
 // Individual drop targets handle the files themselves.
@@ -2796,25 +2818,113 @@ if (!window.__webPreview) {
 }
 
 const _headerShield = document.getElementById('header-shield')
+const _headerHeading = document.getElementById('header-heading')
+
+// The section heading currently scrolled up to (or past) the top bar — the last
+// heading in DOM order whose top is at/above the given threshold.
+function currentHeadingForBar(threshold) {
+    const content = document.getElementById('script-content')
+    if (!content) return null
+    const headings = content.querySelectorAll(':scope > h1, :scope > h2, :scope > h3')
+    let current = null
+    for (const h of headings) {
+        if (h.getBoundingClientRect().top <= threshold) current = h
+        else break
+    }
+    // Still above the first heading → show the first (current) section anyway.
+    if (!current && headings.length) current = headings[0]
+    return current
+}
+
 function updateHeaderShield() {
     if (!_headerShield) return
-    const btns = document.querySelector('.buttons')
-    const btnsBottom = btns ? btns.getBoundingClientRect().bottom : 0
+    const btns   = document.querySelector('.buttons')
+    const burger = document.querySelector('.sidebar-toggle-button')
+    const burgerRect = burger ? burger.getBoundingClientRect() : null
+
+    // Constrain the buttons row so its left edge can't slide under the burger
+    // button — when the content needs more room, the emergency group (last flex
+    // item) wraps to a second line instead of overlapping the burger.
+    if (btns && burgerRect) {
+        btns.style.maxWidth = Math.max(0, window.innerWidth - burgerRect.right - 16) + 'px'
+    }
+
+    const btnsRect   = btns ? btns.getBoundingClientRect() : null
+    const btnEl      = btns ? btns.querySelector('.button') : null
+    // Height of a single button row (not the wrapped 2-line height).
+    const oneRow     = (btnsRect && btnEl) ? (btnsRect.top + btnEl.offsetHeight)
+                                           : (btnsRect ? btnsRect.bottom : 0)
+    const btnsBottom = btnsRect ? btnsRect.bottom : 0
     document.documentElement.style.setProperty('--btns-bottom', btnsBottom + 'px')
+
+    if (_headerHeading) {
+        // Single-row bar height matches an in-text heading box, min one button row.
+        const sampleHeading = document.querySelector('#script-content > h1, #script-content > h2')
+        const headingH = sampleHeading ? sampleHeading.offsetHeight : 0
+        const rowH = Math.max(headingH, oneRow)
+
+        // Which section are we in? (Heading scrolled up to the single-row bottom.)
+        const heading = currentHeadingForBar(rowH)
+        _headerHeading.textContent = heading ? heading.textContent.trim() : ''
+
+        const sidebarOpen  = document.getElementById('scene-sidebar')?.classList.contains('open')
+        const leftReserve  = sidebarOpen ? 252 : (burgerRect ? burgerRect.right + 10 : 10)
+        const rightReserve = btnsRect ? (window.innerWidth - btnsRect.left + 10) : 10
+
+        // Have the emergency buttons wrapped to a second line? (window too narrow)
+        const emGroup = document.querySelector('.emergency-group')
+        const emRect  = emGroup ? emGroup.getBoundingClientRect() : null
+        const emWrapped = !!(emRect && btnsRect && emRect.top > btnsRect.top + 2)
+
+        // Try a single row first: heading centered in the bar, squeezed between
+        // the burger (left) and the buttons (right).
+        _headerShield.classList.remove('two-row')
+        _headerHeading.style.paddingTop   = '0'
+        _headerHeading.style.lineHeight   = rowH + 'px'
+        _headerHeading.style.paddingLeft  = leftReserve + 'px'
+        _headerHeading.style.paddingRight = rightReserve + 'px'
+
+        if (btns) btns.style.rowGap = '0px'
+        let barH = rowH
+        const overflows = heading && _headerHeading.scrollWidth > _headerHeading.clientWidth + 1
+        if (heading && (overflows || emWrapped)) {
+            // Two rows: UI on top (rowH), heading on the second rowH row. Always
+            // 2*rowH so the bar never shrinks when the emergency group joins it.
+            _headerShield.classList.add('two-row')
+            _headerHeading.style.lineHeight  = rowH + 'px'
+            _headerHeading.style.paddingLeft = '1rem'
+            _headerHeading.style.paddingTop  = rowH + 'px'
+            barH = rowH * 2
+            if (emWrapped) {
+                // Push the wrapped emergency group down via row-gap so its centre
+                // lines up with the heading's (centre of the 2nd row = 1.5*rowH),
+                // and keep its width clear on the right.
+                if (btns) btns.style.rowGap = Math.max(0, 1.5 * rowH - oneRow - emRect.height / 2) + 'px'
+                _headerHeading.style.paddingRight = (window.innerWidth - emRect.left + 10) + 'px'
+            } else {
+                _headerHeading.style.paddingRight = '1rem'
+            }
+        }
+        _headerShield.style.height = barH + 'px'
+    }
+
+    // Keep the first cue/text block from hiding behind the bar.
     const content = document.getElementById('script-content')
     if (content) {
+        const shieldBottom  = _headerShield.getBoundingClientRect().bottom
         const contentAbsTop = content.getBoundingClientRect().top + window.scrollY
-        const cuePadding = Math.max(0, btnsBottom - contentAbsTop)
+        const cuePadding = Math.max(0, shieldBottom - contentAbsTop)
         document.documentElement.style.setProperty('--first-cue-padding', cuePadding + 'px')
     }
-    const heading = document.querySelector('#script-content h1, #script-content h2, #script-content h3')
-    const stickyTop = heading ? parseFloat(getComputedStyle(heading).top) || 0 : 0
-    if (stickyTop <= 0) { _headerShield.style.height = '0'; return }
-    _headerShield.style.height = Math.max(btnsBottom, stickyTop) + 'px'
 }
 new ResizeObserver(updateHeaderShield).observe(document.querySelector('.buttons') ?? document.body)
 window.addEventListener('resize', updateHeaderShield)
 updateHeaderShield()
+// Heading box height depends on the heading font / final layout; re-measure once
+// fonts have loaded and after full page load so the bar isn't too short until the
+// first scroll.
+document.fonts?.ready?.then(updateHeaderShield)
+window.addEventListener('load', updateHeaderShield)
 
 document.addEventListener('contextmenu', (e) => {
     if (!editorApp) return
@@ -3242,6 +3352,9 @@ setupAutoTriggers()
         window.scrollTo({ top: scrollY, behavior: 'instant' })
         checkEmptyScript()
         updateHeaderShield()
+        // Re-measure after the headings have actually been laid out, so the bar
+        // reaches full (heading-)height before the first scroll, not after.
+        requestAnimationFrame(updateHeaderShield)
         // Try to compute derived TCs immediately in case audio was already loaded
         updateDerivedTcBadges()
     })
@@ -3499,6 +3612,9 @@ function annotateBlocks() {
     const isFirstText = firstBlock?.tagName === 'P'
     content.classList.toggle('first-block-is-cue', isFirstCue)
     content.classList.toggle('first-block-is-text', !!isFirstText)
+    // Mark the very first heading so it can drop its top margin (no gap at the
+    // top when scrolled up) — :first-child fails because of leading .insert-zone.
+    if (firstBlock?.matches?.('h1, h2')) firstBlock.classList.add('first-heading')
 }
 
 function annotateLineNumbers() {
@@ -9054,13 +9170,17 @@ function initButtons() {
             e.preventDefault()
         }
     }, true)
+    // Capture phase so it still runs while locked — the lock handler on
+    // #script-content calls stopImmediatePropagation() and would otherwise
+    // swallow the outside click that closes the open sidebar.
     document.addEventListener('mousedown', (e) => {
         const sidebar = document.getElementById('scene-sidebar')
         if (!sidebar.classList.contains('open')) return
         if (sidebar.contains(e.target)) return
         if (e.target.closest('.sidebar-toggle-button')) return
         sidebar.classList.remove('open')
-    })
+        updateHeaderShield()
+    }, true)
 
     const searchInput = document.getElementById('search-input')
     let searchTimer = null
@@ -9432,6 +9552,9 @@ async function initApp() {
     buildSidebar()
 
     checkEmptyScript()
+    // Initial load doesn't go through rerender(), so populate the top bar (current
+    // heading + height) now, once the headings have been laid out.
+    requestAnimationFrame(() => { updateHeaderShield(); requestAnimationFrame(updateHeaderShield) })
 
     mtc = new MTCTransmitter()
     mtc.setDisplay(document.querySelector('.tc-display'))

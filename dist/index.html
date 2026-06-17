@@ -24,7 +24,7 @@
         <button id="search-close" data-i18n-title="search.close.title" title="Schließen (Esc)">×</button>
     </div>
 
-    <div id="header-shield"></div>
+    <div id="header-shield"><div id="header-heading"></div></div>
     <div id="script-content"></div>
     <div class="sidebar-toggle-button button" style="font-size:1.4rem" data-i18n-title="toolbar.sidebar.title" title="Szenenübersicht (Strg+B)">☰</div>
 
@@ -35,9 +35,11 @@
         <div class="button lock-button" title="Bearbeitungssperre (Show-Modus)"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg></div>
         <div class="button reload-button" style="font-size:1.4rem">↺</div>
         <div class="button current-trigger-button" style="font-size:1.4rem">⌖</div>
-        <div class="button emergency em-light"><img src="assets/em-light.svg" alt=""></div>
-        <div class="button emergency em-mic"><img src="assets/em-mic.svg" alt=""></div>
-        <div class="button emergency em-music"><img src="assets/em-music.svg" alt=""></div>
+        <div class="emergency-group">
+            <div class="button emergency em-light"><img src="assets/em-light.svg" alt=""></div>
+            <div class="button emergency em-mic"><img src="assets/em-mic.svg" alt=""></div>
+            <div class="button emergency em-music"><img src="assets/em-music.svg" alt=""></div>
+        </div>
     </div>
     <script src="i18n.js"></script>
     <script src="bundle.js"></script>
