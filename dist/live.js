@@ -3,6 +3,22 @@
         const tcEl       = document.getElementById('live-tc')
         const infoBarEl  = document.getElementById('live-info-bar')
         const blocksEl   = document.getElementById('script-blocks')
+        let liveTextZoom = 1   // loaded from device prefs (editor-prefs.json) below
+        function applyLiveZoom() {
+            blocksEl.style.zoom = liveTextZoom === 1 ? '' : String(liveTextZoom)
+        }
+        function setLiveZoom(value) {
+            liveTextZoom = Math.round(Math.max(0.5, Math.min(2.0, value)) * 10) / 10
+            window.electronAPI.saveEditorPrefs?.({ liveTextZoom })
+            applyLiveZoom()
+        }
+        function changeLiveZoom(delta) {
+            setLiveZoom(liveTextZoom + delta)
+        }
+        window.electronAPI.getSettings?.().then(s => {
+            liveTextZoom = parseFloat(s?.liveTextZoom) || 1
+            applyLiveZoom()
+        }).catch(() => {})
         const scrollEl   = document.getElementById('script-scroll')
         const audioPanEl = document.getElementById('audio-panel')
         const btnGo      = document.getElementById('btn-go')
@@ -598,7 +614,13 @@
             try { window.electronAPI.liveBack() } catch(e) { console.error(e) }
         })
         document.addEventListener('keydown', (e) => {
-            if (e.key === ' ' || e.key === 'Enter') {
+            if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) {
+                e.preventDefault(); changeLiveZoom(+0.1)
+            } else if ((e.ctrlKey || e.metaKey) && e.key === '-') {
+                e.preventDefault(); changeLiveZoom(-0.1)
+            } else if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+                e.preventDefault(); setLiveZoom(1)
+            } else if (e.key === ' ' || e.key === 'Enter') {
                 e.preventDefault()
                 try { window.electronAPI.liveGo() } catch(e) { console.error(e) }
             } else if (e.key === 'Backspace' || e.key === 'ArrowLeft') {

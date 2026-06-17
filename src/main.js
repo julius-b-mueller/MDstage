@@ -452,6 +452,22 @@ let midiOutputPorts   = []   // resolved MIDI output ports (parallel array)
 let oscOutputDevices  = []   // [{name, enabled, host, port, sendTriggerNote, color}] — derived from outputDevices
 let appLanguage = 'de'
 let micGroupDisplay = true      // whether to bundle mic roles into group boxes in the UI
+let mainTextZoom = 1   // loaded from device prefs (editor-prefs.json) in initApp
+
+function applyMainZoom() {
+    const el = document.getElementById('script-content')
+    if (el) el.style.zoom = mainTextZoom === 1 ? '' : String(mainTextZoom)
+}
+
+function setMainZoom(value) {
+    mainTextZoom = Math.round(Math.max(0.5, Math.min(2.0, value)) * 10) / 10
+    window.electronAPI.saveEditorPrefs?.({ mainTextZoom })
+    applyMainZoom()
+}
+
+function changeMainZoom(delta) {
+    setMainZoom(mainTextZoom + delta)
+}
 let effectiveDeviceStates = new Map()  // device key → {type, device, messages}
 let effectiveMics       = null  // mic: value of last fired cue that had one
 let micDevices = []   // array of device config objects (from settings.micDevices)
@@ -1142,9 +1158,18 @@ function formatScriptText(text) {
         }
 
         if (!isBlank) {
-            // Dialogue / narrative text — wrap at sentence boundaries
-            const wrapped = wrapSentencesFormat(trimmed)
-            for (const sl of wrapped.split('\n')) out.push(sl)
+            // Split at hard line breaks first; only when <br> has content after it (not trailing).
+            // Trailing <br> (already on its own line ending) is left as-is for idempotency.
+            const brParts = trimmed.split(/<br>/i)
+            const hasContentAfterBr = brParts.length > 1 && brParts[brParts.length - 1].trim() !== ''
+            if (hasContentAfterBr) {
+                const segments = brParts.map(p => p.trim()).filter(Boolean)
+                const wrapped = segments.map(p => wrapSentencesFormat(p)).join(' <br>\n')
+                for (const sl of wrapped.split('\n')) out.push(sl)
+            } else {
+                const wrapped = wrapSentencesFormat(trimmed)
+                for (const sl of wrapped.split('\n')) out.push(sl)
+            }
             continue
         }
 
@@ -2778,6 +2803,16 @@ document.addEventListener('keydown', (e) => {
         toggleSidebar()
         return
     }
+    // Cmd+= / Cmd++ → zoom in; Cmd+- → zoom out; Cmd+0 → reset
+    if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) {
+        e.preventDefault(); changeMainZoom(+0.1); return
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === '-') {
+        e.preventDefault(); changeMainZoom(-0.1); return
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+        e.preventDefault(); setMainZoom(1); return
+    }
     // Escape → close search or sidebar
     if (e.key === 'Escape') {
         const bar = document.getElementById('search-bar')
@@ -4317,8 +4352,13 @@ function removeAllManualMicsFromScript() {
 // Saves or removes auto_mic: true on a cue in scriptText, then refreshes all mic displays.
 function updateAutoMicInScript(triggerIndex, enabled) {
     if (enabled && !hasAnyAutoMic()) {
-        const hasManualMics = triggerYamls.some(ty => ty?.mic !== undefined)
-        if (hasManualMics) {
+        // Collect indices of all cues that currently have a manual mic set
+        const manualMicIndices = triggerYamls
+            .map((ty, i) => (i > 0 && ty?.mic !== undefined ? i : -1))
+            .filter(i => i > 0)
+        if (manualMicIndices.length > 0) {
+            // All indices that should receive auto_mic (clicked cue + all manual-mic cues)
+            const targets = [...new Set([triggerIndex, ...manualMicIndices])]
             const overlay = document.createElement('div')
             overlay.className = 'dialog-overlay'
             overlay.style.zIndex = '9999'
@@ -4347,12 +4387,33 @@ function updateAutoMicInScript(triggerIndex, enabled) {
             const close = () => overlay.remove()
             cancelBtn.addEventListener('click', close)
             overlay.addEventListener('mousedown', e => { if (e.target === overlay) close() })
-            keepBtn.addEventListener('click', () => { close(); _applyAutoMicInScript(triggerIndex, enabled) })
-            removeBtn.addEventListener('click', () => { close(); removeAllManualMicsFromScript(); _applyAutoMicInScript(triggerIndex, enabled) })
+            keepBtn.addEventListener('click', () => { close(); _applyAutoMicToMany(targets, true) })
+            removeBtn.addEventListener('click', () => { close(); removeAllManualMicsFromScript(); _applyAutoMicToMany(targets, true) })
             return
         }
     }
     _applyAutoMicInScript(triggerIndex, enabled)
+}
+
+// Apply auto_mic to multiple trigger indices in a single script write.
+function _applyAutoMicToMany(indices, enabled) {
+    const indexSet = new Set(indices)
+    let blockIdx = 0
+    const updated = scriptText.replace(/```yaml\n([\s\S]*?)```/g, (match, content) => {
+        blockIdx++
+        if (!indexSet.has(blockIdx - 1)) return match
+        let c = content.replace(/^\s*auto_mic\s*:.*\n?/m, '')
+        if (enabled) c = c.trimEnd() + '\nauto_mic: true\n'
+        return `\`\`\`yaml\n${c}\`\`\``
+    })
+    scriptText = updated
+    writeScriptMd(updated)
+    for (const ti of indices) {
+        if (!triggerYamls[ti]) continue
+        if (enabled) triggerYamls[ti].auto_mic = true
+        else delete triggerYamls[ti].auto_mic
+    }
+    _refreshAllMicDisplays()
 }
 
 function _applyAutoMicInScript(triggerIndex, enabled) {
@@ -4370,17 +4431,18 @@ function _applyAutoMicInScript(triggerIndex, enabled) {
         if (enabled) triggerYamls[triggerIndex].auto_mic = true
         else delete triggerYamls[triggerIndex].auto_mic
     }
-    // Refresh mic header displays and button states for all triggers
+    _refreshAllMicDisplays()
+}
+
+function _refreshAllMicDisplays() {
+    const anyAutoMic = hasAnyAutoMic()
     for (let i = 1; i < triggerYamls.length; i++) {
         const triggerEl = triggers[i]
         if (!triggerEl) continue
         const triggerInfo = triggerEl.querySelector('.trigger-info')
         if (!triggerInfo) continue
-        // Remove old mic display
         triggerInfo.querySelector('.trigger-mic')?.remove()
-        // Auto_mic cues always show computed mics; manual mics only when no auto_mic is active anywhere
         const ty = triggerYamls[i]
-        const anyAutoMic = hasAnyAutoMic()
         const micValue = ty?.auto_mic ? computeAutoMicRoles(i) : (!anyAutoMic ? ty?.mic : null)
         if (micValue) {
             const micEl = document.createElement('div')
@@ -4388,7 +4450,6 @@ function _applyAutoMicInScript(triggerIndex, enabled) {
             renderMicIntoEl(micEl, micValue, !!ty?.auto_mic)
             triggerInfo.insertBefore(micEl, triggerInfo.firstChild)
         }
-        // Update auto-mic button state
         const btn = autoMicBtns.get(i)
         if (btn) updateAutoMicBtnAppearance(btn, i)
     }
@@ -9445,6 +9506,8 @@ async function initApp() {
     monitorEnabled  = savedSettings.monitorEnabled  ?? false
     appLanguage     = savedSettings.appLanguage     || 'de'
     micGroupDisplay = savedSettings.micGroupDisplay ?? true
+    mainTextZoom    = parseFloat(savedSettings.mainTextZoom) || 1
+    applyMainZoom()
     document.getElementById('script-content').classList.toggle('show-md-line-numbers', !!(savedSettings.showMdLineNumbers))
     if (savedSettings.openLocked) { lockAutoActivated = false; setShowLock(true) }
     window.applyI18n?.(appLanguage)

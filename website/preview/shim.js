@@ -84,6 +84,7 @@ window.electronAPI = {
     getBuildInfo:  () => _versionInfo.then(v => ({ commit: v.commit || 'preview', date: v.date || '' })),
     getSettings:       () => Promise.resolve({ ..._settings }),
     saveSettings:      (s) => { Object.assign(_settings, s); _ch.postMessage({ type: 'settings-changed', settings: { ..._settings } }); return Promise.resolve() },
+    saveEditorPrefs:   (partial) => { if (partial) Object.assign(_settings, partial); return Promise.resolve() },
     getHostname:       () => Promise.resolve('preview'),
     getEmLightNote:    () => Promise.resolve(_settings.emLightNote || null),
     saveEmLightNote:   (v) => { _settings.emLightNote = v; return Promise.resolve() },

@@ -36,6 +36,27 @@ function saveLastFilePath(p) {
     } catch {}
 }
 
+function loadRecentFiles() {
+    try {
+        const data = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'recent-files.json'), 'utf8'))
+        if (Array.isArray(data.files)) return data.files.filter(p => typeof p === 'string')
+    } catch {}
+    return []
+}
+
+function saveRecentFiles(files) {
+    try {
+        fs.writeFileSync(path.join(app.getPath('userData'), 'recent-files.json'), JSON.stringify({ files }), 'utf8')
+    } catch {}
+}
+
+function addToRecentFiles(p) {
+    const files = loadRecentFiles().filter(f => f !== p)
+    files.unshift(p)
+    saveRecentFiles(files.slice(0, 5))
+    if (Menu.getApplicationMenu()) Menu.setApplicationMenu(buildMenu())
+}
+
 async function openFile() {
     const result = await dialog.showOpenDialog(mainWindow, {
         filters: [{ name: 'Markdown', extensions: ['md'] }],
@@ -44,6 +65,7 @@ async function openFile() {
     if (!result.canceled && result.filePaths.length > 0) {
         scriptMdPath = result.filePaths[0]
         saveLastFilePath(scriptMdPath)
+        addToRecentFiles(scriptMdPath)
         mainWindow.reload()
     }
 }
@@ -58,6 +80,7 @@ const defaultSettings = {
     oscEnabled: false, oscHost: '127.0.0.1', oscPort: 8000,
     monitorEnabled: false,
     appLanguage: 'de',
+    mainTextZoom: 1, liveTextZoom: 1,
 }
 
 function encodeOscMessage(address, args = []) {
@@ -82,7 +105,7 @@ function encodeOscMessage(address, args = []) {
 }
 
 // Keys that are personal/per-user and must not be stored in the shared markdown file
-const EDITOR_PREF_KEYS = ['editorApp', 'dismissedUpdatePopup']
+const EDITOR_PREF_KEYS = ['editorApp', 'dismissedUpdatePopup', 'mainTextZoom', 'liveTextZoom']
 
 let suppressVersionBump = false
 
@@ -322,6 +345,7 @@ async function createNewFile() {
         fs.writeFileSync(result.filePath, template, 'utf8')
         scriptMdPath = result.filePath
         saveLastFilePath(scriptMdPath)
+        addToRecentFiles(scriptMdPath)
         mainWindow.reload()
     }
 }
@@ -340,6 +364,7 @@ function menuT(key) {
             dev: 'Entwickler', devtools: 'DevTools öffnen', devlive: 'DevTools (Live-Fenster)',
             undo: 'Rückgängig', redo: 'Wiederholen', cut: 'Ausschneiden',
             copy: 'Kopieren', paste: 'Einfügen', selectall: 'Alles auswählen',
+            recent: 'Zuletzt geöffnet', 'recent.none': '— Keine —', 'recent.clear': 'Verlauf löschen',
         },
         en: {
             about: 'About MDstage…', newfile: 'New File…', open: 'Open File…',
@@ -351,12 +376,29 @@ function menuT(key) {
             dev: 'Developer', devtools: 'Open DevTools', devlive: 'DevTools (Live window)',
             undo: 'Undo', redo: 'Redo', cut: 'Cut',
             copy: 'Copy', paste: 'Paste', selectall: 'Select All',
+            recent: 'Open Recent', 'recent.none': '— None —', 'recent.clear': 'Clear Recent Files',
         },
     }
     return (M[lang] || M.de)[key] ?? key
 }
 
 function buildMenu() {
+    const recentFiles = loadRecentFiles()
+    const recentSubmenu = recentFiles.length === 0
+        ? [{ label: menuT('recent.none'), enabled: false }]
+        : [
+            ...recentFiles.map(filePath => ({
+                label: path.basename(filePath),
+                click: () => {
+                    scriptMdPath = filePath
+                    saveLastFilePath(scriptMdPath)
+                    addToRecentFiles(filePath)
+                    if (mainWindow) mainWindow.reload()
+                },
+            })),
+            { type: 'separator' },
+            { label: menuT('recent.clear'), click: () => { saveRecentFiles([]); Menu.setApplicationMenu(buildMenu()) } },
+          ]
     const template = [
         ...(process.platform === 'darwin' ? [{
             label: app.getName(),
@@ -376,6 +418,7 @@ function buildMenu() {
                     accelerator: 'Cmd+O',
                     click: openFile,
                 },
+                { label: menuT('recent'), submenu: recentSubmenu },
                 { type: 'separator' },
                 {
                     label: menuT('settings'),
@@ -416,6 +459,7 @@ function buildMenu() {
                     accelerator: 'Ctrl+O',
                     click: openFile,
                 },
+                { label: menuT('recent'), submenu: recentSubmenu },
             ],
         }, {
             label: menuT('exportmenu'),
@@ -727,6 +771,13 @@ app.whenReady().then(async () => {
     scriptMdPath = getLastFilePath()
     if (scriptMdPath && !fs.existsSync(scriptMdPath)) scriptMdPath = null
     const showWelcome = !scriptMdPath
+    // Ensure the startup file appears in recent files (migration from last-file.json)
+    if (scriptMdPath) {
+        const rf = loadRecentFiles()
+        if (!rf.includes(scriptMdPath)) {
+            saveRecentFiles([scriptMdPath, ...rf].slice(0, 5))
+        }
+    }
 
     ipcMain.on('send-osc', (_, { path: oscPath, args = [], host = '127.0.0.1', port = 8000 }) => {
         const safePort = parseInt(port, 10)
@@ -756,6 +807,12 @@ app.whenReady().then(async () => {
             win.webContents.send('settings-changed', settings)
         })
         Menu.setApplicationMenu(buildMenu())
+    })
+
+    // Lightweight device-local pref save — writes only editor-prefs.json (EDITOR_PREF_KEYS),
+    // never the markdown file. Used for zoom so it doesn't trigger a script rewrite/rerender.
+    ipcMain.handle('save-editor-prefs', (_, partial) => {
+        if (partial && typeof partial === 'object') saveEditorPrefs(partial)
     })
 
     ipcMain.handle('get-hostname', () => hostname)
@@ -796,6 +853,7 @@ app.whenReady().then(async () => {
         if (!result.canceled && result.filePaths.length > 0) {
             scriptMdPath = result.filePaths[0]
             saveLastFilePath(scriptMdPath)
+            addToRecentFiles(scriptMdPath)
             mainWindow.reload()
         }
     })

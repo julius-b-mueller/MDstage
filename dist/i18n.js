@@ -237,6 +237,20 @@
             'ver.upgrade.cancel':         'Änderung verwerfen',
             'parse.error.dismiss':        'Ignorieren',
             'parse.error.delete.key':     'unbekannte Eigenschaft löschen',
+            // ── Webvorschau ───────────────────────────────────────────
+            'wm.about':                   'Über MDstage',
+            'wm.new':                     'Neue Datei',
+            'wm.live':                    'Liveansicht',
+            'wm.settings':                'Einstellungen',
+            'wm.roles':                   'Rolleneditor',
+            'wm.preview.title':           '⚠ Vorschau-Modus',
+            'wm.preview.body':            'MIDI und OSC sind nicht verfügbar. Änderungen am Skript werden nicht gespeichert.',
+            'wm.onboard.live':            'Liveansicht öffnen',
+            'wm.onboard.insert':          'Klick auf +: Cue erstellen',
+            'wm.onboard.insert.shift':    'SHIFT+KLICK auf +: Dialog erstellen',
+            'wm.onboard.text':            'SHIFT+KLICK auf Text: Text bearbeiten',
+            'wm.onboard.next':            'Weiter →',
+            'wm.onboard.done':            'Verstanden',
         },
         en: {
             // ── Trigger-Aktions-Buttons ──────────────────────────────
@@ -474,6 +488,20 @@
             'ver.upgrade.cancel':         'Discard changes',
             'parse.error.dismiss':        'Dismiss',
             'parse.error.delete.key':     'Delete unknown property',
+            // ── Web preview ───────────────────────────────────────────
+            'wm.about':                   'About MDstage',
+            'wm.new':                     'New File',
+            'wm.live':                    'Live View',
+            'wm.settings':                'Settings',
+            'wm.roles':                   'Role Editor',
+            'wm.preview.title':           '⚠ Preview Mode',
+            'wm.preview.body':            'MIDI and OSC are unavailable. Changes to the script are not saved.',
+            'wm.onboard.live':            'Open live view',
+            'wm.onboard.insert':          'Click +: Create cue',
+            'wm.onboard.insert.shift':    'SHIFT+CLICK +: Create dialogue',
+            'wm.onboard.text':            'SHIFT+CLICK on text: Edit text',
+            'wm.onboard.next':            'Next →',
+            'wm.onboard.done':            'Got it',
         },
     }
 

@@ -177,8 +177,8 @@
 </head>
 <body>
     <div id="preview-notice">
-        <strong>⚠ Vorschau-Modus</strong>
-        MIDI und OSC sind nicht verfügbar. Änderungen am Skript werden nicht gespeichert.
+        <strong data-i18n="wm.preview.title">⚠ Vorschau-Modus</strong>
+        <span data-i18n="wm.preview.body">MIDI und OSC sind nicht verfügbar. Änderungen am Skript werden nicht gespeichert.</span>
         <div class="preview-lang-toggle">
             <a class="preview-dl-btn" href="../#download" target="_blank" rel="noopener">↓ Download</a>
             <button class="plang-btn" data-lang="de" onclick="window.__previewSetLanguage('de')">DE</button>
@@ -194,11 +194,11 @@
     </script>
 
     <nav id="web-menubar" aria-label="Anwendungsmenü">
-        <button class="wmenu-item" id="wmenu-about">Über MDstage</button>
-        <button class="wmenu-item" id="wmenu-new">Neue Datei</button>
-        <button class="wmenu-item" id="wmenu-live">Liveansicht</button>
-        <button class="wmenu-item" id="wmenu-settings">Einstellungen</button>
-        <button class="wmenu-item" id="wmenu-roles">Rolleneditor</button>
+        <button class="wmenu-item" id="wmenu-about" data-i18n="wm.about">Über MDstage</button>
+        <button class="wmenu-item" id="wmenu-new" data-i18n="wm.new">Neue Datei</button>
+        <button class="wmenu-item" id="wmenu-live" data-i18n="wm.live">Liveansicht</button>
+        <button class="wmenu-item" id="wmenu-settings" data-i18n="wm.settings">Einstellungen</button>
+        <button class="wmenu-item" id="wmenu-roles" data-i18n="wm.roles">Rolleneditor</button>
     </nav>
 
     <div id="scene-sidebar">
@@ -272,18 +272,18 @@
             return [
                 {
                     el: liveBtn,
-                    lines: ['Liveansicht öffnen'],
+                    lines: [window.t('wm.onboard.live')],
                     enter: null, leave: null,
                 },
                 {
                     el: insertBtn,
-                    lines: ['Click auf +: Cue erstellen', 'SHIFT+CLICK auf +: Dialog erstellen'],
+                    lines: [window.t('wm.onboard.insert'), window.t('wm.onboard.insert.shift')],
                     enter: () => { insertBtn.style.opacity = '1' },
                     leave: () => { insertBtn.style.opacity = '' },
                 },
                 {
                     el: textBlock,
-                    lines: ['SHIFT+CLICK auf Text: Text bearbeiten'],
+                    lines: [window.t('wm.onboard.text')],
                     circle: (rect) => ({
                         cx: Math.round(rect.left + 55),
                         cy: Math.round(rect.top  + rect.height / 2),
@@ -395,7 +395,7 @@
                 dots.innerHTML = steps.map((_, j) =>
                     `<span class="live-onboard-dot${j === i ? ' active' : ''}"></span>`
                 ).join('')
-                btn.textContent = i < steps.length - 1 ? 'Weiter →' : 'Verstanden'
+                btn.textContent = i < steps.length - 1 ? window.t('wm.onboard.next') : window.t('wm.onboard.done')
             }
 
             btn.addEventListener('click', () => {

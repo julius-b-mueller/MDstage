@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getBuildInfo:  () => ipcRenderer.invoke('get-build-info'),
     getSettings: () => ipcRenderer.invoke('get-settings'),
     saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
+    saveEditorPrefs: (partial) => ipcRenderer.invoke('save-editor-prefs', partial),
     openExternalUrl: (url) => ipcRenderer.invoke('open-external-url', url),
     setSuppressVersionBump: (val) => ipcRenderer.invoke('set-suppress-version-bump', val),
     getHostname: () => ipcRenderer.invoke('get-hostname'),
