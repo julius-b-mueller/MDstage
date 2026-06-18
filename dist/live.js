@@ -188,7 +188,7 @@
             if (!animate) requestAnimationFrame(() => { blocksEl.style.transition = '' })
         }
 
-        function renderScript(blocks, nextCue, currentCue, selectedVariant) {
+        function renderScript(blocks, nextCue, currentCue, selectedVariant, nextCueIsManual) {
             localSelectedVariant = selectedVariant ?? null
             const grouped = groupBlocks(blocks)
             const frag = document.createDocumentFragment()
@@ -253,7 +253,9 @@
 
             blocksEl.innerHTML = ''
             blocksEl.appendChild(frag)
-            btnGo.disabled = outroPendingBars.size > 0 || autoCuePendingBars.size > 0
+            // Keep Go enabled when the focus is on a manual cue — the operator must be
+            // able to fire it even while an auto-cue is still counting down elsewhere.
+            btnGo.disabled = outroPendingBars.size > 0 || (autoCuePendingBars.size > 0 && !nextCueIsManual)
             // Scroll only when the current cue actually fired — not on every periodic update
             const cueChanged = currentCue !== lastCurrentCue
             lastCurrentCue = currentCue
@@ -595,7 +597,7 @@
 
         // ── Main render ──────────────────────────────────────────────────
         function render(state) {
-            const { blocks, nextCue, currentCue, selectedVariant, timecodeFrames, audioProgress, appLanguage } = state
+            const { blocks, nextCue, currentCue, nextCueIsManual, selectedVariant, timecodeFrames, audioProgress, appLanguage } = state
             if (appLanguage && appLanguage !== window.appLanguage) window.applyI18n(appLanguage)
 
             if (timecodeFrames !== null && timecodeFrames !== undefined) {
@@ -605,7 +607,7 @@
             }
 
             if (state.deviceColors) _deviceColors = state.deviceColors
-            renderScript(blocks, nextCue, currentCue ?? 0, selectedVariant)
+            renderScript(blocks, nextCue, currentCue ?? 0, selectedVariant, nextCueIsManual)
             syncAudio(audioProgress || [])
             updateInfoBar(state)
             updateProgressBar(state.showProgress)

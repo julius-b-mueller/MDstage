@@ -8727,6 +8727,30 @@ function getLoopSlotInfo(loopIdx) {
     }
 }
 
+// The operator's real position: the most recently *manually* triggered cue.
+// Auto-cues (loop fires) don't move it, so it stays put while a loop runs.
+function lastManualCue() {
+    for (let i = cueHistory.length - 1; i >= 0; i--) {
+        if (!cueHistoryAuto[i]) return cueHistory[i]
+    }
+    return 0
+}
+
+// The next cue the live view focuses and that Go fires: the first non-sibling cue
+// after the operator's last manual position that has not fired yet. Auto-cues that
+// already fired stay in cueHistory (it accumulates a fresh entry on every loop
+// pass), so they are skipped and the focus never bounces back to them when the
+// loop wraps — while an un-triggered manual cue in between is never skipped.
+function nextFocusCue() {
+    const fired = new Set(cueHistory)
+    for (let i = lastManualCue() + 1; i < triggerYamls.length; i++) {
+        const ty = triggerYamls[i]
+        if (!ty || ty.sibling) continue
+        if (!fired.has(i)) return i
+    }
+    return null
+}
+
 function broadcastLiveState() {
     if (!window.electronAPI?.sendLiveState) return
 
@@ -8744,11 +8768,7 @@ function broadcastLiveState() {
 
     // Next cue to fire: armed cue takes priority over normal next-cue calculation
     let nextCue = liveNextOverride ?? armedCue
-    if (nextCue === null) {
-        for (let i = liveCurrent + 1; i < triggerYamls.length; i++) {
-            if (triggerYamls[i] && !triggerYamls[i].sibling) { nextCue = i; break }
-        }
-    }
+    if (nextCue === null) nextCue = nextFocusCue()
 
     const rawBlocks = tokenizeScript(scriptText)
     const liveBlocks = []
@@ -8962,10 +8982,15 @@ function broadcastLiveState() {
     const knownMidiDevices = midiOutputDevices.map(d => d.name)
     const knownOscDevices  = oscOutputDevices.map(d => d.name)
 
+    // Whether the focused next cue is operator-triggered (not an auto-cue). Used by
+    // the live view to keep Go enabled while only an auto-cue is pending.
+    const nextCueIsManual = nextCue !== null && !!triggerYamls[nextCue] && !triggerYamls[nextCue].auto_trigger
+
     window.electronAPI.sendLiveState({
         blocks: liveBlocks,
         currentCue: liveCurrent,
         nextCue,
+        nextCueIsManual,
         selectedVariant,
         timecodeFrames: tcFrames,
         audioProgress,
@@ -8991,9 +9016,14 @@ function goAction() {
         triggerAction(cue)
         return
     }
-    for (let i = currentCue + 1; i < triggerYamls.length; i++) {
+    // Advance from the last manual position, skipping cues that already fired (incl.
+    // auto-cues fired by a running loop) so Go lands on the same un-triggered cue the
+    // live view focuses — never skipping an un-triggered manual cue in between.
+    const fired = new Set(cueHistory)
+    for (let i = lastManualCue() + 1; i < triggerYamls.length; i++) {
         if (!triggerYamls[i]) continue
         if (triggerYamls[i].sibling) continue  // skip non-root variants — only reachable via selectedVariant
+        if (fired.has(i)) continue             // already triggered — keep advancing to the next un-fired cue
         // If a variant was chosen for this group, fire it instead of the first sibling
         if (selectedVariant !== null) {
             let sv = selectedVariant
@@ -9342,6 +9372,9 @@ function broadcastLiveVolumes() {
 
 // Fade currentVolume to a target (keep playing). Works with timeupdate's volume management.
 function fadeAdjustVolume(ta, targetVol, fadeTime) {
+    // A fade-out already in progress takes precedence: ignore a volume change that
+    // arrives while the target is fading out to stop, so the fade-out is not revived.
+    if (activeFades.get(ta.ws)?.fadingOut) return
     cancelWsFade(ta.ws)
     const startVol = ta.getCurrentVolume()
     const steps = 50
@@ -9360,10 +9393,11 @@ function fadeAdjustVolume(ta, targetVol, fadeTime) {
 }
 
 // Fade out a loop-capable trigger by reducing currentVolume (plays nicely with timeupdate).
-// Disables loop restarts during the fade so the audio doesn't restart mid-fade.
+// Keeps the loop running during the fade: a loop that reaches its end / fading point
+// before the fade time is over restarts from the top and keeps fading, instead of
+// stopping hard at the boundary. The loop is only torn down once the fade has elapsed.
 function fadeAdjustAudio(ta, fadeTime) {
     cancelWsFade(ta.ws)
-    ta.disableLoop()
     // If a non-primary seq slot is active, fade its gain node via WebAudio scheduling.
     ta.fadeOutActiveSeqSlot?.(fadeTime)
     const startVol = ta.getCurrentVolume()
@@ -9377,6 +9411,7 @@ function fadeAdjustAudio(ta, fadeTime) {
         if (step >= steps) {
             clearInterval(id)
             activeFades.delete(ta.ws)
+            ta.disableLoop()   // fade is over — prevent any further loop restart, then stop
             if (ta.stopAndReset) ta.stopAndReset()
             else ta.ws.stop()
             if (mtc && mtc.wsRef === ta.ws) mtc.stopAndClear()
@@ -9384,8 +9419,10 @@ function fadeAdjustAudio(ta, fadeTime) {
             ta.setCurrentVolume(startVol)
         }
     }, stepInterval)
-    // Store ta + restoreVol so cancelWsFade can restore currentVolume if cancelled mid-fade
-    activeFades.set(ta.ws, { id, ta, restoreVol: startVol })
+    // Store ta + restoreVol so cancelWsFade can restore currentVolume if cancelled mid-fade.
+    // `fadingOut` lets a concurrent volume adjust know the target is on its way out and
+    // must not be revived (fade-out wins over a volume change that arrives right after).
+    activeFades.set(ta.ws, { id, ta, restoreVol: startVol, fadingOut: true })
 }
 
 function stopall() {
