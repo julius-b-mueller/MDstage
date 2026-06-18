@@ -1071,7 +1071,7 @@ footer a:hover{text-decoration:underline}
   document.querySelectorAll('.yt-facade').forEach(el => {
     el.addEventListener('click', () => {
       const id = el.dataset.videoid
-      el.innerHTML = `<iframe src="https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>`
+      el.innerHTML = `<iframe src="https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0" allow="autoplay; encrypted-media; picture-in-picture" sandbox="allow-scripts allow-same-origin allow-presentation allow-popups allow-popups-to-escape-sandbox" allowfullscreen></iframe>`
       el.style.cursor = 'default'
     }, { once: true })
   })
