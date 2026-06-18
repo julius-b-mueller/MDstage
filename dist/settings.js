@@ -603,9 +603,9 @@
                     const isMidi = typeSel.value === 'midi'
                     midiSection.style.display = isMidi ? '' : 'none'
                     oscSection.style.display   = isMidi ? 'none' : ''
+                    tcWrap.style.display = isMidi ? '' : 'none'
                 }
                 typeSel.addEventListener('change', updateTypeVis)
-                updateTypeVis()
 
                 const trigNoteLabel = document.createElement('label')
                 trigNoteLabel.style.cssText = 'display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf'
@@ -615,6 +615,17 @@
                 const trigNoteWrap = document.createElement('div'); trigNoteWrap.className = 'field'
                 trigNoteWrap.appendChild(trigNoteLabel)
                 card.appendChild(trigNoteWrap)
+
+                const tcLabel = document.createElement('label')
+                tcLabel.style.cssText = 'display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf'
+                const tcCb = document.createElement('input'); tcCb.type = 'checkbox'; tcCb.style.width = 'auto'
+                tcCb.checked = cfg.sendTimecode ?? false
+                tcLabel.append(tcCb, document.createTextNode('MIDI-Timecode senden'))
+                const tcWrap = document.createElement('div'); tcWrap.className = 'field'
+                tcWrap.appendChild(tcLabel)
+                card.appendChild(tcWrap)
+
+                updateTypeVis()
 
                 const colorWrap = document.createElement('div'); colorWrap.className = 'field'
                 const colorLbl = document.createElement('label'); colorLbl.textContent = 'Farbe'
@@ -640,7 +651,7 @@
 
                 function getValues() {
                     const type = typeSel.value
-                    const base = { name: nameInput.value.trim() || nameInput.placeholder, type, enabled: activatedCb.checked, sendTriggerNote: trigNoteCb.checked, color: DEVICE_COLORS[colorSel.value] || '' }
+                    const base = { name: nameInput.value.trim() || nameInput.placeholder, type, enabled: activatedCb.checked, sendTriggerNote: trigNoteCb.checked, sendTimecode: type === 'midi' ? tcCb.checked : false, color: DEVICE_COLORS[colorSel.value] || '' }
                     if (type === 'midi') return { ...base, device: midiSel.value || null }
                     return { ...base, host: hostIn.value.trim() || '127.0.0.1', port: parseInt(portIn.value) || 8000 }
                 }
@@ -651,7 +662,12 @@
             // Migrate or load outputDevices
             let initialOutputDevices
             if (settings.outputDevices?.length > 0) {
-                initialOutputDevices = settings.outputDevices
+                // If saved devices have no sendTimecode yet, migrate from legacy midiTCDevice
+                initialOutputDevices = settings.outputDevices.map(d =>
+                    d.sendTimecode == null && d.type === 'midi' && d.device && settings.midiTCDevice === d.device
+                        ? { ...d, sendTimecode: true }
+                        : d
+                )
             } else {
                 const midiDevs = settings.midiOutputDevices?.length > 0
                     ? settings.midiOutputDevices
@@ -671,7 +687,6 @@
             let _pendingOutputDevices = initialOutputDevices
 
             // ── MIDI ──────────────────────────────────────────────────
-            const tcSelect        = document.getElementById('tc-device')
             const liveInputSelect = document.getElementById('live-input-device')
 
             const emLightDeviceSel = document.getElementById('em-light-device')
@@ -690,9 +705,6 @@
                 const midiInNames  = new Set()
                 for (const output of midiAccess.outputs.values()) {
                     midiOutNames.add(output.name)
-                    const o3 = new Option(output.name, output.name)
-                    if (settings.midiTCDevice === output.name) o3.selected = true
-                    tcSelect.appendChild(o3)
                 }
                 for (const input of midiAccess.inputs.values()) {
                     midiInNames.add(input.name)
@@ -700,8 +712,6 @@
                     if (settings.midiLiveDevice === input.name) o.selected = true
                     liveInputSelect.appendChild(o)
                 }
-                if (settings.midiTCDevice && !midiOutNames.has(settings.midiTCDevice))
-                    insertWarning(tcSelect, `Gerät „${settings.midiTCDevice}" nicht gefunden – MIDI-Ausgabe deaktiviert`)
                 if (settings.midiLiveDevice && !midiInNames.has(settings.midiLiveDevice))
                     insertWarning(liveInputSelect, `Gerät „${settings.midiLiveDevice}" nicht gefunden – Eingang deaktiviert`)
 
@@ -998,7 +1008,7 @@
                     mainAudioDevice: mainAudioSel.value || null,
                     ...getRouting(),
                     outputDevices: outDevs,
-                    midiTCDevice:     tcSelect.value     || null,
+                    midiTCDevice:     null,
                     editorApp:        editorAppSel.value || null,
                     midiGoNote,
                     midiBackNote,

@@ -156,7 +156,11 @@
                 ? `<div class="outro-pending-bar-wrap"><div class="outro-pending-bar-fill" style="width:0%"></div></div>`
                 : ''
             const autoCuePendingBar = b.autoCuePending
-                ? `<div class="autocue-pending-bar-wrap"><div class="autocue-pending-bar-fill" style="width:${(b.autoCuePending.currentTime / b.autoCuePending.at * 100).toFixed(1)}%"></div></div>`
+                ? (() => {
+                    const ac = b.autoCuePending, base = ac.base ?? 0, denom = ac.at - base
+                    const pct = denom > 0 ? Math.min(100, Math.max(0, (ac.currentTime - base) / denom * 100)) : 0
+                    return `<div class="autocue-pending-bar-wrap"><div class="autocue-pending-bar-fill" style="width:${pct.toFixed(1)}%"></div></div>`
+                })()
                 : ''
             return `
                 <div class="trigger-row">
@@ -325,8 +329,9 @@
             const _acDone = []
             for (const [_acIdx, { fillEl, item }] of autoCuePendingBars.entries()) {
                 const elapsed = (performance.now() - item.receivedAt) / 1000
-                const pct = item.at > 0
-                    ? Math.min(100, (item.currentTime + elapsed) / item.at * 100)
+                const base = item.base ?? 0, denom = item.at - base
+                const pct = denom > 0
+                    ? Math.min(100, Math.max(0, (item.currentTime + elapsed - base) / denom * 100))
                     : 100
                 fillEl.style.width = pct.toFixed(1) + '%'
                 if (pct >= 100) _acDone.push(_acIdx)

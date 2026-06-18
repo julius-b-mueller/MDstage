@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getScriptPath: () => ipcRenderer.invoke('get-script-path'),
     backupScriptMd: () => ipcRenderer.invoke('backup-script-md'),
     backupScriptMdVersioned: (version) => ipcRenderer.invoke('backup-script-md-versioned', version),
+    backupScriptMdUncleaned: () => ipcRenderer.invoke('backup-script-md-uncleaned'),
     writeIncompatibilityLog: (data) => ipcRenderer.invoke('write-incompatibility-log', data),
     getRoles: () => ipcRenderer.invoke('get-roles'),
     saveRoles: (data) => ipcRenderer.invoke('save-roles', data),

@@ -797,7 +797,9 @@ body.trigger-pick-mode-filtered .waveform-wrapper { pointer-events: none; }
     overflow-x: auto;
     align-items: flex-start;
     margin-top: 0.5rem;
-    padding-bottom: 0.2rem;
+    /* overflow-x:auto makes overflow-y computed to auto, which would clip the
+       active-slot underline at the bottom — pad so it stays visible. */
+    padding-bottom: 0.3rem;
 }
 .seq-slots-row > .waveform-wrapper { margin-top: 0; flex: 1; min-width: 200px; }
 .seq-slot { position: relative; }
@@ -817,8 +819,10 @@ body.trigger-pick-mode-filtered .waveform-wrapper { pointer-events: none; }
 .seq-slot:not(.seq-slot-active) wavesurfer, .seq-slot:not(.seq-slot-active) .waveform-container {
     opacity: 0.45;
 }
-.seq-slot-active .waveform-container { box-shadow: 0 0 0 2px rgba(229,192,123,0.5); border-radius: 3px; }
-/* A lone slot needs no "active part" indicator — drop the amber outline. */
+/* Active part-loop: a single amber line under the slot (a full ring gets clipped
+   by the row's overflow on the edge slots). */
+.seq-slot-active .waveform-container { box-shadow: 0 3px 0 0 #e5c07b; }
+/* A lone slot needs no "active part" indicator — drop the amber line. */
 .seq-slot:only-child.seq-slot-active .waveform-container { box-shadow: none; }
 
 /* Dialog: seq entry cards */

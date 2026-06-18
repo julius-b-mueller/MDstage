@@ -434,7 +434,7 @@ Microphone muting is configured separately under **Mixer Remote Control** in Set
 
 ### Timecode (MTC)
 
-A dedicated **TC** MIDI device can be set in Settings for MTC output. See [Timecode (MTC)](#timecode-mtc).
+Each MIDI output device has a **Send MIDI Timecode** checkbox in Settings; MTC is sent to every device with it enabled. See [Timecode (MTC)](#timecode-mtc).
 
 ### MIDI Input
 

@@ -46,7 +46,22 @@ const TRIGGER_BLOCK_KEYS = new Set([
     'cue_midi', 'cue_osc',
 ])
 
-// Returns [{block, key}] for every YAML key not in the current spec.
+// Allowed keys for nested objects inside a cue block — used to surface unknown
+// keys at any depth, not just the top level. Keep in sync with the YAML spec in
+// README.md (see [[project-yaml-spec]]).
+const NOTE_REF_KEYS     = new Set(['ch', 'note'])                       // trigger_note / chain_end / loop_outro
+const MUSIC_KEYS        = new Set(['file', 'volume', 'start', 'end', 'fadein', 'fadeout', 'fading_point', 'loop', 'monitor', 'adjust'])
+const MUSIC_SEQ_KEYS    = new Set(['file', 'volume', 'start', 'end', 'fadein', 'fadeout', 'fading_point', 'monitor'])
+const ADJUST_KEYS       = new Set(['trigger_note', 'fadeout', 'fadetime', 'volume'])
+const AUTO_TRIGGER_KEYS = new Set(['trigger_note', 'at'])
+const CUE_MIDI_KEYS     = new Set(['device', 'type', 'ch', 'note', 'vel', 'cc', 'value', 'program', 'bytes'])
+const CUE_OSC_KEYS      = new Set(['device', 'path', 'arg', 'arg_type'])
+
+function isPlainObject(v) { return v != null && typeof v === 'object' && !Array.isArray(v) }
+
+// Returns [{block, key}] for every YAML key not in the current spec, recursing
+// into known nested objects/arrays. Nested paths use dotted/indexed notation
+// (e.g. `music.adjust.foo`, `music_seq[1].bar`, `cue_midi[0].baz`).
 function findUnknownYamlKeys(text) {
     const results = []
     const re = /```yaml\n([\s\S]*?)```/g
@@ -56,13 +71,46 @@ function findUnknownYamlKeys(text) {
         let parsed
         try { parsed = yaml.load(m[1]) } catch { continue }
         if (!parsed || typeof parsed !== 'object') continue
-        if (parsed.config && typeof parsed.config === 'object') {
-            for (const k of Object.keys(parsed.config).filter(k => !CONFIG_BLOCK_KEYS.has(k)))
-                results.push({ block: blockIndex, key: `config.${k}` })
-        } else {
-            for (const k of Object.keys(parsed).filter(k => !TRIGGER_BLOCK_KEYS.has(k)))
-                results.push({ block: blockIndex, key: k })
+
+        const block = blockIndex
+        const report = (obj, allowed, prefix) => {
+            if (!isPlainObject(obj)) return
+            for (const k of Object.keys(obj))
+                if (!allowed.has(k)) results.push({ block, key: prefix + k })
         }
+
+        if (parsed.config && typeof parsed.config === 'object') {
+            report(parsed.config, CONFIG_BLOCK_KEYS, 'config.')
+            continue
+        }
+
+        report(parsed, TRIGGER_BLOCK_KEYS, '')
+
+        // Nested objects within a cue block
+        report(parsed.trigger_note, NOTE_REF_KEYS, 'trigger_note.')
+        report(parsed.chain_end,    NOTE_REF_KEYS, 'chain_end.')
+        report(parsed.loop_outro,   NOTE_REF_KEYS, 'loop_outro.')
+
+        if (isPlainObject(parsed.music)) {
+            report(parsed.music, MUSIC_KEYS, 'music.')
+            if (isPlainObject(parsed.music.adjust)) {
+                report(parsed.music.adjust, ADJUST_KEYS, 'music.adjust.')
+                report(parsed.music.adjust.trigger_note, NOTE_REF_KEYS, 'music.adjust.trigger_note.')
+            }
+        }
+
+        if (Array.isArray(parsed.music_seq))
+            parsed.music_seq.forEach((item, i) => report(item, MUSIC_SEQ_KEYS, `music_seq[${i}].`))
+
+        if (isPlainObject(parsed.auto_trigger)) {
+            report(parsed.auto_trigger, AUTO_TRIGGER_KEYS, 'auto_trigger.')
+            report(parsed.auto_trigger.trigger_note, NOTE_REF_KEYS, 'auto_trigger.trigger_note.')
+        }
+
+        if (Array.isArray(parsed.cue_midi))
+            parsed.cue_midi.forEach((item, i) => report(item, CUE_MIDI_KEYS, `cue_midi[${i}].`))
+        if (Array.isArray(parsed.cue_osc))
+            parsed.cue_osc.forEach((item, i) => report(item, CUE_OSC_KEYS, `cue_osc[${i}].`))
     }
     return results
 }
@@ -432,6 +480,7 @@ let liveViewOpen = false
 let showLock = false
 let lockAutoActivated = false
 let armedCue = null
+let lastStartedAudioCue = null  // index of the most recently played audio cue (Space toggles it)
 let midiGoNote = null
 let midiBackNote = null
 let midiBackLongPressTimer = null
@@ -440,7 +489,7 @@ let pickModeCallback = null
 let midiAccess = null
 let micDeviceOutputs = []   // MIDI output per micDevices entry (null = not connected / OSC)
 let midiTrigger = null
-let midiTC = null
+let midiTCOutputs = []
 let midiLiveDevice = null
 let mtc = null
 let oscEnabled = false
@@ -2772,8 +2821,21 @@ document.addEventListener('keydown', (e) => {
         const ae = document.activeElement
         const isInput = ae?.tagName === 'INPUT' || ae?.tagName === 'TEXTAREA' || ae?.isContentEditable
         if (!isInput) {
-            if (e.key === ' ') { e.preventDefault(); goAction(); return }
-            if (e.key === 'Backspace') { e.preventDefault(); backAction(); return }
+            if (e.key === ' ') { e.preventDefault(); if (ae?.tagName === 'BUTTON') ae.blur(); goAction(); return }
+            if (e.key === 'Backspace') { e.preventDefault(); if (ae?.tagName === 'BUTTON') ae.blur(); backAction(); return }
+        }
+    } else if (!liveViewOpen && e.key === ' ' && !inlineEditor && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        // Live view closed: Space pauses/resumes the most recently started audio cue.
+        // In lock mode it has no function — but still swallow it so the page doesn't scroll.
+        const ae = document.activeElement
+        const isInput = ae?.tagName === 'INPUT' || ae?.tagName === 'TEXTAREA' || ae?.isContentEditable
+        if (!isInput) {
+            e.preventDefault()
+            if (ae?.tagName === 'BUTTON') ae.blur()
+            if (!showLock && lastStartedAudioCue !== null) {
+                triggerAudio.get(lastStartedAudioCue)?.togglePlayPause()
+            }
+            return
         }
     }
     if (e.key === 'Shift') {
@@ -2839,6 +2901,15 @@ document.addEventListener('keyup', (e) => {
         })
         for (const [idx, btn] of autoMicBtns) updateAutoMicBtnAppearance(btn, idx)
     }
+}, { capture: true })
+// A button that keeps focus after a mouse click shows a persistent focus ring
+// (and Space is a global GO/▶ hotkey — a focused button would also re-fire on
+// Space). Drop focus after the click so no ring lingers until the user clicks
+// elsewhere. Runs in the capture phase so it still fires for buttons whose own
+// click handler calls stopPropagation() (e.g. the cue action buttons).
+document.addEventListener('click', (e) => {
+    const btn = e.target?.closest?.('button')
+    if (btn && document.activeElement === btn) btn.blur()
 }, { capture: true })
 window.addEventListener('blur', () => { shiftHeld = false; document.body.classList.remove('shift-held') })
 window.addEventListener('scroll', updateSidebarActive, { passive: true })
@@ -2988,7 +3059,7 @@ function makeHtmlSafe(mdText) {
 
 class MTCTransmitter {
     constructor() {
-        this.output = null
+        this.outputs = []
         this.intervalId = null
         this.qfIndex = 0
         this.lastFrames = 0
@@ -3001,7 +3072,7 @@ class MTCTransmitter {
         this.displayEl = null
     }
 
-    setOutput(output) { this.output = output }
+    setOutputs(outputs) { this.outputs = outputs ?? [] }
     setDisplay(el) { this.displayEl = el }
 
     _parseTC(str) {
@@ -3033,14 +3104,15 @@ class MTCTransmitter {
     }
 
     _sendFullFrame(frames) {
-        if (!this.output) return
+        if (!this.outputs.length) return
         const { hh, mm, ss, ff } = this._decompose(frames)
         const hhByte = (0b01 << 5) | hh  // 25fps type bits 6:5
-        this.output.send([0xF0, 0x7F, 0x7F, 0x01, 0x01, hhByte, mm, ss, ff, 0xF7])
+        const msg = [0xF0, 0x7F, 0x7F, 0x01, 0x01, hhByte, mm, ss, ff, 0xF7]
+        for (const out of this.outputs) out.send(msg)
     }
 
     _sendQF(frames) {
-        if (!this.output) return
+        if (!this.outputs.length) return
         const { hh, mm, ss, ff } = this._decompose(frames)
         const i = this.qfIndex
         let nibble
@@ -3055,12 +3127,25 @@ class MTCTransmitter {
             case 7: nibble = ((hh >> 4) & 0x01) | (0b01 << 1); break  // 25fps rate bits
             default: nibble = 0
         }
-        this.output.send([0xF1, (i << 4) | nibble])
+        const msg = [0xF1, (i << 4) | nibble]
+        for (const out of this.outputs) out.send(msg)
     }
 
     onLoopRestart(loopDurSec, newStartSec) {
-        // TC loops with the audio: jump back to startFrames each iteration
+        // Single-file loop: the TC loops with the audio — jump back to startFrames
+        // each iteration (loopOffsetFrames stays 0 here).
+        this.loopOffsetFrames = 0
         this.iterStartSec = newStartSec
+    }
+
+    // Multi-file (music_seq) Vamp: point the TC at the currently active part-loop
+    // slot. `offsetFrames` is the summed length of all earlier parts in the cycle
+    // (0 for the first part → the TC resets there); `slotStartSec` is that slot's
+    // local start; `ws` is the slot's wavesurfer so getCurrentTime tracks it.
+    setSeqSegment(offsetFrames, slotStartSec, ws) {
+        this.loopOffsetFrames = offsetFrames
+        this.iterStartSec = slotStartSec
+        if (ws) this.wsRef = ws
     }
 
     getCurrentFrames() {
@@ -3582,6 +3667,30 @@ function scrollToMdLine(mdLine) {
     window.scrollTo({ top: targetTop, behavior: 'smooth' })
 }
 
+// Parse a dotted/indexed key path ("music.adjust.foo", "cue_midi[1].bar",
+// "config.baz") into an array of object keys / numeric array indices.
+function parseKeyPath(key) {
+    const parts = []
+    for (const seg of key.split('.')) {
+        const name = seg.replace(/\[\d+\]/g, '')
+        if (name) parts.push(name)
+        for (const im of seg.matchAll(/\[(\d+)\]/g)) parts.push(Number(im[1]))
+    }
+    return parts
+}
+
+// Delete the leaf addressed by a key path from a parsed YAML object, walking
+// through intermediate objects/arrays. No-op if any segment is missing.
+function deleteByKeyPath(root, key) {
+    const parts = parseKeyPath(key)
+    let cur = root
+    for (let i = 0; i < parts.length - 1; i++) {
+        if (cur == null) return
+        cur = cur[parts[i]]
+    }
+    if (cur != null && typeof cur === 'object') delete cur[parts[parts.length - 1]]
+}
+
 function deleteUnknownYamlKey(blockNum, key) {
     let count = 0
     const newText = scriptText.replace(/```yaml\n([\s\S]*?)```/g, (match, content) => {
@@ -3590,11 +3699,7 @@ function deleteUnknownYamlKey(blockNum, key) {
         let parsed
         try { parsed = yaml.load(content) } catch { return match }
         if (!parsed || typeof parsed !== 'object') return match
-        if (key.startsWith('config.')) {
-            if (parsed.config && typeof parsed.config === 'object') delete parsed.config[key.slice(7)]
-        } else {
-            delete parsed[key]
-        }
+        deleteByKeyPath(parsed, key)
         const newYaml = yaml.dump(parsed, { indent: 4, lineWidth: -1, noRefs: true })
         return count === 1
             ? `\`\`\`yaml\n${newYaml.trimEnd()}\n\`\`\``
@@ -3604,6 +3709,100 @@ function deleteUnknownYamlKey(blockNum, key) {
     scriptText = newText
     showParseErrors()
     writeScriptMd(newText)
+}
+
+// Read the value addressed by a dotted/indexed key path (mirror of deleteByKeyPath).
+function getByKeyPath(root, key) {
+    let cur = root
+    for (const p of parseKeyPath(key)) {
+        if (cur == null) return undefined
+        cur = cur[p]
+    }
+    return cur
+}
+
+// Build a cleaned version of the script without writing it. Removes:
+//   1. Unknown YAML keys at any nesting level (spec violations).
+//   2. Inert loop remnants — `fading_point`/`loop` on a cue that is no longer a
+//      loop (e.g. left over after converting a Vamp back to a normal cue).
+// Returns { removals: [{block, key, value}], newText }.
+function computeYamlCleanup() {
+    const unknownByBlock = new Map()
+    for (const { block, key } of findUnknownYamlKeys(scriptText)) {
+        if (!unknownByBlock.has(block)) unknownByBlock.set(block, [])
+        unknownByBlock.get(block).push(key)
+    }
+    const removals = []
+    let blockIndex = 0
+    const newText = scriptText.replace(/```yaml\n([\s\S]*?)```/g, (match, content) => {
+        blockIndex++
+        let parsed
+        try { parsed = yaml.load(content) } catch { return match }
+        if (!parsed || typeof parsed !== 'object') return match
+        const block = blockIndex
+        let changed = false
+        const remove = (key) => {
+            const value = getByKeyPath(parsed, key)
+            if (value === undefined) return
+            removals.push({ block, key, value })
+            deleteByKeyPath(parsed, key)
+            changed = true
+        }
+        // 1. Unknown keys (spec violations, any nesting)
+        for (const key of unknownByBlock.get(block) || []) remove(key)
+        // 2. Inert loop remnants — cue blocks that are not loops
+        if (!(parsed.config && typeof parsed.config === 'object')) {
+            const isLoop = parsed.music?.loop === true
+                || Object.prototype.hasOwnProperty.call(parsed, 'loop_outro')
+                || Array.isArray(parsed.music_seq)
+            if (!isLoop && isPlainObject(parsed.music)) {
+                if (Object.prototype.hasOwnProperty.call(parsed.music, 'fading_point')) remove('music.fading_point')
+                if (parsed.music.loop === false) remove('music.loop')
+            }
+        }
+        if (!changed) return match
+        const newYaml = yaml.dump(parsed, { indent: 4, lineWidth: -1, noRefs: true })
+        return block === 1
+            ? `\`\`\`yaml\n${newYaml.trimEnd()}\n\`\`\``
+            : `\`\`\`yaml\n${inlineNoteObjects(newYaml.trimEnd())}\n\`\`\``
+    })
+    return { removals, newText }
+}
+
+// Menu entry point (invoked from electron/main.js via window.__runYamlCleanup).
+window.__runYamlCleanup = async function () {
+    const { removals, newText } = computeYamlCleanup()
+    if (!removals.length) {
+        await showConfirmDialog({
+            title: t('cleanup.title'),
+            body: t('cleanup.none'),
+            confirmLabel: 'OK',
+            cancelLabel: null,
+        })
+        return
+    }
+    const MAX = 30
+    const shown = removals.slice(0, MAX).map(r =>
+        `Block ${r.block}: <strong>${escapeHtml(r.key)}</strong> = ${escapeHtml(JSON.stringify(r.value))}`
+    ).join('<br>')
+    const more = removals.length > MAX ? `<br>… ${removals.length - MAX} ${t('cleanup.more')}` : ''
+    const proceed = await showConfirmDialog({
+        title: t('cleanup.title'),
+        body: `${t('cleanup.body').replace('%1', removals.length)}<br><br>${shown}${more}`,
+        hint: t('cleanup.backup'),
+        confirmLabel: t('cleanup.confirm'),
+        cancelLabel: t('btn.cancel'),
+    })
+    if (!proceed) return
+    try {
+        await window.electronAPI.backupScriptMdUncleaned()
+    } catch (e) {
+        console.error('YAML-Cleanup-Backup fehlgeschlagen:', e)
+        return
+    }
+    scriptText = newText
+    await writeScriptMd(newText)
+    rerender(newText)
 }
 
 function tokenizeScript(text) {
@@ -3889,6 +4088,25 @@ function setupAutoTriggers() {
 
         // Firing + progress bar state
         const firedSet = new Set()
+        let lastCt = -1   // previous playhead time, for loop-wrap detection
+
+        // The auto-cue with the next-smaller `at` (this one's progress is relative
+        // to it). Returns null if this is the first auto-cue on the source.
+        const prevLinkOf = (link) => {
+            let prev = null
+            for (const o of links) {
+                if (o === link || o.at >= link.at) continue
+                if (prev === null || o.at > prev.at) prev = o
+            }
+            return prev
+        }
+
+        const clearProgressBars = () => {
+            for (const link of links) {
+                const b = autoTriggerBtns.get(link.targetIdx)
+                if (b) { b.style.background = ''; b.style.color = '' }
+            }
+        }
 
         const onPlay = () => {
             firedSet.clear()
@@ -3896,6 +4114,7 @@ function setupAutoTriggers() {
             // play was triggered by triggerAction, the waveform ▶ button, or after
             // a manual scrub while paused.
             const ct = ta.mainAudioEl.currentTime
+            lastCt = ct
             let lastPast = null
             for (const link of links) {
                 if (link.at <= ct) {
@@ -3916,6 +4135,13 @@ function setupAutoTriggers() {
         const onTime = (ct) => {
             // Don't fire during seeks or waveform scrubbing — only during actual playback
             if (ta.mainAudioEl.paused || scrubbingSet.has(sourceIdx)) return
+            // Loop wrap: the cursor jumped back to the loop start → re-arm all
+            // auto-cues so they fire again on every loop pass, and reset their bars.
+            if (ct < lastCt - 0.3) {
+                firedSet.clear()
+                clearProgressBars()
+            }
+            lastCt = ct
             for (const link of links) {
                 if (!firedSet.has(link.targetIdx) && ct >= link.at) {
                     firedSet.add(link.targetIdx)
@@ -3928,11 +4154,20 @@ function setupAutoTriggers() {
                     triggerAction(link.targetIdx)
                     continue
                 }
-                // Progress bar fill
+                // Progress bar fill — relative to the previous auto-cue (or the loop
+                // start for the first one). The bar only appears once the previous
+                // auto-cue has actually fired.
                 const btn = autoTriggerBtns.get(link.targetIdx)
-                if (btn && !firedSet.has(link.targetIdx) && link.at > 0) {
-                    const pct = Math.min(100, Math.max(0, ct / link.at * 100))
-                    btn.style.background = `linear-gradient(to right, rgba(152,195,121,0.35) ${pct}%, transparent ${pct}%)`
+                if (btn && !firedSet.has(link.targetIdx)) {
+                    const prev  = prevLinkOf(link)
+                    const base  = prev ? prev.at : (ta.mp?.start ?? 0)
+                    const ready = !prev || firedSet.has(prev.targetIdx)
+                    if (ready && link.at > base) {
+                        const pct = Math.min(100, Math.max(0, (ct - base) / (link.at - base) * 100))
+                        btn.style.background = `linear-gradient(to right, rgba(152,195,121,0.35) ${pct}%, transparent ${pct}%)`
+                    } else {
+                        btn.style.background = ''
+                    }
                 }
             }
         }
@@ -4437,6 +4672,12 @@ function _applyAutoMicInScript(triggerIndex, enabled) {
 function _refreshAllMicDisplays() {
     const anyAutoMic = hasAnyAutoMic()
     for (let i = 1; i < triggerYamls.length; i++) {
+        // Keep the auto-mic button's active state in sync first — it lives in the
+        // action row, independent of the .trigger-info mic display below, so it
+        // must not be gated behind the trigger-info guards.
+        const btn = autoMicBtns.get(i)
+        if (btn) updateAutoMicBtnAppearance(btn, i)
+
         const triggerEl = triggers[i]
         if (!triggerEl) continue
         const triggerInfo = triggerEl.querySelector('.trigger-info')
@@ -4450,8 +4691,6 @@ function _refreshAllMicDisplays() {
             renderMicIntoEl(micEl, micValue, !!ty?.auto_mic)
             triggerInfo.insertBefore(micEl, triggerInfo.firstChild)
         }
-        const btn = autoMicBtns.get(i)
-        if (btn) updateAutoMicBtnAppearance(btn, i)
     }
 }
 
@@ -4785,6 +5024,8 @@ function buildTrigger(codeblockYaml, index) {
         let suppressSeekRestart  = false
         let suppressPauseStop    = false  // prevents ws.on("pause") from killing a group source
         let forceFullBuffer      = false  // play button: ignore trim region, use full buffer
+        let loopSourceSliced     = false  // active source is a sliced [start,end] loop buffer
+                                          // (region-relative offset → audio-locked fade applies)
 
         // If this cue was playing during a rerender, adopt the running audio graph so the
         // AudioBufferSourceNode is never interrupted.  The new playbackGain (just created
@@ -4820,6 +5061,7 @@ function buildTrigger(codeblockYaml, index) {
 
         function startSource(offset, when) {
             visuallyDone = false
+            loopSourceSliced = false
             const ta_ = triggerAudio.get(index)
             if (!sharedAudioCtx || !playbackGain) {
                 if (mainAudioCtxGain) mainAudioCtxGain.gain.value = 1
@@ -4861,6 +5103,7 @@ function buildTrigger(codeblockYaml, index) {
                 activeSource            = src
                 activeSourceStartedAt   = when
                 activeSourceStartOffset = regionOff
+                loopSourceSliced        = true   // offset is region-relative (0..loopDur)
                 mainAudioEl.loop        = true  // cursor managed by fireLoopRestart timer
             } else {
                 const safeOffset  = Math.max(0, offset)
@@ -5075,7 +5318,12 @@ function buildTrigger(codeblockYaml, index) {
                 const isCE = srcTy?.chain_end  && findTriggerByNote(srcTy.chain_end)  === nextIdx
                 const isOT = srcTy?.loop_outro && findTriggerByNote(srcTy.loop_outro) === nextIdx
                 if ((isCE || isOT) && nextTa) {
-                    mtc.startFromFrames(mtc.getCurrentFrames(), nextTa.ws, nextIdx, nextTa.mp?.start ?? 0)
+                    let frames = mtc.getCurrentFrames()
+                    // Multi-file Vamp Finish: TC = loop start + total length of all
+                    // part-loops, regardless of which part the devamp fired from.
+                    const sd = triggerSeqSlots.get(index)
+                    if (isOT && sd && sd.total > 1) frames = mtc.startFrames + seqTotalFrames(index)
+                    mtc.startFromFrames(frames, nextTa.ws, nextIdx, nextTa.mp?.start ?? 0)
                 }
             }
             if (typeof ty?.music === 'object' && ty.music.adjust) {
@@ -5343,6 +5591,9 @@ function buildTrigger(codeblockYaml, index) {
             loopOutroPending.delete(index)
             loopOutroInitialRemaining.delete(index)
             setOutroPendingIndicator(outroIdx, false)
+            // Multi-file Vamp: the devamp fired from the primary slot — clear its
+            // amber active-slot outline (the non-primary path does this via setActive).
+            triggerSeqSlots.get(index)?.slots[0]?.setActive?.(false)
             currentCue = outroIdx
             markTriggers(outroIdx)
             fireGaplessTransition(outroIdx)
@@ -5629,6 +5880,9 @@ function buildTrigger(codeblockYaml, index) {
                     seqData.slots[0]?.setActive?.(false)
                     nextSlot.setActive?.(true)
                     nextSlot.startCursor(nextNs, 0)
+                    // Continue the TC into the next part-loop (see [[BACKLOG]] SLF ticket).
+                    if (mtc && mtc.activeTcIndex === index)
+                        mtc.setSeqSegment(seqOffsetFrames(index, nextSlotIdx), nextNs, nextSlot.ws)
                     armSeqBoundaryTimer(nextSlotIdx)
                 }, Math.max(0, msToTransition))
                 // After tail: reset primary cursor and clear gapless flag.
@@ -5750,9 +6004,15 @@ function buildTrigger(codeblockYaml, index) {
                         const _ta_wb = triggerAudio.get(index)
                         if (_ta_wb) _ta_wb.gaplessSwitchActive = true
                         mainAudioEl.play().catch(() => {})
+                        // Cycle wrapped to the first part-loop → TC resets to the cue start.
+                        if (mtc && mtc.activeTcIndex === index)
+                            mtc.setSeqSegment(0, nextNs, _ta_wb?.ws)
                     } else {
                         nextSlot.setActive?.(true)
                         nextSlot.startCursor(nextNs, 0)
+                        // Continue the TC into the next part-loop.
+                        if (mtc && mtc.activeTcIndex === index)
+                            mtc.setSeqSegment(seqOffsetFrames(index, nextSlotIdx), nextNs, nextSlot.ws)
                         armSeqBoundaryTimer(nextSlotIdx)
                     }
                 }, Math.max(0, msToTransition))
@@ -5816,7 +6076,11 @@ function buildTrigger(codeblockYaml, index) {
                         if (mtc && mtc.activeTcIndex === index) mtc.stopAndClear()
                     }
                 }
-                ws.setVolume(currentVolume); return
+                // Don't slam a fading loop to full volume right at the seam — that produced a
+                // loud blip. The next timeupdate's audio-locked fade keeps the gain near 0
+                // through the loop boundary.
+                if (!(loopSourceSliced && (mp.fadein > 0 || mp.fadeout > 0))) ws.setVolume(currentVolume)
+                return
             }
             // Pre-seek next audio and schedule gapless transition via setTimeout
             // (fires at the precise end time instead of waiting for next timeupdate)
@@ -5878,9 +6142,23 @@ function buildTrigger(codeblockYaml, index) {
                 }
             }
             let f = 1
-            const t = ct - mp.start
+            // For a sliced loop region the audio thread loops sample-accurately while the
+            // media-element cursor (ct) drifts against it — driving the fade off ct leaks the
+            // loop seam at non-zero gain (audible "too loud" click). Derive the fade position
+            // from the source's own AudioContext clock so the seam always lands at gain≈0.
+            let fadeCt = ct
+            if (loopSourceSliced && activeSource && activeSourceStartedAt !== null
+                && activeSourceStartOffset !== null && sharedAudioCtx) {
+                const loopDur = (mp.end ?? ws.getDuration()) - (mp.start ?? 0)
+                if (loopDur > 0) {
+                    const elapsed = sharedAudioCtx.currentTime - activeSourceStartedAt
+                    const posInRegion = (((activeSourceStartOffset + elapsed) % loopDur) + loopDur) % loopDur
+                    fadeCt = (mp.start ?? 0) + posInRegion
+                }
+            }
+            const t = fadeCt - mp.start
             if (mp.fadein  > 0 && t >= 0 && t < mp.fadein)            f = t / mp.fadein
-            if (mp.fadeout > 0 && (effEnd - ct) < mp.fadeout) f = Math.min(f, (effEnd - ct) / mp.fadeout)
+            if (mp.fadeout > 0 && (effEnd - fadeCt) < mp.fadeout) f = Math.min(f, (effEnd - fadeCt) / mp.fadeout)
             ws.setVolume(Math.max(0, currentVolume * f))
         })
 
@@ -5899,6 +6177,7 @@ function buildTrigger(codeblockYaml, index) {
             // Show the amber active-slot indicator on the primary slot whenever it starts playing.
             const _sdPlay = triggerSeqSlots.get(index)
             if (_sdPlay && _sdPlay.idx === 0) _sdPlay.slots[0]?.setActive?.(true)
+            lastStartedAudioCue = index   // Space (live view closed) toggles this cue
             if (gaplessActive) return
             pauseBtn.textContent = "⏸"
             chainEndArmed = false
@@ -6199,6 +6478,7 @@ function buildTrigger(codeblockYaml, index) {
         triggerAudio.set(index, {
             ws, mainAudioEl, monitorFile, musicFile, overlay, getX, autoMarkerState, mp,
             stopAndReset: () => wsStopAndReset(),
+            togglePlayPause: () => pauseBtn.click(),
             fadeOutActiveSeqSlot: (durationSec) => {
                 const sd = triggerSeqSlots.get(index)
                 if (sd && sd.idx > 0) sd.slots[sd.idx]?.fadeOut?.(durationSec)
@@ -6564,14 +6844,11 @@ function buildTrigger(codeblockYaml, index) {
     updateAutoMicBtnAppearance(autoMicBtn, index)
     autoMicBtn.addEventListener('mouseenter', () => updateAutoMicBtnAppearance(autoMicBtn, index))
     autoMicBtn.addEventListener('mouseleave', () => updateAutoMicBtnAppearance(autoMicBtn, index))
-    autoMicBtn.addEventListener('mousedown', e => {
-        e.stopPropagation()
-        autoMicBtn._shiftAtMousedown = shiftHeld
-    })
+    autoMicBtn.addEventListener('mousedown', e => e.stopPropagation())
     autoMicBtn.addEventListener('click', e => {
         e.stopPropagation()
         const isActive = triggerYamls[index]?.auto_mic
-        if (isActive && !autoMicBtn._shiftAtMousedown) return   // deactivate only via Shift+Click
+        if (isActive && !e.shiftKey) return   // deactivate only via Shift+Click
         updateAutoMicInScript(index, !isActive)
     })
     triggerDiv.querySelector('.trigger-actions').appendChild(autoMicBtn)
@@ -6973,6 +7250,47 @@ function slfChainRootOf(idx) {
     return idx
 }
 
+// Length (seconds, up to the fading point / Ausklingpunkt) of each part-loop in a
+// multi-file Vamp (music_seq). Index 0 = the primary `music:` file. Returns null
+// if any part's duration isn't known yet.
+function seqPartLengthsSec(index) {
+    const seqData = triggerSeqSlots.get(index)
+    const total = seqData?.total ?? 1
+    const partLen = (mp, dur) => {
+        if (!mp || !(dur > 0)) return null
+        const start = mp.start ?? 0
+        const effTrans = (mp.fading_point ?? 0) > 0 ? mp.fading_point : (mp.end ?? dur)
+        return Math.max(0, effTrans - start)
+    }
+    const ta = triggerAudio.get(index)
+    const l0 = partLen(ta?.mp, ta?.decodedBuffer?.duration ?? ta?.ws?.getDuration() ?? 0)
+    if (l0 === null) return null
+    const lens = [l0]
+    for (let k = 1; k < total; k++) {
+        const slot = seqData.slots[k]
+        const l = partLen(slot?.mp, slot?.decodedBuffer?.duration ?? slot?.ws?.getDuration() ?? 0)
+        if (l === null) return null
+        lens.push(l)
+    }
+    return lens
+}
+
+// Cumulative TC frame offset at the start of seq slot `slotIdx` (= summed length
+// of all earlier part-loops in the cycle). 0 for slot 0 → the TC resets there.
+function seqOffsetFrames(index, slotIdx) {
+    const lens = seqPartLengthsSec(index)
+    if (!lens) return 0
+    let sec = 0
+    for (let k = 0; k < slotIdx && k < lens.length; k++) sec += lens[k]
+    return Math.round(sec * 25)
+}
+
+// Total TC frames of one full multi-file Vamp cycle (sum of all part-loops).
+function seqTotalFrames(index) {
+    const lens = seqPartLengthsSec(index)
+    return lens ? Math.round(lens.reduce((a, b) => a + b, 0) * 25) : 0
+}
+
 // Computes derived TC string (HH:MM:SS:FF) for a non-root SLF cue.
 // Returns a TC string or null if root has no TC or audio durations are unknown.
 function derivedTcFor(idx) {
@@ -6993,14 +7311,23 @@ function derivedTcFor(idx) {
         if (next === null || next === current || next === undefined) break
 
         const ta = triggerAudio.get(current)
-        const audioEl = ta?.mainAudioEl
-        const mp = ta?.mp
-        if (audioEl && isFinite(audioEl.duration) && audioEl.duration > 0) {
-            const start = mp?.start ?? 0
-            const end   = mp?.end   ?? audioEl.duration
-            frames += Math.round((end - start) * 25)
+        const seqData = triggerSeqSlots.get(current)
+        if (seqData && seqData.total > 1) {
+            // Multi-file Vamp: the Finish is offset by the summed length of every
+            // part-loop (each up to its fading point), not just the primary file.
+            const lens = seqPartLengthsSec(current)
+            if (!lens) return null
+            frames += Math.round(lens.reduce((a, b) => a + b, 0) * 25)
         } else {
-            return null  // duration unknown
+            const audioEl = ta?.mainAudioEl
+            const mp = ta?.mp
+            if (audioEl && isFinite(audioEl.duration) && audioEl.duration > 0) {
+                const start = mp?.start ?? 0
+                const end   = mp?.end   ?? audioEl.duration
+                frames += Math.round((end - start) * 25)
+            } else {
+                return null  // duration unknown
+            }
         }
         current = next
     }
@@ -8482,7 +8809,18 @@ function broadcastLiveState() {
                         const srcTa = triggerAudio.get(j)
                         if (srcTa?.ws.isPlaying()) {
                             const ct = srcTa.mainAudioEl?.currentTime ?? 0
-                            if (ct < aty.at) autoCuePending = { currentTime: ct, at: aty.at }
+                            // Progress is relative to the previous auto-cue on the same
+                            // source (or the loop start). Only show once it's been reached.
+                            let base = srcTa.mp?.start ?? 0
+                            for (let k = 1; k < triggerYamls.length; k++) {
+                                if (k === cueIdx) continue
+                                const kAty = triggerYamls[k]?.auto_trigger
+                                if (!kAty?.trigger_note) continue
+                                const kSrc = findTriggerByNote(kAty.trigger_note)
+                                if (kSrc === null || groupRootOf(kSrc) !== srcRoot) continue
+                                if (kAty.at < aty.at && kAty.at > base) base = kAty.at
+                            }
+                            if (ct < aty.at && ct >= base) autoCuePending = { currentTime: ct, at: aty.at, base }
                             break
                         }
                     }
@@ -8707,6 +9045,12 @@ function backAction() {
     // Undo each popped cue's effects (audio, loop outro queues, music.adjust)
     for (const pIdx of popped) {
         fadeOutAndStop(pIdx)
+
+        // Clear a lingering auto-cue progress bar on the reverted cue. If its
+        // source loop is still playing it will be repainted on the next
+        // timeupdate; otherwise it stays cleared (fixes a bar running on after Back).
+        const acBtn = autoTriggerBtns.get(pIdx)
+        if (acBtn) { acBtn.style.background = ''; acBtn.style.color = '' }
 
         for (const [loopIdx, outroIdx] of loopOutroPending) {
             if (outroIdx === pIdx) {
@@ -9404,11 +9748,17 @@ function refreshMidiDevices(settings) {
     micDeviceOutputs = micDevices.map(() => null)
     midiOutputPorts  = midiOutputDevices.map(() => null)
     midiTrigger = null
-    midiTC = null
+    midiTCOutputs = []
     midiGoNote    = settings.midiGoNote    || null
     midiBackNote  = settings.midiBackNote  || null
     midiLiveDevice = settings.midiLiveDevice || null
     if (!midiAccess) return
+    // Determine which device names should receive TC.
+    // Per-device sendTimecode flag takes precedence; fall back to legacy midiTCDevice setting.
+    const hasSendTimecodeFlag = midiOutputDevices.some(d => d.sendTimecode)
+    const tcDeviceNames = hasSendTimecodeFlag
+        ? new Set(midiOutputDevices.filter(d => d.sendTimecode).map(d => d.device).filter(Boolean))
+        : (settings.midiTCDevice ? new Set([settings.midiTCDevice]) : new Set())
     for (const output of midiAccess.outputs.values()) {
         for (let i = 0; i < micDevices.length; i++) {
             const dev = micDevices[i]
@@ -9420,10 +9770,10 @@ function refreshMidiDevices(settings) {
             if (midiOutputDevices[i].device && output.name === midiOutputDevices[i].device)
                 midiOutputPorts[i] = output
         }
-        if (settings.midiTCDevice && output.name === settings.midiTCDevice) midiTC = output
+        if (tcDeviceNames.has(output.name)) midiTCOutputs.push(output)
     }
     midiTrigger = midiOutputPorts[0] ?? null  // keeps sendTriggerNote working
-    if (mtc) mtc.setOutput(midiTC)
+    if (mtc) mtc.setOutputs(midiTCOutputs)
 }
 
 function stopAllAudio() {
@@ -9625,7 +9975,7 @@ async function initApp() {
     applyAudioDevices()
 
     await initMidi(savedSettings)
-    mtc.setOutput(midiTC)
+    mtc.setOutputs(midiTCOutputs)
 
     window.electronAPI.onScriptChanged(async () => {
         const newText = await window.electronAPI.getScriptMd()

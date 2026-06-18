@@ -365,6 +365,7 @@ function menuT(key) {
             undo: 'Rückgängig', redo: 'Wiederholen', cut: 'Ausschneiden',
             copy: 'Kopieren', paste: 'Einfügen', selectall: 'Alles auswählen',
             recent: 'Zuletzt geöffnet', 'recent.none': '— Keine —', 'recent.clear': 'Verlauf löschen',
+            cleanup: 'YAML aufräumen…',
         },
         en: {
             about: 'About MDstage…', newfile: 'New File…', open: 'Open File…',
@@ -377,6 +378,7 @@ function menuT(key) {
             undo: 'Undo', redo: 'Redo', cut: 'Cut',
             copy: 'Copy', paste: 'Paste', selectall: 'Select All',
             recent: 'Open Recent', 'recent.none': '— None —', 'recent.clear': 'Clear Recent Files',
+            cleanup: 'Clean up YAML…',
         },
     }
     return (M[lang] || M.de)[key] ?? key
@@ -440,6 +442,10 @@ function buildMenu() {
                     accelerator: 'Cmd+E',
                     click: () => { if (mainWindow) mainWindow.webContents.executeJavaScript('window.__runExport && window.__runExport()').catch(() => {}) },
                 },
+                {
+                    label: menuT('cleanup'),
+                    click: () => { if (mainWindow) mainWindow.webContents.executeJavaScript('window.__runYamlCleanup && window.__runYamlCleanup()').catch(() => {}) },
+                },
                 { type: 'separator' },
                 { role: 'hide' },
                 { role: 'hideOthers' },
@@ -467,6 +473,9 @@ function buildMenu() {
                 label: menuT('export'),
                 accelerator: 'Ctrl+E',
                 click: () => { if (mainWindow) mainWindow.webContents.executeJavaScript('window.__runExport && window.__runExport()').catch(() => {}) },
+            }, {
+                label: menuT('cleanup'),
+                click: () => { if (mainWindow) mainWindow.webContents.executeJavaScript('window.__runYamlCleanup && window.__runYamlCleanup()').catch(() => {}) },
             }],
         }, {
             label: menuT('prefs'),
@@ -869,6 +878,13 @@ app.whenReady().then(async () => {
         if (!scriptMdPath) throw new Error('No file open')
         const safe = String(version).replace(/[^0-9a-zA-Z.\-]/g, '_')
         const backupPath = scriptMdPath.replace(/\.md$/, `~v${safe}.md`)
+        fs.copyFileSync(scriptMdPath, backupPath)
+        return path.basename(backupPath)
+    })
+
+    ipcMain.handle('backup-script-md-uncleaned', () => {
+        if (!scriptMdPath) throw new Error('No file open')
+        const backupPath = scriptMdPath.replace(/\.md$/, '~uncleaned.md')
         fs.copyFileSync(scriptMdPath, backupPath)
         return path.basename(backupPath)
     })
