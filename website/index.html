@@ -4,8 +4,51 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MDstage – Das interaktive Inspizientenbuch</title>
-<meta name="description" content="MDstage verwandelt das Regiebuch in eine interaktive Schaltzentrale: Musik, Mikrofone, Licht und Timecode – alles mit Go und Back.">
+<meta name="description" content="MDstage verwandelt das Regiebuch in eine interaktive Schaltzentrale: Musik, Mikrofone, Licht und Timecode – alles mit Go und Back. Taktgenaue Vamps, samplegenaues Back. Kostenlos für Mac, Windows und Linux.">
+<link rel="canonical" href="https://mdstage.org/">
+<meta name="robots" content="index, follow">
+<meta name="theme-color" content="#282c34">
 <link rel="icon" type="image/png" href="assets/icon.png">
+<!-- Open Graph -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="MDstage">
+<meta property="og:locale" content="de_DE">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:url" content="https://mdstage.org/">
+<meta property="og:title" content="MDstage – Das interaktive Inspizientenbuch">
+<meta property="og:description" content="Das Regiebuch, das die Show fährt: Cues für Ton, Mikrofone, Licht und Timecode direkt im Textbuch – gesteuert mit Go und Back. Kostenlos für Mac, Windows und Linux.">
+<meta property="og:image" content="https://mdstage.org/assets/MDstage-open-graph.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="MDstage – Regiebuch und Show-Steuerung in einer App">
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="MDstage – Das interaktive Inspizientenbuch">
+<meta name="twitter:description" content="Das Regiebuch, das die Show fährt: Cues für Ton, Mikrofone, Licht und Timecode direkt im Textbuch – gesteuert mit Go und Back.">
+<meta name="twitter:image" content="https://mdstage.org/assets/MDstage-open-graph.png">
+<meta name="twitter:image:alt" content="MDstage – Regiebuch und Show-Steuerung in einer App">
+<!-- Structured data -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "MDstage",
+  "description": "Interaktives Inspizientenbuch für Live-Shows und Theaterproduktionen: Cues für Audio, MIDI, OSC, Mikrofone, Licht und Timecode werden als YAML direkt in das Markdown-Textbuch eingebettet und mit Go und Back gefahren.",
+  "url": "https://mdstage.org/",
+  "applicationCategory": "MultimediaApplication",
+  "operatingSystem": "macOS, Windows, Linux",
+  "softwareVersion": "1.11.3",
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "EUR"
+  },
+  "author": {
+    "@type": "Person",
+    "name": "Julius Müller"
+  }
+}
+</script>
 <style>
 :root {
   --bg:      #282c34;
@@ -427,6 +470,9 @@ footer a:hover{text-decoration:underline}
         <p data-de="Der Back-Button stellt den vollständigen Status des vorherigen Cues wieder her: Wurde ein Loop unterbrochen, startet er neu. Mikrofone, die im vorherigen Cue geöffnet waren, werden wieder geöffnet. Wurde eine Lichtszene durch den falschen Cue gewechselt, wird die vorherige Szene erneut getriggert." data-en="The Back button fully restores the state of the previous cue: if a loop was interrupted, it restarts. Microphones that were open in the previous cue are reopened. If a lighting scene was changed by the wrong cue, the previous scene is triggered again.">
           Der Back-Button stellt den vollständigen Status des vorherigen Cues wieder her: Wurde ein Loop unterbrochen, startet er neu. Mikrofone, die im vorherigen Cue geöffnet waren, werden wieder geöffnet. Wurde eine Lichtszene durch den falschen Cue gewechselt, wird die vorherige Szene erneut getriggert.
         </p>
+        <p data-de="Besonders bei Loops geht Back taktgenau vor: Hat man den Vamp mit Go schon in den Ausgang geschickt, holt Back ihn nicht einfach von vorne zurück, sondern genau an die Stelle, an der er jetzt wäre, wäre nie Go gedrückt worden – samplegenau auf der Audio-Uhr berechnet. Der Vamp läuft im Takt weiter, ohne hörbaren Sprung." data-en="With loops, Back is beat-accurate: if you already sent the vamp into its outro with Go, Back doesn't restart it from the top – it resumes it exactly where it would be now had Go never happened, calculated sample-accurately on the audio clock. The vamp continues in beat, with no audible jump.">
+          Besonders bei Loops geht Back taktgenau vor: Hat man den Vamp mit Go schon in den Ausgang geschickt, holt Back ihn nicht einfach von vorne zurück, sondern genau an die Stelle, an der er jetzt wäre, wäre nie Go gedrückt worden – samplegenau auf der Audio-Uhr berechnet. Der Vamp läuft im Takt weiter, ohne hörbaren Sprung.
+        </p>
         <p data-de="Das gibt der Person am Pult Sicherheit: Ein versehentlicher Go-Druck ist kein Problem – einfach Back drücken und weiter." data-en="This gives the operator confidence: an accidental Go press is no problem – just press Back and continue.">
           Das gibt der Person am Pult Sicherheit: Ein versehentlicher Go-Druck ist kein Problem – einfach Back drücken und weiter.
         </p>
@@ -533,6 +579,9 @@ footer a:hover{text-decoration:underline}
         </p>
         <p data-de="Auch Übergänge von einem Stück direkt ins nächste sind möglich: Das Ende des ersten Titels löst automatisch den nächsten aus." data-en="Transitions from one track directly into the next are also possible: the end of the first track automatically triggers the next.">
           Auch Übergänge von einem Stück direkt ins nächste sind möglich: Das Ende des ersten Titels löst automatisch den nächsten aus.
+        </p>
+        <p data-de="Und falls der Devamp zu früh kommt: Back holt den Vamp taktgenau zurück – samplegenau an die Stelle, an der er jetzt wäre, ohne Sprung im Groove. Bei mehrteiligen Vamps trifft Back den richtigen Teil und die richtige Phase darin." data-en="And if the devamp comes too early: Back resumes the vamp beat-accurately – sample-precise, at the exact spot it would be at now, with no jump in the groove. For multi-part vamps, Back lands on the correct part and the correct phase within it.">
+          Und falls der Devamp zu früh kommt: Back holt den Vamp taktgenau zurück – samplegenau an die Stelle, an der er jetzt wäre, ohne Sprung im Groove. Bei mehrteiligen Vamps trifft Back den richtigen Teil und die richtige Phase darin.
         </p>
       </div>
     </div>
