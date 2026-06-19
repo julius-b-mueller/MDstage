@@ -150,6 +150,12 @@ const lastPlaybackPos = new Map()
 // boundary + the wall-clock time it happened. Lets Back compute where the sequence would
 // be now (phase + elapsed, mod total length) and resume there, beat-compensated.
 const seqPhaseAnchor = new Map()
+// Crossfade window (seconds) for the Back loop-resume handover: when Back undoes a
+// finish/outro and resumes the loop it handed off from, the finish is faded out over this
+// time while the loop snaps back in — a short crossfade instead of two 500 ms fades that
+// overlap and comb/phase when loop and finish share material (e.g. same drums + extra
+// melody). Tunable by ear: smaller = less phaser but more abrupt, larger = smoother.
+const BACK_HANDOVER_FADE = 0.05
 // musicFile -> triggerIndex[]  (for cross-trigger fade lookups)
 const fileToTriggers = new Map()
 // targetIdx → <button> element for auto-cue progress bar updates
@@ -5081,6 +5087,16 @@ function buildTrigger(codeblockYaml, index) {
         function startSource(offset, when) {
             visuallyDone = false
             loopSourceSliced = false
+            // A fresh source start means no gapless transition is in progress for this trigger.
+            // Clear any stale gaplessActive — otherwise ws.on("play") returns early on its
+            // `if (gaplessActive) return` guard and never resets it, which would leave the
+            // timeupdate boundary handler permanently skipping fireLoopRestart/fireLoopOutro
+            // (hard loop, no tail, armed finish never fires) after a Back-resume.
+            gaplessActive = false
+            // Not in an outro tail anymore — the stale cleanup that would have reset these is
+            // skipped on a Back-resume, so reset here (else the live-view fill stays faded out).
+            inTail = false
+            inTailDuration = 0
             const ta_ = triggerAudio.get(index)
             if (!sharedAudioCtx || !playbackGain) {
                 if (mainAudioCtxGain) mainAudioCtxGain.gain.value = 1
@@ -5490,6 +5506,10 @@ function buildTrigger(codeblockYaml, index) {
                     nextTa.startCursor(ns, 0)
                 }, Math.max(0, msToTransition))
                 setTimeout(() => {
+                    // If a Back-resume restarted this loop during the tail, it cleared
+                    // gaplessActive — skip this now-stale cleanup, or it would pause the
+                    // resumed cursor and hide its playbar (finish then never fires).
+                    if (!gaplessActive) return
                     suppressPauseStop = true
                     mainAudioEl.loop = false
                     mainAudioEl.pause()
@@ -5568,6 +5588,10 @@ function buildTrigger(codeblockYaml, index) {
 
                 // ④ After the tail finishes: clean up the current cue's transport state.
                 setTimeout(() => {
+                    // Skip if a Back-resume already restarted this trigger during the tail
+                    // (it cleared gaplessActive) — otherwise this stale cleanup pauses the
+                    // resumed cursor.
+                    if (!gaplessActive) return
                     gaplessActive = false
                     inTail = false
                     inTailDuration = 0
@@ -5910,6 +5934,7 @@ function buildTrigger(codeblockYaml, index) {
                 // OR if a new transition is already in progress (wrap-back fired between
                 // startGaplessSource and its own timeout — seqData.idx not yet updated).
                 setTimeout(() => {
+                    if (!gaplessActive) return   // Back-resume already restarted this loop → stale
                     preSeekArmed = false
                     gaplessActive = false
                     if (seqData.idx !== nextSlotIdx || seqData.transitionInProgress) return
@@ -5976,6 +6001,7 @@ function buildTrigger(codeblockYaml, index) {
                         nextTa.startCursor(ns, 0)
                     }, Math.max(0, msToTransition))
                     setTimeout(() => {
+                        if (!gaplessActive) return   // Back-resume already restarted this loop → stale
                         gaplessActive = false
                         inTail = false
                         inTailDuration = 0
@@ -6099,19 +6125,26 @@ function buildTrigger(codeblockYaml, index) {
         // Back: resume a stopped multi-file SLF loop at the beat-compensated position it
         // would be at had it never stopped. Returns false (→ caller falls back) if this
         // isn't a multi-file loop or the data needed isn't available.
-        function resumeSeqBeatComp(primaryVol) {
+        function resumeSeqBeatComp(primaryVol, opts = {}) {
             const seqData = triggerSeqSlots.get(index)
             const lens    = seqSlotLengths()
             const anchor  = seqPhaseAnchor.get(index)
             if (!seqData || !lens || !anchor) return false
             const total = lens.reduce((a, b) => a + b, 0)
             if (total <= 0) return false
+            gaplessActive = false   // clear any stale transition flag before re-arming the loop
+            // Clear any tail/done state on the main closure so the live-view fill un-fades
+            // immediately — even when we resume into a non-primary slot (which wouldn't
+            // otherwise touch these flags, leaving the bar faded until slot 0 comes round).
+            inTail = false; inTailDuration = 0; visuallyDone = false
 
             // Schedule the resume at a precise AudioContext time and compute the phase for
             // *that* instant on the same clock, so the vamp comes back exactly in beat.
+            // `opts.when` lets backAction align the resume with the outgoing finish's stop.
             const lead   = 0.02
             const ctxNow = sharedAudioCtx?.currentTime ?? null
-            const when   = ctxNow != null ? ctxNow + lead : null
+            const when   = opts.when ?? (ctxNow != null ? ctxNow + lead : null)
+            const fadeIn = opts.fadeIn   // short crossfade-in when set, else the 0.5 s default
             const elapsed = (anchor.ctxAt != null && when != null)
                 ? (when - anchor.ctxAt)
                 : ((performance.now() - anchor.at) / 1000 + lead)
@@ -6134,13 +6167,25 @@ function buildTrigger(codeblockYaml, index) {
                 ta?.setCurrentVolume?.(0)
                 // Sample-accurate primary-slot resume — same scheduled-source path the SLF
                 // transitions already use; avoids ws.play latency / seek quantization.
-                if (when != null && ta?.startGaplessSource?.(o, when)) {
-                    ta.startCursor?.(o, Math.round(lead * 1000))
+                const scheduled = when != null && ta?.startGaplessSource?.(o, when)
+                if (scheduled) {
+                    ta.startCursor?.(o, Math.round(Math.max(0, when - (sharedAudioCtx?.currentTime ?? when)) * 1000))
                 } else {
                     ws.setVolume(0)
                     ws.play(o)
                 }
-                fadeAdjustVolume(ta, primaryVol, 0.5)
+                if (fadeIn != null && scheduled && playbackGain && when != null) {
+                    // Short crossfade-in (< timeupdate interval, so the per-timeupdate gain
+                    // write won't clobber it); currentVolume set to target so it holds after.
+                    currentVolume = primaryVol
+                    try {
+                        playbackGain.gain.cancelScheduledValues(sharedAudioCtx.currentTime)
+                        playbackGain.gain.setValueAtTime(0, when)
+                        playbackGain.gain.linearRampToValueAtTime(primaryVol, when + fadeIn)
+                    } catch (_) {}
+                } else {
+                    fadeAdjustVolume(ta, primaryVol, 0.5)
+                }
             } else {
                 const slot = seqData.slots[k]
                 if (!slot?.decodedBuffer || !sharedAudioCtx) return false
@@ -6154,7 +6199,9 @@ function buildTrigger(codeblockYaml, index) {
                 slot.setGain?.(0)
                 slot.startGaplessSource(o, when ?? (sharedAudioCtx.currentTime + lead))
                 slot.startCursor(o, Math.round(lead * 1000))
-                slot.fadeIn?.(slot.mp.volume ?? 0.8, 0.5)
+                // slot.fadeIn ramps the slot's own gain node (AudioContext-scheduled), so a
+                // short fade here is clean; use the handover crossfade time when given.
+                slot.fadeIn?.(slot.mp.volume ?? 0.8, fadeIn ?? 0.5)
                 armSeqBoundaryTimer(k)
             }
             // Anchor at the scheduled resume instant so a subsequent Back stays consistent.
@@ -6628,10 +6675,16 @@ function buildTrigger(codeblockYaml, index) {
             enableLoop:  () => { loopEnabled = mp.loop },
             // Back: beat-compensated resume of a stopped multi-file SLF loop (returns false
             // if not a multi-file loop, so the caller falls back to the single-file path).
-            resumeSeqBeatComp: (vol) => resumeSeqBeatComp(vol),
+            resumeSeqBeatComp: (vol, opts) => resumeSeqBeatComp(vol, opts),
             // Called by another trigger's fireGaplessTransition to start this trigger's source
             getPlaybackGain:    () => playbackGain,
             stopActiveSource:   () => stopSource(),
+            // Back resume of a managed loop: start the source the same way normal play does
+            // (sample-accurate src.start(when, offset)), so the full managed-loop state is set
+            // up — visuallyDone reset, no cursor self-loop, loopGroup timing — and the
+            // timeupdate boundary handler drives the fading_point tail and fires the armed
+            // finish. Returns true if a source was created.
+            startSourceAt: (offset, when) => { startSource(offset, when); return !!activeSource },
             getActiveSourceInfo: () => ({ src: activeSource, startedAt: activeSourceStartedAt, startOffset: activeSourceStartOffset }),
             // True as long as the AudioBufferSourceNode is running, even if WaveSurfer's
             // media element isn't playing yet (e.g. during the adoption cursor-sync gap).
@@ -6655,6 +6708,8 @@ function buildTrigger(codeblockYaml, index) {
                 if (!sharedAudioCtx || !playbackGain) return false
                 const ta_ = triggerAudio.get(index)
                 if (!ta_?.decodedBuffer) return false
+                visuallyDone = false   // a source is starting → live-view bar visible again
+                inTail = false; inTailDuration = 0   // not in an outro tail anymore (fill un-fades)
                 if (mainAudioCtxGain) mainAudioCtxGain.gain.value = 0
                 tryBuildLoopGroups()
                 stopSource()
@@ -8634,13 +8689,13 @@ function updateLoopGroupInScript(triggerIndex, key, value) {
     for (const [idx, fn] of slfGripUpdaters) fn()
 }
 
-function fadeOutAndStop(cueIdx) {
+function fadeOutAndStop(cueIdx, ms = 500) {
     const ta = triggerAudio.get(cueIdx)
     if (!ta || !ta.ws.isPlaying()) return
     const originalVol = ta.mp?.volume ?? 1
     const start = performance.now()
     const tick = () => {
-        const t = Math.min(1, (performance.now() - start) / 500)
+        const t = Math.min(1, (performance.now() - start) / ms)
         const v = originalVol * (1 - t)
         ta.ws.setVolume(v)
         if (t < 1) {
@@ -8727,7 +8782,13 @@ function triggerAction(cue) {
         if (findTriggerByNote(triggerYamls[i].loop_outro) !== cue) continue
         const loopTa = triggerAudio.get(i)
         const _seqData = triggerSeqSlots.get(i)
-        const _loopActive = loopTa?.ws.isPlaying() || (_seqData && _seqData.total > 1 && _seqData.idx > 0)
+        // A Back-resumed loop plays via its AudioBufferSource (activeSource, set synchronously)
+        // before its mainAudioEl cursor reports isPlaying — and an SLF loop resumed into its
+        // primary slot has idx===0. So also treat a live source as "loop active"; otherwise a
+        // quick Go right after Back fires the finish immediately instead of arming it.
+        const _loopActive = loopTa?.ws.isPlaying()
+            || (_seqData && _seqData.total > 1 && _seqData.idx > 0)
+            || !!loopTa?.getActiveSourceInfo?.().src
         if (!_loopActive) continue
         if (loopOutroPending.get(i) === cue) {
             // Second click → cancel pending
@@ -9222,10 +9283,31 @@ function backAction() {
         if (!isAuto) break   // stop after the first non-auto entry
     }
 
+    // Determine the cue Back lands on (last manual cue still in history) and whether its
+    // loop will be resumed — so a popped finish/outro it handed off from can be handed back
+    // with a short coordinated crossfade instead of a 500 ms overlap (phaser on shared
+    // material). `prev` is reused by the resume block below.
+    let prev = null
+    for (let i = cueHistory.length - 1; i >= 0; i--) {
+        if (!cueHistoryAuto[i]) { prev = cueHistory[i]; break }
+    }
+    const prevTa = prev !== null ? triggerAudio.get(prev) : null
+    const prevWillResume = !!(prevTa && !prevTa.ws.isPlaying()
+        && (prevTa.mp?.loop || !!triggerYamls[prev]?.loop_outro))
+    let handoverFinishIdx = null
+    if (prevWillResume) {
+        const succNote = triggerYamls[prev]?.loop_outro || triggerYamls[prev]?.chain_end
+        const succIdx  = succNote ? findTriggerByNote(succNote) : null
+        if (succIdx !== null && popped.includes(succIdx)
+            && triggerAudio.get(succIdx)?.getActiveSourceInfo?.().src) {
+            handoverFinishIdx = succIdx   // stopped in the resume block, not faded here
+        }
+    }
+
     // Stop the popped cues' own audio and clear their loop-outro queues / progress bars.
     // (Audio they adjusted on *other* cues is restored separately below.)
     for (const pIdx of popped) {
-        fadeOutAndStop(pIdx)
+        if (pIdx !== handoverFinishIdx) fadeOutAndStop(pIdx)
         // fadeOutAndStop doesn't touch the timecode, so stop MTC here if the reverted
         // cue was the active TC source — otherwise the timecode keeps rolling on a track
         // that Back just stopped.
@@ -9292,28 +9374,36 @@ function backAction() {
         }
     }
 
-    // Land on the last *manual* cue still in history — never on a leftover auto-cue
-    // entry from a loop that was already running before the popped manual cue.
-    let prev = null
-    for (let i = cueHistory.length - 1; i >= 0; i--) {
-        if (!cueHistoryAuto[i]) { prev = cueHistory[i]; break }
-    }
-
+    // Land on the last *manual* cue still in history (computed above as `prev`) — never on a
+    // leftover auto-cue entry from a loop that was already running before the popped cue.
     if (prev !== null) {
         x32UnmuteChannels(getMicForCue(prev))
         // Restart prev's audio only if it was a loop (simple mp.loop or managed
         // loop_outro) — i.e. something that was still playing before the undone Go.
         // A loop that the undone cue stopped (e.g. a devamp/outro) is restored here at
         // the volume the remaining history implies.
-        const prevTa = triggerAudio.get(prev)
         const prevIsLoop = prevTa?.mp?.loop || !!triggerYamls[prev]?.loop_outro
         if (prevTa && !prevTa.ws.isPlaying() && prevIsLoop) {
             const effPrev = effectiveAudioStateOf(prev, cueHistory)
             const vol = effPrev.volume > 0 ? effPrev.volume : (prevTa.mp?.volume ?? 0.8)
+
+            // Coordinated handover: if the undone Go handed this loop off to a finish/outro we
+            // just popped, fade that finish out over a short window (BACK_HANDOVER_FADE) while
+            // the loop snaps back in (12 ms) at its beat-compensated position — a brief
+            // crossfade instead of two 500 ms fades overlapping (which combs/phases when loop
+            // and finish share material, e.g. same drums + extra melody). The loop's 30 ms
+            // scheduling lead means the finish has already pre-faded before the loop enters,
+            // so the residual overlap is at low level.
+            let opts
+            if (handoverFinishIdx !== null) {
+                fadeOutAndStop(handoverFinishIdx, BACK_HANDOVER_FADE * 1000)
+                opts = { fadeIn: 0.012 }
+            }
+
             // Beat-compensated so the loop stays in beat: multi-file SLF via resumeSeqBeatComp,
             // single-file via resumeAudioAt.
-            if (!prevTa.resumeSeqBeatComp?.(vol)) {
-                resumeAudioAt(prev, vol, true)
+            if (!prevTa.resumeSeqBeatComp?.(vol, opts)) {
+                resumeAudioAt(prev, vol, true, opts)
                 // Resume the timecode too if this loop was the TC source before the undone Go
                 // (e.g. undoing an outro handoff that moved MTC onto the outro). mtc.start
                 // re-derives frames from wsTime, so it tracks the beat-compensated position.
@@ -9644,7 +9734,7 @@ function fadeAdjustAudio(ta, fadeTime) {
 // stays smooth. A loop (beatCompensate=true) re-enters at the position it would be at
 // had it never stopped — elapsed time since the stop, wrapped into the loop region —
 // so Back stays in beat. Other audio resumes at the exact position it was stopped.
-function resumeAudioAt(cueIdx, targetVol, beatCompensate) {
+function resumeAudioAt(cueIdx, targetVol, beatCompensate, opts = {}) {
     const ta = triggerAudio.get(cueIdx)
     if (!ta) return
     const mp = ta.mp
@@ -9658,20 +9748,48 @@ function resumeAudioAt(cueIdx, targetVol, beatCompensate) {
     // and keeps the position math on the audio clock instead of the wall clock.
     if (beatCompensate && info && ctx && ta.startGaplessSource && ta.startCursor) {
         const lead    = 0.03
-        const when    = ctx.currentTime + lead
+        const when    = opts.when ?? (ctx.currentTime + lead)
         const fp      = mp?.fading_point ?? 0
         const loopEnd = fp > 0 ? fp : (mp?.end ?? (ta.ws.getDuration?.() ?? 0))
         const range   = loopEnd - loopStart
         // Same clock as `when`; fall back to wall clock for captures without a ctx timestamp.
-        const elapsed = info.ctxAt != null ? (when - info.ctxAt) : ((performance.now() - info.at) / 1000 + lead)
+        const elapsed = info.ctxAt != null ? (when - info.ctxAt) : ((performance.now() - info.at) / 1000 + (when - ctx.currentTime))
         let pos = info.position
         if (range > 0) pos = loopStart + (((info.position - loopStart + elapsed) % range) + range) % range
         cancelWsFade(ta.ws)
         ta.enableLoop()
         ta.setCurrentVolume(0)
-        if (ta.startGaplessSource(pos, when)) {
-            ta.startCursor(pos, Math.round(lead * 1000))
-            fadeAdjustVolume(ta, targetVol, 0.5)
+        // Managed loops (loop_outro) must resume via startSource — the same primitive normal
+        // play uses — so the fading_point tail and the armed-finish firing (both driven by the
+        // timeupdate boundary handler) work. startGaplessSource only sets up a self-looping
+        // source and leaves that machinery dead → hard loop, finish never fires, playbar hidden.
+        // Simple loops have no such machinery and keep the leaner startGaplessSource path.
+        const useManaged = !!triggerYamls[cueIdx]?.loop_outro && !!ta.startSourceAt
+        const started = useManaged ? ta.startSourceAt(pos, when) : ta.startGaplessSource(pos, when)
+        if (started) {
+            // startSource doesn't force the cursor's own loop off for loopGroup loops; ensure
+            // it's off so fireLoopRestart (not the media element) manages the cursor.
+            if (useManaged && ta.mainAudioEl) ta.mainAudioEl.loop = false
+            ta.startCursor(pos, Math.round(Math.max(0, when - ctx.currentTime) * 1000))
+            if (opts.fadeIn != null) {
+                // Short crossfade-in for the Back handover: ramp the gain directly on the
+                // AudioContext over a window shorter than the timeupdate interval (so the
+                // per-timeupdate gain write can't clobber it). currentVolume set to target so
+                // the engine holds full volume once the ramp completes.
+                const pg = ta.getPlaybackGain?.()
+                ta.setCurrentVolume(targetVol)
+                if (pg) {
+                    try {
+                        pg.gain.cancelScheduledValues(ctx.currentTime)
+                        pg.gain.setValueAtTime(0, when)
+                        pg.gain.linearRampToValueAtTime(targetVol, when + opts.fadeIn)
+                    } catch (_) {}
+                } else {
+                    fadeAdjustVolume(ta, targetVol, 0.5)
+                }
+            } else {
+                fadeAdjustVolume(ta, targetVol, 0.5)
+            }
             return
         }
         // startGaplessSource declined (no decoded buffer yet) → fall through to ws.play.

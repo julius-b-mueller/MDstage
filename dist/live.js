@@ -313,7 +313,7 @@
             for (const { fillEl, timeEl, volFill, item } of audioRows.values()) {
                 const { pct, remaining } = calcProgress(item)
                 fillEl.style.width = (pct * 100).toFixed(2) + '%'
-                if (!item.inTail) fillEl.style.opacity = ''
+                if (!item.inTail) { fillEl.style.opacity = ''; fillEl.style.transition = '' }
                 timeEl.style.visibility = item.inTail ? 'hidden' : ''
                 timeEl.textContent = item.inTail ? timeEl.textContent : '-' + fmt(remaining)
                 // Volume bar: absolute volume 0–100 % (default 80 % if unset)
@@ -408,7 +408,15 @@
                     })
 
                     row.append(label, barWrap, timeEl, volWrap, stopBtn)
-                    audioPanEl.appendChild(row)
+                    // Insert in cue order rather than always at the bottom, so an audio that
+                    // restarts via Back (e.g. a loop, lower cueIdx than its finish) reappears
+                    // at its original position — where it went out — instead of sliding in as
+                    // the next item in the list.
+                    let beforeEl = null, beforeIdx = Infinity
+                    for (const [idx, r] of audioRows) {
+                        if (idx > item.cueIdx && idx < beforeIdx) { beforeIdx = idx; beforeEl = r.el }
+                    }
+                    audioPanEl.insertBefore(row, beforeEl)
                     requestAnimationFrame(() => row.classList.remove('entering'))
                     audioRows.set(item.cueIdx, { el: row, fillEl: fill, timeEl, volFill, item })
                 }
