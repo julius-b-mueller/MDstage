@@ -5841,11 +5841,6 @@ function buildTrigger(codeblockYaml, index) {
         function fireSeqNext() {
             const seqData = triggerSeqSlots.get(index)
             if (!seqData || seqData.total <= 1 || seqData.transitionInProgress) return
-            // Resume guard: a Back-resume re-establishes playback from scratch (new source +
-            // delayed cursor). A stale boundary detection (e.g. the primary cursor's timeupdate
-            // still reporting its pre-resume position ≥ boundary) must not fire a transition in
-            // the moments right after — it would stomp the fresh resume (idx jumps, source killed).
-            if (seqData._resumeGuardUntil && performance.now() < seqData._resumeGuardUntil) return
             // Primary slot active: use normal outro path (ws.isPlaying() = true there)
             if (loopOutroPending.has(index) && seqData.idx === 0) { fireLoopOutro(); return }
 
@@ -5881,6 +5876,14 @@ function buildTrigger(codeblockYaml, index) {
                 const loopDurSamp  = Math.max(1, loopEndSamp - loopStartSamp)
                 const startOffSamp = Math.round(activeSourceStartOffset * sr)
                 const firstBound   = activeSourceStartedAt + (loopEndSamp - startOffSamp) / sr
+                // Reject a stale call: if the current source hasn't reached its first real
+                // boundary yet, this fireSeqNext was triggered by a stale signal — e.g. the
+                // primary cursor's timeupdate still reporting its pre-resume position right after
+                // a Back, which would otherwise snap the transition to "now" and stomp the fresh
+                // resume. firstBound scales with the resume offset, so a genuine boundary is never
+                // blocked, no matter how close to the boundary the operator pressed Back. An
+                // ongoing loop has firstBound well in the past, so normal transitions pass.
+                if (ctx.currentTime < firstBound - 0.1) { seqData.transitionInProgress = false; return }
                 const n = Math.max(0, Math.ceil((ctx.currentTime - firstBound) * sr / loopDurSamp))
                 let transitionTime = firstBound + n * loopDurSamp / sr
                 if (transitionTime - ctx.currentTime > (loopEnd - loopStart) * 0.5) {
@@ -6192,10 +6195,6 @@ function buildTrigger(codeblockYaml, index) {
             clearTimeout(chainEndTimer);  chainEndTimer  = null
             preSeekArmed  = false
             chainEndArmed = false
-            // Block any stale fireSeqNext (timeupdate/boundary) for a short window while the
-            // resume's source + delayed cursor settle. The real next-boundary transition is
-            // seconds away, so this window can't suppress a legitimate transition.
-            seqData._resumeGuardUntil = performance.now() + 250
             seqData.transitionInProgress = false
             for (let j = 0; j < seqData.total; j++) seqData.slots[j]?.setActive?.(false)
 
