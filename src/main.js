@@ -5192,6 +5192,18 @@ function buildTrigger(codeblockYaml, index) {
                 }
             }
             src.addEventListener('ended', () => { if (activeSource === src) activeSource = null })
+
+            // Initialise the SLF phase anchor here — the single choke-point where the primary
+            // source actually starts. ws.on("play") used to do this, but ws.play(start) fires
+            // "seeking" first, which starts the source via ws.on("seeking"); the "play" handler
+            // then bails at `if (activeSource) return` before its anchor code, so a multi-file
+            // loop started without ever anchoring → Back fell back to the non-beat-accurate
+            // resume ("von vorne"). `when` is the exact AudioContext source-start time.
+            { const _sd = triggerSeqSlots.get(index)
+              if (_sd && _sd.total > 1 && _sd.idx === 0) {
+                  const _ph = Math.max(0, offset - (mp.start ?? 0))
+                  seqPhaseAnchor.set(index, { phase: _ph, at: performance.now(), ctxAt: when })
+              } }
         }
 
         function stopSource(when) {
@@ -5490,6 +5502,7 @@ function buildTrigger(codeblockYaml, index) {
                 inTail = tailLen > 0
                 inTailDuration = tailLen
                 setTimeout(() => {
+                    if (!gaplessActive) return   // Back-resume cleared it → stale handoff, skip
                     if (outroAt > 0) {
                         // Stop the Loop cursor immediately; the audio tail continues playing.
                         suppressPauseStop = true
@@ -5828,6 +5841,11 @@ function buildTrigger(codeblockYaml, index) {
         function fireSeqNext() {
             const seqData = triggerSeqSlots.get(index)
             if (!seqData || seqData.total <= 1 || seqData.transitionInProgress) return
+            // Resume guard: a Back-resume re-establishes playback from scratch (new source +
+            // delayed cursor). A stale boundary detection (e.g. the primary cursor's timeupdate
+            // still reporting its pre-resume position ≥ boundary) must not fire a transition in
+            // the moments right after — it would stomp the fresh resume (idx jumps, source killed).
+            if (seqData._resumeGuardUntil && performance.now() < seqData._resumeGuardUntil) return
             // Primary slot active: use normal outro path (ws.isPlaying() = true there)
             if (loopOutroPending.has(index) && seqData.idx === 0) { fireLoopOutro(); return }
 
@@ -6002,6 +6020,7 @@ function buildTrigger(codeblockYaml, index) {
                     inTailDuration = outroLen
 
                     setTimeout(() => {
+                        if (!gaplessActive) return   // Back-resume cleared it → stale handoff, skip
                         if (outroLen > 0) curSlot.startTailCursor(effTrans, outroLen)
                         curSlot.pauseCursor()
                         curSlot.setActive?.(false)
@@ -6164,6 +6183,19 @@ function buildTrigger(codeblockYaml, index) {
             const within = Math.max(0, P - acc)
 
             clearTimeout(seqData.boundaryTimer); seqData.boundaryTimer = null
+            // Cancel ALL pending playback timers from the old run — the resume re-establishes
+            // playback from scratch and re-arms its own. A leftover loopJumpTimer/chainEndTimer
+            // would otherwise fire a stale fireSeqNext in the ~20ms gap before startCursor's
+            // delayed ws.play() runs (which is what clears them), stomping the fresh resume:
+            // idx jumps to the next slot, the primary source is stopped → loop "restarts from top".
+            clearTimeout(loopJumpTimer);  loopJumpTimer  = null
+            clearTimeout(chainEndTimer);  chainEndTimer  = null
+            preSeekArmed  = false
+            chainEndArmed = false
+            // Block any stale fireSeqNext (timeupdate/boundary) for a short window while the
+            // resume's source + delayed cursor settle. The real next-boundary transition is
+            // seconds away, so this window can't suppress a legitimate transition.
+            seqData._resumeGuardUntil = performance.now() + 250
             seqData.transitionInProgress = false
             for (let j = 0; j < seqData.total; j++) seqData.slots[j]?.setActive?.(false)
 
