@@ -177,6 +177,11 @@ let editorApp = null
 let audioBasePath = 'audio/'
 let sharedAudioCtx = null
 
+// Bumped whenever decoded buffers are invalidated (e.g. audio-device change). A decode
+// in flight checks its captured generation after the await and skips the assignment if
+// it's stale — prevents a freed buffer from being resurrected and avoids double-decodes.
+let decodeGen = 0
+
 // Prevent path traversal from user-supplied YAML filenames (e.g. ../../etc/passwd).
 // Preserves legitimate subdirectory paths like "subfolder/song.mp3".
 function sanitizeAudioPath(filename) {
@@ -239,6 +244,7 @@ async function preDecodeForGapless(targetIdx) {
     const ta = triggerAudio.get(targetIdx)
     if (!ta || ta.decodedBuffer || ta._decoding) return
     ta._decoding = true
+    const gen = decodeGen
     try {
         const ctx = getAudioCtx()
         const mainAb = await (await fetch(audioBasePath + ta.musicFile)).arrayBuffer()
@@ -252,6 +258,7 @@ async function preDecodeForGapless(targetIdx) {
                 console.warn('[multichannel] Monitor-Decode fehlgeschlagen:', e)
             }
         }
+        if (gen !== decodeGen) return   // invalidated mid-decode (e.g. device change) — drop
         ta.decodedBuffer = mergeToMultichannel(mainBuf, monBuf)
         tryBuildLoopGroups()
         preDecodeSeqSlots(targetIdx)
@@ -270,6 +277,7 @@ async function preDecodeSeqSlots(targetIdx) {
         const slot = seqData.slots[i]
         if (!slot || slot.decodedBuffer || slot._decoding) continue
         slot._decoding = true
+        const gen = decodeGen
         try {
             const mainAb  = await (await fetch(audioBasePath + slot.musicFile)).arrayBuffer()
             const mainBuf = await ctx.decodeAudioData(mainAb)
@@ -280,6 +288,7 @@ async function preDecodeSeqSlots(targetIdx) {
                     monBuf = await ctx.decodeAudioData(monAb)
                 } catch (e) { console.warn('[seq] monitor decode failed slot', i, e) }
             }
+            if (gen !== decodeGen) continue   // invalidated mid-decode — drop stale buffer
             slot.decodedBuffer = mergeToMultichannel(mainBuf, monBuf)
         } catch (e) { console.warn('[seq] decode failed slot', i, e) }
         finally { slot._decoding = false }
@@ -8692,20 +8701,30 @@ function updateLoopGroupInScript(triggerIndex, key, value) {
 function fadeOutAndStop(cueIdx, ms = 500) {
     const ta = triggerAudio.get(cueIdx)
     if (!ta || !ta.ws.isPlaying()) return
-    const originalVol = ta.mp?.volume ?? 1
+    // Start the ramp from the *current* (possibly ducked) volume, not the configured
+    // mp.volume — otherwise a ducked track jumps up to full level on the first frame
+    // before fading out. Mirrors fadeAdjustAudio.
+    cancelWsFade(ta.ws)
+    const startVol = ta.getCurrentVolume?.() ?? ta.ws.getVolume()
     const start = performance.now()
+    // Register the rAF fade in activeFades (as every other fade helper does) so a later
+    // cancelWsFade() — e.g. when Back resumes this very cue — can abort it. Otherwise the
+    // terminal stop()/setVolume below would fire ~ms later and kill the resumed playback.
+    const token = { raf: 0 }
     const tick = () => {
+        if (activeFades.get(ta.ws) !== token) return   // cancelled or superseded
         const t = Math.min(1, (performance.now() - start) / ms)
-        const v = originalVol * (1 - t)
-        ta.ws.setVolume(v)
+        ta.ws.setVolume(Math.max(0, startVol * (1 - t)))
         if (t < 1) {
-            requestAnimationFrame(tick)
+            token.raf = requestAnimationFrame(tick)
         } else {
+            activeFades.delete(ta.ws)
             ta.ws.stop()
-            ta.ws.setVolume(originalVol)
+            ta.ws.setVolume(startVol)
         }
     }
-    requestAnimationFrame(tick)
+    token.raf = requestAnimationFrame(tick)
+    activeFades.set(ta.ws, token)
 }
 
 function showLoopGroupDialog(index, anchorBtn) {
@@ -9441,6 +9460,13 @@ function backAction() {
     broadcastLiveState()
 }
 
+// MIDIOutput.send() throws (InvalidStateError) on a disconnected/closed port. Guard every
+// send so one bad device can't abort a multi-device/-channel loop, and so the deferred
+// Note-Off timers below never throw uncaught.
+function _safeMidiSend(port, bytes) {
+    try { port?.send(bytes) } catch (e) { console.warn('[midi] send failed:', e) }
+}
+
 function sendTriggerNote(cue) {
     const tn = triggerYamls[cue].trigger_note
     if (!tn) return
@@ -9449,8 +9475,8 @@ function sendTriggerNote(cue) {
         if (midiOutputDevices[i].enabled === false) continue
         const port = midiOutputPorts[i]
         if (!port) continue
-        port.send([0x90 | (tn.ch - 1), tn.note, 100])
-        setTimeout(() => port.send([0x80 | (tn.ch - 1), tn.note, 0]), 100)
+        _safeMidiSend(port, [0x90 | (tn.ch - 1), tn.note, 100])
+        setTimeout(() => _safeMidiSend(port, [0x80 | (tn.ch - 1), tn.note, 0]), 100)
     }
 }
 
@@ -9552,21 +9578,21 @@ function _sendMidiMsgArray(messages) {
             const ch = ((parseInt(msg.ch) || 1) - 1) & 0xF
             const note = Math.max(0, Math.min(127, parseInt(msg.note) || 0))
             const vel  = Math.max(0, Math.min(127, parseInt(msg.vel) ?? 100))
-            port.send([0x90 | ch, note, vel])
-            setTimeout(() => port.send([0x80 | ch, note, 0]), 100)
+            _safeMidiSend(port, [0x90 | ch, note, vel])
+            setTimeout(() => _safeMidiSend(port, [0x80 | ch, note, 0]), 100)
         } else if (msg.type === 'cc') {
             const ch  = ((parseInt(msg.ch)    || 1) - 1) & 0xF
             const cc  = Math.max(0, Math.min(127, parseInt(msg.cc)    || 0))
             const val = Math.max(0, Math.min(127, parseInt(msg.value) ?? 0))
-            port.send([0xB0 | ch, cc, val])
+            _safeMidiSend(port, [0xB0 | ch, cc, val])
         } else if (msg.type === 'pc') {
             const ch  = ((parseInt(msg.ch) || 1) - 1) & 0xF
             const pgm = Math.max(0, Math.min(127, parseInt(msg.program) || 0))
-            port.send([0xC0 | ch, pgm])
+            _safeMidiSend(port, [0xC0 | ch, pgm])
         } else if (msg.type === 'sysex') {
             const bytes = String(msg.bytes || '').trim().split(/\s+/)
                 .map(h => parseInt(h, 16)).filter(n => !isNaN(n) && n >= 0 && n <= 255)
-            if (bytes.length) port.send(bytes)
+            if (bytes.length) _safeMidiSend(port, bytes)
         }
     }
 }
@@ -9637,7 +9663,8 @@ const activeFades = new WeakMap()
 function cancelWsFade(ws) {
     const entry = activeFades.get(ws)
     if (entry == null) return
-    clearInterval(entry.id ?? entry)
+    if (entry.raf != null) cancelAnimationFrame(entry.raf)   // rAF fade (fadeOutAndStop)
+    else clearInterval(entry.id ?? entry)
     // For fadeAdjustAudio: restore currentVolume to pre-fade value on cancel
     if (entry.ta && entry.restoreVol !== undefined) entry.ta.setCurrentVolume(entry.restoreVol)
     activeFades.delete(ws)
@@ -10110,7 +10137,7 @@ function _sendMicToDevice(dev, devIdx, allChs, unmuteChs) {
     if (dev.micMuteMethod === 'x32') {
         const out = micDeviceOutputs[devIdx]
         if (!out) return
-        for (const ch of allChs) out.send([0xB1, ch - 1, unmuteChs.includes(ch) ? 0 : 127])
+        for (const ch of allChs) _safeMidiSend(out, [0xB1, ch - 1, unmuteChs.includes(ch) ? 0 : 127])
     } else if (dev.micMuteMethod === 'custom-midi') {
         const out = micDeviceOutputs[devIdx]
         if (!out) return
@@ -10125,7 +10152,7 @@ function _sendMicToDevice(dev, devIdx, allChs, unmuteChs) {
             for (const ch of allChs) {
                 const isUnmuted = unmuteChs.includes(ch)
                 const bytes = parseMidiTemplate(isUnmuted ? dev.micMuteMidiUnmute : dev.micMuteMidiMute, ch - 1, isUnmuted ? 0x00 : 0x7F)
-                if (bytes.length) out.send(bytes)
+                if (bytes.length) _safeMidiSend(out, bytes)
             }
         } else if (dev.micMuteMidiType === 'note') {
             for (const ch of allChs) {
@@ -10133,21 +10160,21 @@ function _sendMicToDevice(dev, devIdx, allChs, unmuteChs) {
                 const mCh  = (resolveCh(dev.micMuteMidiNoteCh, ch - 1) - 1) & 0xF
                 const note = resolveCh(dev.micMuteMidiNoteNum, ch - 1) & 0x7F
                 const vel  = (isUnmuted ? dev.micMuteMidiVelOn : dev.micMuteMidiVelOff) & 0x7F
-                out.send([0x90 | mCh, note, vel])
-                if (vel > 0) setTimeout(() => out?.send([0x80 | mCh, note, 0]), 100)
+                _safeMidiSend(out, [0x90 | mCh, note, vel])
+                if (vel > 0) setTimeout(() => _safeMidiSend(out, [0x80 | mCh, note, 0]), 100)
             }
         } else if (dev.micMuteMidiType === 'cc') {
             for (const ch of allChs) {
                 const isUnmuted = unmuteChs.includes(ch)
                 const mCh = (resolveCh(dev.micMuteMidiCcCh, ch - 1) - 1) & 0xF
                 const cc  = resolveCh(dev.micMuteMidiCcNum, ch - 1) & 0x7F
-                out.send([0xB0 | mCh, cc, (isUnmuted ? dev.micMuteMidiCcValOn : dev.micMuteMidiCcValOff) & 0x7F])
+                _safeMidiSend(out, [0xB0 | mCh, cc, (isUnmuted ? dev.micMuteMidiCcValOn : dev.micMuteMidiCcValOff) & 0x7F])
             }
         } else if (dev.micMuteMidiType === 'pc') {
             for (const ch of allChs) {
                 const isUnmuted = unmuteChs.includes(ch)
                 const mCh  = (resolveCh(dev.micMuteMidiPcCh, ch - 1) - 1) & 0xF
-                out.send([0xC0 | mCh, (isUnmuted ? dev.micMuteMidiPcOn : dev.micMuteMidiPcOff) & 0x7F])
+                _safeMidiSend(out, [0xC0 | mCh, (isUnmuted ? dev.micMuteMidiPcOn : dev.micMuteMidiPcOff) & 0x7F])
             }
         }
     } else if (dev.micMuteMethod === 'custom-osc') {
@@ -10236,6 +10263,10 @@ function setupMidiInputListeners() {
 
             if (midiBackNote && ch === midiBackNote.ch && note === midiBackNote.note) {
                 if (isNoteOn) {
+                    // Guard against a repeated Note-On without an intervening Note-Off
+                    // (key-repeat / doubly-sending controllers): clear the prior timer so it
+                    // can't fire stopAllAudio() unexpectedly after being orphaned.
+                    clearTimeout(midiBackLongPressTimer)
                     midiBackLongPressed = false
                     midiBackLongPressTimer = setTimeout(() => {
                         midiBackLongPressed = true
@@ -10448,8 +10479,10 @@ async function initApp() {
             micGroupDisplay = newSettings.micGroupDisplay ?? true
             document.getElementById('script-content').classList.toggle('show-md-line-numbers', !!(newSettings.showMdLineNumbers))
             updateGutterState()
-            if (changed)
+            if (changed) {
+                decodeGen++   // invalidate any in-flight decode so it won't resurrect a freed buffer
                 for (const ta of triggerAudio.values()) { ta.decodedBuffer = null; ta._decoding = false }
+            }
             applyAudioDevices()
         }
         navigator.mediaDevices.enumerateDevices().then(devs => {
