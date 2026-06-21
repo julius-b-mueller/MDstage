@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Professionelle Vamps & Devamps erstellen und nutzen – MDstage</title>
+<meta name="description" content="Vamps sind Endlosschleifen, die taktgenau in den Ausgang (Devamp) wechseln. So baust du sie in MDstage – inklusive mehrteiliger Vamps und sicherem Back.">
+<link rel="canonical" href="https://mdstage.org/blog/vamps-devamps.html">
+<meta name="robots" content="index, follow">
+<meta name="theme-color" content="#282c34">
+<link rel="icon" type="image/png" href="../assets/icon.png">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="MDstage">
+<meta property="og:locale" content="de_DE">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:url" content="https://mdstage.org/blog/vamps-devamps.html">
+<meta property="og:title" content="Professionelle Vamps & Devamps erstellen und nutzen">
+<meta property="og:description" content="Endlosschleifen, die taktgenau in den Ausgang wechseln – inklusive mehrteiliger Vamps und sicherem Back.">
+<meta property="og:image" content="https://mdstage.org/assets/MDstage-open-graph.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Professionelle Vamps & Devamps erstellen und nutzen">
+<meta name="twitter:description" content="Endlosschleifen, die taktgenau in den Ausgang wechseln – inklusive mehrteiliger Vamps und sicherem Back.">
+<meta name="twitter:image" content="https://mdstage.org/assets/MDstage-open-graph.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "Professionelle Vamps & Devamps erstellen und nutzen",
+  "description": "Vamps sind Endlosschleifen, die taktgenau in den Ausgang (Devamp) wechseln. So baust du sie in MDstage.",
+  "datePublished": "2026-06-21",
+  "dateModified": "2026-06-21",
+  "inLanguage": "de",
+  "author": { "@type": "Person", "name": "Julius B. Müller" },
+  "publisher": { "@type": "Person", "name": "Julius B. Müller" },
+  "image": "https://mdstage.org/assets/MDstage-open-graph.png",
+  "mainEntityOfPage": "https://mdstage.org/blog/vamps-devamps.html"
+}
+</script>
+<link rel="stylesheet" href="blog.css">
+</head>
+<body>
+
+<nav>
+  <a href="../index.html" class="nav-logo">
+    <img src="../assets/icon.png" width="24" height="24" alt="MDstage" style="border-radius:5px;flex-shrink:0">
+    MDstage
+  </a>
+  <div class="nav-links">
+    <a href="../index.html#concept" data-de="Konzept" data-en="Concept">Konzept</a>
+    <a href="../index.html#features" data-de="Features" data-en="Features">Features</a>
+    <a href="../index.html#download" data-de="Download" data-en="Download">Download</a>
+    <a href="../index.html#faq" data-de="FAQ" data-en="FAQ">FAQ</a>
+    <a href="index.html" class="active" data-de="Blog" data-en="Blog">Blog</a>
+    <a href="../about.html" data-de="Über" data-en="About">Über</a>
+  </div>
+  <div class="nav-right">
+    <a href="../preview/" class="nav-try">
+      <span data-de="Im Browser testen" data-en="Try in browser">Im Browser testen</span>
+    </a>
+    <a href="../index.html#download" class="nav-cta" data-de="Herunterladen" data-en="Download">Herunterladen</a>
+    <div class="lang-toggle">
+      <button class="lang-btn active" onclick="setLang('de')">DE</button>
+      <button class="lang-btn"        onclick="setLang('en')">EN</button>
+    </div>
+  </div>
+</nav>
+
+<article class="article">
+  <p class="crumb"><a href="index.html" data-de="← Blog" data-en="← Blog">← Blog</a> &nbsp;·&nbsp; <span class="tag g" data-de="Musik" data-en="Music">Musik</span></p>
+
+  <h1 data-de="Professionelle Vamps & Devamps erstellen und nutzen" data-en="Create and use professional vamps & devamps">Professionelle Vamps & Devamps erstellen und nutzen</h1>
+
+  <p class="lead" data-de="Ein Vamp ist im Musiktheater eine Endlosschleife, die so lange läuft, bis auf der Bühne etwas passiert – ein Auftritt, ein Stichwort, ein Applaus. Der Devamp ist der saubere Ausgang aus dieser Schleife. Mit MDstage baust du beides so, dass der Übergang immer im Takt sitzt." data-en="In musical theatre, a vamp is an endless loop that keeps playing until something happens on stage – an entrance, a cue, applause. The devamp is the clean exit out of that loop. With MDstage you build both so the transition always lands on the beat.">
+    Ein Vamp ist im Musiktheater eine Endlosschleife, die so lange läuft, bis auf der Bühne etwas passiert – ein Auftritt, ein Stichwort, ein Applaus. Der Devamp ist der saubere Ausgang aus dieser Schleife. Mit MDstage baust du beides so, dass der Übergang immer im Takt sitzt.
+  </p>
+
+  <h2 data-de="Intro, Vamp, Devamp" data-en="Intro, vamp, devamp">Intro, Vamp, Devamp</h2>
+  <p data-de="Ein Musikstück lässt sich in drei Bausteine gliedern: ein Intro, das einmal läuft, die Schleife (den Vamp), die sich endlos wiederholt, und den Ausgang (den Devamp), der das Stück sauber beendet. Der Vamp spielt so lange, bis du Go drückst – dann spielt er die laufende Runde noch zu Ende und übergibt taktgenau an den Devamp. Kein hektisches Abwürgen, kein hörbarer Schnitt." data-en="A piece of music can be split into three building blocks: an intro that plays once, the loop (the vamp) that repeats endlessly, and the outro (the devamp) that ends the piece cleanly. The vamp plays until you press Go – then it finishes the current iteration and hands over to the devamp exactly on the beat. No frantic cut-off, no audible seam.">
+    Ein Musikstück lässt sich in drei Bausteine gliedern: ein Intro, das einmal läuft, die Schleife (den Vamp), die sich endlos wiederholt, und den Ausgang (den Devamp), der das Stück sauber beendet. Der Vamp spielt so lange, bis du Go drückst – dann spielt er die laufende Runde noch zu Ende und übergibt taktgenau an den Devamp. Kein hektisches Abwürgen, kein hörbarer Schnitt.
+  </p>
+
+  <h2 data-de="Der einfachste Aufbau" data-en="The simplest setup">Der einfachste Aufbau</h2>
+  <p data-de="Im Kern brauchst du nur zwei Bausteine: die Schleife selbst und den Ausgang. In MDstage legst du beide bequem über die Oberfläche an – du wählst die Loop-Datei, dann die Ausgangs-Datei und verbindest die beiden mit einem Klick. Mehr ist nicht nötig." data-en="At its core you only need two building blocks: the loop itself and the outro. In MDstage you create both comfortably through the interface – you pick the loop file, then the outro file, and link the two with a click. That's all it takes.">
+    Im Kern brauchst du nur zwei Bausteine: die Schleife selbst und den Ausgang. In MDstage legst du beide bequem über die Oberfläche an – du wählst die Loop-Datei, dann die Ausgangs-Datei und verbindest die beiden mit einem Klick. Mehr ist nicht nötig.
+  </p>
+  <p data-de="Wichtig ist nur das Prinzip: Die Schleife spielt endlos, bis du ihren Ausgang auslöst. Genau dann – und keinen Moment früher – wechselt die Musik sauber in den Devamp." data-en="The principle is what matters: the loop plays endlessly until you trigger its outro. At exactly that moment – and not a beat earlier – the music switches cleanly into the devamp.">
+    Wichtig ist nur das Prinzip: Die Schleife spielt endlos, bis du ihren Ausgang auslöst. Genau dann – und keinen Moment früher – wechselt die Musik sauber in den Devamp.
+  </p>
+
+  <h2 data-de="Längere Vamps aus mehreren Teilen" data-en="Longer vamps from multiple parts">Längere Vamps aus mehreren Teilen</h2>
+  <p data-de="Eine reine Ein-Takt-Schleife klingt schnell mechanisch. Deshalb kann ein Vamp aus mehreren Teilen bestehen, die nahtlos ineinander übergehen und am Ende wieder von vorne beginnen – so entsteht eine lange, abwechslungsreiche Schleife. Das Beste daran: Beim Devamp musst du nicht auf das Ende der gesamten Sequenz warten. Der Ausstieg erfolgt immer am nächsten Abschnittswechsel des gerade laufenden Teils, also früh und musikalisch passend." data-en="A pure one-bar loop quickly sounds mechanical. That's why a vamp can consist of several parts that flow seamlessly into one another and loop back to the start – creating a long, varied loop. The best part: when devamping you don't have to wait for the whole sequence to end. The exit always happens at the next boundary of the currently playing part – early and musically fitting.">
+    Eine reine Ein-Takt-Schleife klingt schnell mechanisch. Deshalb kann ein Vamp aus mehreren Teilen bestehen, die nahtlos ineinander übergehen und am Ende wieder von vorne beginnen – so entsteht eine lange, abwechslungsreiche Schleife. Das Beste daran: Beim Devamp musst du nicht auf das Ende der gesamten Sequenz warten. Der Ausstieg erfolgt immer am nächsten Abschnittswechsel des gerade laufenden Teils, also früh und musikalisch passend.
+  </p>
+  <p data-de="Und damit es nie gehackt klingt: Vamp und Devamp dürfen ausklingen. Wird kurz vor dem Schleifen-Ende ein Becken angeschlagen, trägt der Nachhall über den Übergang hinaus – ein völlig natürlicher, unterbrechungsfreier Wechsel." data-en="And so it never sounds chopped: vamps and devamps may ring out. If a cymbal is struck just before the loop boundary, the decay carries over the transition – a completely natural, uninterrupted change.">
+    Und damit es nie gehackt klingt: Vamp und Devamp dürfen ausklingen. Wird kurz vor dem Schleifen-Ende ein Becken angeschlagen, trägt der Nachhall über den Übergang hinaus – ein völlig natürlicher, unterbrechungsfreier Wechsel.
+  </p>
+
+  <h2 data-de="Wenn der Devamp zu früh kommt" data-en="When the devamp comes too early">Wenn der Devamp zu früh kommt</h2>
+  <p data-de="Der häufigste Fehler an der Stelle: zu früh Go drücken. In MDstage ist das kein Problem. Back holt den Vamp taktgenau zurück – und zwar nicht von vorne, sondern genau an die Stelle, an der er jetzt wäre, wäre nie Go gedrückt worden. MDstage rechnet samplegenau mit, wie weit die Schleife inzwischen gelaufen wäre, und steigt dort wieder ein. Der Groove läuft ohne Sprung weiter; bei mehrteiligen Vamps trifft Back sogar den richtigen Teil und die richtige Phase darin." data-en="The most common mistake here: pressing Go too early. In MDstage that's no problem. Back resumes the vamp beat-accurately – not from the top, but exactly where it would be now had Go never been pressed. MDstage tracks sample-accurately how far the loop would have advanced and re-enters there. The groove continues with no jump; for multi-part vamps, Back even lands on the correct part and the correct phase within it.">
+    Der häufigste Fehler an der Stelle: zu früh Go drücken. In MDstage ist das kein Problem. Back holt den Vamp taktgenau zurück – und zwar nicht von vorne, sondern genau an die Stelle, an der er jetzt wäre, wäre nie Go gedrückt worden. MDstage rechnet samplegenau mit, wie weit die Schleife inzwischen gelaufen wäre, und steigt dort wieder ein. Der Groove läuft ohne Sprung weiter; bei mehrteiligen Vamps trifft Back sogar den richtigen Teil und die richtige Phase darin.
+  </p>
+
+  <h2 data-de="So gehst du in der Praxis vor" data-en="How to proceed in practice">So gehst du in der Praxis vor</h2>
+  <ul>
+    <li data-de="Schneide Intro, Loop und Ausgang als saubere Audiodateien – die Schnittpunkte direkt in MDstage auf der Wellenform feinjustieren." data-en="Cut intro, loop and outro as clean audio files – fine-tune the cut points right on the waveform in MDstage.">Schneide Intro, Loop und Ausgang als saubere Audiodateien – die Schnittpunkte direkt in MDstage auf der Wellenform feinjustieren.</li>
+    <li data-de="Lege den Loop-Cue an und verknüpfe ihn mit seinem Ausgangs-Cue." data-en="Create the loop cue and link it to its outro cue.">Lege den Loop-Cue an und verknüpfe ihn mit seinem Ausgangs-Cue.</li>
+    <li data-de="Für lange Vamps zusätzliche Teile in die Sequenz hängen und ausprobieren, wie sich der frühe Ausstieg anfühlt." data-en="For long vamps, add more parts to the sequence and test how the early exit feels.">Für lange Vamps zusätzliche Teile in die Sequenz hängen und ausprobieren, wie sich der frühe Ausstieg anfühlt.</li>
+    <li data-de="In der Probe das Back-Verhalten testen, damit du im Zweifel ruhig bleibst." data-en="Test the Back behaviour in rehearsal so you stay calm when in doubt.">In der Probe das Back-Verhalten testen, damit du im Zweifel ruhig bleibst.</li>
+  </ul>
+
+  <div class="cta-box">
+    <h3 data-de="Selbst ausprobieren?" data-en="Want to try it yourself?">Selbst ausprobieren?</h3>
+    <div class="cta-actions">
+      <a class="btn-primary" href="../index.html#download" data-de="MDstage herunterladen" data-en="Download MDstage">MDstage herunterladen</a>
+      <a class="btn-preview" href="../preview/" data-de="Im Browser testen" data-en="Try in browser">Im Browser testen</a>
+    </div>
+  </div>
+
+  <div class="post-more">
+    <p class="section-label" data-de="Weiterlesen" data-en="Read more">Weiterlesen</p>
+    <ul>
+      <li><a href="show-automatisieren.html" data-de="Eine Show durchautomatisieren – nur noch Go drücken" data-en="Fully automate a show – just press Go">Eine Show durchautomatisieren – nur noch Go drücken</a></li>
+      <li><a href="auto-mic.html" data-de="Mikrofone automatisch öffnen und schließen" data-en="Open and close microphones automatically">Mikrofone automatisch öffnen und schließen</a></li>
+    </ul>
+  </div>
+</article>
+
+<footer>
+  <p>
+    <span data-de="Für die Bühne gemacht." data-en="Made for the stage.">Für die Bühne gemacht.</span>
+    &nbsp;·&nbsp; <a href="mailto:hello@mdstage.org">hello@mdstage.org</a>
+    &nbsp;·&nbsp; <a href="https://github.com/julius-b-mueller/MDstage" target="_blank" rel="noopener">GitHub</a>
+    &nbsp;·&nbsp; <a href="index.html" data-de="Blog" data-en="Blog">Blog</a>
+    &nbsp;·&nbsp; <a href="../about.html" data-de="Über" data-en="About">Über</a>
+    &nbsp;·&nbsp; <a href="../impressum.html" data-de="Impressum &amp; Datenschutz" data-en="Legal &amp; Privacy">Impressum &amp; Datenschutz</a>
+  </p>
+</footer>
+
+<div id="cookie-banner">
+  <p class="cookie-text">
+    <span id="cb-text-de"><strong>Keine Cookies. Keine Daten. Kein Tracking.</strong> MDstage funkt nicht nach Hause – ich habe also keinen blassen Schimmer, ob du es verwendest. Falls du möchtest: Schreib mir kurz, wo du es einsetzt. Ich freue mich immer über Rückmeldung.</span>
+    <span id="cb-text-en" style="display:none"><strong>No cookies. No data. No tracking.</strong> MDstage doesn't phone home – so I have absolutely no idea if you're using it. If you'd like to let me know: drop me a quick email about where you're using it. I always appreciate hearing from people.</span>
+  </p>
+  <div class="cookie-actions">
+    <a class="cookie-mail" id="cb-mail" href="mailto:hello@mdstage.org?subject=MDstage%20Einsatz" data-subject-de="MDstage Einsatz" data-subject-en="Using MDstage">
+      <span id="cb-mail-de">✉ Mail schreiben</span>
+      <span id="cb-mail-en" style="display:none">✉ Send a mail</span>
+    </a>
+    <button class="cookie-close" id="cb-close">
+      <span id="cb-close-de">Schließen</span>
+      <span id="cb-close-en" style="display:none">Close</span>
+    </button>
+  </div>
+</div>
+
+<script src="blog.js"></script>
+</body>
+</html>

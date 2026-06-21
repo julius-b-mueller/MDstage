@@ -49,6 +49,94 @@
   }
 }
 </script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "Was kostet MDstage?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "MDstage ist kostenlos und läuft auf macOS, Windows und Linux. Einfach herunterladen und loslegen."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Muss ich programmieren oder YAML schreiben können?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Nein. Textbuch, Cues und Einstellungen legst du komplett über die Oberfläche an. Intern wird alles als Markdown gespeichert – wer mag, kann es auch direkt im Editor bearbeiten, muss es aber nicht."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Welche Bühnentechnik kann ich damit steuern?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Mischpult und Mikrofone (z. B. ein Digitalmischpult über MIDI), Lichtpulte über MIDI-Noten, beliebige netzwerkbasierte Systeme über OSC sowie Licht und Video über MIDI Timecode."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Wie löse ich Go und Back aus?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Über die Tastatur, einen MIDI-Controller oder ein Bluetooth-Pedal – ganz wie es für deine Produktion am bequemsten ist."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Was passiert, wenn ich zu früh Go drücke?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Back macht den letzten Go vollständig rückgängig: Loops, Mikrofone und Lichtszenen kehren in ihren vorherigen Zustand zurück. Bei Loops geschieht das sogar taktgenau, ohne hörbaren Sprung."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Was ist ein Vamp / Devamp?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Ein Vamp ist eine Endlosschleife, die läuft, bis du den Ausgang (Devamp) auslöst – der dann taktgenau im richtigen Moment startet."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Wie öffnet MDstage Mikrofone automatisch?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Die Auto-Mic-Funktion liest den Rollentext und öffnet genau die Mikrofone, deren Rollen im jeweiligen Abschnitt sprechen."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Kann ein Team gemeinsam an einer Show arbeiten?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Ja. Die ganze Show steckt in einer einzigen Markdown-Datei. Sie lässt sich über einen geteilten Ordner, einen USB-Stick oder ein Git-Repository teilen – so arbeiten alle an derselben Version."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Sammelt MDstage Daten?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Nein. MDstage funkt nicht nach Hause: kein Tracking, keine Cookies, keine Datenübertragung. Es läuft vollständig offline auf deinem Rechner."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Wie bekomme ich Hilfe?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Schreib einfach eine Mail an hello@mdstage.org. Über Rückmeldungen, Fragen und Berichte aus euren Produktionen freue ich mich immer."
+      }
+    }
+  ]
+}
+</script>
 <style>
 :root {
   --bg:      #282c34;
@@ -117,6 +205,17 @@ nav{position:sticky;top:0;z-index:100;background:var(--bg2);border-bottom:1px so
 .section-label{font-size:.72rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--blue);margin-bottom:.6rem}
 .section-title{font-size:clamp(1.55rem,2.8vw,2.1rem);font-weight:800;letter-spacing:-.02em;color:#fff;margin-bottom:.7rem}
 .section-sub{font-size:1rem;color:var(--dim);max-width:500px;line-height:1.75;margin-bottom:3rem}
+
+/* ── FAQ ──────────────────────── */
+.faq-list{max-width:760px}
+.faq-item{border:1px solid var(--border);border-radius:var(--r);background:var(--bg2);margin-bottom:.7rem;overflow:hidden}
+.faq-item summary{list-style:none;cursor:pointer;padding:1rem 1.2rem;font-weight:600;color:#fff;display:flex;justify-content:space-between;align-items:center;gap:1rem}
+.faq-item summary::-webkit-details-marker{display:none}
+.faq-item summary::after{content:'+';color:var(--blue);font-weight:400;font-size:1.4rem;line-height:1;transition:transform .15s}
+.faq-item[open] summary::after{transform:rotate(45deg)}
+.faq-item summary:hover{background:var(--bg3)}
+.faq-item .faq-a{padding:0 1.2rem 1.1rem;color:var(--text);line-height:1.7}
+.faq-item .faq-a a{color:var(--blue)}
 
 /* ── Feature blocks ──────────────────────── */
 .feat-block{display:grid;grid-template-columns:1fr 1fr;gap:3.5rem;align-items:center;margin-bottom:5rem}
@@ -238,6 +337,8 @@ footer a:hover{text-decoration:underline}
     <a href="#features" data-de="Features" data-en="Features">Features</a>
     <a href="#tutorial" data-de="Tutorial" data-en="Tutorial">Tutorial</a>
     <a href="#download" data-de="Download" data-en="Download">Download</a>
+    <a href="#faq" data-de="FAQ" data-en="FAQ">FAQ</a>
+    <a href="blog/index.html" data-de="Blog" data-en="Blog">Blog</a>
     <a href="about.html" data-de="Über" data-en="About">Über</a>
   </div>
   <div class="nav-right">
@@ -361,11 +462,8 @@ footer a:hover{text-decoration:underline}
       </div>
       <div class="feat-text">
         <h3 data-de="Cues direkt im Textbuch" data-en="Cues right inside the script">Cues direkt im Textbuch</h3>
-        <p data-de="Trigger für Musik, Mikrofone, Lichtszenen und mehr werden direkt an der richtigen Stelle im Skript platziert. Das Textbuch und die Show-Steuerung bilden eine Einheit – kein ständiges Umschalten zwischen verschiedenen Programmen." data-en="Triggers for music, microphones, lighting and more are placed directly at the right point in the script. The script and show control are one unit – no switching between different applications.">
-          Trigger für Musik, Mikrofone, Lichtszenen und mehr werden direkt an der richtigen Stelle im Skript platziert. Das Textbuch und die Show-Steuerung bilden eine Einheit – kein ständiges Umschalten zwischen verschiedenen Programmen.
-        </p>
-        <p data-de="Jeden Trigger über die Benutzeroberfläche anlegen und bearbeiten: Audiodatei wählen, Mikrofone zuweisen, Lichtszene eintragen. Kein Texteditor nötig." data-en="Create and edit every trigger via the UI: choose audio file, assign microphones, enter light scene. No text editor required.">
-          Jeden Trigger über die Benutzeroberfläche anlegen und bearbeiten: Audiodatei wählen, Mikrofone zuweisen, Lichtszene eintragen. Kein Texteditor nötig.
+        <p data-de="Musik, Mikrofone und Licht stehen als Cues direkt an der richtigen Stelle im Textbuch – Skript und Steuerung in einem, ganz ohne Texteditor." data-en="Music, microphones and lighting sit as cues right where they belong in the script – script and show control in one, no text editor needed.">
+          Musik, Mikrofone und Licht stehen als Cues direkt an der richtigen Stelle im Textbuch – Skript und Steuerung in einem, ganz ohne Texteditor.
         </p>
       </div>
     </div>
@@ -405,11 +503,8 @@ footer a:hover{text-decoration:underline}
       </div>
       <div class="feat-text">
         <h3 data-de="Live-Ansicht: fokussiert auf das Wesentliche" data-en="Live View: focused on what matters">Live-Ansicht: fokussiert auf das Wesentliche</h3>
-        <p data-de="Ein separates Fenster zeigt den Dialog kurz vor dem nächsten Cue als Stichwort, den nächsten Cue selbst sowie alle laufenden Audios mit Fortschrittsanzeige. Kein Scrollen, kein Suchen." data-en="A separate window shows the dialogue just before the next cue as a prompt, the next cue itself, and all running audio tracks with progress bars. No scrolling, no searching.">
-          Ein separates Fenster zeigt den Dialog kurz vor dem nächsten Cue als Stichwort, den nächsten Cue selbst sowie alle laufenden Audios mit Fortschrittsanzeige. Kein Scrollen, kein Suchen.
-        </p>
-        <p data-de="Go und Back funktionieren auch per Tastatur, MIDI-Controller oder Bluetooth-Pedal." data-en="Go and Back also work via keyboard, MIDI controller or Bluetooth pedal.">
-          Go und Back funktionieren auch per Tastatur, MIDI-Controller oder Bluetooth-Pedal.
+        <p data-de="Ein eigenes Fenster zeigt nur das Nötige: das nächste Stichwort, den nächsten Cue und alle laufenden Audios. Kein Scrollen, kein Suchen." data-en="A separate window shows only what matters: the next prompt, the next cue and all running audio. No scrolling, no searching.">
+          Ein eigenes Fenster zeigt nur das Nötige: das nächste Stichwort, den nächsten Cue und alle laufenden Audios. Kein Scrollen, kein Suchen.
         </p>
       </div>
     </div>
@@ -467,14 +562,8 @@ footer a:hover{text-decoration:underline}
       </div>
       <div class="feat-text">
         <h3 data-de="Go zu früh? Back macht es rückgängig" data-en="Go too early? Back undoes it">Go zu früh? Back macht es rückgängig</h3>
-        <p data-de="Der Back-Button stellt den vollständigen Status des vorherigen Cues wieder her: Wurde ein Loop unterbrochen, startet er neu. Mikrofone, die im vorherigen Cue geöffnet waren, werden wieder geöffnet. Wurde eine Lichtszene durch den falschen Cue gewechselt, wird die vorherige Szene erneut getriggert." data-en="The Back button fully restores the state of the previous cue: if a loop was interrupted, it restarts. Microphones that were open in the previous cue are reopened. If a lighting scene was changed by the wrong cue, the previous scene is triggered again.">
-          Der Back-Button stellt den vollständigen Status des vorherigen Cues wieder her: Wurde ein Loop unterbrochen, startet er neu. Mikrofone, die im vorherigen Cue geöffnet waren, werden wieder geöffnet. Wurde eine Lichtszene durch den falschen Cue gewechselt, wird die vorherige Szene erneut getriggert.
-        </p>
-        <p data-de="Besonders bei Loops geht Back taktgenau vor: Hat man den Vamp mit Go schon in den Ausgang geschickt, holt Back ihn nicht einfach von vorne zurück, sondern genau an die Stelle, an der er jetzt wäre, wäre nie Go gedrückt worden – samplegenau auf der Audio-Uhr berechnet. Der Vamp läuft im Takt weiter, ohne hörbaren Sprung." data-en="With loops, Back is beat-accurate: if you already sent the vamp into its outro with Go, Back doesn't restart it from the top – it resumes it exactly where it would be now had Go never happened, calculated sample-accurately on the audio clock. The vamp continues in beat, with no audible jump.">
-          Besonders bei Loops geht Back taktgenau vor: Hat man den Vamp mit Go schon in den Ausgang geschickt, holt Back ihn nicht einfach von vorne zurück, sondern genau an die Stelle, an der er jetzt wäre, wäre nie Go gedrückt worden – samplegenau auf der Audio-Uhr berechnet. Der Vamp läuft im Takt weiter, ohne hörbaren Sprung.
-        </p>
-        <p data-de="Das gibt der Person am Pult Sicherheit: Ein versehentlicher Go-Druck ist kein Problem – einfach Back drücken und weiter." data-en="This gives the operator confidence: an accidental Go press is no problem – just press Back and continue.">
-          Das gibt der Person am Pult Sicherheit: Ein versehentlicher Go-Druck ist kein Problem – einfach Back drücken und weiter.
+        <p data-de="Back macht den letzten Go vollständig rückgängig – Loops, Mikrofone und Licht kehren in den vorherigen Zustand zurück. Bei Loops sogar taktgenau, ohne hörbaren Sprung." data-en="Back fully undoes the last Go – loops, microphones and lighting return to their previous state. With loops even beat-accurately, with no audible jump.">
+          Back macht den letzten Go vollständig rückgängig – Loops, Mikrofone und Licht kehren in den vorherigen Zustand zurück. Bei Loops sogar taktgenau, ohne hörbaren Sprung.
         </p>
       </div>
     </div>
@@ -515,11 +604,8 @@ footer a:hover{text-decoration:underline}
       </div>
       <div class="feat-text">
         <h3 data-de="Varianten für verschiedene Besetzungen" data-en="Variants for different casts">Varianten für verschiedene Besetzungen</h3>
-        <p data-de="Wenn derselbe Song je nach Besetzung in verschiedenen Tonarten oder mit unterschiedlichen Arrangements gespielt wird, kann man dafür mehrere Varianten desselben Cues anlegen – jede mit einer eigenen Audiodatei." data-en="When the same song is performed in different keys or arrangements depending on the cast, multiple variants of the same cue can be created – each with its own audio file.">
-          Wenn derselbe Song je nach Besetzung in verschiedenen Tonarten oder mit unterschiedlichen Arrangements gespielt wird, kann man dafür mehrere Varianten desselben Cues anlegen – jede mit einer eigenen Audiodatei.
-        </p>
-        <p data-de="In der Live-Ansicht werden alle Varianten nebeneinander dargestellt und blinken, bis eine ausgewählt wird. Ein Klick wählt die Variante aus – erst dann startet Go die Wiedergabe." data-en="In the live view all variants are shown side by side and blink until one is selected. A click chooses the variant – only then does Go start playback.">
-          In der Live-Ansicht werden alle Varianten nebeneinander dargestellt und blinken, bis eine ausgewählt wird. Ein Klick wählt die Variante aus – erst dann startet Go die Wiedergabe.
+        <p data-de="Mehrere Varianten eines Cues für verschiedene Besetzungen – jede mit eigener Tonart oder eigenem Arrangement. Vor dem Go einfach die passende auswählen." data-en="Multiple variants of one cue for different casts – each with its own key or arrangement. Just pick the right one before Go.">
+          Mehrere Varianten eines Cues für verschiedene Besetzungen – jede mit eigener Tonart oder eigenem Arrangement. Vor dem Go einfach die passende auswählen.
         </p>
       </div>
     </div>
@@ -568,20 +654,8 @@ footer a:hover{text-decoration:underline}
       </div>
       <div class="feat-text">
         <h3 data-de="Vamp &amp; Devamp – Loops, die auf ihr Ende warten" data-en="Vamp &amp; Devamp – Loops that wait for their cue">Vamp &amp; Devamp – Loops, die auf ihr Ende warten</h3>
-        <p data-de="Musik kann als Intro, Vamp (Endlosschleife) und Devamp (Ausgang) strukturiert werden. Der Vamp spielt weiter, bis auf Go gedrückt wird – dann wartet er, bis die aktuelle Schleifen-Runde beendet ist, und startet den Devamp exakt am richtigen Moment." data-en="Music can be structured as intro, vamp (endless loop) and devamp (outro). The vamp keeps playing until Go is pressed – then it waits for the current iteration to finish and starts the devamp at exactly the right moment.">
-          Musik kann als Intro, Vamp (Endlosschleife) und Devamp (Ausgang) strukturiert werden. Der Vamp spielt weiter, bis auf Go gedrückt wird – dann wartet er, bis die aktuelle Schleifen-Runde beendet ist, und startet den Devamp exakt am richtigen Moment.
-        </p>
-        <p data-de="Ein Vamp kann aus mehreren Teilen bestehen, die nahtlos ineinander übergehen – so entsteht eine lange, abwechslungsreiche Schleife. Trotzdem muss beim Devamp nicht auf das Ende der gesamten Sequenz gewartet werden: Der Ausstieg erfolgt immer am nächsten Abschnittswechsel des gerade laufenden Teils." data-en="A vamp can consist of multiple parts that transition seamlessly into one another – creating a long, varied loop. Yet when devamping, there's no need to wait for the full sequence to end: the exit fires at the next boundary of the currently active part.">
-          Ein Vamp kann aus mehreren Teilen bestehen, die nahtlos ineinander übergehen – so entsteht eine lange, abwechslungsreiche Schleife. Trotzdem muss beim Devamp nicht auf das Ende der gesamten Sequenz gewartet werden: Der Ausstieg erfolgt immer am nächsten Abschnittswechsel des gerade laufenden Teils.
-        </p>
-        <p data-de="Vamp und Devamp können ausklingen: Wenn kurz vor dem Loop-Ende ein Becken angeschlagen wird, spielt der Nachhall noch über den Übergang hinaus – für einen völlig natürlichen, unterbrechungsfreien Übergang." data-en="Vamps and devamps can ring out naturally: if a cymbal is struck just before the loop boundary, the decay carries through the transition – for a completely smooth, uninterrupted handoff.">
-          Vamp und Devamp können ausklingen: Wenn kurz vor dem Loop-Ende ein Becken angeschlagen wird, spielt der Nachhall noch über den Übergang hinaus – für einen völlig natürlichen, unterbrechungsfreien Übergang.
-        </p>
-        <p data-de="Auch Übergänge von einem Stück direkt ins nächste sind möglich: Das Ende des ersten Titels löst automatisch den nächsten aus." data-en="Transitions from one track directly into the next are also possible: the end of the first track automatically triggers the next.">
-          Auch Übergänge von einem Stück direkt ins nächste sind möglich: Das Ende des ersten Titels löst automatisch den nächsten aus.
-        </p>
-        <p data-de="Und falls der Devamp zu früh kommt: Back holt den Vamp taktgenau zurück – samplegenau an die Stelle, an der er jetzt wäre, ohne Sprung im Groove. Bei mehrteiligen Vamps trifft Back den richtigen Teil und die richtige Phase darin." data-en="And if the devamp comes too early: Back resumes the vamp beat-accurately – sample-precise, at the exact spot it would be at now, with no jump in the groove. For multi-part vamps, Back lands on the correct part and the correct phase within it.">
-          Und falls der Devamp zu früh kommt: Back holt den Vamp taktgenau zurück – samplegenau an die Stelle, an der er jetzt wäre, ohne Sprung im Groove. Bei mehrteiligen Vamps trifft Back den richtigen Teil und die richtige Phase darin.
+        <p data-de="Loops, die laufen, bis du Go drückst – der Ausgang (Devamp) startet dann taktgenau im richtigen Moment, ohne hörbaren Sprung." data-en="Loops that keep playing until you press Go – the outro (devamp) then starts beat-accurately at the right moment, with no audible jump.">
+          Loops, die laufen, bis du Go drückst – der Ausgang (Devamp) startet dann taktgenau im richtigen Moment, ohne hörbaren Sprung.
         </p>
       </div>
     </div>
@@ -621,11 +695,8 @@ footer a:hover{text-decoration:underline}
       </div>
       <div class="feat-text">
         <h3 data-de="Audio direkt in der Software anpassen" data-en="Adjust audio directly in the software">Audio direkt in der Software anpassen</h3>
-        <p data-de="Start- und Endpunkt, Fade-in, Fade-out und Lautstärke lassen sich per Maus auf der Wellenform einstellen und werden automatisch gespeichert. Kein Audioschnitt-Programm nötig." data-en="Start point, end point, fade-in, fade-out and volume can be set with the mouse on the waveform and are saved automatically. No audio editing software needed.">
-          Start- und Endpunkt, Fade-in, Fade-out und Lautstärke lassen sich per Maus auf der Wellenform einstellen und werden automatisch gespeichert. Kein Audioschnitt-Programm nötig.
-        </p>
-        <p data-de="Das Ergebnis ist sofort hörbar – Wiedergabe-Button klicken, Marker verschieben, fertig." data-en="The result is immediately audible – click play, move the markers, done.">
-          Das Ergebnis ist sofort hörbar – Wiedergabe-Button klicken, Marker verschieben, fertig.
+        <p data-de="Start, Ende, Fades und Lautstärke direkt auf der Wellenform einstellen – kein extra Schnittprogramm nötig." data-en="Set start, end, fades and volume right on the waveform – no separate audio editor needed.">
+          Start, Ende, Fades und Lautstärke direkt auf der Wellenform einstellen – kein extra Schnittprogramm nötig.
         </p>
       </div>
     </div>
@@ -666,11 +737,8 @@ footer a:hover{text-decoration:underline}
       </div>
       <div class="feat-text">
         <h3 data-de="Cues, die andere Cues beeinflussen" data-en="Cues that affect other cues">Cues, die andere Cues beeinflussen</h3>
-        <p data-de="Wird ein Cue ausgelöst, kann er gleichzeitig einen anderen Cue beeinflussen: die Lautstärke der laufenden Hintergrundmusik senken, sie langsam ausfaden oder komplett stoppen." data-en="When a cue is triggered, it can simultaneously affect another cue: lower the volume of the running background music, slowly fade it out, or stop it completely.">
-          Wird ein Cue ausgelöst, kann er gleichzeitig einen anderen Cue beeinflussen: die Lautstärke der laufenden Hintergrundmusik senken, sie langsam ausfaden oder komplett stoppen.
-        </p>
-        <p data-de="So lässt sich zum Beispiel festlegen: Sobald der Dialog-Cue ausgelöst wird, blendet die Musik aus dem vorherigen Cue in drei Sekunden aus – ohne dass dafür ein extra Go-Button nötig ist." data-en="For example: as soon as the dialogue cue fires, the music from the previous cue fades out over three seconds – no extra Go press needed.">
-          So lässt sich zum Beispiel festlegen: Sobald der Dialog-Cue ausgelöst wird, blendet die Musik aus dem vorherigen Cue in drei Sekunden aus – ohne dass dafür ein extra Go-Button nötig ist.
+        <p data-de="Ein Cue kann beim Auslösen andere Cues leiser drehen, ausfaden oder stoppen – ganz ohne extra Go-Druck." data-en="When it fires, a cue can turn other cues down, fade them out or stop them – with no extra Go press.">
+          Ein Cue kann beim Auslösen andere Cues leiser drehen, ausfaden oder stoppen – ganz ohne extra Go-Druck.
         </p>
       </div>
     </div>
@@ -708,11 +776,8 @@ footer a:hover{text-decoration:underline}
       </div>
       <div class="feat-text">
         <h3 data-de="Automatische Trigger zur richtigen Zeit" data-en="Automatic triggers at the right time">Automatische Trigger zur richtigen Zeit</h3>
-        <p data-de="Ein Cue kann so eingestellt werden, dass er sich automatisch auslöst, wenn ein anderer Cue eine bestimmte Zeitposition in der Wiedergabe erreicht. So lassen sich Abläufe vorprogrammieren, die exakt synchron zur Musik passieren müssen." data-en="A cue can be set to fire automatically when another cue reaches a specific playback position. This lets you pre-program sequences that must happen in exact sync with the music.">
-          Ein Cue kann so eingestellt werden, dass er sich automatisch auslöst, wenn ein anderer Cue eine bestimmte Zeitposition in der Wiedergabe erreicht. So lassen sich Abläufe vorprogrammieren, die exakt synchron zur Musik passieren müssen.
-        </p>
-        <p data-de="Den Zeitpunkt festlegen ist einfach: Wiedergabe bis zur richtigen Stelle laufen lassen, dann den Auto-Cue-Marker setzen. Kein Eintippen von Zeitcodes." data-en="Setting the time is simple: let playback run to the right spot, then set the auto-cue marker. No typing timecodes.">
-          Den Zeitpunkt festlegen ist einfach: Wiedergabe bis zur richtigen Stelle laufen lassen, dann den Auto-Cue-Marker setzen. Kein Eintippen von Zeitcodes.
+        <p data-de="Cues lösen sich automatisch aus, sobald die Musik eine bestimmte Stelle erreicht – exakt synchron, ohne Eintippen von Zeitcodes." data-en="Cues fire automatically as soon as the music reaches a set point – perfectly in sync, with no timecodes to type.">
+          Cues lösen sich automatisch aus, sobald die Musik eine bestimmte Stelle erreicht – exakt synchron, ohne Eintippen von Zeitcodes.
         </p>
       </div>
     </div>
@@ -755,11 +820,8 @@ footer a:hover{text-decoration:underline}
       </div>
       <div class="feat-text">
         <h3 data-de="Mikrofone automatisch aus dem Rollentext" data-en="Microphones automatic from the script text">Mikrofone automatisch aus dem Rollentext</h3>
-        <p data-de="Mit dem Auto-Mic-Button markiert ein Cue den Beginn einer Sektion. MDstage scannt den Rollentext bis zum nächsten Auto-Mic-Cue und öffnet automatisch genau die Mikrofone, deren Rollen in diesem Abschnitt sprechen." data-en="With the Auto-Mic button, a cue marks the start of a section. MDstage scans the script up to the next Auto-Mic cue and automatically opens exactly the microphones whose roles have dialogue in that section.">
-          Mit dem Auto-Mic-Button markiert ein Cue den Beginn einer Sektion. MDstage scannt den Rollentext bis zum nächsten Auto-Mic-Cue und öffnet automatisch genau die Mikrofone, deren Rollen in diesem Abschnitt sprechen.
-        </p>
-        <p data-de="Ändert sich der Rollentext, passen sich die Mikrofone sofort an." data-en="Change the script text, and the microphones update immediately.">
-          Ändert sich der Rollentext, passen sich die Mikrofone sofort an.
+        <p data-de="MDstage liest den Rollentext und öffnet automatisch genau die Mikrofone, deren Rollen gerade sprechen – ändert sich der Text, passen sie sich sofort an." data-en="MDstage reads the script and automatically opens exactly the microphones whose roles are currently speaking – change the text, and they adjust instantly.">
+          MDstage liest den Rollentext und öffnet automatisch genau die Mikrofone, deren Rollen gerade sprechen – ändert sich der Text, passen sie sich sofort an.
         </p>
       </div>
     </div>
@@ -809,11 +871,8 @@ footer a:hover{text-decoration:underline}
       </div>
       <div class="feat-text">
         <h3 data-de="MIDI, OSC und Timecode" data-en="MIDI, OSC and Timecode">MIDI, OSC und Timecode</h3>
-        <p data-de="MDstage ist die Schaltzentrale der Show: Mikrofon-Routing am X32-Mischpult via MIDI, custom OSC-Nachrichten an beliebige Systeme, MIDI Timecode (MTC 25fps) für Licht und Video." data-en="MDstage is the show control hub: microphone routing on the X32 mixer via MIDI, custom OSC messages to any system, MIDI Timecode (MTC 25fps) for lighting and video.">
-          MDstage ist die Schaltzentrale der Show: Mikrofon-Routing am X32-Mischpult via MIDI, custom OSC-Nachrichten an beliebige Systeme, MIDI Timecode (MTC 25fps) für Licht und Video.
-        </p>
-        <p data-de="Go und Back lassen sich jedem MIDI-Controller, Bluetooth-Pedal oder Keyboard zuweisen. Per Langdruck auf den Back-Button werden alle Wiedergaben sofort gestoppt." data-en="Go and Back can be assigned to any MIDI controller, Bluetooth pedal or keyboard. Long-pressing Back stops all playback immediately.">
-          Go und Back lassen sich jedem MIDI-Controller, Bluetooth-Pedal oder Keyboard zuweisen. Per Langdruck auf den Back-Button werden alle Wiedergaben sofort gestoppt.
+        <p data-de="Eine Schaltzentrale für alles: Mischpult, Licht und Video über MIDI, OSC und Timecode. Go und Back laufen über Tastatur, MIDI-Controller oder Bluetooth-Pedal." data-en="One control hub for everything: mixer, lighting and video via MIDI, OSC and timecode. Go and Back work via keyboard, MIDI controller or Bluetooth pedal.">
+          Eine Schaltzentrale für alles: Mischpult, Licht und Video über MIDI, OSC und Timecode. Go und Back laufen über Tastatur, MIDI-Controller oder Bluetooth-Pedal.
         </p>
       </div>
     </div>
@@ -851,11 +910,8 @@ footer a:hover{text-decoration:underline}
       </div>
       <div class="feat-text">
         <h3 data-de="Dual-Audio: Main und Monitor getrennt" data-en="Dual Audio: Main and Monitor separate">Dual-Audio: Main und Monitor getrennt</h3>
-        <p data-de="Auf einem einzigen Aggregate Device werden Haupt- und Monitor-Mix auf verschiedene Ausgangskanäle geroutet. Pro Cue kann eine eigene Monitor-Datei hinterlegt werden – z.B. mit Klickspur oder Regiesprechern." data-en="On a single aggregate device, main and monitor mix are routed to different output channels. Each cue can have its own monitor file – e.g. with a click track or director's cues.">
-          Auf einem einzigen Aggregate Device werden Haupt- und Monitor-Mix auf verschiedene Ausgangskanäle geroutet. Pro Cue kann eine eigene Monitor-Datei hinterlegt werden – z.B. mit Klickspur oder Regiesprechern.
-        </p>
-        <p data-de="Die Kanalzuweisung erfolgt in den Einstellungen per Routing-Matrix. Auch PDF- und DOCX-Export des Regiebuchs ist eingebaut." data-en="Channel assignment is done in the settings via a routing matrix. PDF and DOCX export of the script is also built in.">
-          Die Kanalzuweisung erfolgt in den Einstellungen per Routing-Matrix. Auch PDF- und DOCX-Export des Regiebuchs ist eingebaut.
+        <p data-de="Haupt- und Monitor-Mix getrennt auf eigene Ausgangskanäle – pro Cue eine eigene Monitor-Spur, z. B. mit Klick oder Regiesprechern." data-en="Main and monitor mix kept separate on their own output channels – each cue can have its own monitor track, e.g. with a click or director's cues.">
+          Haupt- und Monitor-Mix getrennt auf eigene Ausgangskanäle – pro Cue eine eigene Monitor-Spur, z. B. mit Klick oder Regiesprechern.
         </p>
       </div>
     </div>
@@ -899,14 +955,8 @@ footer a:hover{text-decoration:underline}
       </div>
       <div class="feat-text">
         <h3 data-de="Die ganze Show steckt in einer Datei" data-en="The whole show in a single file">Die ganze Show steckt in einer Datei</h3>
-        <p data-de="Textbuch und alle Trigger werden als eine einzige Markdown-Datei gespeichert. Das macht Zusammenarbeit einfach: Die Datei liegt im geteilten Ordner, auf einem USB-Stick oder in einem Git-Repository – und alle arbeiten immer an derselben Version." data-en="Script and all triggers are stored as a single Markdown file. That makes collaboration simple: the file lives in a shared folder, on a USB stick or in a Git repository – everyone always works on the same version.">
-          Textbuch und alle Trigger werden als eine einzige Markdown-Datei gespeichert. Das macht Zusammenarbeit einfach: Die Datei liegt im geteilten Ordner, auf einem USB-Stick oder in einem Git-Repository – und alle arbeiten immer an derselben Version.
-        </p>
-        <p data-de="Wer Git nutzt, bekommt vollständige Versionshistorie, kann Probenversionen mit Premierenversionen vergleichen und Änderungen nachvollziehen. Wer das nicht braucht, ignoriert es einfach." data-en="Git users get full version history, can compare rehearsal and premiere versions, and track every change. Those who don't need it can simply ignore it.">
-          Wer Git nutzt, bekommt vollständige Versionshistorie, kann Probenversionen mit Premierenversionen vergleichen und Änderungen nachvollziehen. Wer das nicht braucht, ignoriert es einfach.
-        </p>
-        <p data-de="Alles ist auch vollständig über die Oberfläche bedienbar – Text schreiben, Trigger anlegen, Einstellungen. Wer nie einen Texteditor öffnen möchte, muss es nicht." data-en="Everything is also fully operable via the interface – writing text, creating triggers, settings. Those who never want to open a text editor don't have to.">
-          Alles ist auch vollständig über die Oberfläche bedienbar – Text schreiben, Trigger anlegen, Einstellungen. Wer nie einen Texteditor öffnen möchte, muss es nicht.
+        <p data-de="Die ganze Show steckt in einer Markdown-Datei – einfach zu teilen über geteilten Ordner, USB-Stick oder Git und immer auf derselben Version." data-en="The whole show lives in a single Markdown file – easy to share via a shared folder, USB stick or Git, always on the same version.">
+          Die ganze Show steckt in einer Markdown-Datei – einfach zu teilen über geteilten Ordner, USB-Stick oder Git und immer auf derselben Version.
         </p>
       </div>
     </div>
@@ -1026,11 +1076,86 @@ footer a:hover{text-decoration:underline}
   </div>
 </section>
 
+<!-- ── FAQ ──────────────────────────────────────────────── -->
+<section class="feat-section" id="faq">
+  <div class="feat-inner">
+    <p class="section-label" data-de="FAQ" data-en="FAQ">FAQ</p>
+    <h2 class="section-title" data-de="Häufige Fragen" data-en="Frequently asked questions">Häufige Fragen</h2>
+    <p class="section-sub" data-de="Kurz beantwortet – und falls etwas fehlt, schreib einfach eine Mail." data-en="Answered briefly – and if something's missing, just drop a mail.">
+      Kurz beantwortet – und falls etwas fehlt, schreib einfach eine Mail.
+    </p>
+
+    <div class="faq-list">
+      <details class="faq-item">
+        <summary data-de="Was kostet MDstage?" data-en="What does MDstage cost?">Was kostet MDstage?</summary>
+        <div class="faq-a" data-de="MDstage ist kostenlos und läuft auf macOS, Windows und Linux. Einfach herunterladen und loslegen." data-en="MDstage is free and runs on macOS, Windows and Linux. Just download and get started.">
+          MDstage ist kostenlos und läuft auf macOS, Windows und Linux. Einfach herunterladen und loslegen.
+        </div>
+      </details>
+      <details class="faq-item">
+        <summary data-de="Muss ich programmieren oder YAML schreiben können?" data-en="Do I need to code or write YAML?">Muss ich programmieren oder YAML schreiben können?</summary>
+        <div class="faq-a" data-de="Nein. Textbuch, Cues und Einstellungen legst du komplett über die Oberfläche an. Intern wird alles als Markdown gespeichert – wer mag, kann es auch direkt im Editor bearbeiten, muss es aber nicht." data-en="No. You create the script, cues and settings entirely through the interface. Everything is stored as Markdown under the hood – you can edit it in a text editor if you like, but you don't have to.">
+          Nein. Textbuch, Cues und Einstellungen legst du komplett über die Oberfläche an. Intern wird alles als Markdown gespeichert – wer mag, kann es auch direkt im Editor bearbeiten, muss es aber nicht.
+        </div>
+      </details>
+      <details class="faq-item">
+        <summary data-de="Welche Bühnentechnik kann ich damit steuern?" data-en="What stage equipment can I control with it?">Welche Bühnentechnik kann ich damit steuern?</summary>
+        <div class="faq-a" data-de="Mischpult und Mikrofone (z. B. ein Digitalmischpult über MIDI), Lichtpulte über MIDI-Noten, beliebige netzwerkbasierte Systeme über OSC sowie Licht und Video über MIDI Timecode. Mehr dazu im Beitrag <a href='blog/buehnentechnik-steuern.html'>Bühnentechnik zentral steuern</a>." data-en="Mixer and microphones (e.g. a digital mixer via MIDI), lighting consoles via MIDI notes, any networked system via OSC, plus lighting and video via MIDI timecode. More in the post <a href='blog/buehnentechnik-steuern.html'>Central stage control</a>.">
+          Mischpult und Mikrofone (z. B. ein Digitalmischpult über MIDI), Lichtpulte über MIDI-Noten, beliebige netzwerkbasierte Systeme über OSC sowie Licht und Video über MIDI Timecode. Mehr dazu im Beitrag <a href="blog/buehnentechnik-steuern.html">Bühnentechnik zentral steuern</a>.
+        </div>
+      </details>
+      <details class="faq-item">
+        <summary data-de="Wie löse ich Go und Back aus?" data-en="How do I trigger Go and Back?">Wie löse ich Go und Back aus?</summary>
+        <div class="faq-a" data-de="Über die Tastatur, einen MIDI-Controller oder ein Bluetooth-Pedal – ganz wie es für deine Produktion am bequemsten ist." data-en="Via the keyboard, a MIDI controller or a Bluetooth pedal – whatever is most comfortable for your production.">
+          Über die Tastatur, einen MIDI-Controller oder ein Bluetooth-Pedal – ganz wie es für deine Produktion am bequemsten ist.
+        </div>
+      </details>
+      <details class="faq-item">
+        <summary data-de="Was passiert, wenn ich zu früh Go drücke?" data-en="What happens if I press Go too early?">Was passiert, wenn ich zu früh Go drücke?</summary>
+        <div class="faq-a" data-de="Back macht den letzten Go vollständig rückgängig: Loops, Mikrofone und Lichtszenen kehren in ihren vorherigen Zustand zurück. Bei Loops geschieht das sogar taktgenau, ohne hörbaren Sprung." data-en="Back fully undoes the last Go: loops, microphones and lighting scenes return to their previous state. With loops this even happens beat-accurately, with no audible jump.">
+          Back macht den letzten Go vollständig rückgängig: Loops, Mikrofone und Lichtszenen kehren in ihren vorherigen Zustand zurück. Bei Loops geschieht das sogar taktgenau, ohne hörbaren Sprung.
+        </div>
+      </details>
+      <details class="faq-item">
+        <summary data-de="Was ist ein Vamp / Devamp?" data-en="What is a vamp / devamp?">Was ist ein Vamp / Devamp?</summary>
+        <div class="faq-a" data-de="Ein Vamp ist eine Endlosschleife, die läuft, bis du den Ausgang (Devamp) auslöst – der dann taktgenau im richtigen Moment startet. Ausführlich erklärt im Beitrag <a href='blog/vamps-devamps.html'>Vamps &amp; Devamps</a>." data-en="A vamp is an endless loop that plays until you trigger the outro (devamp) – which then starts beat-accurately at the right moment. Explained in detail in the post <a href='blog/vamps-devamps.html'>Vamps &amp; Devamps</a>.">
+          Ein Vamp ist eine Endlosschleife, die läuft, bis du den Ausgang (Devamp) auslöst – der dann taktgenau im richtigen Moment startet. Ausführlich erklärt im Beitrag <a href="blog/vamps-devamps.html">Vamps &amp; Devamps</a>.
+        </div>
+      </details>
+      <details class="faq-item">
+        <summary data-de="Wie öffnet MDstage Mikrofone automatisch?" data-en="How does MDstage open microphones automatically?">Wie öffnet MDstage Mikrofone automatisch?</summary>
+        <div class="faq-a" data-de="Die Auto-Mic-Funktion liest den Rollentext und öffnet genau die Mikrofone, deren Rollen im jeweiligen Abschnitt sprechen. Wie das eingerichtet wird, steht im Beitrag <a href='blog/auto-mic.html'>Mikrofone automatisch öffnen und schließen</a>." data-en="The Auto-Mic feature reads the script and opens exactly the microphones whose roles speak in each section. How to set it up is described in the post <a href='blog/auto-mic.html'>Open and close microphones automatically</a>.">
+          Die Auto-Mic-Funktion liest den Rollentext und öffnet genau die Mikrofone, deren Rollen im jeweiligen Abschnitt sprechen. Wie das eingerichtet wird, steht im Beitrag <a href="blog/auto-mic.html">Mikrofone automatisch öffnen und schließen</a>.
+        </div>
+      </details>
+      <details class="faq-item">
+        <summary data-de="Kann ein Team gemeinsam an einer Show arbeiten?" data-en="Can a team work on a show together?">Kann ein Team gemeinsam an einer Show arbeiten?</summary>
+        <div class="faq-a" data-de="Ja. Die ganze Show steckt in einer einzigen Markdown-Datei. Sie lässt sich über einen geteilten Ordner, einen USB-Stick oder ein Git-Repository teilen – so arbeiten alle an derselben Version." data-en="Yes. The whole show is contained in a single Markdown file. You can share it via a shared folder, a USB stick or a Git repository – so everyone works on the same version.">
+          Ja. Die ganze Show steckt in einer einzigen Markdown-Datei. Sie lässt sich über einen geteilten Ordner, einen USB-Stick oder ein Git-Repository teilen – so arbeiten alle an derselben Version.
+        </div>
+      </details>
+      <details class="faq-item">
+        <summary data-de="Sammelt MDstage Daten?" data-en="Does MDstage collect data?">Sammelt MDstage Daten?</summary>
+        <div class="faq-a" data-de="Nein. MDstage funkt nicht nach Hause: kein Tracking, keine Cookies, keine Datenübertragung. Es läuft vollständig offline auf deinem Rechner." data-en="No. MDstage doesn't phone home: no tracking, no cookies, no data transfer. It runs completely offline on your computer.">
+          Nein. MDstage funkt nicht nach Hause: kein Tracking, keine Cookies, keine Datenübertragung. Es läuft vollständig offline auf deinem Rechner.
+        </div>
+      </details>
+      <details class="faq-item">
+        <summary data-de="Wie bekomme ich Hilfe?" data-en="How do I get help?">Wie bekomme ich Hilfe?</summary>
+        <div class="faq-a" data-de="Schreib einfach eine Mail an <a href='mailto:hello@mdstage.org'>hello@mdstage.org</a>. Über Rückmeldungen, Fragen und Berichte aus euren Produktionen freue ich mich immer." data-en="Just send a mail to <a href='mailto:hello@mdstage.org'>hello@mdstage.org</a>. I always appreciate feedback, questions and reports from your productions.">
+          Schreib einfach eine Mail an <a href="mailto:hello@mdstage.org">hello@mdstage.org</a>. Über Rückmeldungen, Fragen und Berichte aus euren Produktionen freue ich mich immer.
+        </div>
+      </details>
+    </div>
+  </div>
+</section>
+
 <footer>
   <p>
     <span data-de="Für die Bühne gemacht." data-en="Made for the stage.">Für die Bühne gemacht.</span>
     &nbsp;·&nbsp; <a href="mailto:hello@mdstage.org">hello@mdstage.org</a>
     &nbsp;·&nbsp; <a href="https://github.com/julius-b-mueller/MDstage" target="_blank" rel="noopener">GitHub</a>
+    &nbsp;·&nbsp; <a href="blog/index.html" data-de="Blog" data-en="Blog">Blog</a>
     &nbsp;·&nbsp; <a href="about.html" data-de="Über" data-en="About">Über</a>
     &nbsp;·&nbsp; <a href="impressum.html" data-de="Impressum &amp; Datenschutz" data-en="Legal &amp; Privacy">Impressum &amp; Datenschutz</a>
   </p>

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Eine Show durchautomatisieren – nur noch Go drücken – MDstage</title>
+<meta name="description" content="Musik, Mikrofone, Licht und Video so vorbereiten, dass die ganze Vorstellung mit einem einzigen Knopf läuft. Der Weg zur durchautomatisierten Show in MDstage.">
+<link rel="canonical" href="https://mdstage.org/blog/show-automatisieren.html">
+<meta name="robots" content="index, follow">
+<meta name="theme-color" content="#282c34">
+<link rel="icon" type="image/png" href="../assets/icon.png">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="MDstage">
+<meta property="og:locale" content="de_DE">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:url" content="https://mdstage.org/blog/show-automatisieren.html">
+<meta property="og:title" content="Eine Show durchautomatisieren – nur noch Go drücken">
+<meta property="og:description" content="Musik, Mikrofone, Licht und Video so vorbereiten, dass die ganze Vorstellung mit einem einzigen Knopf läuft.">
+<meta property="og:image" content="https://mdstage.org/assets/MDstage-open-graph.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Eine Show durchautomatisieren – nur noch Go drücken">
+<meta name="twitter:description" content="Musik, Mikrofone, Licht und Video so vorbereiten, dass die ganze Vorstellung mit einem einzigen Knopf läuft.">
+<meta name="twitter:image" content="https://mdstage.org/assets/MDstage-open-graph.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "Eine Show durchautomatisieren – nur noch Go drücken",
+  "description": "Musik, Mikrofone, Licht und Video so vorbereiten, dass die ganze Vorstellung mit einem einzigen Knopf läuft.",
+  "datePublished": "2026-06-21",
+  "dateModified": "2026-06-21",
+  "inLanguage": "de",
+  "author": { "@type": "Person", "name": "Julius B. Müller" },
+  "publisher": { "@type": "Person", "name": "Julius B. Müller" },
+  "image": "https://mdstage.org/assets/MDstage-open-graph.png",
+  "mainEntityOfPage": "https://mdstage.org/blog/show-automatisieren.html"
+}
+</script>
+<link rel="stylesheet" href="blog.css">
+</head>
+<body>
+
+<nav>
+  <a href="../index.html" class="nav-logo">
+    <img src="../assets/icon.png" width="24" height="24" alt="MDstage" style="border-radius:5px;flex-shrink:0">
+    MDstage
+  </a>
+  <div class="nav-links">
+    <a href="../index.html#concept" data-de="Konzept" data-en="Concept">Konzept</a>
+    <a href="../index.html#features" data-de="Features" data-en="Features">Features</a>
+    <a href="../index.html#download" data-de="Download" data-en="Download">Download</a>
+    <a href="../index.html#faq" data-de="FAQ" data-en="FAQ">FAQ</a>
+    <a href="index.html" class="active" data-de="Blog" data-en="Blog">Blog</a>
+    <a href="../about.html" data-de="Über" data-en="About">Über</a>
+  </div>
+  <div class="nav-right">
+    <a href="../preview/" class="nav-try">
+      <span data-de="Im Browser testen" data-en="Try in browser">Im Browser testen</span>
+    </a>
+    <a href="../index.html#download" class="nav-cta" data-de="Herunterladen" data-en="Download">Herunterladen</a>
+    <div class="lang-toggle">
+      <button class="lang-btn active" onclick="setLang('de')">DE</button>
+      <button class="lang-btn"        onclick="setLang('en')">EN</button>
+    </div>
+  </div>
+</nav>
+
+<article class="article">
+  <p class="crumb"><a href="index.html" data-de="← Blog" data-en="← Blog">← Blog</a> &nbsp;·&nbsp; <span class="tag p" data-de="Workflow" data-en="Workflow">Workflow</span></p>
+
+  <h1 data-de="Eine Show durchautomatisieren – nur noch Go drücken" data-en="Fully automate a show – just press Go">Eine Show durchautomatisieren – nur noch Go drücken</h1>
+
+  <p class="lead" data-de="Das Ziel ist verlockend: eine Vorstellung, bei der eine einzige Person nur noch an den richtigen Stellen Go drückt – und Musik, Mikrofone, Licht und Video laufen wie von selbst. Mit MDstage ist das kein Wunschdenken, sondern eine Frage der Vorbereitung. So gehst du es an." data-en="The goal is tempting: a performance where one single person just presses Go at the right moments – and music, microphones, lighting and video run as if by themselves. With MDstage that's not wishful thinking but a matter of preparation. Here's how to approach it.">
+    Das Ziel ist verlockend: eine Vorstellung, bei der eine einzige Person nur noch an den richtigen Stellen Go drückt – und Musik, Mikrofone, Licht und Video laufen wie von selbst. Mit MDstage ist das kein Wunschdenken, sondern eine Frage der Vorbereitung. So gehst du es an.
+  </p>
+
+  <h2 data-de="Alles hängt am Textbuch" data-en="Everything hangs on the script">Alles hängt am Textbuch</h2>
+  <p data-de="Die Grundidee von MDstage: Das Textbuch und die Show-Steuerung sind ein und dasselbe. Jeder Cue – ob Musik, Mikrofon, Licht oder eine Nachricht an ein anderes Gerät – sitzt genau an der Stelle im Text, an der er passieren soll. Du programmierst die Show also dort, wo du sie ohnehin liest. Beim Durchgehen entsteht Cue für Cue eine vollständige Ablaufsteuerung." data-en="The core idea of MDstage: the script and the show control are one and the same. Every cue – music, microphone, lighting, or a message to another device – sits exactly at the point in the text where it should happen. So you program the show right where you read it anyway. Going through it, a complete sequence of operations emerges cue by cue.">
+    Die Grundidee von MDstage: Das Textbuch und die Show-Steuerung sind ein und dasselbe. Jeder Cue – ob Musik, Mikrofon, Licht oder eine Nachricht an ein anderes Gerät – sitzt genau an der Stelle im Text, an der er passieren soll. Du programmierst die Show also dort, wo du sie ohnehin liest. Beim Durchgehen entsteht Cue für Cue eine vollständige Ablaufsteuerung.
+  </p>
+
+  <h2 data-de="Drei Stufen der Automatisierung" data-en="Three levels of automation">Drei Stufen der Automatisierung</h2>
+  <p data-de="Du musst nicht alles auf einmal automatisieren. In der Praxis bauen sich Produktionen meist in Stufen auf:" data-en="You don't have to automate everything at once. In practice, productions usually build up in stages:">
+    Du musst nicht alles auf einmal automatisieren. In der Praxis bauen sich Produktionen meist in Stufen auf:
+  </p>
+  <ul>
+    <li data-de="<strong>1. Ein Go pro Cue.</strong> Jeder Einsatz – Musik, Lichtwechsel, Mikrofon – bekommt einen eigenen Cue. Du drückst an jeder Stelle einmal Go. Schon hier verschwindet das Jonglieren mit mehreren Programmen." data-en="<strong>1. One Go per cue.</strong> Every entry – music, lighting change, microphone – gets its own cue. You press Go once at each point. Even here, juggling several programs disappears."><strong>1. Ein Go pro Cue.</strong> Jeder Einsatz – Musik, Lichtwechsel, Mikrofon – bekommt einen eigenen Cue. Du drückst an jeder Stelle einmal Go. Schon hier verschwindet das Jonglieren mit mehreren Programmen.</li>
+    <li data-de="<strong>2. Cues bündeln.</strong> Was gleichzeitig passiert, kommt in einen einzigen Cue: Musik starten, Licht wechseln und die richtigen Mikrofone öffnen mit einem Go. Außerdem kann ein Cue andere beeinflussen – etwa die laufende Hintergrundmusik automatisch ausblenden." data-en="<strong>2. Bundle cues.</strong> Whatever happens at the same time goes into a single cue: start music, change lighting and open the right microphones with one Go. A cue can also affect others – for instance automatically fading out the running background music."><strong>2. Cues bündeln.</strong> Was gleichzeitig passiert, kommt in einen einzigen Cue: Musik starten, Licht wechseln und die richtigen Mikrofone öffnen mit einem Go. Außerdem kann ein Cue andere beeinflussen – etwa die laufende Hintergrundmusik automatisch ausblenden.</li>
+    <li data-de="<strong>3. Automatische Übergänge.</strong> Manche Cues lösen sich selbst aus: zum Beispiel, wenn die Musik eine bestimmte Stelle erreicht, oder wenn ein Stück endet und nahtlos das nächste startet. Diese Ketten musst du gar nicht mehr von Hand fahren." data-en="<strong>3. Automatic transitions.</strong> Some cues fire themselves: for example when the music reaches a certain point, or when one track ends and the next starts seamlessly. You no longer have to run these chains by hand."><strong>3. Automatische Übergänge.</strong> Manche Cues lösen sich selbst aus: zum Beispiel, wenn die Musik eine bestimmte Stelle erreicht, oder wenn ein Stück endet und nahtlos das nächste startet. Diese Ketten musst du gar nicht mehr von Hand fahren.</li>
+  </ul>
+  <p data-de="Am Ende bleibt für die Person am Pult oft nur noch eines: an den dramaturgisch wichtigen Punkten Go zu drücken. Den Rest erledigt die Show selbst." data-en="In the end, the operator is often left with just one thing: pressing Go at the dramaturgically important points. The show takes care of the rest.">
+    Am Ende bleibt für die Person am Pult oft nur noch eines: an den dramaturgisch wichtigen Punkten Go zu drücken. Den Rest erledigt die Show selbst.
+  </p>
+
+  <h2 data-de="Auto-Mic und Vamps nehmen Druck raus" data-en="Auto-Mic and vamps take off the pressure">Auto-Mic und Vamps nehmen Druck raus</h2>
+  <p data-de="Zwei Funktionen machen den Unterschied zwischen „viel klicken" und „entspannt fahren". Mit <a href='auto-mic.html'>Auto-Mic</a> öffnet MDstage die Mikrofone automatisch nach dem Rollentext – du musst sie nie einzeln schalten. Und mit <a href='vamps-devamps.html'>Vamps</a> wartet die Musik geduldig auf die Bühne: Der Loop läuft, bis der Einsatz da ist, und steigt dann taktgenau aus. So bleibt die Show auch dann im Takt, wenn auf der Bühne improvisiert wird." data-en="Two features make the difference between 'a lot of clicking' and 'running it relaxed'. With <a href='auto-mic.html'>Auto-Mic</a>, MDstage opens the microphones automatically based on the script – you never have to switch them individually. And with <a href='vamps-devamps.html'>vamps</a>, the music waits patiently for the stage: the loop runs until the entrance happens and then exits exactly on the beat. So the show stays in time even when the stage improvises.">
+    Zwei Funktionen machen den Unterschied zwischen „viel klicken“ und „entspannt fahren“. Mit <a href="auto-mic.html">Auto-Mic</a> öffnet MDstage die Mikrofone automatisch nach dem Rollentext – du musst sie nie einzeln schalten. Und mit <a href="vamps-devamps.html">Vamps</a> wartet die Musik geduldig auf die Bühne: Der Loop läuft, bis der Einsatz da ist, und steigt dann taktgenau aus. So bleibt die Show auch dann im Takt, wenn auf der Bühne improvisiert wird.
+  </p>
+
+  <h2 data-de="Sicher auch für eine Person ohne Technik-Erfahrung" data-en="Safe even for one person without tech experience">Sicher auch für eine Person ohne Technik-Erfahrung</h2>
+  <p data-de="Automatisierung ist nur dann etwas wert, wenn sie verzeiht. Deshalb macht Back jeden Go vollständig rückgängig – inklusive Loops, Mikrofonen und Licht. Ein zu früher Einsatz wird einfach zurückgeholt, und es geht weiter, als wäre nichts gewesen. Genau das macht den Unterschied: Eine gut vorbereitete Show kann am Ende auch eine Person ohne jede Technik-Vorerfahrung sicher fahren." data-en="Automation is only worth something if it forgives. That's why Back fully undoes every Go – including loops, microphones and lighting. An early entry is simply pulled back, and things continue as if nothing happened. That's exactly the difference: a well-prepared show can ultimately be run safely even by someone with no prior technical experience.">
+    Automatisierung ist nur dann etwas wert, wenn sie verzeiht. Deshalb macht Back jeden Go vollständig rückgängig – inklusive Loops, Mikrofonen und Licht. Ein zu früher Einsatz wird einfach zurückgeholt, und es geht weiter, als wäre nichts gewesen. Genau das macht den Unterschied: Eine gut vorbereitete Show kann am Ende auch eine Person ohne jede Technik-Vorerfahrung sicher fahren.
+  </p>
+
+  <div class="cta-box">
+    <h3 data-de="Selbst ausprobieren?" data-en="Want to try it yourself?">Selbst ausprobieren?</h3>
+    <div class="cta-actions">
+      <a class="btn-primary" href="../index.html#download" data-de="MDstage herunterladen" data-en="Download MDstage">MDstage herunterladen</a>
+      <a class="btn-preview" href="../preview/" data-de="Im Browser testen" data-en="Try in browser">Im Browser testen</a>
+    </div>
+  </div>
+
+  <div class="post-more">
+    <p class="section-label" data-de="Weiterlesen" data-en="Read more">Weiterlesen</p>
+    <ul>
+      <li><a href="auto-mic.html" data-de="Mikrofone automatisch öffnen und schließen" data-en="Open and close microphones automatically">Mikrofone automatisch öffnen und schließen</a></li>
+      <li><a href="buehnentechnik-steuern.html" data-de="Bühnentechnik zentral aus dem Inspizientenbuch steuern" data-en="Control stage tech centrally from the prompt book">Bühnentechnik zentral aus dem Inspizientenbuch steuern</a></li>
+      <li><a href="vamps-devamps.html" data-de="Professionelle Vamps & Devamps erstellen und nutzen" data-en="Create and use professional vamps & devamps">Professionelle Vamps & Devamps erstellen und nutzen</a></li>
+    </ul>
+  </div>
+</article>
+
+<footer>
+  <p>
+    <span data-de="Für die Bühne gemacht." data-en="Made for the stage.">Für die Bühne gemacht.</span>
+    &nbsp;·&nbsp; <a href="mailto:hello@mdstage.org">hello@mdstage.org</a>
+    &nbsp;·&nbsp; <a href="https://github.com/julius-b-mueller/MDstage" target="_blank" rel="noopener">GitHub</a>
+    &nbsp;·&nbsp; <a href="index.html" data-de="Blog" data-en="Blog">Blog</a>
+    &nbsp;·&nbsp; <a href="../about.html" data-de="Über" data-en="About">Über</a>
+    &nbsp;·&nbsp; <a href="../impressum.html" data-de="Impressum &amp; Datenschutz" data-en="Legal &amp; Privacy">Impressum &amp; Datenschutz</a>
+  </p>
+</footer>
+
+<div id="cookie-banner">
+  <p class="cookie-text">
+    <span id="cb-text-de"><strong>Keine Cookies. Keine Daten. Kein Tracking.</strong> MDstage funkt nicht nach Hause – ich habe also keinen blassen Schimmer, ob du es verwendest. Falls du möchtest: Schreib mir kurz, wo du es einsetzt. Ich freue mich immer über Rückmeldung.</span>
+    <span id="cb-text-en" style="display:none"><strong>No cookies. No data. No tracking.</strong> MDstage doesn't phone home – so I have absolutely no idea if you're using it. If you'd like to let me know: drop me a quick email about where you're using it. I always appreciate hearing from people.</span>
+  </p>
+  <div class="cookie-actions">
+    <a class="cookie-mail" id="cb-mail" href="mailto:hello@mdstage.org?subject=MDstage%20Einsatz" data-subject-de="MDstage Einsatz" data-subject-en="Using MDstage">
+      <span id="cb-mail-de">✉ Mail schreiben</span>
+      <span id="cb-mail-en" style="display:none">✉ Send a mail</span>
+    </a>
+    <button class="cookie-close" id="cb-close">
+      <span id="cb-close-de">Schließen</span>
+      <span id="cb-close-en" style="display:none">Close</span>
+    </button>
+  </div>
+</div>
+
+<script src="blog.js"></script>
+</body>
+</html>

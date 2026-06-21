@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mikrofone automatisch öffnen und schließen – MDstage</title>
+<meta name="description" content="Auto-Mic in MDstage liest den Rollentext und öffnet automatisch genau die Mikrofone, deren Rollen gerade sprechen. So funktioniert es und so richtest du es ein.">
+<link rel="canonical" href="https://mdstage.org/blog/auto-mic.html">
+<meta name="robots" content="index, follow">
+<meta name="theme-color" content="#282c34">
+<link rel="icon" type="image/png" href="../assets/icon.png">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="MDstage">
+<meta property="og:locale" content="de_DE">
+<meta property="og:locale:alternate" content="en_US">
+<meta property="og:url" content="https://mdstage.org/blog/auto-mic.html">
+<meta property="og:title" content="Mikrofone automatisch öffnen und schließen">
+<meta property="og:description" content="Auto-Mic liest den Rollentext und öffnet automatisch genau die Mikrofone, deren Rollen gerade sprechen.">
+<meta property="og:image" content="https://mdstage.org/assets/MDstage-open-graph.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Mikrofone automatisch öffnen und schließen">
+<meta name="twitter:description" content="Auto-Mic liest den Rollentext und öffnet automatisch genau die Mikrofone, deren Rollen gerade sprechen.">
+<meta name="twitter:image" content="https://mdstage.org/assets/MDstage-open-graph.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "Mikrofone automatisch öffnen und schließen",
+  "description": "Auto-Mic in MDstage liest den Rollentext und öffnet automatisch genau die Mikrofone, deren Rollen gerade sprechen.",
+  "datePublished": "2026-06-21",
+  "dateModified": "2026-06-21",
+  "inLanguage": "de",
+  "author": { "@type": "Person", "name": "Julius B. Müller" },
+  "publisher": { "@type": "Person", "name": "Julius B. Müller" },
+  "image": "https://mdstage.org/assets/MDstage-open-graph.png",
+  "mainEntityOfPage": "https://mdstage.org/blog/auto-mic.html"
+}
+</script>
+<link rel="stylesheet" href="blog.css">
+</head>
+<body>
+
+<nav>
+  <a href="../index.html" class="nav-logo">
+    <img src="../assets/icon.png" width="24" height="24" alt="MDstage" style="border-radius:5px;flex-shrink:0">
+    MDstage
+  </a>
+  <div class="nav-links">
+    <a href="../index.html#concept" data-de="Konzept" data-en="Concept">Konzept</a>
+    <a href="../index.html#features" data-de="Features" data-en="Features">Features</a>
+    <a href="../index.html#download" data-de="Download" data-en="Download">Download</a>
+    <a href="../index.html#faq" data-de="FAQ" data-en="FAQ">FAQ</a>
+    <a href="index.html" class="active" data-de="Blog" data-en="Blog">Blog</a>
+    <a href="../about.html" data-de="Über" data-en="About">Über</a>
+  </div>
+  <div class="nav-right">
+    <a href="../preview/" class="nav-try">
+      <span data-de="Im Browser testen" data-en="Try in browser">Im Browser testen</span>
+    </a>
+    <a href="../index.html#download" class="nav-cta" data-de="Herunterladen" data-en="Download">Herunterladen</a>
+    <div class="lang-toggle">
+      <button class="lang-btn active" onclick="setLang('de')">DE</button>
+      <button class="lang-btn"        onclick="setLang('en')">EN</button>
+    </div>
+  </div>
+</nav>
+
+<article class="article">
+  <p class="crumb"><a href="index.html" data-de="← Blog" data-en="← Blog">← Blog</a> &nbsp;·&nbsp; <span class="tag b" data-de="Mikrofone" data-en="Microphones">Mikrofone</span></p>
+
+  <h1 data-de="Mikrofone automatisch öffnen und schließen" data-en="Open and close microphones automatically">Mikrofone automatisch öffnen und schließen</h1>
+
+  <p class="lead" data-de="Wer am Mischpult Mikrofone von Hand auf- und zudreht, hat in einer dialogreichen Szene alle Hände voll zu tun – und ein offenes Mikro zur falschen Zeit hört man sofort. Die Auto-Mic-Funktion von MDstage nimmt dir diese Arbeit ab: Sie liest den Rollentext und öffnet automatisch genau die Mikrofone, deren Rollen gerade sprechen." data-en="Opening and closing microphones by hand on the mixer keeps you busy in a dialogue-heavy scene – and an open mic at the wrong moment is heard immediately. MDstage's Auto-Mic feature takes this off your plate: it reads the script and automatically opens exactly the microphones whose roles are currently speaking.">
+    Wer am Mischpult Mikrofone von Hand auf- und zudreht, hat in einer dialogreichen Szene alle Hände voll zu tun – und ein offenes Mikro zur falschen Zeit hört man sofort. Die Auto-Mic-Funktion von MDstage nimmt dir diese Arbeit ab: Sie liest den Rollentext und öffnet automatisch genau die Mikrofone, deren Rollen gerade sprechen.
+  </p>
+
+  <h2 data-de="Die Idee dahinter" data-en="The idea behind it">Die Idee dahinter</h2>
+  <p data-de="In MDstage sind Rollen und Mikrofonkanäle einmalig miteinander verknüpft: Jede sprechende Rolle bekommt einen Mikrofonkanal zugewiesen. Ab da muss niemand mehr überlegen, welcher Kanal zu welcher Figur gehört – das weiß die Software." data-en="In MDstage, roles and microphone channels are linked once: every speaking role is assigned a microphone channel. From then on, nobody has to remember which channel belongs to which character – the software knows.">
+    In MDstage sind Rollen und Mikrofonkanäle einmalig miteinander verknüpft: Jede sprechende Rolle bekommt einen Mikrofonkanal zugewiesen. Ab da muss niemand mehr überlegen, welcher Kanal zu welcher Figur gehört – das weiß die Software.
+  </p>
+  <p data-de="Ein Auto-Mic-Cue markiert dann den Beginn eines Abschnitts. MDstage schaut sich den Rollentext von diesem Cue bis zum nächsten Auto-Mic-Cue an, sammelt alle Rollen, die in diesem Abschnitt sprechen, und öffnet genau deren Mikrofone. Alle anderen bleiben zu." data-en="An Auto-Mic cue then marks the start of a section. MDstage looks at the script from that cue up to the next Auto-Mic cue, collects every role that speaks in that section, and opens exactly their microphones. Everything else stays muted.">
+    Ein Auto-Mic-Cue markiert dann den Beginn eines Abschnitts. MDstage schaut sich den Rollentext von diesem Cue bis zum nächsten Auto-Mic-Cue an, sammelt alle Rollen, die in diesem Abschnitt sprechen, und öffnet genau deren Mikrofone. Alle anderen bleiben zu.
+  </p>
+
+  <h2 data-de="So richtest du Auto-Mic ein" data-en="How to set up Auto-Mic">So richtest du Auto-Mic ein</h2>
+  <p data-de="In drei Schritten ist es eingerichtet:" data-en="It's set up in three steps:">In drei Schritten ist es eingerichtet:</p>
+  <ul>
+    <li data-de="<strong>Rollen mit Mikrofonen verknüpfen.</strong> Lege fest, welche Rolle auf welchem Mischpult-Kanal liegt. Das machst du einmal pro Produktion." data-en="<strong>Link roles to microphones.</strong> Define which role is on which mixer channel. You do this once per production."><strong>Rollen mit Mikrofonen verknüpfen.</strong> Lege fest, welche Rolle auf welchem Mischpult-Kanal liegt. Das machst du einmal pro Produktion.</li>
+    <li data-de="<strong>Auto-Mic-Cues setzen.</strong> Platziere an jedem Szenen- oder Stimmungswechsel einen Cue und aktiviere darin den Auto-Mic-Button. Ab dort gilt die neue Mikrofon-Konstellation." data-en="<strong>Place Auto-Mic cues.</strong> Put a cue at every scene or mood change and enable the Auto-Mic button in it. The new microphone set applies from there."><strong>Auto-Mic-Cues setzen.</strong> Platziere an jedem Szenen- oder Stimmungswechsel einen Cue und aktiviere darin den Auto-Mic-Button. Ab dort gilt die neue Mikrofon-Konstellation.</li>
+    <li data-de="<strong>Fertig.</strong> MDstage berechnet die offenen Kanäle selbst. Bei jedem Go für einen Auto-Mic-Cue werden genau die passenden Mikrofone geöffnet und der Rest stummgeschaltet." data-en="<strong>Done.</strong> MDstage computes the open channels itself. On every Go for an Auto-Mic cue, exactly the right microphones are opened and the rest are muted."><strong>Fertig.</strong> MDstage berechnet die offenen Kanäle selbst. Bei jedem Go für einen Auto-Mic-Cue werden genau die passenden Mikrofone geöffnet und der Rest stummgeschaltet.</li>
+  </ul>
+  <p data-de="Der letzte Auto-Mic-Cue – der, nach dem keiner mehr folgt – schaltet alle Mikrofone stumm. So endet jeder Akt sauber, ohne dass ein offener Kanal übrig bleibt." data-en="The last Auto-Mic cue – the one with no further Auto-Mic cue after it – mutes all microphones. That way every act ends cleanly, with no open channel left over.">
+    Der letzte Auto-Mic-Cue – der, nach dem keiner mehr folgt – schaltet alle Mikrofone stumm. So endet jeder Akt sauber, ohne dass ein offener Kanal übrig bleibt.
+  </p>
+
+  <h2 data-de="Der eigentliche Clou: Es bleibt immer aktuell" data-en="The real benefit: it always stays up to date">Der eigentliche Clou: Es bleibt immer aktuell</h2>
+  <p data-de="Die Liste der offenen Mikrofone wird nicht von Hand gepflegt, sondern bei Bedarf direkt aus dem Rollentext berechnet. Das hat in der Praxis eine große Wirkung: Wird in der Probe eine Zeile gestrichen oder eine Rolle bekommt einen zusätzlichen Einwurf, passt sich die Mikrofon-Konstellation automatisch an. Niemand muss daran denken, eine separate Mikrofonliste nachzuziehen." data-en="The list of open microphones isn't maintained by hand – it's computed from the script whenever needed. In practice this has a big effect: if a line is cut in rehearsal or a role gains an extra interjection, the microphone set adjusts automatically. Nobody has to remember to update a separate mic list.">
+    Die Liste der offenen Mikrofone wird nicht von Hand gepflegt, sondern bei Bedarf direkt aus dem Rollentext berechnet. Das hat in der Praxis eine große Wirkung: Wird in der Probe eine Zeile gestrichen oder eine Rolle bekommt einen zusätzlichen Einwurf, passt sich die Mikrofon-Konstellation automatisch an. Niemand muss daran denken, eine separate Mikrofonliste nachzuziehen.
+  </p>
+  <p data-de="Gerade in der heißen Phase kurz vor der Premiere, wenn täglich Text geändert wird, spart das nicht nur Zeit, sondern verhindert Fehler – etwa ein Mikro, das nach einer Strichfassung versehentlich offen geblieben wäre." data-en="Especially in the hectic phase before opening night, when text changes daily, this not only saves time but prevents mistakes – such as a mic that would have stayed open by accident after a cut.">
+    Gerade in der heißen Phase kurz vor der Premiere, wenn täglich Text geändert wird, spart das nicht nur Zeit, sondern verhindert Fehler – etwa ein Mikro, das nach einer Strichfassung versehentlich offen geblieben wäre.
+  </p>
+
+  <h2 data-de="Zusammen mit dem Mischpult" data-en="Together with the mixer">Zusammen mit dem Mischpult</h2>
+  <p data-de="Das Schalten selbst übernimmt das Mischpult. MDstage spricht zum Beispiel ein Digitalmischpult über MIDI an und mutet oder entmutet die jeweiligen Kanäle. Du behältst also dein gewohntes Pult und deine Mixe – MDstage übernimmt nur das Timing der Mute-Schaltungen, taktgenau zum Cue." data-en="The actual switching is handled by the mixer. MDstage talks to a digital mixer over MIDI, for example, and mutes or unmutes the respective channels. You keep your familiar console and your mixes – MDstage only takes over the timing of the mute switches, exactly on the cue.">
+    Das Schalten selbst übernimmt das Mischpult. MDstage spricht zum Beispiel ein Digitalmischpult über MIDI an und mutet oder entmutet die jeweiligen Kanäle. Du behältst also dein gewohntes Pult und deine Mixe – MDstage übernimmt nur das Timing der Mute-Schaltungen, taktgenau zum Cue.
+  </p>
+  <p data-de="Und falls doch einmal ein Go zu früh kommt: Mit Back werden auch die Mikrofone wieder in den Zustand des vorherigen Cues zurückversetzt." data-en="And if a Go does come too early: Back also returns the microphones to the state of the previous cue.">
+    Und falls doch einmal ein Go zu früh kommt: Mit Back werden auch die Mikrofone wieder in den Zustand des vorherigen Cues zurückversetzt.
+  </p>
+
+  <div class="cta-box">
+    <h3 data-de="Selbst ausprobieren?" data-en="Want to try it yourself?">Selbst ausprobieren?</h3>
+    <div class="cta-actions">
+      <a class="btn-primary" href="../index.html#download" data-de="MDstage herunterladen" data-en="Download MDstage">MDstage herunterladen</a>
+      <a class="btn-preview" href="../preview/" data-de="Im Browser testen" data-en="Try in browser">Im Browser testen</a>
+    </div>
+  </div>
+
+  <div class="post-more">
+    <p class="section-label" data-de="Weiterlesen" data-en="Read more">Weiterlesen</p>
+    <ul>
+      <li><a href="buehnentechnik-steuern.html" data-de="Bühnentechnik zentral aus dem Inspizientenbuch steuern" data-en="Control stage tech centrally from the prompt book">Bühnentechnik zentral aus dem Inspizientenbuch steuern</a></li>
+      <li><a href="show-automatisieren.html" data-de="Eine Show durchautomatisieren – nur noch Go drücken" data-en="Fully automate a show – just press Go">Eine Show durchautomatisieren – nur noch Go drücken</a></li>
+    </ul>
+  </div>
+</article>
+
+<footer>
+  <p>
+    <span data-de="Für die Bühne gemacht." data-en="Made for the stage.">Für die Bühne gemacht.</span>
+    &nbsp;·&nbsp; <a href="mailto:hello@mdstage.org">hello@mdstage.org</a>
+    &nbsp;·&nbsp; <a href="https://github.com/julius-b-mueller/MDstage" target="_blank" rel="noopener">GitHub</a>
+    &nbsp;·&nbsp; <a href="index.html" data-de="Blog" data-en="Blog">Blog</a>
+    &nbsp;·&nbsp; <a href="../about.html" data-de="Über" data-en="About">Über</a>
+    &nbsp;·&nbsp; <a href="../impressum.html" data-de="Impressum &amp; Datenschutz" data-en="Legal &amp; Privacy">Impressum &amp; Datenschutz</a>
+  </p>
+</footer>
+
+<div id="cookie-banner">
+  <p class="cookie-text">
+    <span id="cb-text-de"><strong>Keine Cookies. Keine Daten. Kein Tracking.</strong> MDstage funkt nicht nach Hause – ich habe also keinen blassen Schimmer, ob du es verwendest. Falls du möchtest: Schreib mir kurz, wo du es einsetzt. Ich freue mich immer über Rückmeldung.</span>
+    <span id="cb-text-en" style="display:none"><strong>No cookies. No data. No tracking.</strong> MDstage doesn't phone home – so I have absolutely no idea if you're using it. If you'd like to let me know: drop me a quick email about where you're using it. I always appreciate hearing from people.</span>
+  </p>
+  <div class="cookie-actions">
+    <a class="cookie-mail" id="cb-mail" href="mailto:hello@mdstage.org?subject=MDstage%20Einsatz" data-subject-de="MDstage Einsatz" data-subject-en="Using MDstage">
+      <span id="cb-mail-de">✉ Mail schreiben</span>
+      <span id="cb-mail-en" style="display:none">✉ Send a mail</span>
+    </a>
+    <button class="cookie-close" id="cb-close">
+      <span id="cb-close-de">Schließen</span>
+      <span id="cb-close-en" style="display:none">Close</span>
+    </button>
+  </div>
+</div>
+
+<script src="blog.js"></script>
+</body>
+</html>
