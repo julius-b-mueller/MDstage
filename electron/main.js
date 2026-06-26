@@ -77,6 +77,7 @@ const defaultSettings = {
     x32Protocol: 'x32midi', x32OscHost: '192.168.1.1', x32OscPort: 10023,
     editorApp: null,
     midiGoNote: null, midiBackNote: null, midiLiveDevice: null,
+    cueTriggerInput: 'off', cueTriggerMidiDevice: null, cueTriggerOscPort: 8001, cueTriggerOscHost: '127.0.0.1',
     oscEnabled: false, oscHost: '127.0.0.1', oscPort: 8000,
     monitorEnabled: false,
     appLanguage: 'de',
@@ -102,6 +103,59 @@ function encodeOscMessage(address, args = []) {
         else                          parts.push(encodeFloat(a))
     }
     return Buffer.concat(parts)
+}
+
+// Reads the OSC address (the leading null-terminated, 4-byte-padded ASCII string)
+// from an incoming UDP packet. Returns the address string, or null if it doesn't
+// look like an OSC message. Arguments are ignored — cue triggering is path-based.
+function decodeOscAddress(buf) {
+    if (!Buffer.isBuffer(buf) || buf.length < 4 || buf[0] !== 0x2f /* '/' */) return null
+    const end = buf.indexOf(0)
+    if (end < 1) return null
+    const addr = buf.toString('ascii', 0, end)
+    return /^\/[\x20-\x7e]*$/.test(addr) ? addr : null
+}
+
+// ── Cue-Trigger OSC receiver ──────────────────────────────────────────────────
+// Listens on a UDP port for `/cue/<ch>/<note>` messages and forwards the matched
+// note to the renderer, which fires the cue whose trigger_note equals {ch, note}.
+let cueOscSocket = null
+
+function stopCueOscServer() {
+    if (cueOscSocket) {
+        try { cueOscSocket.close() } catch {}
+        cueOscSocket = null
+    }
+}
+
+function setupCueOscServer(settings) {
+    stopCueOscServer()
+    if (settings.cueTriggerInput !== 'osc') return
+    const port = parseInt(settings.cueTriggerOscPort, 10)
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return
+    // Bind address: '127.0.0.1' (local only, default) or '0.0.0.0' (whole network).
+    // Restrict to the two known-safe values to avoid binding anywhere unexpected.
+    const host = settings.cueTriggerOscHost === '0.0.0.0' ? '0.0.0.0' : '127.0.0.1'
+
+    const sock = dgram.createSocket('udp4')
+    sock.on('error', (e) => { console.error('Cue-OSC server error:', e.message); stopCueOscServer() })
+    sock.on('message', (msg) => {
+        const addr = decodeOscAddress(msg)
+        if (!addr) return
+        const m = /^\/cue\/(\d+)\/(\d+)$/.exec(addr)
+        if (!m) return
+        const ch   = parseInt(m[1], 10)
+        const note = parseInt(m[2], 10)
+        if (ch < 1 || ch > 16 || note < 0 || note > 127) return
+        if (mainWindow)
+            mainWindow.webContents.executeJavaScript(`window.__cueTrigger && window.__cueTrigger(${ch}, ${note})`).catch(() => {})
+    })
+    try {
+        sock.bind(port, host)
+        cueOscSocket = sock
+    } catch (e) {
+        console.error('Cue-OSC bind failed:', e.message)
+    }
 }
 
 // Keys that are personal/per-user and must not be stored in the shared markdown file
@@ -812,6 +866,7 @@ app.whenReady().then(async () => {
 
     ipcMain.handle('save-settings', (_, settings) => {
         persistSettings(settings)
+        setupCueOscServer(settings)
         BrowserWindow.getAllWindows().forEach(win => {
             win.webContents.send('settings-changed', settings)
         })
@@ -1043,6 +1098,7 @@ app.whenReady().then(async () => {
 
     Menu.setApplicationMenu(buildMenu())
     createMainWindow()
+    setupCueOscServer(loadSettings())
 
     if (showWelcome) {
         mainWindow.webContents.once('did-finish-load', () => {

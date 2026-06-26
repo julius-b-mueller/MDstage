@@ -442,6 +442,17 @@ Two configurable MIDI notes for **Go** and **Back** — received on all MIDI inp
 
 ---
 
+## Remote Cue Triggering (MIDI / OSC Input)
+
+External software (lighting desks, QLab, Companion, …) can fire individual cues by their own note. Configure the input under **Settings → Live → Remote Cue Trigger**:
+
+- **MIDI** — choose a dedicated input device. An incoming **Note On** whose channel/note equals a cue's `trigger_note` fires that cue (independent of the current position).
+- **OSC** — listens on a UDP port for the path **`/cue/<ch>/<note>`** (no arguments). For example `/cue/1/42` fires the cue with `trigger_note: {ch: 1, note: 42}`.
+
+In both cases the cue is triggered exactly as if it were the next Go on that cue. Because every cue has a `trigger_note` (assigned automatically if not set), no extra per-cue configuration is needed.
+
+---
+
 ## OSC Output
 
 OSC (Open Sound Control) output devices are part of the same unified device list as MIDI devices (see [MIDI](#midi)). Each OSC device has a name, host, port, and optional colour.

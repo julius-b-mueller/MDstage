@@ -48,6 +48,7 @@ const _settings = {
     midiTCDevice: null,
     editorApp: null, editorCustomCmd: '',
     midiGoNote: null, midiBackNote: null, midiLiveDevice: null,
+    cueTriggerInput: 'off', cueTriggerMidiDevice: null, cueTriggerOscPort: 8001, cueTriggerOscHost: '127.0.0.1',
     monitorEnabled: false,
     appLanguage: 'de',
 }

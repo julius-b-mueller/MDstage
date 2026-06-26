@@ -525,6 +525,7 @@ let micDeviceOutputs = []   // MIDI output per micDevices entry (null = not conn
 let midiTrigger = null
 let midiTCOutputs = []
 let midiLiveDevice = null
+let cueTriggerMidiDevice = null   // dedicated MIDI input that fires cues by their trigger_note
 let mtc = null
 let oscEnabled = false
 let oscHost = '127.0.0.1'
@@ -9255,6 +9256,23 @@ function broadcastLiveState() {
     })
 }
 
+// Fire the cue whose trigger_note matches `tn` ({ch, note}), regardless of the
+// current position — used by remote triggering via MIDI/OSC input. No-op if no
+// cue carries that note. Mirrors the armed-cue branch of goAction().
+function triggerCueByNote(tn) {
+    const idx = findTriggerByNote(tn)
+    if (idx == null) return
+    setArmedCue(null)
+    selectedVariant = null
+    currentCue = idx
+    markTriggers(idx)
+    scrollToTrigger(idx)
+    triggerAction(idx)
+}
+
+// Entry point invoked from the main process for OSC cue triggering (/cue/<ch>/<note>).
+window.__cueTrigger = (ch, note) => triggerCueByNote({ ch, note })
+
 function goAction() {
     if (armedCue !== null) {
         const cue = armedCue
@@ -10237,6 +10255,7 @@ function refreshMidiDevices(settings) {
     midiGoNote    = settings.midiGoNote    || null
     midiBackNote  = settings.midiBackNote  || null
     midiLiveDevice = settings.midiLiveDevice || null
+    cueTriggerMidiDevice = settings.cueTriggerInput === 'midi' ? (settings.cueTriggerMidiDevice || null) : null
     if (!midiAccess) return
     // Determine which device names should receive TC.
     // Per-device sendTimecode flag takes precedence; fall back to legacy midiTCDevice setting.
@@ -10278,7 +10297,11 @@ const MIDI_BACK_LONG_PRESS_MS = 600
 function setupMidiInputListeners() {
     if (!midiAccess) return
     for (const input of midiAccess.inputs.values()) {
-        if (midiLiveDevice && input.name !== midiLiveDevice) {
+        // A device may serve as the Live (Go/Back) input, the dedicated cue-trigger
+        // input, or both. An empty midiLiveDevice means "all devices" for Go/Back.
+        const isLive    = !midiLiveDevice || input.name === midiLiveDevice
+        const isTrigger = cueTriggerMidiDevice && input.name === cueTriggerMidiDevice
+        if (!isLive && !isTrigger) {
             input.onmidimessage = null
             continue
         }
@@ -10288,6 +10311,11 @@ function setupMidiInputListeners() {
             const ch       = (status & 0x0f) + 1
             const isNoteOn  = type === 0x90 && velocity > 0
             const isNoteOff = type === 0x80 || (type === 0x90 && velocity === 0)
+
+            // Cue triggering: an incoming Note-On fires the cue whose trigger_note matches.
+            if (isTrigger && isNoteOn) triggerCueByNote({ ch, note })
+
+            if (!isLive) return
 
             if (midiGoNote && ch === midiGoNote.ch && note === midiGoNote.note && isNoteOn)
                 goAction()

@@ -242,6 +242,31 @@
                 </div>
             </div>
 
+            <div class="section-title" data-i18n="s.cuetrig">Cue-Fernsteuerung</div>
+            <div class="field">
+                <label data-i18n="s.cuetrig.help">Cues von externer Software auslösen — die Note des Cues (trigger_note) löst ihn aus.</label>
+                <select id="cuetrig-input">
+                    <option value="off"  data-i18n="s.cuetrig.off">— aus —</option>
+                    <option value="midi" data-i18n="s.cuetrig.midi">MIDI</option>
+                    <option value="osc"  data-i18n="s.cuetrig.osc">OSC</option>
+                </select>
+            </div>
+            <div class="field" id="cuetrig-midi-panel" style="display:none">
+                <label data-i18n="s.cuetrig.device">Eingangs-Gerät</label>
+                <select id="cuetrig-midi-device">
+                    <option value="" data-i18n="s.midi.live.device.all">— alle Geräte —</option>
+                </select>
+            </div>
+            <div class="field" id="cuetrig-osc-panel" style="display:none">
+                <label data-i18n="s.cuetrig.port">OSC-Port (Pfad: /cue/&lt;ch&gt;/&lt;note&gt;)</label>
+                <input type="number" id="cuetrig-osc-port" min="1" max="65535" value="8001">
+                <label data-i18n="s.cuetrig.host">Erreichbar von</label>
+                <select id="cuetrig-osc-host">
+                    <option value="127.0.0.1" data-i18n="s.cuetrig.host.local">Nur dieser Computer (127.0.0.1)</option>
+                    <option value="0.0.0.0"   data-i18n="s.cuetrig.host.lan">Gesamtes Netzwerk (0.0.0.0)</option>
+                </select>
+            </div>
+
             <div class="section-title" data-i18n="s.emlight">Notfall-Licht</div>
             <div class="field">
                 <label style="display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf">

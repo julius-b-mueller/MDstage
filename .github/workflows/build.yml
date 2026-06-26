@@ -53,12 +53,17 @@ jobs:
       - run: npm ci
       - run: npx webpack --mode production
       - run: node scripts/build-version.js
-      - run: npx electron-builder --linux AppImage deb rpm --publish never
+      - run: npx electron-builder --linux AppImage deb rpm --x64 --arm64 --publish never
       - run: |
           mkdir -p artifacts
-          find release -name "*.AppImage" -exec cp {} artifacts/MDstage-linux-x64.AppImage \; 2>/dev/null || true
-          find release -name "*.deb"      -exec cp {} artifacts/MDstage-linux-x64.deb \;      2>/dev/null || true
-          find release -name "*.rpm"      -exec cp {} artifacts/MDstage-linux-x64.rpm \;      2>/dev/null || true
+          # x64
+          find release -name "*.AppImage" ! -name "*arm64*" -exec cp {} artifacts/MDstage-linux-x64.AppImage \; 2>/dev/null || true
+          find release -name "*amd64.deb"                    -exec cp {} artifacts/MDstage-linux-x64.deb \;      2>/dev/null || true
+          find release -name "*x86_64.rpm"                   -exec cp {} artifacts/MDstage-linux-x64.rpm \;      2>/dev/null || true
+          # arm64 (Raspberry Pi 64-bit)
+          find release -name "*arm64.AppImage"               -exec cp {} artifacts/MDstage-linux-arm64.AppImage \; 2>/dev/null || true
+          find release -name "*arm64.deb"                    -exec cp {} artifacts/MDstage-linux-arm64.deb \;      2>/dev/null || true
+          find release -name "*aarch64.rpm"                  -exec cp {} artifacts/MDstage-linux-arm64.rpm \;      2>/dev/null || true
           ls -lh artifacts/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

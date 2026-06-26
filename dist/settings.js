@@ -689,6 +689,22 @@
             // ── MIDI ──────────────────────────────────────────────────
             const liveInputSelect = document.getElementById('live-input-device')
 
+            // ── Cue-Fernsteuerung ─────────────────────────────────────
+            const cueTrigInputSel = document.getElementById('cuetrig-input')
+            const cueTrigMidiSel  = document.getElementById('cuetrig-midi-device')
+            const cueTrigOscPort  = document.getElementById('cuetrig-osc-port')
+            const cueTrigOscHost  = document.getElementById('cuetrig-osc-host')
+            cueTrigInputSel.value = settings.cueTriggerInput || 'off'
+            cueTrigOscPort.value  = settings.cueTriggerOscPort ?? 8001
+            cueTrigOscHost.value  = settings.cueTriggerOscHost || '127.0.0.1'
+            function updateCueTrigPanels() {
+                const v = cueTrigInputSel.value
+                document.getElementById('cuetrig-midi-panel').style.display = v === 'midi' ? '' : 'none'
+                document.getElementById('cuetrig-osc-panel').style.display  = v === 'osc'  ? '' : 'none'
+            }
+            cueTrigInputSel.addEventListener('change', updateCueTrigPanels)
+            updateCueTrigPanels()
+
             const emLightDeviceSel = document.getElementById('em-light-device')
             const emLightMidiPanel = document.getElementById('em-light-midi-panel')
             const emLightOscPanel  = document.getElementById('em-light-osc-panel')
@@ -711,9 +727,14 @@
                     const o = new Option(input.name, input.name)
                     if (settings.midiLiveDevice === input.name) o.selected = true
                     liveInputSelect.appendChild(o)
+                    const o2 = new Option(input.name, input.name)
+                    if (settings.cueTriggerMidiDevice === input.name) o2.selected = true
+                    cueTrigMidiSel.appendChild(o2)
                 }
                 if (settings.midiLiveDevice && !midiInNames.has(settings.midiLiveDevice))
                     insertWarning(liveInputSelect, `Gerät „${settings.midiLiveDevice}" nicht gefunden – Eingang deaktiviert`)
+                if (settings.cueTriggerMidiDevice && !midiInNames.has(settings.cueTriggerMidiDevice))
+                    insertWarning(cueTrigMidiSel, `Gerät „${settings.cueTriggerMidiDevice}" nicht gefunden – Trigger deaktiviert`)
 
                 // Build output device cards now that we have the MIDI output list
                 _midiOutNames = midiOutNames
@@ -1013,6 +1034,10 @@
                     midiGoNote,
                     midiBackNote,
                     midiLiveDevice: liveInputSelect.value || null,
+                    cueTriggerInput:       cueTrigInputSel.value || 'off',
+                    cueTriggerMidiDevice:  cueTrigMidiSel.value || null,
+                    cueTriggerOscPort:     parseInt(cueTrigOscPort.value, 10) || 8001,
+                    cueTriggerOscHost:     cueTrigOscHost.value === '0.0.0.0' ? '0.0.0.0' : '127.0.0.1',
                     appLanguage: langSel.value || 'de',
                     emLightEnabled:         emLightEnabledEl.checked,
                     emLightDevice:          _elColonI >= 0 ? _elDevVal.slice(_elColonI + 1) : null,
