@@ -4,6 +4,7 @@ app.setName('MDstage')
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
+const crypto = require('crypto')
 const yaml = require('js-yaml')
 const dgram = require('dgram')
 const {
@@ -21,6 +22,17 @@ function escapeRegex(s) {
 }
 
 let scriptMdPath = null
+
+// Script-trust state: frozen per file-open so auto-writes (note assignment, formatting) can't
+// retroactively flip an externally-changed file to "trusted" before the user decides.
+let trustChecked = false
+let scriptTrusted = false
+
+function setScriptPath(p) {
+    scriptMdPath = p
+    trustChecked = false
+    scriptTrusted = false
+}
 
 function getLastFilePath() {
     try {
@@ -63,7 +75,7 @@ async function openFile() {
         properties: ['openFile'],
     })
     if (!result.canceled && result.filePaths.length > 0) {
-        scriptMdPath = result.filePaths[0]
+        setScriptPath(result.filePaths[0])
         saveLastFilePath(scriptMdPath)
         addToRecentFiles(scriptMdPath)
         mainWindow.reload()
@@ -72,14 +84,17 @@ async function openFile() {
 const hostname = os.hostname().split('.')[0]
 
 const defaultSettings = {
-    mainAudioDevice: null, mainChannelL: 0, mainChannelR: 1, monitorChannelL: 2, monitorChannelR: 3,
+    mainAudioDevice: null,
+    // Virtual channel NAMES (shared, config top-level). The name→physical-output routing is
+    // machine-local (userData `virtualChannelOutputs`); unrouted defaults positionally.
+    virtualChannels: [{ name: 'L' }, { name: 'R' }],
     midiX32Device: null, midiTriggerDevice: null, midiTCDevice: null,
     x32Protocol: 'x32midi', x32OscHost: '192.168.1.1', x32OscPort: 10023,
     editorApp: null,
     midiGoNote: null, midiBackNote: null, midiLiveDevice: null,
     cueTriggerInput: 'off', cueTriggerMidiDevice: null, cueTriggerOscPort: 8001, cueTriggerOscHost: '127.0.0.1',
     oscEnabled: false, oscHost: '127.0.0.1', oscPort: 8000,
-    monitorEnabled: false,
+    outputsBlocked: false,
     appLanguage: 'de',
     mainTextZoom: 1, liveTextZoom: 1,
 }
@@ -158,8 +173,12 @@ function setupCueOscServer(settings) {
     }
 }
 
-// Keys that are personal/per-user and must not be stored in the shared markdown file
-const EDITOR_PREF_KEYS = ['editorApp', 'dismissedUpdatePopup', 'mainTextZoom', 'liveTextZoom']
+// Show-level settings live at config top-level in the shared .md and travel with the file:
+// the virtual-channel NAMES and the output-device DECLARATIONS (name/type/colour). Everything
+// else — output-device addresses, mixer connection, audio device, MIDI/OSC bindings, emergency-
+// light wiring, language and view prefs, and the HTTP trust state — is machine/rig-local and
+// lives in userData (editor-prefs.json). A shared show file therefore carries no venue config.
+const SHARED_CONFIG_KEYS = ['outputDevices', 'virtualChannels']
 
 let suppressVersionBump = false
 
@@ -171,11 +190,34 @@ function loadEditorPrefs() {
     try { return JSON.parse(fs.readFileSync(editorPrefsPath(), 'utf8')) } catch { return {} }
 }
 
-function saveEditorPrefs(settings) {
+// Merge a patch into editor-prefs.json. Untouched keys (e.g. the internally-managed
+// scriptTrustHashes) are preserved.
+function saveEditorPrefs(patch) {
     const existing = loadEditorPrefs()
-    const prefs = { ...existing }
-    for (const k of EDITOR_PREF_KEYS) if (k in settings) prefs[k] = settings[k]
-    fs.writeFileSync(editorPrefsPath(), JSON.stringify(prefs, null, 2), 'utf8')
+    fs.writeFileSync(editorPrefsPath(), JSON.stringify({ ...existing, ...patch }, null, 2), 'utf8')
+}
+
+function hashContent(s) {
+    return crypto.createHash('sha256').update(s, 'utf8').digest('hex')
+}
+
+// Record the current on-disk script hash as "last written by this machine" so the trust
+// warning is skipped next time — unless the file is later changed on another machine.
+function recordScriptHash() {
+    if (!scriptMdPath) return
+    try {
+        const prefs = loadEditorPrefs()
+        prefs.scriptTrustHashes = { ...(prefs.scriptTrustHashes || {}), [scriptMdPath]: hashContent(fs.readFileSync(scriptMdPath, 'utf8')) }
+        fs.writeFileSync(editorPrefsPath(), JSON.stringify(prefs, null, 2), 'utf8')
+    } catch (e) { console.warn('recordScriptHash:', e.message) }
+}
+
+// Freeze, once per file-open, whether the incoming file matches the hash this machine last
+// stored for it. Done before any auto-write so reformatting can't auto-trust a foreign file.
+function evaluateScriptTrust(content) {
+    trustChecked = true
+    const known = loadEditorPrefs().scriptTrustHashes?.[scriptMdPath]
+    scriptTrusted = !!known && known === hashContent(content)
 }
 
 // When launched from Applications/Spotlight the shell PATH is minimal — augment with common install locations
@@ -206,43 +248,42 @@ function readConfigBlock() {
 }
 
 function loadSettings() {
-    let base = { ...defaultSettings }
+    // Machine-local prefs are the base; show-level keys from the shared .md override them.
+    let base = { ...defaultSettings, ...loadEditorPrefs() }
     try {
         const { parsed } = readConfigBlock()
-        const mdSettings = parsed?.config?.settings?.[hostname]
-        if (mdSettings != null) {
-            // Strip editor keys — never trust them from a shared file
-            const safe = { ...mdSettings }
-            for (const k of EDITOR_PREF_KEYS) delete safe[k]
-            base = { ...base, ...safe }
+        for (const k of SHARED_CONFIG_KEYS) {
+            const v = parsed?.config?.[k]
+            if (v !== undefined) base[k] = v
         }
     } catch (e) {
         console.warn('settings read error:', e.message)
     }
-    return { ...base, ...loadEditorPrefs() }
+    return base
 }
 
 function persistSettings(settings) {
-    // Always persist editor prefs to userData, independent of the markdown file
-    saveEditorPrefs(settings)
+    // Machine-local: everything except the shared show-level keys → userData
+    const localPrefs = { ...settings }
+    for (const k of SHARED_CONFIG_KEYS) delete localPrefs[k]
+    saveEditorPrefs(localPrefs)
 
     const { text, parsed, block } = readConfigBlock()
     if (!parsed?.config) return
 
-    // Strip editor keys before writing to the shared markdown file
-    const mdSettings = { ...settings }
-    for (const k of EDITOR_PREF_KEYS) delete mdSettings[k]
+    // Show-level keys → config top-level (shared, travels with the file)
+    if (Array.isArray(settings.outputDevices)) parsed.config.outputDevices = settings.outputDevices
+    if (Array.isArray(settings.virtualChannels))
+        parsed.config.virtualChannels = settings.virtualChannels.map(v => ({ name: v.name }))
 
-    let existing = parsed.config.settings ?? {}
-    // Migrate from legacy flat format to hostname-keyed on first save
-    if ('mainAudioDevice' in existing) existing = {}
-    existing[hostname] = mdSettings
-    parsed.config.settings = existing
+    // The per-hostname settings map is obsolete — machine config now lives entirely in userData.
+    delete parsed.config.settings
     if (!suppressVersionBump) parsed.config.app_version = app.getVersion()
 
     const newYaml = yaml.dump(parsed, { indent: 4, lineWidth: -1, noRefs: true })
     const newBlock = '```yaml\n' + newYaml.trimEnd() + '\n```'
     fs.writeFileSync(scriptMdPath, text.replace(block, () => newBlock), 'utf8')
+    recordScriptHash()   // this machine just wrote the file → trusted
 }
 
 let mainWindow = null
@@ -397,7 +438,8 @@ async function createNewFile() {
         const name = path.basename(result.filePath, '.md')
         const template = `# ${name}\n\n\`\`\`yaml\nconfig:\n    app_version: "${app.getVersion()}"\n    roles: {}\n\`\`\`\n`
         fs.writeFileSync(result.filePath, template, 'utf8')
-        scriptMdPath = result.filePath
+        setScriptPath(result.filePath)
+        recordScriptHash()   // brand-new file authored on this machine → trusted
         saveLastFilePath(scriptMdPath)
         addToRecentFiles(scriptMdPath)
         mainWindow.reload()
@@ -446,7 +488,7 @@ function buildMenu() {
             ...recentFiles.map(filePath => ({
                 label: path.basename(filePath),
                 click: () => {
-                    scriptMdPath = filePath
+                    setScriptPath(filePath)
                     saveLastFilePath(scriptMdPath)
                     addToRecentFiles(filePath)
                     if (mainWindow) mainWindow.reload()
@@ -831,7 +873,7 @@ app.whenReady().then(async () => {
     if (process.platform === 'darwin') {
         app.dock.setIcon(path.join(__dirname, '../dist/assets/icon.png'))
     }
-    scriptMdPath = getLastFilePath()
+    setScriptPath(getLastFilePath())
     if (scriptMdPath && !fs.existsSync(scriptMdPath)) scriptMdPath = null
     const showWelcome = !scriptMdPath
     // Ensure the startup file appears in recent files (migration from last-file.json)
@@ -841,6 +883,40 @@ app.whenReady().then(async () => {
             saveRecentFiles([scriptMdPath, ...rf].slice(0, 5))
         }
     }
+
+    ipcMain.handle('send-http', async (_, { url, method = 'GET', path = '', body = null, contentType = null } = {}) => {
+        try {
+            // Defense in depth: enforce the output gate here, not only in the renderer. A show
+            // file can drive arbitrary HTTP on the LAN, so refuse when outputs are blocked or the
+            // script isn't trusted — even if a renderer bug routed around the in-page guard.
+            if (loadEditorPrefs().outputsBlocked) return { ok: false, error: 'outputs blocked' }
+            if (!scriptTrusted) return { ok: false, error: 'untrusted script' }
+            if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return { ok: false, error: 'invalid url' }
+            const full = url.replace(/\/+$/, '') + (path ? (path.startsWith('/') ? path : '/' + path) : '')
+            const target = new URL(full)
+            const lib = target.protocol === 'https:' ? require('https') : require('http')
+            const m = String(method || 'GET').toUpperCase()
+            const headers = {}
+            let payload = null
+            if (body != null && body !== '' && m !== 'GET' && m !== 'HEAD') {
+                payload = Buffer.from(String(body), 'utf8')
+                headers['Content-Type'] = contentType || 'text/plain'
+                headers['Content-Length'] = payload.length
+            }
+            return await new Promise((resolve) => {
+                const req = lib.request(target, { method: m, headers, timeout: 5000 }, (res) => {
+                    res.resume()   // drain
+                    resolve({ ok: res.statusCode >= 200 && res.statusCode < 400, status: res.statusCode })
+                })
+                req.on('error', (e) => resolve({ ok: false, error: e.message }))
+                req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'timeout' }) })
+                if (payload) req.write(payload)
+                req.end()
+            })
+        } catch (e) {
+            return { ok: false, error: e.message }
+        }
+    })
 
     ipcMain.on('send-osc', (_, { path: oscPath, args = [], host = '127.0.0.1', port = 8000 }) => {
         const safePort = parseInt(port, 10)
@@ -873,8 +949,8 @@ app.whenReady().then(async () => {
         Menu.setApplicationMenu(buildMenu())
     })
 
-    // Lightweight device-local pref save — writes only editor-prefs.json (EDITOR_PREF_KEYS),
-    // never the markdown file. Used for zoom so it doesn't trigger a script rewrite/rerender.
+    // Lightweight device-local pref save — writes only editor-prefs.json, never the markdown
+    // file. Used for zoom so it doesn't trigger a script rewrite/rerender.
     ipcMain.handle('save-editor-prefs', (_, partial) => {
         if (partial && typeof partial === 'object') saveEditorPrefs(partial)
     })
@@ -883,7 +959,10 @@ app.whenReady().then(async () => {
 
     ipcMain.handle('get-script-md', () => {
         if (!scriptMdPath) return '```yaml\nconfig:\n    roles: {}\n```\n'
-        return fs.readFileSync(scriptMdPath, 'utf8')
+        const content = fs.readFileSync(scriptMdPath, 'utf8')
+        // First read after a file-open: freeze the trust decision before any auto-write.
+        if (!trustChecked) evaluateScriptTrust(content)
+        return content
     })
 
     ipcMain.handle('write-script-md', (_, content) => {
@@ -906,16 +985,27 @@ app.whenReady().then(async () => {
             }
         }
         fs.writeFileSync(scriptMdPath, toWrite, 'utf8')
+        recordScriptHash()
     })
 
     ipcMain.handle('get-script-path', () => scriptMdPath ?? '')
+
+    // Script trust: renderer asks whether the just-opened file is trusted (last change was on
+    // this machine); ack records the current content as trusted after the user allows it.
+    ipcMain.handle('get-script-trusted', () => scriptTrusted)
+    ipcMain.handle('ack-script-trust', () => {
+        recordScriptHash()
+        scriptTrusted = true
+        trustChecked = true
+        return true
+    })
     ipcMain.handle('open-file-welcome', async () => {
         const result = await dialog.showOpenDialog(mainWindow, {
             filters: [{ name: 'Markdown', extensions: ['md'] }],
             properties: ['openFile'],
         })
         if (!result.canceled && result.filePaths.length > 0) {
-            scriptMdPath = result.filePaths[0]
+            setScriptPath(result.filePaths[0])
             saveLastFilePath(scriptMdPath)
             addToRecentFiles(scriptMdPath)
             mainWindow.reload()
@@ -1033,6 +1123,7 @@ app.whenReady().then(async () => {
             }
         }
         fs.writeFileSync(scriptMdPath, text, 'utf8')
+        recordScriptHash()
         BrowserWindow.getAllWindows().forEach(win => win.webContents.send('script-changed'))
     })
 
@@ -1053,6 +1144,7 @@ app.whenReady().then(async () => {
         const newYaml = yaml.dump(parsed, { indent: 4, lineWidth: -1, noRefs: true })
         const newBlock = '```yaml\n' + newYaml.trimEnd() + '\n```'
         fs.writeFileSync(scriptMdPath, text.replace(block, () => newBlock), 'utf8')
+        recordScriptHash()
         BrowserWindow.getAllWindows().forEach(win => win.webContents.send('script-changed'))
     })
 

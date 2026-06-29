@@ -85,4 +85,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getEmLightNote: () => ipcRenderer.invoke('get-em-light-note'),
     saveEmLightNote: (note) => ipcRenderer.invoke('save-em-light-note', note),
     sendOsc: (data) => ipcRenderer.send('send-osc', data),
+    sendHttp: (data) => ipcRenderer.invoke('send-http', data),
+    getScriptTrusted: () => ipcRenderer.invoke('get-script-trusted'),
+    ackScriptTrust: () => ipcRenderer.invoke('ack-script-trust'),
 })

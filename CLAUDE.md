@@ -36,3 +36,9 @@ Also: `package.json` und das JSON-LD in `website/index.html` immer **beide** von
 ## Git Tags
 
 Tags immer **ohne** `v`-Präfix setzen: `1.11.6`, nicht `v1.11.6`.
+
+## Backward-Compatibility
+
+Backward-Compatibility ist **nicht** wichtig. Alte Datei-/Settings-Formate müssen nicht
+weiter gelesen werden; Migrationspfade sind nicht erforderlich. Im Zweifel das alte Modell
+sauber ersetzen statt parallel zu pflegen.

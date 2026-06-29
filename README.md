@@ -67,28 +67,21 @@ config:
             color: purple
             roles: [Anna, Ben]
     emLightNote: {ch: 1, note: 64}
+    # Virtual-channel NAMES are show-level (shared, config top-level). Cue audio patches
+    # reference them by name; the name→physical-output routing is machine-local.
+    virtualChannels:
+        - {name: L}
+        - {name: R}
     settings:
         MacBookPro:
-            mainAudioDevice: "Blackmagic Audio"
-            monitorAudioDevice: "Built-in Output"
-            monitorOffsetMs: 0
+            # Output-device DECLARATIONS only — name/type/colour. Addresses (MIDI port /
+            # OSC host:port / HTTP url), the mixer connection, audio device and vChannel
+            # routing are NOT stored here; they live in each machine's local prefs.
             outputDevices:
-                - name: "Licht"
-                  type: midi
-                  device: "IAC Driver"
-                  color: yellow
-                  sendTriggerNote: true
-                - name: "QLab"
-                  type: osc
-                  enabled: true
-                  host: 192.168.1.5
-                  port: 53000
-                  sendTriggerNote: false
-            midiX32Device: "X32"
-            midiTCDevice: "IAC Driver"
+                - {name: "Licht", type: midi, color: yellow}
+                - {name: "QLab",  type: osc}
             midiGoNote: {ch: 1, note: 36}
             midiBackNote: {ch: 1, note: 37}
-            editorApp: vscode
 ```
 
 ---
@@ -162,6 +155,7 @@ Every YAML block (except the config block) is a **cue** (trigger). It is display
 | `osc: "/path/{ch}"` | OSC message path sent when the cue fires (legacy — see [OSC Output](#osc-output)). |
 | `cue_midi: [...]` | List of MIDI messages sent when the cue fires (see [MIDI](#midi)). |
 | `cue_osc: [...]` | List of OSC messages sent when the cue fires (see [OSC Output](#osc-output)). |
+| `cue_http: [...]` | List of HTTP requests sent when the cue fires (see [HTTP Output](#http-output)). |
 | `sibling: true` | Marks the cue as a **variant** of the preceding cue (alternative audio/mic assignment). |
 
 ### Audio Object (Extended Format)
@@ -176,8 +170,34 @@ music:
     fadeout: 2.0
     fading_point: 96.0
     loop: true
-    monitor: loop-monitor.wav
 ```
+
+`start`, `end`, `fadein`, `fadeout`, `fading_point` and `loop` define the shared transport
+for the whole cue.
+
+#### Multiple audios + channel patching
+
+A cue can contain **several audios** that play together as one multichannel audio. Each
+audio's channel count is detected automatically; every channel is patched **by name** to one
+or more **virtual channels** (defined in settings). Use the `audios` list instead of `file`:
+
+```yaml
+music:
+    loop: true
+    audios:
+        - file: band.wav            # 4-channel file
+          patch: [Saal L, Saal R, Sub L, Sub R]
+        - file: click.wav
+          mono: true                # downmix to mono (e.g. stereo click track)
+          volume: 0.7               # per-audio level
+          patch: [Click]            # an entry may be a list of names for fan-out
+```
+
+- `patch` has one entry per source channel (one entry when `mono: true`). An entry is a
+  virtual-channel name or a list of names (fan-out to several vChannels).
+- A virtual channel may be driven by only one audio per cue. With only the default two
+  vChannels (L/R), a cue uses a single audio patched implicitly to L/R and the patch UI is
+  hidden.
 
 ### Editing a Cue
 
@@ -236,20 +256,33 @@ Every cue with an audio file shows an interactive waveform:
 
 All changes (volume, start/end, fades, loop) are saved automatically to the YAML file.
 
-### Dual Output (Main + Monitor)
+### Virtual Channels & Routing
 
-Two different audio output devices can be configured in settings:
+Audio routing uses a **virtual channel** abstraction between cue audio and the soundcard:
 
-- **Main audio** – goes to the front-of-house system
-- **Monitor audio** – goes to the stage manager monitor (e.g. headphones)
+1. In **Settings → Audio Output** you define how many virtual channels you want and name them
+   (e.g. `Saal L`, `Saal R`, `Sub`, `Click`) — independent of how many channels the selected
+   device actually has. The default is two channels, `L` and `R`.
+2. Each virtual channel is routed **1:1** to a physical output of the device. No physical
+   output can be shared by two virtual channels.
+3. In a cue, every channel of every audio is patched **by name** to one or more virtual
+   channels (see [Multiple audios + channel patching](#multiple-audios--channel-patching)).
 
-If no separate monitor device is set, no monitor signal is generated. A per-cue `monitor: file.wav` can specify a separate monitor mix file (e.g. with a click track). A configurable **Monitor Offset** (ms) shifts the monitor signal in time relative to the main signal.
+This decouples the production design (named buses) from the venue's soundcard: re-routing for
+a different interface only touches the virtual-channel routing, not the cues.
 
-### Audio Channel Routing
+**Names are shared, routing is local.** The virtual-channel **names** are stored in the show file
+(so cue patches resolve everywhere); the **name→physical-output mapping** is stored locally on
+each machine (unrouted channels default positionally: 1st→output 1, 2nd→output 2, …). The audio
+output device and the mixer-remote connection are likewise machine-local — the same show file
+runs at different venues without editing.
 
-When using a multi-channel audio interface or an **Aggregate Device** (macOS Audio MIDI Setup), the settings panel shows a routing table. Each audio source (main L/R, monitor L/R) can be freely assigned to any output channel of the device. This allows sending main and monitor to separate physical outputs without needing two separate audio interfaces.
+To test a virtual channel's physical output directly from the settings window, use the **▶**
+button in its row.
 
-To test each channel assignment directly from the settings window, use the **▶** button in the test column.
+If a cue references a virtual channel that no longer exists (e.g. it was removed in settings),
+a warning is shown in the red banner when the file is opened. **Clean up YAML** removes audios
+that are routed to non-existent virtual channels.
 
 ### Note: Use WAV for Seamless Transitions
 
@@ -332,7 +365,18 @@ music_seq:
       fading_point: 30.0
 ```
 
-Each `music_seq` entry supports the same fields as the `music` object: `file`, `volume`, `start`, `end`, `fadein`, `fadeout`, `fading_point`, `monitor`.
+Each `music_seq` entry supports `file`, `volume`, `start`, `end`, `fadein`, `fadeout`, `fading_point`. With more than 2 virtual channels, a slot can also hold its own `audios` list (multiple files patched to virtual channels), exactly like the primary `music` block:
+
+```yaml
+music_seq:
+    - audios:
+        - file: loop-b-band.wav
+          patch: [Saal L, Saal R, Sub L, Sub R]
+        - file: loop-b-click.wav
+          mono: true
+          patch: [Click]
+      fading_point: 28.0
+```
 
 **Behavior:**
 - Files play in order: A → B → C → A → B → …
@@ -351,21 +395,34 @@ The **S/L/F** button on a trigger opens a menu to configure `chain_end` or `loop
 
 ## Auto-Cue
 
-A cue can be triggered automatically when audio playback reaches a specific position.
+A cue can be triggered automatically by another cue (the *source*), either when the source's
+audio reaches a position, or after a delay once the source fires.
 
 **Setup:**
-1. Scrub the source cue's audio to the desired position and pause
-2. Click **⏱ Auto-Cue** on the target cue
-3. Click the source cue (pick mode)
+1. Click **⏱ Auto-Cue** on the target cue
+2. Click the source cue (pick mode — any cue with a trigger note can be picked)
+3. **If the source audio is paused at a position**, that position is used (audio-position
+   auto-cue). **Otherwise** a dialog asks for a delay in seconds (delay auto-cue).
 
-The auto-cue marker appears on the source cue's waveform. **Shift+Drag** repositions the marker. **Shift+Click** on the Auto-Cue button deletes the auto-cue.
+For audio-position auto-cues the marker appears on the source cue's waveform; **Shift+Drag**
+repositions it. For delay auto-cues, a progress bar fills on the target's Auto-Cue button while
+counting down. **Shift+Click** on the Auto-Cue button deletes the auto-cue.
+
+A delay auto-cue fires its target the configured number of seconds after the source cue is
+triggered. Stopping the source or pressing Back before it fires cancels the pending auto-cue.
 
 ### YAML Representation
 
 ```yaml
-auto_trigger:
+auto_trigger:                     # audio-position form
     trigger_note: {ch: 1, note: 3}
     at: 45.2
+```
+
+```yaml
+auto_trigger:                     # delay form (fires 8 s after the source cue)
+    trigger_note: {ch: 1, note: 3}
+    delay: 8.0
 ```
 
 ---
@@ -487,6 +544,27 @@ The `{ch}` placeholder in the path is replaced with the role's channel number (t
 
 ---
 
+## HTTP Output
+
+HTTP output devices are part of the same unified device list as MIDI and OSC devices (see [MIDI](#midi)). Each HTTP device has a name, a **base URL** (e.g. `http://192.168.1.50:8080`), and an optional colour. HTTP is available for per-cue messages only (not for the mixer remote control).
+
+### Per-Cue HTTP Messages (`cue_http`)
+
+A cue can send HTTP requests to any configured HTTP device when it fires:
+
+```yaml
+cue_http:
+    - device: "Lichtpult"
+      method: POST            # GET | POST | PUT | DELETE | PATCH
+      path: /api/scene/3
+      body: '{"fade": 2.0}'
+      content_type: application/json
+```
+
+The request is sent to `<device base URL>` + `path`. `body` and `content_type` are optional (a body is only sent for non-GET/HEAD methods). If `device` is omitted, the first HTTP device is used. Like `cue_midi`/`cue_osc`, HTTP messages participate in Back's device state restoration (see [Cue History (Back)](#cue-history-back)).
+
+---
+
 ## Timecode (MTC)
 
 The app generates MIDI Timecode (25 fps) synchronised to audio playback.
@@ -553,9 +631,9 @@ To avoid a comb-filter/phaser artefact when the Devamp shares material with the 
 
 **Behavior after a jump:** Back always follows the actual trigger history, not the script order. If a cue was reached by jumping (clicking it directly), Back returns to the cue that was active before the jump — not to the cue that precedes it in the script.
 
-**Device state restoration (MIDI/OSC):** When Back pops a cue, the app checks which output devices that cue addressed via `cue_midi` / `cue_osc`. For each such device, it scans backwards through the remaining cue history and resends the message set from the most recent earlier cue that addressed the same device. If no earlier cue addressed that device, nothing is sent — the device is left in its current state.
+**Device state restoration (MIDI/OSC/HTTP):** When Back pops a cue, the app checks which output devices that cue addressed via `cue_midi` / `cue_osc` / `cue_http`. For each such device, it scans backwards through the remaining cue history and resends the message set from the most recent earlier cue that addressed the same device. If no earlier cue addressed that device, nothing is sent — the device is left in its current state.
 
-The old `osc:` field and `trigger_note` are **not** part of this restoration mechanism. Only `cue_midi` and `cue_osc` messages participate in device state tracking.
+The old `osc:` field and `trigger_note` are **not** part of this restoration mechanism. Only `cue_midi`, `cue_osc` and `cue_http` messages participate in device state tracking.
 
 ---
 
@@ -625,23 +703,32 @@ Mic assignments are shown as grouped chips by default. The display can be switch
 
 | Setting | Description |
 |---|---|
-| Audio device | Output device for main and monitor signal |
-| Monitor Mix enabled | Activates the monitor mix |
-| Channel routing table | Assigns main L/R and monitor L/R to specific output channels of the device (for multi-channel interfaces or Aggregate Devices) |
-| Monitor Offset (ms) | Time offset of the monitor signal relative to the main signal |
+| Audio device | Output device for all virtual channels |
+| Virtual channels | Define and name the virtual channels; route each 1:1 to a physical output of the device |
 
-### Output Devices (MIDI + OSC)
+### Output Devices (MIDI + OSC + HTTP)
 
-The unified device list manages all MIDI and OSC output devices. Each device has:
+The unified device list manages all MIDI, OSC and HTTP output devices. Each device has:
 
 | Property | Description |
 |---|---|
-| Name | Display name — used in `cue_midi` / `cue_osc` to target the device |
-| Type | `midi` or `osc` |
+| Name | Display name — used in `cue_midi` / `cue_osc` / `cue_http` to target the device |
+| Type | `midi`, `osc` or `http` |
 | Colour | Optional colour shown as a badge on trigger panels |
-| Send trigger note | If enabled, this MIDI device receives the cue's `trigger_note` when a cue fires |
+| Send trigger note | MIDI/OSC only: if enabled, receives the cue's `trigger_note` when a cue fires |
 | Device (MIDI) | System MIDI port name |
 | Host / Port (OSC) | UDP target address |
+| Base URL (HTTP) | Base URL for `cue_http` requests, e.g. `http://192.168.1.50:8080` |
+
+**Addresses are machine-local.** Only the device **name, type and colour** are stored in the
+shared `script.md`. The actual endpoint (MIDI port / OSC host:port / HTTP base URL) and the
+enabled / send-trigger-note / send-timecode flags are stored **locally on each machine**
+(`editor-prefs.json` in the app's user-data folder), keyed by device name. This keeps addresses
+(incl. internal IPs) out of shared show files and lets the same show run at different venues —
+each operator configures the local addresses once. When you open a show whose device is not
+configured on this machine, a banner notes it and its cues stay silent until you set the address
+in settings. A cue message whose device name isn't configured locally sends **nothing** (no
+fallback to a default device).
 
 ### MIDI Input
 

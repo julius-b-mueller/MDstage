@@ -38,29 +38,26 @@
 
             const mainAudioSel = document.getElementById('main-audio-device')
 
-            // ── Channel routing matrix ───────────────────────────────────
-            const routingBody    = document.getElementById('routing-body')
-            const monitorCheckbox = document.getElementById('monitor-enable')
-            const monitorHint    = document.getElementById('monitor-hint')
-            const monThL         = document.getElementById('mon-th-l')
-            const monThR         = document.getElementById('mon-th-r')
-            const COLS = [
-                { key: 'mainL', sel: 'sel-main', isMon: false },
-                { key: 'mainR', sel: 'sel-main', isMon: false },
-                { key: 'monL',  sel: 'sel-mon',  isMon: true  },
-                { key: 'monR',  sel: 'sel-mon',  isMon: true  },
-            ]
-            const routing = {
-                mainL: settings.mainChannelL    ?? 0,
-                mainR: settings.mainChannelR    ?? 1,
-                monL:  settings.monitorChannelL ?? -1,
-                monR:  settings.monitorChannelR ?? -1,
-            }
-            let monitorEnabled = settings.monitorEnabled ?? false
+            // ── Virtual channels + 1:1 routing to physical outputs ───────
+            const vchBody   = document.getElementById('vch-body')
+            const vchAddBtn = document.getElementById('vch-add-btn')
+            const vchWarn   = document.getElementById('vch-warn')
+            // vChannel NAMES come from the show (.md); the name→output routing is machine-local.
+            // Unrouted channels default positionally (i-th → output i).
+            const _vchOutputs = (settings.virtualChannelOutputs && typeof settings.virtualChannelOutputs === 'object') ? settings.virtualChannelOutputs : {}
+            let vChannels = ((Array.isArray(settings.virtualChannels) && settings.virtualChannels.length)
+                ? settings.virtualChannels
+                : [{ name: 'L' }, { name: 'R' }])
+                .map((v, i) => {
+                    const name = String((typeof v === 'string' ? v : v?.name) ?? '').trim()
+                    const out = _vchOutputs[name]
+                    return { name, output: Number.isInteger(out) && out >= 0 ? out : i }
+                })
 
             let currentNumCh = 2
 
             async function playTestTone(ch, btn) {
+                if (ch == null || ch < 0) return
                 const label = mainAudioSel.value
                 const devId = deviceIdMap.get(label) || ''
                 btn.classList.add('playing')
@@ -91,78 +88,92 @@
                 }
             }
 
-            function buildRoutingTable(numCh) {
-                currentNumCh = numCh
-                const monPossible = numCh >= 4
+            function checkVchNames() {
+                const names = vChannels.map(v => v.name.trim()).filter(Boolean)
+                const dup = names.length !== new Set(names).size
+                vchWarn.style.display = dup ? 'block' : 'none'
+                if (dup) vchWarn.textContent = window.t('s.vch.dupName')
+                return !dup
+            }
 
-                // Clamp out-of-range assignments to -1 (unassigned)
-                for (const col of COLS) if (routing[col.key] >= numCh) routing[col.key] = -1
+            function buildVchTable() {
+                vchBody.innerHTML = ''
+                // Clamp outputs that exceed the device's channel count
+                for (const v of vChannels) if (v.output != null && v.output >= currentNumCh) v.output = null
+                const usedOutputs = new Set(vChannels.map(v => v.output).filter(o => o != null))
 
-                // Monitor checkbox state
-                if (!monPossible) {
-                    monitorEnabled = false
-                    monitorCheckbox.checked = false
-                    monitorCheckbox.disabled = true
-                } else {
-                    monitorCheckbox.disabled = false
-                    monitorCheckbox.checked = monitorEnabled
-                }
-                monThL.style.opacity = monitorEnabled ? '' : '0.35'
-                monThR.style.opacity = monitorEnabled ? '' : '0.35'
-                monitorHint.textContent = !monPossible
-                    ? window.t('s.monitor.need4')
-                    : !monitorEnabled ? window.t('s.monitor.disabled')
-                    : ''
-
-                routingBody.innerHTML = ''
-                for (let ch = 0; ch < numCh; ch++) {
+                vChannels.forEach((vc, i) => {
                     const tr = document.createElement('tr')
-                    const labelTd = document.createElement('td')
-                    labelTd.textContent = `Kanal ${ch + 1}`
-                    tr.appendChild(labelTd)
-                    for (const col of COLS) {
-                        const disabled = col.isMon && !monitorEnabled
-                        const isSelected = !disabled && routing[col.key] === ch
-                        const td = document.createElement('td')
-                        td.className = 'route-cell' + (isSelected ? ' ' + col.sel : '') + (disabled ? ' disabled' : '')
-                        td.dataset.col = col.key
-                        if (!disabled) {
-                            td.addEventListener('click', () => {
-                                if (routing[col.key] === ch) {
-                                    routing[col.key] = -1
-                                } else {
-                                    // Exclusive: each channel can only hold one role
-                                    for (const c of COLS) {
-                                        if (!c.isMon || monitorEnabled) {
-                                            if (routing[c.key] === ch) routing[c.key] = -1
-                                        }
-                                    }
-                                    routing[col.key] = ch
-                                }
-                                buildRoutingTable(numCh)
-                            })
-                        }
-                        tr.appendChild(td)
+
+                    // Name
+                    const nameTd = document.createElement('td')
+                    const nameIn = document.createElement('input')
+                    nameIn.type = 'text'; nameIn.value = vc.name
+                    nameIn.style.cssText = 'width:100%;box-sizing:border-box'
+                    nameIn.addEventListener('input', () => { vc.name = nameIn.value; checkVchNames() })
+                    nameTd.appendChild(nameIn)
+                    tr.appendChild(nameTd)
+
+                    // Physical output (1:1, exclusive)
+                    const outTd = document.createElement('td')
+                    const sel = document.createElement('select')
+                    sel.style.cssText = 'width:100%;box-sizing:border-box'
+                    const none = new Option(window.t('s.vch.none'), '')
+                    if (vc.output == null) none.selected = true
+                    sel.appendChild(none)
+                    for (let ch = 0; ch < currentNumCh; ch++) {
+                        const o = new Option(`${window.t('s.vch.outCh')} ${ch + 1}`, String(ch))
+                        if (vc.output === ch) o.selected = true
+                        else if (usedOutputs.has(ch)) o.disabled = true
+                        sel.appendChild(o)
                     }
+                    sel.addEventListener('change', () => {
+                        vc.output = sel.value === '' ? null : parseInt(sel.value, 10)
+                        buildVchTable()
+                    })
+                    outTd.appendChild(sel)
+                    tr.appendChild(outTd)
+
+                    // Test tone
                     const testTd = document.createElement('td')
                     testTd.className = 'col-test'
                     const testBtn = document.createElement('button')
-                    testBtn.className = 'test-btn'
-                    testBtn.textContent = '▶'
-                    testBtn.title = `Kanal ${ch + 1} testen`
-                    testBtn.addEventListener('click', () => playTestTone(ch, testBtn))
+                    testBtn.className = 'test-btn'; testBtn.textContent = '▶'
+                    testBtn.title = window.t('s.vch.test')
+                    testBtn.disabled = vc.output == null
+                    testBtn.addEventListener('click', () => playTestTone(vc.output, testBtn))
                     testTd.appendChild(testBtn)
                     tr.appendChild(testTd)
-                    routingBody.appendChild(tr)
-                }
+
+                    // Remove
+                    const rmTd = document.createElement('td')
+                    rmTd.className = 'col-test'
+                    const rmBtn = document.createElement('button')
+                    rmBtn.className = 'test-btn'; rmBtn.textContent = '✕'
+                    rmBtn.title = window.t('s.vch.remove')
+                    rmBtn.disabled = vChannels.length <= 1
+                    rmBtn.addEventListener('click', () => {
+                        vChannels.splice(i, 1)
+                        checkVchNames(); buildVchTable()
+                    })
+                    rmTd.appendChild(rmBtn)
+                    tr.appendChild(rmTd)
+
+                    vchBody.appendChild(tr)
+                })
+                checkVchNames()
             }
 
-            monitorCheckbox.addEventListener('change', () => {
-                monitorEnabled = monitorCheckbox.checked
-                buildRoutingTable(currentNumCh)
+            vchAddBtn.addEventListener('click', () => {
+                // Default new vChannel to the first free physical output
+                const used = new Set(vChannels.map(v => v.output).filter(o => o != null))
+                let out = null
+                for (let ch = 0; ch < currentNumCh; ch++) if (!used.has(ch)) { out = ch; break }
+                vChannels.push({ name: `Kanal ${vChannels.length + 1}`, output: out })
+                buildVchTable()
             })
 
-            async function refreshRoutingTable() {
+            async function refreshVchTable() {
                 const label = mainAudioSel.value
                 const devId = deviceIdMap.get(label) || ''
                 let numCh = 2
@@ -174,18 +185,19 @@
                         tmpCtx.close()
                     } catch {}
                 }
-                buildRoutingTable(Math.max(2, Math.min(numCh, 16)))
+                currentNumCh = Math.max(2, Math.min(numCh, 64))
+                buildVchTable()
             }
 
-            mainAudioSel.addEventListener('change', refreshRoutingTable)
+            mainAudioSel.addEventListener('change', refreshVchTable)
 
-            const getRouting = () => ({
-                mainChannelL:    routing.mainL >= 0 ? routing.mainL : 0,
-                mainChannelR:    routing.mainR >= 0 ? routing.mainR : 1,
-                monitorChannelL: routing.monL >= 0 ? routing.monL : null,
-                monitorChannelR: routing.monR >= 0 ? routing.monR : null,
-                monitorEnabled,
-            })
+            // Names → shared .md (config-level); routing map → machine-local userData.
+            const getVirtualChannelNames = () => vChannels.map(v => ({ name: v.name.trim() })).filter(v => v.name)
+            const getVirtualChannelOutputs = () => {
+                const out = {}
+                for (const v of vChannels) { const n = v.name.trim(); if (n && v.output != null) out[n] = v.output }
+                return out
+            }
 
             function insertWarning(afterEl, message) {
                 const p = document.createElement('p')
@@ -220,7 +232,7 @@
                 insertError('Audio-Geräte nicht verfügbar: ' + e.message)
             }
 
-            await refreshRoutingTable()
+            await refreshVchTable()
 
             // ── Mischpult Fernbedienung (dynamic multi-device) ────────
             const micDevicesList  = document.getElementById('mic-devices-list')
@@ -533,7 +545,7 @@
                 nameInput.value = cfg.name || `Gerät ${idx + 1}`
                 const typeSel = document.createElement('select')
                 typeSel.style.cssText = 'width:auto;background:#383c44;color:#abb2bf;border:1px solid #4b5263;padding:0.3rem 0.5rem;border-radius:4px;font-size:0.9rem;font-family:inherit;cursor:pointer;flex-shrink:0'
-                for (const [v, lbl] of [['midi','MIDI'],['osc','OSC']]) {
+                for (const [v, lbl] of [['midi','MIDI'],['osc','OSC'],['http','HTTP']]) {
                     const o = new Option(lbl, v)
                     if (v === (cfg.type || 'midi')) o.selected = true
                     typeSel.appendChild(o)
@@ -599,11 +611,23 @@
                 }
                 card.appendChild(oscSection)
 
+                // HTTP-specific section (base URL)
+                const httpSection = document.createElement('div')
+                const urlIn = document.createElement('input'); urlIn.type = 'text'
+                urlIn.placeholder = 'http://192.168.1.50:8080'; urlIn.value = cfg.url || ''
+                httpSection.appendChild(mkField('Basis-URL', urlIn))
+                const urlCheck = () => urlIn.classList.toggle('invalid', urlIn.value.trim() !== '' && !/^https?:\/\/.+/i.test(urlIn.value.trim()))
+                urlIn.addEventListener('input', urlCheck); urlCheck()
+                cardValidators.push([urlIn, v => /^https?:\/\/.+/i.test(v.trim())])
+                card.appendChild(httpSection)
+
                 function updateTypeVis() {
-                    const isMidi = typeSel.value === 'midi'
-                    midiSection.style.display = isMidi ? '' : 'none'
-                    oscSection.style.display   = isMidi ? 'none' : ''
-                    tcWrap.style.display = isMidi ? '' : 'none'
+                    const type = typeSel.value
+                    midiSection.style.display = type === 'midi' ? '' : 'none'
+                    oscSection.style.display  = type === 'osc'  ? '' : 'none'
+                    httpSection.style.display = type === 'http' ? '' : 'none'
+                    tcWrap.style.display = type === 'midi' ? '' : 'none'
+                    trigNoteWrap.style.display = type === 'http' ? 'none' : ''
                 }
                 typeSel.addEventListener('change', updateTypeVis)
 
@@ -651,39 +675,28 @@
 
                 function getValues() {
                     const type = typeSel.value
-                    const base = { name: nameInput.value.trim() || nameInput.placeholder, type, enabled: activatedCb.checked, sendTriggerNote: trigNoteCb.checked, sendTimecode: type === 'midi' ? tcCb.checked : false, color: DEVICE_COLORS[colorSel.value] || '' }
+                    const base = { name: nameInput.value.trim() || nameInput.placeholder, type, enabled: activatedCb.checked, sendTriggerNote: type === 'http' ? false : trigNoteCb.checked, sendTimecode: type === 'midi' ? tcCb.checked : false, color: DEVICE_COLORS[colorSel.value] || '' }
                     if (type === 'midi') return { ...base, device: midiSel.value || null }
+                    if (type === 'http') return { ...base, url: urlIn.value.trim() }
                     return { ...base, host: hostIn.value.trim() || '127.0.0.1', port: parseInt(portIn.value) || 8000 }
                 }
                 outputDeviceStates.push({ card, getValues, cardValidators, removeBtn })
                 outputDevicesList.appendChild(card)
             }
 
-            // Migrate or load outputDevices
-            let initialOutputDevices
-            if (settings.outputDevices?.length > 0) {
-                // If saved devices have no sendTimecode yet, migrate from legacy midiTCDevice
-                initialOutputDevices = settings.outputDevices.map(d =>
-                    d.sendTimecode == null && d.type === 'midi' && d.device && settings.midiTCDevice === d.device
-                        ? { ...d, sendTimecode: true }
-                        : d
-                )
-            } else {
-                const midiDevs = settings.midiOutputDevices?.length > 0
-                    ? settings.midiOutputDevices
-                    : settings.midiTriggerDevice
-                        ? [{ name: 'Gerät 1', device: settings.midiTriggerDevice, sendTriggerNote: true }]
-                        : []
-                const oscDevs = settings.oscOutputDevices?.length > 0
-                    ? settings.oscOutputDevices
-                    : settings.oscEnabled
-                        ? [{ name: 'OSC', enabled: true, host: settings.oscHost || '127.0.0.1', port: settings.oscPort ?? 8000, sendTriggerNote: false }]
-                        : []
-                initialOutputDevices = [
-                    ...midiDevs.map(d => ({ sendTriggerNote: true, ...d, type: 'midi' })),
-                    ...oscDevs.map(d => ({ sendTriggerNote: false, ...d, type: 'osc' })),
-                ]
-            }
+            // Build cards from device declarations (.md: name/type/color) merged with the
+            // machine-local endpoints (userData: address + flags, keyed by device name).
+            const _deviceEndpoints = (settings.deviceEndpoints && typeof settings.deviceEndpoints === 'object') ? settings.deviceEndpoints : {}
+            const initialOutputDevices = (settings.outputDevices || []).filter(d => d && d.name).map(d => {
+                const ep = _deviceEndpoints[d.name] || {}
+                return {
+                    name: d.name, type: d.type || 'midi', color: d.color || '',
+                    enabled: ep.enabled ?? true,
+                    sendTriggerNote: !!ep.sendTriggerNote,
+                    sendTimecode: !!ep.sendTimecode,
+                    device: ep.device ?? null, host: ep.host, port: ep.port, url: ep.url,
+                }
+            })
             let _pendingOutputDevices = initialOutputDevices
 
             // ── MIDI ──────────────────────────────────────────────────
@@ -973,6 +986,8 @@
             openLockedEl.checked = settings.openLocked ?? false
             const showMdLinesEl = document.getElementById('show-md-line-numbers')
             showMdLinesEl.checked = settings.showMdLineNumbers ?? false
+            const outputsBlockedEl = document.getElementById('outputs-blocked')
+            outputsBlockedEl.checked = settings.outputsBlocked ?? false
 
             // ── Text-Editor ───────────────────────────────────────────
             const editorAppSel   = document.getElementById('editor-app')
@@ -1022,13 +1037,30 @@
                     if (firstInvalid) { firstInvalid.scrollIntoView({ behavior: 'smooth', block: 'center' }); firstInvalid.focus() }
                     return
                 }
+                if (!checkVchNames()) {
+                    document.getElementById('tab-audio')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                    return
+                }
                 const _elDevVal  = emLightDeviceSel.value
                 const _elColonI  = _elDevVal.indexOf(':')
                 const outDevs = outputDeviceStates.map(s => s.getValues())
+                // Split each device: declaration (name/type/colour → shared .md) vs.
+                // endpoint (address + flags → machine-local userData, keyed by name).
+                const outputDeviceDecls = outDevs.map(d => ({ name: d.name, type: d.type, color: d.color || '' }))
+                const deviceEndpoints = {}
+                for (const d of outDevs) {
+                    const ep = { enabled: d.enabled, sendTriggerNote: d.sendTriggerNote, sendTimecode: d.sendTimecode }
+                    if (d.type === 'midi')      ep.device = d.device ?? null
+                    else if (d.type === 'http') ep.url = d.url || ''
+                    else { ep.host = d.host; ep.port = d.port }
+                    deviceEndpoints[d.name] = ep
+                }
                 await window.electronAPI.saveSettings({
                     mainAudioDevice: mainAudioSel.value || null,
-                    ...getRouting(),
-                    outputDevices: outDevs,
+                    virtualChannels: getVirtualChannelNames(),
+                    virtualChannelOutputs: getVirtualChannelOutputs(),
+                    outputDevices: outputDeviceDecls,
+                    deviceEndpoints,
                     midiTCDevice:     null,
                     editorApp:        editorAppSel.value || null,
                     midiGoNote,
@@ -1062,6 +1094,7 @@
                     micGroupDisplay: micGroupDisplayEl.checked,
                     openLocked: openLockedEl.checked,
                     showMdLineNumbers: showMdLinesEl.checked,
+                    outputsBlocked: outputsBlockedEl.checked,
                 })
                 window.close()
             })

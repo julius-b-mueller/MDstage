@@ -688,7 +688,14 @@ body.show-locked .trigger select   { cursor: not-allowed !important; }
     transition: opacity 0.12s;
 }
 
-/* ── Filtered pick mode (Auto-Cue: only eligible triggers highlight) ── */
+/* ── Highlight pick mode (Auto-Cue: every cue clickable, only positioned sources marked) ── */
+body.trigger-pick-mode-highlight .trigger { cursor: crosshair; }
+body.trigger-pick-mode-highlight .trigger:hover { background-color: #3e422c; }
+body.trigger-pick-mode-highlight .trigger-actions { pointer-events: none; }
+body.trigger-pick-mode-highlight .waveform-wrapper { pointer-events: none; }
+body.trigger-pick-mode-highlight .trigger-pick-eligible { border-left: 5px #e5c07b solid !important; }
+
+/* ── Filtered pick mode (only eligible triggers highlight) ── */
 body.trigger-pick-mode-filtered .trigger-pick-eligible {
     border-left: 5px #e5c07b solid !important;
     cursor: crosshair;
@@ -835,6 +842,33 @@ body.trigger-pick-mode-filtered .waveform-wrapper { pointer-events: none; }
 }
 .seq-entry-card:first-child {
     border-color: rgba(255,255,255,0.08);
+}
+
+/* Per-audio mono toggle + channel patch (cue dialog) */
+.audio-mono-btn.active {
+    background: #61afef;
+    color: #282c34;
+    border-color: #61afef;
+}
+.audio-patch { display: flex; flex-direction: column; gap: 0.25rem; }
+.audio-patch-row { display: flex; align-items: center; gap: 0.3rem; flex-wrap: wrap; }
+.audio-patch-ch {
+    font-size: 0.78rem; color: #7a8394; min-width: 4.2rem;
+}
+.audio-patch-chip {
+    font-size: 0.76rem;
+    padding: 0.1rem 0.5rem;
+    border-radius: 10px;
+    border: 1px solid #4b5263;
+    background: transparent;
+    color: #abb2bf;
+    cursor: pointer;
+}
+.audio-patch-chip:hover { background: #2c313a; }
+.audio-patch-chip.active {
+    background: #98c379;
+    color: #282c34;
+    border-color: #98c379;
 }
 
 .ws-grip {
@@ -1275,6 +1309,24 @@ body.shift-held .insert-hotspot:hover .insert-btn { background: #61afef; }
     cursor: pointer; color: #282c34; line-height: 1.4;
 }
 .parse-error-close:hover { background: rgba(0,0,0,0.3); }
+.outputs-blocked-bar {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    background: #d19a66;
+    color: #282c34;
+    padding: 0.5rem 1rem;
+    z-index: 99998;
+    font-size: 0.85rem;
+    font-weight: 600;
+    display: flex; align-items: center; justify-content: center; gap: 0.85rem;
+    box-shadow: 0 -2px 8px rgba(0,0,0,0.4);
+}
+.outputs-blocked-bar button {
+    background: rgba(0,0,0,0.18); border: none; border-radius: 3px;
+    padding: 0.15rem 0.6rem; font-size: 0.8rem; font-weight: 600;
+    cursor: pointer; color: #282c34; line-height: 1.4;
+}
+.outputs-blocked-bar button:hover { background: rgba(0,0,0,0.32); }
 .parse-error-line-btn {
     background: none; border: none; padding: 0;
     color: #282c34; cursor: pointer;

@@ -25,7 +25,7 @@ const loopGroups = new Map()
 // slots[1..N] = objects returned by buildSeqSlot()
 const triggerSeqSlots = new Map()
 
-// triggerIndex -> { ws, mainAudioEl, monitorFile, musicFile, overlay, getX, autoMarkerState }
+// triggerIndex -> { ws, mainAudioEl, audios, musicFile, overlay, getX, autoMarkerState }
 const triggerAudio = new Map()
 // musicFile → { playbackGain, activeSource, startedAt, startOffset, decodedBuffer, volume }
 // Populated in rerender() so buildTrigger can adopt a running audio graph without interrupting it.
@@ -36,26 +36,28 @@ let _versionBumpAppVersion = null
 
 // Valid top-level keys for each YAML block type — unknown keys are surfaced as parse errors.
 const CONFIG_BLOCK_KEYS = new Set([
-    'roles', 'groups', 'settings', 'app_version', 'emLightNote',
+    'roles', 'groups', 'app_version', 'emLightNote', 'virtualChannels', 'outputDevices',
 ])
 const TRIGGER_BLOCK_KEYS = new Set([
     'sibling', 'trigger_note', 'note', 'auto_mic', 'mic',
     'music', 'music_seq', 'osc', 'osc_arg', 'osc_arg_type',
     'qlcplus', 'projection', 'start_tc',
     'auto_trigger', 'chain_end', 'loop_outro',
-    'cue_midi', 'cue_osc',
+    'cue_midi', 'cue_osc', 'cue_http',
 ])
 
 // Allowed keys for nested objects inside a cue block — used to surface unknown
 // keys at any depth, not just the top level. Keep in sync with the YAML spec in
 // README.md (see [[project-yaml-spec]]).
 const NOTE_REF_KEYS     = new Set(['ch', 'note'])                       // trigger_note / chain_end / loop_outro
-const MUSIC_KEYS        = new Set(['file', 'volume', 'start', 'end', 'fadein', 'fadeout', 'fading_point', 'loop', 'monitor', 'adjust'])
-const MUSIC_SEQ_KEYS    = new Set(['file', 'volume', 'start', 'end', 'fadein', 'fadeout', 'fading_point', 'monitor'])
+const MUSIC_KEYS        = new Set(['file', 'volume', 'start', 'end', 'fadein', 'fadeout', 'fading_point', 'loop', 'audios', 'adjust'])
+const MUSIC_SEQ_KEYS    = new Set(['file', 'volume', 'start', 'end', 'fadein', 'fadeout', 'fading_point', 'audios'])
+const AUDIO_KEYS        = new Set(['file', 'mono', 'volume', 'patch'])
 const ADJUST_KEYS       = new Set(['trigger_note', 'fadeout', 'fadetime', 'volume'])
-const AUTO_TRIGGER_KEYS = new Set(['trigger_note', 'at'])
-const CUE_MIDI_KEYS     = new Set(['device', 'type', 'ch', 'note', 'vel', 'cc', 'value', 'program', 'bytes'])
-const CUE_OSC_KEYS      = new Set(['device', 'path', 'arg', 'arg_type'])
+const AUTO_TRIGGER_KEYS = new Set(['trigger_note', 'at', 'delay'])
+const CUE_MIDI_KEYS     = new Set(['device', 'type', 'ch', 'note', 'vel', 'cc', 'value', 'program', 'bytes', 'comment'])
+const CUE_OSC_KEYS      = new Set(['device', 'path', 'arg', 'arg_type', 'comment'])
+const CUE_HTTP_KEYS     = new Set(['device', 'method', 'path', 'body', 'content_type', 'comment'])
 
 function isPlainObject(v) { return v != null && typeof v === 'object' && !Array.isArray(v) }
 
@@ -97,10 +99,16 @@ function findUnknownYamlKeys(text) {
                 report(parsed.music.adjust, ADJUST_KEYS, 'music.adjust.')
                 report(parsed.music.adjust.trigger_note, NOTE_REF_KEYS, 'music.adjust.trigger_note.')
             }
+            if (Array.isArray(parsed.music.audios))
+                parsed.music.audios.forEach((a, i) => report(a, AUDIO_KEYS, `music.audios[${i}].`))
         }
 
         if (Array.isArray(parsed.music_seq))
-            parsed.music_seq.forEach((item, i) => report(item, MUSIC_SEQ_KEYS, `music_seq[${i}].`))
+            parsed.music_seq.forEach((item, i) => {
+                report(item, MUSIC_SEQ_KEYS, `music_seq[${i}].`)
+                if (isPlainObject(item) && Array.isArray(item.audios))
+                    item.audios.forEach((a, j) => report(a, AUDIO_KEYS, `music_seq[${i}].audios[${j}].`))
+            })
 
         if (isPlainObject(parsed.auto_trigger)) {
             report(parsed.auto_trigger, AUTO_TRIGGER_KEYS, 'auto_trigger.')
@@ -111,6 +119,8 @@ function findUnknownYamlKeys(text) {
             parsed.cue_midi.forEach((item, i) => report(item, CUE_MIDI_KEYS, `cue_midi[${i}].`))
         if (Array.isArray(parsed.cue_osc))
             parsed.cue_osc.forEach((item, i) => report(item, CUE_OSC_KEYS, `cue_osc[${i}].`))
+        if (Array.isArray(parsed.cue_http))
+            parsed.cue_http.forEach((item, i) => report(item, CUE_HTTP_KEYS, `cue_http[${i}].`))
     }
     return results
 }
@@ -163,15 +173,16 @@ const autoTriggerBtns = new Map()
 const autoMicBtns = new Map()
 // sourceIdx → { links, unPlay, unTime, unPause, unFin, markFired, getUnfiredPast }
 const autoTriggerSetup = new Map()
+// targetIdx → { sourceIdx, timeoutId, rafId } for delay-based auto-cues currently counting down
+const delayAutoTimers = new Map()
 // sourceIdx currently being scrubbed (drag on waveform while playing)
 const scrubbingSet = new Set()
 
 let mainAudioDevice    = null
-let mainChannelL    = 0   // 0-indexed device output channels (Main L, Main R, Mon L, Mon R)
-let mainChannelR    = 1
-let monitorChannelL = 2
-let monitorChannelR = 3
-let monitorEnabled  = false
+// Virtual channels: an abstraction layer between cue audio and the soundcard.
+// Defined in settings (count + names, independent of the device), each routed 1:1
+// to a physical output. [{ name, output }] — output = 0-based device channel or null.
+let virtualChannels = [{ name: 'L', output: 0 }, { name: 'R', output: 1 }]
 let audioOutputDevices = []
 let editorApp = null
 let audioBasePath = 'audio/'
@@ -181,6 +192,13 @@ let sharedAudioCtx = null
 // in flight checks its captured generation after the await and skips the assignment if
 // it's stale — prevents a freed buffer from being resurrected and avoids double-decodes.
 let decodeGen = 0
+
+// Device colours come from the shared .md and are interpolated into style.cssText. Only
+// allow hex literals so a hand-edited file can't inject arbitrary CSS (e.g. an exfil beacon
+// via `background:url(...)`). Anything else falls back to no colour.
+function safeColor(c) {
+    return (typeof c === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(c)) ? c : ''
+}
 
 // Prevent path traversal from user-supplied YAML filenames (e.g. ../../etc/passwd).
 // Preserves legitimate subdirectory paths like "subfolder/song.mp3".
@@ -193,11 +211,46 @@ function sanitizeAudioPath(filename) {
         .join('/')
 }
 
+// Build the runtime virtual channels from the show's vChannel NAMES (shared, from the .md)
+// and the machine-local name→physical-output routing (`virtualChannelOutputs`, userData).
+// Unrouted channels default positionally (i-th vChannel → output i), so the default L/R pair
+// maps to outputs 0/1 with no local config needed.
+function buildVirtualChannels(names, outputs) {
+    outputs = (outputs && typeof outputs === 'object') ? outputs : {}
+    const list = (Array.isArray(names) && names.length)
+        ? names
+        : [{ name: 'L' }, { name: 'R' }]
+    return list
+        .map(v => (typeof v === 'string' ? { name: v } : v))
+        .filter(v => v && typeof v.name === 'string' && v.name.trim())
+        .map((v, i) => {
+            const name = String(v.name).trim()
+            const out = outputs[name]
+            return { name, output: Number.isInteger(out) && out >= 0 ? out : i }
+        })
+}
+
+// 0-based physical output channel for a virtual-channel name, or null if the
+// vChannel doesn't exist or isn't routed.
+function physicalOutputFor(vName) {
+    const vc = virtualChannels.find(v => v.name === vName)
+    return vc && vc.output != null ? vc.output : null
+}
+
+// Number of device output channels needed = highest routed physical channel + 1
+// (minimum 2 for stereo). Independent of how many vChannels are defined.
+function requiredChannelCount() {
+    let max = 1
+    for (const v of virtualChannels)
+        if (v.output != null && v.output > max) max = v.output
+    return max + 1
+}
+
 function getAudioCtx() {
     if (!sharedAudioCtx) sharedAudioCtx = new AudioContext()
     if (sharedAudioCtx.state === 'suspended') sharedAudioCtx.resume().catch(() => {})
     const dest   = sharedAudioCtx.destination
-    const needed = Math.max(mainChannelL, mainChannelR, monitorChannelL, monitorChannelR) + 1
+    const needed = requiredChannelCount()
     if (needed > 2 && dest.maxChannelCount >= needed && dest.channelCount < needed) {
         dest.channelCountMode = 'explicit'
         dest.channelCount = needed
@@ -205,39 +258,137 @@ function getAudioCtx() {
     return sharedAudioCtx
 }
 
-// Builds a multichannel AudioBuffer routing main L/R and monitor L/R to the configured
-// device output channels. If no monitor file is given, main audio is duplicated to monitor
-// channels (unless monitor channels equal main channels — then fast path).
-// Shorter buffer is zero-padded with silence automatically (copyToChannel).
-function mergeToMultichannel(mainBuf, monBuf) {
-    const monitorDiffers = monitorChannelL !== mainChannelL || monitorChannelR !== mainChannelR
-    const monSrc  = monBuf ?? mainBuf   // duplicate main when no separate monitor file
-    const totalCh = monitorDiffers
-        ? Math.max(mainChannelL, mainChannelR, monitorChannelL, monitorChannelR) + 1
-        : Math.max(mainChannelL, mainChannelR) + 1
+// Average all channels of a buffer into a single Float32Array (mono downmix).
+function downmixMono(buf) {
+    const len = buf.length
+    const out = new Float32Array(len)
+    const n = buf.numberOfChannels
+    for (let c = 0; c < n; c++) {
+        const data = buf.getChannelData(c)
+        for (let i = 0; i < len; i++) out[i] += data[i]
+    }
+    if (n > 1) for (let i = 0; i < len; i++) out[i] /= n
+    return out
+}
 
-    // Fast path: main on ch1-2, no separate monitor routing
-    if (totalCh <= 2 && mainChannelL === 0 && mainChannelR === 1 && !monitorDiffers) return mainBuf
+// Resolve a cue audio's patch into a per-source-channel array of vChannel-name lists.
+// audio.patch may be: undefined (simple mode → default stereo onto the first vChannels),
+// or an array (entries = name or [names] for fan-out). numCh is the source channel count
+// (1 when mono). Returns Float32-channel-count-aligned arrays of names.
+function resolveAudioPatch(audio, numCh) {
+    if (Array.isArray(audio.patch) && audio.patch.length) {
+        return audio.patch.map(entry => Array.isArray(entry) ? entry.slice() : [entry])
+    }
+    // Simple mode: map channel i → virtualChannels[i]. A mono source fans out to the
+    // first two vChannels (L/R) so it isn't stuck on one side.
+    if (numCh === 1) {
+        const names = virtualChannels.slice(0, 2).map(v => v.name)
+        return [names.length ? names : []]
+    }
+    return Array.from({ length: numCh }, (_, i) =>
+        virtualChannels[i] ? [virtualChannels[i].name] : [])
+}
+
+// Builds one multichannel AudioBuffer for a cue from its decoded audios.
+// `audios`: [{ buf: AudioBuffer, mono: bool, volume: number, patch: [[vName,...], ...] }].
+// Each source channel is copied (scaled by per-audio volume) onto the physical output(s)
+// of its patched vChannel(s). Routing is 1:1 (no summing); shorter audios are zero-padded.
+function buildCueBuffer(audios) {
+    if (!audios || !audios.length) return null
+    const sr     = audios[0].buf.sampleRate
+    const totalCh = requiredChannelCount()
+    let maxLen = 0
+    for (const a of audios) maxLen = Math.max(maxLen, a.buf.length)
 
     const dest = sharedAudioCtx?.destination
-    if (!dest || dest.maxChannelCount < totalCh) {
-        console.info(`[multichannel] Gerät unterstützt < ${totalCh} Kanäle – Standard-Routing`)
-        return mainBuf
+    if (dest && dest.maxChannelCount < totalCh) {
+        console.info(`[multichannel] Gerät unterstützt < ${totalCh} Kanäle – einige vKanäle bleiben stumm`)
     }
-    dest.channelCountMode = 'explicit'
-    dest.channelCount = totalCh
+    if (dest && dest.maxChannelCount >= totalCh && totalCh > 2) {
+        dest.channelCountMode = 'explicit'
+        dest.channelCount = totalCh
+    }
 
-    const maxLen = Math.max(mainBuf.length, monBuf ? monBuf.length : 0)
-    const merged = sharedAudioCtx.createBuffer(totalCh, maxLen, mainBuf.sampleRate)
-    merged.copyToChannel(mainBuf.getChannelData(0), mainChannelL)
-    if (mainBuf.numberOfChannels > 1) merged.copyToChannel(mainBuf.getChannelData(1), mainChannelR)
-    if (monitorDiffers) {
-        merged.copyToChannel(monSrc.getChannelData(0), monitorChannelL)
-        if (monSrc.numberOfChannels > 1) merged.copyToChannel(monSrc.getChannelData(1), monitorChannelR)
-        if (monBuf && Math.abs(mainBuf.duration - monBuf.duration) > 0.1)
-            console.warn(`[multichannel] Längenunterschied: Haupt ${mainBuf.duration.toFixed(2)}s, Monitor ${monBuf.duration.toFixed(2)}s – Monitor mit Stille aufgefüllt`)
+    const out = sharedAudioCtx.createBuffer(totalCh, maxLen, sr)
+    for (const a of audios) {
+        const srcChans = a.mono
+            ? [downmixMono(a.buf)]
+            : Array.from({ length: a.buf.numberOfChannels }, (_, c) => a.buf.getChannelData(c))
+        const vol = a.volume ?? 1
+        const patch = a.patch || resolveAudioPatch(a, srcChans.length)
+        patch.forEach((vNames, chIdx) => {
+            let data = srcChans[chIdx]
+            if (!data) return
+            if (vol !== 1) {
+                const scaled = new Float32Array(data.length)
+                for (let i = 0; i < data.length; i++) scaled[i] = data[i] * vol
+                data = scaled
+            }
+            for (const vName of vNames) {
+                const phys = physicalOutputFor(vName)
+                if (phys == null || phys >= totalCh) continue
+                out.copyToChannel(data, phys)   // 1:1, last write wins (no summing)
+            }
+        })
     }
-    return merged
+    return out
+}
+
+// Decode all of a cue's audio files and merge them into one device buffer.
+// `audios`: [{ file, mono, volume, patch }] (patch = raw YAML patch or undefined).
+async function decodeCueAudios(ctx, audios) {
+    const decoded = []
+    for (const a of audios) {
+        const ab  = await (await fetch(audioBasePath + a.file)).arrayBuffer()
+        const buf = await ctx.decodeAudioData(ab)
+        const numCh = a.mono ? 1 : buf.numberOfChannels
+        if (Array.isArray(a.patch) && a.patch.length !== numCh)
+            console.warn(`[multichannel] ${a.file}: patch hat ${a.patch.length} Einträge, Datei hat ${numCh} Kanäle`)
+        decoded.push({ buf, mono: !!a.mono, volume: a.volume ?? 1, patch: resolveAudioPatch(a, numCh) })
+    }
+    return buildCueBuffer(decoded)
+}
+
+// Cache of audio file → channel count (for the cue patch UI). Decoding is the only
+// reliable way to learn channel count in the browser; results are memoized.
+const channelCountCache = new Map()
+async function detectChannelCount(file) {
+    if (!file) return 0
+    if (channelCountCache.has(file)) return channelCountCache.get(file)
+    try {
+        const ctx = getAudioCtx()
+        const ab  = await (await fetch(audioBasePath + file)).arrayBuffer()
+        const buf = await ctx.decodeAudioData(ab)
+        channelCountCache.set(file, buf.numberOfChannels)
+        return buf.numberOfChannels
+    } catch (e) {
+        console.warn('[patch] channel detection failed for', file, e)
+        return 0
+    }
+}
+
+// Normalize a cue's `music` YAML into the audios list used for playback.
+// Accepts the scalar short form (`music: file.wav`), the `music.file` object form,
+// and the explicit `music.audios` list. Returns [{ file, mono, volume, patch }].
+function extractCueAudios(musicYaml) {
+    if (!musicYaml) return []
+    if (typeof musicYaml === 'string') {
+        const f = sanitizeAudioPath(musicYaml)
+        return f ? [{ file: f, mono: false, volume: 1, patch: null }] : []
+    }
+    if (Array.isArray(musicYaml.audios) && musicYaml.audios.length) {
+        return musicYaml.audios.map(a => ({
+            file:   sanitizeAudioPath(a && a.file),
+            mono:   !!(a && a.mono),
+            volume: (a && a.volume != null) ? a.volume : 1,
+            patch:  Array.isArray(a && a.patch) ? a.patch : null,
+        })).filter(a => a.file)
+    }
+    if (musicYaml.file) {
+        const f = sanitizeAudioPath(musicYaml.file)
+        return f ? [{ file: f, mono: false, volume: 1, patch: null }] : []
+    }
+    return []
 }
 
 async function preDecodeForGapless(targetIdx) {
@@ -247,19 +398,9 @@ async function preDecodeForGapless(targetIdx) {
     const gen = decodeGen
     try {
         const ctx = getAudioCtx()
-        const mainAb = await (await fetch(audioBasePath + ta.musicFile)).arrayBuffer()
-        const mainBuf = await ctx.decodeAudioData(mainAb)
-        let monBuf = null
-        if (ta.monitorFile) {
-            try {
-                const monAb = await (await fetch(audioBasePath + ta.monitorFile)).arrayBuffer()
-                monBuf = await ctx.decodeAudioData(monAb)
-            } catch (e) {
-                console.warn('[multichannel] Monitor-Decode fehlgeschlagen:', e)
-            }
-        }
+        const merged = await decodeCueAudios(ctx, ta.audios || [])
         if (gen !== decodeGen) return   // invalidated mid-decode (e.g. device change) — drop
-        ta.decodedBuffer = mergeToMultichannel(mainBuf, monBuf)
+        ta.decodedBuffer = merged
         tryBuildLoopGroups()
         preDecodeSeqSlots(targetIdx)
     } catch (e) {
@@ -279,17 +420,9 @@ async function preDecodeSeqSlots(targetIdx) {
         slot._decoding = true
         const gen = decodeGen
         try {
-            const mainAb  = await (await fetch(audioBasePath + slot.musicFile)).arrayBuffer()
-            const mainBuf = await ctx.decodeAudioData(mainAb)
-            let monBuf = null
-            if (slot.monitorFile) {
-                try {
-                    const monAb = await (await fetch(audioBasePath + slot.monitorFile)).arrayBuffer()
-                    monBuf = await ctx.decodeAudioData(monAb)
-                } catch (e) { console.warn('[seq] monitor decode failed slot', i, e) }
-            }
+            const merged = await decodeCueAudios(ctx, slot.audios || [])
             if (gen !== decodeGen) continue   // invalidated mid-decode — drop stale buffer
-            slot.decodedBuffer = mergeToMultichannel(mainBuf, monBuf)
+            slot.decodedBuffer = merged
         } catch (e) { console.warn('[seq] decode failed slot', i, e) }
         finally { slot._decoding = false }
     }
@@ -310,7 +443,7 @@ function tryBuildLoopGroups() {
 
 // Creates a minimal WaveSurfer + audio closure for one additional seq slot.
 // Returns the slot API object that is stored in triggerSeqSlots.get(index).slots[k].
-function buildSeqSlot({ index, seqSlotIdx, musicFile, monitorFile, mp, parentContainer }) {
+function buildSeqSlot({ index, seqSlotIdx, musicFile, audios, mp, parentContainer }) {
     const wrapper = document.createElement('div')
     wrapper.classList.add('waveform-wrapper', 'seq-slot')
 
@@ -384,7 +517,7 @@ function buildSeqSlot({ index, seqSlotIdx, musicFile, monitorFile, mp, parentCon
         ws,
         mp,
         musicFile,
-        monitorFile: monitorFile ?? null,
+        audios: audios ?? [{ file: musicFile, mono: false, volume: mp.volume ?? 1, patch: null }],
         decodedBuffer: null,
         _decoding: false,
 
@@ -513,6 +646,9 @@ let pendingAutoTrigger = false  // set just before calling triggerAction from au
 let liveViewOpen = false
 let showLock = false
 let lockAutoActivated = false
+// When a file is opened with Lock active, startup dialogs and the error banner are deferred
+// here and only run on the first unlock (so a locked live view opens clean).
+let deferredStartupActions = []
 let armedCue = null
 let lastStartedAudioCue = null  // index of the most recently played audio cue (Space toggles it)
 let midiGoNote = null
@@ -534,6 +670,8 @@ let outputDevices     = []   // unified [{name, type:'midi'|'osc', ...}]
 let midiOutputDevices = []   // [{name, device, sendTriggerNote, color}]  — derived from outputDevices
 let midiOutputPorts   = []   // resolved MIDI output ports (parallel array)
 let oscOutputDevices  = []   // [{name, enabled, host, port, sendTriggerNote, color}] — derived from outputDevices
+let httpOutputDevices = []   // [{name, enabled, url, color}] — derived from outputDevices
+let remoteCuesBlocked = false // session gate: when set, no cue drives MIDI/OSC/HTTP outputs
 let appLanguage = 'de'
 let micGroupDisplay = true      // whether to bundle mic roles into group boxes in the UI
 let mainTextZoom = 1   // loaded from device prefs (editor-prefs.json) in initApp
@@ -1051,6 +1189,51 @@ function showConfirmDialog({ title, body, hint = null, confirmLabel = 'Ja', canc
         overlay.append(box)
         document.body.appendChild(overlay)
         ;(cancelBtn ?? confirmBtn).focus()
+    })
+}
+
+// Modal asking for a delay in seconds. Resolves to the number (>= 0) or null on cancel.
+function showDelayDialog(initial = 5) {
+    return new Promise(resolve => {
+        const overlay = document.createElement('div')
+        overlay.className = 'dialog-overlay'
+        overlay.style.zIndex = '9999'
+        overlay.addEventListener('mousedown', e => e.stopPropagation())
+
+        const box = document.createElement('div')
+        box.className = 'dialog-box'
+        const h3 = document.createElement('h3')
+        h3.textContent = t('dlg.autocue.delay.title')
+        const bodyEl = document.createElement('p')
+        bodyEl.style.cssText = 'color:#abb2bf;font-size:0.9rem;margin:0 0 1rem;line-height:1.6'
+        bodyEl.textContent = t('dlg.autocue.delay.body')
+
+        const input = document.createElement('input')
+        input.type = 'number'; input.min = '0'; input.step = '0.1'; input.value = String(initial)
+        input.classList.add('dialog-select')
+        input.style.cssText = 'width:8rem;margin:0 0 1.2rem'
+
+        const actions = document.createElement('div')
+        actions.className = 'dialog-actions'
+        const close = (val) => { overlay.remove(); resolve(val) }
+        const cancelBtn = document.createElement('button')
+        cancelBtn.className = 'dialog-btn'; cancelBtn.textContent = t('dlg.cancel')
+        cancelBtn.addEventListener('click', () => close(null))
+        const confirmBtn = document.createElement('button')
+        confirmBtn.className = 'dialog-btn dialog-btn-primary'; confirmBtn.textContent = t('dlg.ok')
+        const submit = () => {
+            const v = parseFloat(input.value)
+            if (!isFinite(v) || v < 0) { input.focus(); return }
+            close(v)
+        }
+        confirmBtn.addEventListener('click', submit)
+        input.addEventListener('keydown', e => { if (e.key === 'Enter') submit() })
+
+        actions.append(cancelBtn, confirmBtn)
+        box.append(h3, bodyEl, input, actions)
+        overlay.append(box)
+        document.body.appendChild(overlay)
+        input.focus(); input.select()
     })
 }
 
@@ -3541,6 +3724,29 @@ function validateCueFields(y, blockNum, lineNum) {
             parseErrors.push({ blockNum, line: lineNum, message: `trigger_note ungültig: ch=${ch} (1–16), note=${note} (0–127)` })
     }
 
+    const knownVChannels = new Set(virtualChannels.map(v => v.name))
+    // Validate one entry of an `audios` list (used by music.audios and music_seq[i].audios).
+    const validateAudioEntry = (a, prefix) => {
+        if (!a || typeof a !== 'object' || typeof a.file !== 'string' || !a.file) {
+            parseErrors.push({ blockNum, line: lineNum, message: `${prefix}: 'file' (String) fehlt` })
+            return
+        }
+        if (a.volume != null && (typeof a.volume !== 'number' || !isFinite(a.volume) || a.volume < 0 || a.volume > 1))
+            parseErrors.push({ blockNum, line: lineNum, message: `${prefix}.volume ungültig: ${a.volume}` })
+        if (a.patch != null) {
+            if (!Array.isArray(a.patch)) {
+                parseErrors.push({ blockNum, line: lineNum, message: `${prefix}.patch muss eine Liste sein` })
+            } else {
+                for (const entry of a.patch) {
+                    for (const n of (Array.isArray(entry) ? entry : [entry])) {
+                        if (n != null && !knownVChannels.has(n))
+                            parseErrors.push({ blockNum, line: lineNum, message: `${prefix}.patch: vKanal „${n}" existiert nicht (in den Einstellungen definieren oder YAML aufräumen)` })
+                    }
+                }
+            }
+        }
+    }
+
     if (y.music && typeof y.music === 'object') {
         const { volume, start, end, fadein, fadeout, fading_point } = y.music
         if (volume != null && (typeof volume !== 'number' || !isFinite(volume) || volume < 0 || volume > 1))
@@ -3549,6 +3755,10 @@ function validateCueFields(y, blockNum, lineNum) {
             if (v != null && (typeof v !== 'number' || !isFinite(v) || v < 0))
                 parseErrors.push({ blockNum, line: lineNum, message: `music.${k} ungültig: ${v} (nicht-negative Zahl erwartet)` })
         }
+        if (y.music.audios != null) {
+            if (!Array.isArray(y.music.audios)) parseErrors.push({ blockNum, line: lineNum, message: 'music.audios muss eine Liste sein' })
+            else y.music.audios.forEach((a, i) => validateAudioEntry(a, `music.audios[${i}]`))
+        }
     }
 
     if (y.music_seq != null) {
@@ -3556,16 +3766,21 @@ function validateCueFields(y, blockNum, lineNum) {
             parseErrors.push({ blockNum, line: lineNum, message: 'music_seq muss eine Liste sein' })
         } else {
             y.music_seq.forEach((item, i) => {
-                if (!item || typeof item !== 'object' || typeof item.file !== 'string' || !item.file)
-                    parseErrors.push({ blockNum, line: lineNum, message: `music_seq[${i}]: 'file' (String) fehlt` })
-                else {
-                    const { volume, start, end, fadein, fadeout, fading_point } = item
-                    if (volume != null && (typeof volume !== 'number' || !isFinite(volume) || volume < 0 || volume > 1))
-                        parseErrors.push({ blockNum, line: lineNum, message: `music_seq[${i}].volume ungültig: ${volume}` })
-                    for (const [k, v] of [['start', start], ['end', end], ['fadein', fadein], ['fadeout', fadeout], ['fading_point', fading_point]]) {
-                        if (v != null && (typeof v !== 'number' || !isFinite(v) || v < 0))
-                            parseErrors.push({ blockNum, line: lineNum, message: `music_seq[${i}].${k} ungültig: ${v}` })
-                    }
+                const hasAudios = item && typeof item === 'object' && Array.isArray(item.audios) && item.audios.length
+                if (!item || typeof item !== 'object' || (!hasAudios && (typeof item.file !== 'string' || !item.file))) {
+                    parseErrors.push({ blockNum, line: lineNum, message: `music_seq[${i}]: 'file' oder 'audios' fehlt` })
+                    return
+                }
+                const { volume, start, end, fadein, fadeout, fading_point } = item
+                if (volume != null && (typeof volume !== 'number' || !isFinite(volume) || volume < 0 || volume > 1))
+                    parseErrors.push({ blockNum, line: lineNum, message: `music_seq[${i}].volume ungültig: ${volume}` })
+                for (const [k, v] of [['start', start], ['end', end], ['fadein', fadein], ['fadeout', fadeout], ['fading_point', fading_point]]) {
+                    if (v != null && (typeof v !== 'number' || !isFinite(v) || v < 0))
+                        parseErrors.push({ blockNum, line: lineNum, message: `music_seq[${i}].${k} ungültig: ${v}` })
+                }
+                if (item.audios != null) {
+                    if (!Array.isArray(item.audios)) parseErrors.push({ blockNum, line: lineNum, message: `music_seq[${i}].audios muss eine Liste sein` })
+                    else item.audios.forEach((a, j) => validateAudioEntry(a, `music_seq[${i}].audios[${j}]`))
                 }
             })
         }
@@ -3576,12 +3791,20 @@ function validateCueFields(y, blockNum, lineNum) {
         if (typeof at !== 'number' || !isFinite(at) || at < 0)
             parseErrors.push({ blockNum, line: lineNum, message: `auto_trigger.at ungültig: ${at} (nicht-negative Zahl erwartet)` })
     }
+    if (y.auto_trigger && typeof y.auto_trigger === 'object' && y.auto_trigger.delay != null) {
+        const { delay } = y.auto_trigger
+        if (typeof delay !== 'number' || !isFinite(delay) || delay < 0)
+            parseErrors.push({ blockNum, line: lineNum, message: `auto_trigger.delay ungültig: ${delay} (nicht-negative Zahl erwartet)` })
+    }
 
     if (y.cue_midi != null && !Array.isArray(y.cue_midi))
         parseErrors.push({ blockNum, line: lineNum, message: 'cue_midi muss eine Liste sein' })
 
     if (y.cue_osc != null && !Array.isArray(y.cue_osc))
         parseErrors.push({ blockNum, line: lineNum, message: 'cue_osc muss eine Liste sein' })
+
+    if (y.cue_http != null && !Array.isArray(y.cue_http))
+        parseErrors.push({ blockNum, line: lineNum, message: 'cue_http muss eine Liste sein' })
 }
 
 function validateYamlBlocks(text) {
@@ -3684,6 +3907,32 @@ function showParseErrors() {
     })
     banner.appendChild(content)
     document.body.prepend(banner)
+}
+
+// Persistent, visible state: when outputs are blocked, no cue drives MIDI/OSC/HTTP. Set from
+// the settings toggle, the trust dialog's "block" choice, or the indicator's unblock button —
+// all three persist `outputsBlocked` so the state survives reloads and stays in sync.
+function updateOutputsBlockedBar() {
+    let bar = document.getElementById('outputs-blocked-bar')
+    if (!remoteCuesBlocked) { bar?.remove(); return }
+    if (bar) return
+    bar = document.createElement('div')
+    bar.id = 'outputs-blocked-bar'
+    bar.className = 'outputs-blocked-bar'
+    const label = document.createElement('span')
+    label.textContent = t('outputs.blocked.label')
+    const btn = document.createElement('button')
+    btn.textContent = t('outputs.blocked.unblock')
+    btn.addEventListener('click', () => setOutputsBlocked(false))
+    bar.append(label, btn)
+    document.body.appendChild(bar)
+}
+
+function setOutputsBlocked(blocked) {
+    remoteCuesBlocked = blocked
+    updateOutputsBlockedBar()
+    // Machine-local flag → write only editor-prefs.json (no show-file rewrite/version bump).
+    window.electronAPI?.saveEditorPrefs?.({ outputsBlocked: blocked })
 }
 
 function scrollToMdLine(mdLine) {
@@ -3794,6 +4043,26 @@ function computeYamlCleanup() {
                 if (Object.prototype.hasOwnProperty.call(parsed.music, 'fading_point')) remove('music.fading_point')
                 if (parsed.music.loop === false) remove('music.loop')
             }
+        }
+        // 3. Audios routed to vChannels that no longer exist in the settings (music + music_seq)
+        {
+            const known = new Set(virtualChannels.map(v => v.name))
+            const patchRefsMissing = (a) => Array.isArray(a?.patch) && a.patch.some(entry =>
+                (Array.isArray(entry) ? entry : [entry]).some(n => n != null && !known.has(n)))
+            const pruneAudios = (container, keyPrefix) => {
+                if (!isPlainObject(container) || !Array.isArray(container.audios)) return
+                const kept = []
+                container.audios.forEach((a, i) => {
+                    if (patchRefsMissing(a)) {
+                        removals.push({ block, key: `${keyPrefix}.audios[${i}]`, value: a })
+                        changed = true
+                    } else kept.push(a)
+                })
+                if (kept.length !== container.audios.length) container.audios = kept
+            }
+            pruneAudios(parsed.music, 'music')
+            if (Array.isArray(parsed.music_seq))
+                parsed.music_seq.forEach((item, i) => pruneAudios(item, `music_seq[${i}]`))
         }
         if (!changed) return match
         const newYaml = yaml.dump(parsed, { indent: 4, lineWidth: -1, noRefs: true })
@@ -3946,14 +4215,20 @@ let pickModeEligibilityFn = null
 
 function _pickEscHandler(e) { if (e.key === 'Escape') exitPickMode() }
 
-function enterPickMode(cb, eligibilityFn = null) {
+// cb(index) on pick. eligibilityFn gates which clicks count (others cancel). highlightFn (when
+// given) marks a *subset* visually without dimming the rest — used by Auto-Cue, where every cue
+// is a valid source but only the audio-positioned ones deserve a highlight.
+function enterPickMode(cb, eligibilityFn = null, highlightFn = null) {
     pickModeCallback = cb
     pickModeEligibilityFn = eligibilityFn
-    if (eligibilityFn) {
+    if (highlightFn) {
+        document.body.classList.add('trigger-pick-mode-highlight')
+        for (let i = 1; i < triggers.length; i++)
+            if (triggers[i]) triggers[i].classList.toggle('trigger-pick-eligible', highlightFn(i))
+    } else if (eligibilityFn) {
         document.body.classList.add('trigger-pick-mode-filtered')
-        for (let i = 1; i < triggers.length; i++) {
+        for (let i = 1; i < triggers.length; i++)
             if (triggers[i]) triggers[i].classList.toggle('trigger-pick-eligible', eligibilityFn(i))
-        }
     } else {
         document.body.classList.add('trigger-pick-mode')
     }
@@ -3963,7 +4238,7 @@ function enterPickMode(cb, eligibilityFn = null) {
 function exitPickMode() {
     pickModeCallback = null
     pickModeEligibilityFn = null
-    document.body.classList.remove('trigger-pick-mode', 'trigger-pick-mode-filtered')
+    document.body.classList.remove('trigger-pick-mode', 'trigger-pick-mode-filtered', 'trigger-pick-mode-highlight')
     document.querySelectorAll('.trigger-pick-eligible').forEach(el => el.classList.remove('trigger-pick-eligible'))
     document.removeEventListener('keydown', _pickEscHandler)
 }
@@ -3979,7 +4254,9 @@ function updateAutoBtnAppearance(btn, idx) {
         btn.textContent = t('btn.autocue')
         btn.classList.remove('trigger-action-btn-danger')
         btn.classList.toggle('trigger-action-btn-active', !!aty)
-        btn.title = aty ? t('btn.autocue.title.edit') : t('btn.autocue.title.set')
+        btn.title = aty
+            ? (aty.delay != null ? `${t('btn.autocue.title.edit')} (+${aty.delay}s)` : t('btn.autocue.title.edit'))
+            : t('btn.autocue.title.set')
     }
 }
 
@@ -4015,6 +4292,65 @@ function markControlledTriggers() {
             triggers[targetIdx].querySelector('.trigger-music')?.appendChild(indicator)
         }
     }
+}
+
+// Cancel a pending delay-based auto-cue (timer + progress bar) for one target.
+function cancelDelayAutoCue(targetIdx) {
+    const d = delayAutoTimers.get(targetIdx)
+    if (!d) return
+    clearTimeout(d.timeoutId)
+    if (d.rafId) cancelAnimationFrame(d.rafId)
+    delayAutoTimers.delete(targetIdx)
+    const btn = autoTriggerBtns.get(targetIdx)
+    if (btn) { btn.style.background = ''; btn.style.color = '' }
+}
+
+// Cancel all delay-based auto-cues whose source is one of the given cues.
+function cancelDelayAutoCuesFromSources(sourceIdxs) {
+    const set = new Set(sourceIdxs)
+    for (const [target, d] of [...delayAutoTimers]) if (set.has(d.sourceIdx)) cancelDelayAutoCue(target)
+}
+
+// When `sourceCue` fires, arm every delay-based auto-cue that points at it (or at one of
+// its variant siblings). Each fires its target `delay` seconds later via triggerAction —
+// identical downstream behaviour (cueHistoryAuto tagging, live view) to audio auto-cues.
+function armDelayAutoCues(sourceCue) {
+    if (!triggerYamls[sourceCue]?.trigger_note) return
+    const sourceRoot = groupRootOf(sourceCue)
+    let armedAny = false
+    for (let targetIdx = 1; targetIdx < triggerYamls.length; targetIdx++) {
+        const aty = triggerYamls[targetIdx]?.auto_trigger
+        if (!aty || aty.delay == null || !aty.trigger_note) continue
+        const explicit = findTriggerByNote(aty.trigger_note)
+        if (explicit === null || groupRootOf(explicit) !== sourceRoot) continue
+
+        cancelDelayAutoCue(targetIdx)   // re-arm cleanly
+        const delayMs = Math.max(0, aty.delay * 1000)
+        const startedAt = performance.now()
+        const btn = autoTriggerBtns.get(targetIdx)
+        const entry = { sourceIdx: sourceCue, timeoutId: null, rafId: null, startedAt, delay: aty.delay }
+
+        const tick = () => {
+            if (!delayAutoTimers.has(targetIdx)) return
+            const pct = delayMs > 0 ? Math.min(100, (performance.now() - startedAt) / delayMs * 100) : 100
+            if (btn) btn.style.background = `linear-gradient(to right, rgba(152,195,121,0.35) ${pct}%, transparent ${pct}%)`
+            if (pct < 100) entry.rafId = requestAnimationFrame(tick)
+        }
+        entry.timeoutId = setTimeout(() => {
+            delayAutoTimers.delete(targetIdx)
+            if (btn) { btn.style.background = ''; btn.style.color = '' }
+            currentCue = targetIdx
+            markTriggers(targetIdx)
+            scrollToTrigger(targetIdx)
+            pendingAutoTrigger = true
+            triggerAction(targetIdx)
+        }, delayMs)
+        delayAutoTimers.set(targetIdx, entry)
+        if (delayMs > 0) entry.rafId = requestAnimationFrame(tick)
+        armedAny = true
+    }
+    // Push the new countdown(s) to the live view so it shows the auto-cue pending bar.
+    if (armedAny) broadcastLiveState()
 }
 
 function setupAutoTriggers() {
@@ -4375,10 +4711,11 @@ function updateAutoTriggerInScript(targetIndex, autoYaml) {
         // Remove existing auto_trigger block (key + all indented sub-lines)
         let c = content.replace(/^auto_trigger:(?:\n    [^\n]*)*/m, '').replace(/\n{3,}/g, '\n\n')
         if (autoYaml !== null) {
-            const { trigger_note: tn, at } = autoYaml
+            const { trigger_note: tn, at, delay } = autoYaml
             const lines = ['auto_trigger:']
             if (tn) lines.push(`    trigger_note: {ch: ${tn.ch}, note: ${tn.note}}`)
-            lines.push(`    at: ${parseFloat(at.toFixed(3))}`)
+            if (delay != null) lines.push(`    delay: ${parseFloat(delay.toFixed(3))}`)
+            else lines.push(`    at: ${parseFloat(at.toFixed(3))}`)
             c = c.trimEnd() + '\n' + lines.join('\n') + '\n'
         }
         return `\`\`\`yaml\n${c}\`\`\``
@@ -4929,6 +5266,32 @@ function buildTrigger(codeblockYaml, index) {
         triggerInfo.appendChild(oscRow)
     }
 
+    // cue_http chips
+    if (Array.isArray(codeblockYaml.cue_http) && codeblockYaml.cue_http.length > 0) {
+        const httpRow = document.createElement('div')
+        httpRow.classList.add('trigger-cue-osc')
+        for (const msg of codeblockYaml.cue_http) {
+            const chip = document.createElement('span')
+            chip.classList.add('cue-msg-chip', 'cue-msg-chip--osc')
+            const httpDevName = msg.device || httpOutputDevices[0]?.name || ''
+            const isUnknownHttp = !!msg.device && !httpOutputDevices.some(d => d.name === msg.device)
+            const httpDevColor = (httpOutputDevices.find(d => d.name === httpDevName) ?? httpOutputDevices[0])?.color || ''
+            if (isUnknownHttp) chip.classList.add('cue-msg-chip--unknown')
+            if (httpDevColor) chip.style.cssText = `border-color:${httpDevColor}55;background:${httpDevColor}12`
+            const badge = document.createElement('span')
+            badge.className = 'cue-type-badge'
+            badge.textContent = (isUnknownHttp ? '! ' : '') + (httpDevName || 'HTTP')
+            if (httpDevColor) badge.style.cssText = `background:${httpDevColor}30;color:${httpDevColor}`
+            const content = document.createElement('span')
+            content.className = 'cue-msg-content'
+            content.textContent = msg.comment || `${(msg.method || 'GET')} ${msg.path || ''}`.trim()
+            chip.appendChild(badge)
+            chip.appendChild(content)
+            httpRow.appendChild(chip)
+        }
+        triggerInfo.appendChild(httpRow)
+    }
+
     // text note
     if (codeblockYaml.note) triggerNote.innerText = codeblockYaml.note
 
@@ -5413,6 +5776,7 @@ function buildTrigger(codeblockYaml, index) {
                 sendOscMessage(nextIdx)
                 sendCueMidiMessages(nextIdx)
                 sendCueOscMessages(nextIdx)
+                sendCueHttpMessages(nextIdx)
                 cueHistory.push(nextIdx); cueHistoryAuto.push(isAuto)
                 broadcastLiveState()
                 return
@@ -6672,7 +7036,7 @@ function buildTrigger(codeblockYaml, index) {
             document.addEventListener("mouseup", onUp)
         })
 
-        const monitorFile = sanitizeAudioPath(typeof codeblockYaml.music === 'object' ? codeblockYaml.music.monitor ?? null : null)
+        const cueAudios = extractCueAudios(codeblockYaml.music)
 
         // ── Common patches ────────────────────────────────────────────────
         const _wsSetVol = ws.setVolume.bind(ws)
@@ -6694,7 +7058,7 @@ function buildTrigger(codeblockYaml, index) {
         }
 
         triggerAudio.set(index, {
-            ws, mainAudioEl, monitorFile, musicFile, overlay, getX, autoMarkerState, mp,
+            ws, mainAudioEl, audios: cueAudios, musicFile, overlay, getX, autoMarkerState, mp,
             stopAndReset: () => wsStopAndReset(),
             togglePlayPause: () => pauseBtn.click(),
             fadeOutActiveSeqSlot: (durationSec) => {
@@ -6880,7 +7244,9 @@ function buildTrigger(codeblockYaml, index) {
             const slots = [primarySlotProxy]
 
             for (const [si, seqEntry] of musicSeqArr.entries()) {
-                if (!seqEntry?.file) continue
+                // A seq slot is a `file` (single audio) or its own `audios` list (multichannel patch).
+                const slotAudios = extractCueAudios(seqEntry)
+                if (!slotAudios.length) continue
                 const slotMp = {
                     volume:    seqEntry.volume    ?? mp.volume,
                     start:     seqEntry.start     ?? 0,
@@ -6891,8 +7257,8 @@ function buildTrigger(codeblockYaml, index) {
                 }
                 slots.push(buildSeqSlot({
                     index, seqSlotIdx: si + 1,
-                    musicFile: sanitizeAudioPath(seqEntry.file),
-                    monitorFile: sanitizeAudioPath(seqEntry.monitor ?? null),
+                    musicFile: slotAudios[0].file,   // primary file drives the waveform/cursor
+                    audios: slotAudios,
                     mp: slotMp, parentContainer: seqRow,
                 }))
             }
@@ -7014,13 +7380,11 @@ function buildTrigger(codeblockYaml, index) {
             if (triggerYamls[index]?.auto_trigger) updateAutoTriggerInScript(index, null)
             return
         }
-        // Eligibility: has audio + paused + not at start or end
-        const isEligible = (idx) => {
-            if (idx === index) return false
+        // The source audio is positioned (paused mid-track) → record an audio-position auto-cue.
+        // Otherwise a delay-based auto-cue is offered. Any cue with a trigger_note is selectable.
+        const isAudioPositioned = (idx) => {
             const ta = triggerAudio.get(idx)
-            if (!ta) return false
-            if (!ta.mainAudioEl.paused) return false
-            if (!triggerYamls[idx]?.trigger_note) return false
+            if (!ta || !ta.mainAudioEl.paused) return false
             const el = ta.mainAudioEl
             const srcYaml = triggerYamls[idx]
             const srcStart = (typeof srcYaml?.music === 'object' ? srcYaml.music.start : null) ?? 0
@@ -7029,18 +7393,21 @@ function buildTrigger(codeblockYaml, index) {
             if (el.currentTime >= srcEnd - 0.3) return false
             return true
         }
-        // Pick source trigger (only eligible ones highlight), then record its playhead position
-        enterPickMode(sourceIdx => {
-            const ta = triggerAudio.get(sourceIdx)
-            const el = ta.mainAudioEl
+        const isEligible = (idx) => idx !== index && !!triggerYamls[idx]?.trigger_note
+        // Pick source trigger, then either record its audio position or ask for a delay.
+        enterPickMode(async sourceIdx => {
             const srcYaml = triggerYamls[sourceIdx]
-            const srcStart = (typeof srcYaml?.music === 'object' ? srcYaml.music.start : null) ?? 0
-            const srcEnd   = (typeof srcYaml?.music === 'object' ? srcYaml.music.end   : null) ?? ta.ws.getDuration()
-            // Abort if at start or end (covered by eligibilityFn for playing; this catches edge positions)
-            if (Math.abs(el.currentTime - srcStart) < 0.3) return
-            if (el.currentTime >= srcEnd - 0.3) return
-            updateAutoTriggerInScript(index, { trigger_note: srcYaml.trigger_note, at: el.currentTime })
-        }, isEligible)
+            if (!srcYaml?.trigger_note) return
+            if (isAudioPositioned(sourceIdx)) {
+                const el = triggerAudio.get(sourceIdx).mainAudioEl
+                updateAutoTriggerInScript(index, { trigger_note: srcYaml.trigger_note, at: el.currentTime })
+            } else {
+                const existing = triggerYamls[index]?.auto_trigger
+                const delay = await showDelayDialog(existing?.delay ?? 5)
+                if (delay == null) return
+                updateAutoTriggerInScript(index, { trigger_note: srcYaml.trigger_note, delay })
+            }
+        }, isEligible, isAudioPositioned)   // highlight only audio-positioned sources; all others still pickable (→ delay)
     })
     triggerDiv.querySelector('.trigger-actions').appendChild(autoBtn)
 
@@ -7730,45 +8097,6 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         if (currentFile) mfComp.setValue(currentFile)
     }
 
-    // ── Monitor-Mix ─────────────────────────────────────────────────
-    const monWrap = document.createElement('div')
-    monWrap.classList.add('dialog-field')
-    const monLabel = document.createElement('label')
-    monLabel.textContent = t('dlg.trigger.monitor')
-    const monComp = createAudioSelect(audioFiles, t('dlg.trigger.monitor.none'))
-    const monWarning = document.createElement('div')
-    monWarning.style.cssText = 'color:#e5c07b;font-size:0.82rem;margin-top:0.3rem;display:none'
-    monWrap.append(monLabel, monComp.element, monWarning)
-    if (!window.__webPreview) {
-        const monHint = document.createElement('p')
-        monHint.style.cssText = 'font-size:0.72rem;color:#4a505a;margin:0.2rem 0 0'
-        monHint.textContent = 'Aus vorhandenen auswählen oder neue Datei per Drag & Drop hinzufügen'
-        monWrap.appendChild(monHint)
-    }
-    // monWrap is superseded by the seq-card display below
-
-    if ((isEdit || isCopy) && existingYaml?.music && typeof existingYaml.music === 'object' && existingYaml.music.monitor) {
-        monComp.setValue(existingYaml.music.monitor)
-    }
-
-    async function checkMonitorDuration() {
-        const mf = mfComp.getValue()
-        const mf2 = monComp.getValue()
-        if (!mf || !mf2) { monWarning.style.display = 'none'; return }
-        const [d1, d2] = await Promise.all([
-            new Promise(res => { const a = new Audio('audio/' + mf);  a.addEventListener('loadedmetadata', () => res(a.duration)); a.addEventListener('error', () => res(null)) }),
-            new Promise(res => { const a = new Audio('audio/' + mf2); a.addEventListener('loadedmetadata', () => res(a.duration)); a.addEventListener('error', () => res(null)) }),
-        ])
-        if (d1 && d2 && Math.abs(d1 - d2) > 0.1) {
-            monWarning.textContent = `⚠ Unterschiedliche Längen: ${d1.toFixed(2)}s vs ${d2.toFixed(2)}s`
-            monWarning.style.display = 'block'
-        } else {
-            monWarning.style.display = 'none'
-        }
-    }
-    mfComp.onChange(checkMonitorDuration)
-    monComp.onChange(checkMonitorDuration)
-    checkMonitorDuration()
 
     // ── Ausklingpunkt (fading_point) ────────────────────────────────────
     // Shown only for SLF Loop / SLF Start / SLF Bridge / normal Loop cues when editing
@@ -7825,19 +8153,178 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     seqSection.classList.add('dialog-field')
     const seqHeaderRow = document.createElement('div')
     seqHeaderRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem'
+    // Multi-audio (simultaneous) editing is available for normal cues when more than the
+    // default 2 virtual channels (L/R) are defined. Seq-loop cues keep their sequential
+    // vamp-slot editing (music_seq) unchanged.
+    const multiAudio = !isSeqLoop && virtualChannels.length > 2
+    // SLF-Loop cues with >2 vChannels: each slot (primary + sequence) holds its own audio list
+    const seqMulti   = isSeqLoop && virtualChannels.length > 2
     const seqLabel = document.createElement('label')
     seqLabel.textContent = isSeqLoop ? t('dlg.trigger.music_seq.all') : t('dlg.trigger.music')
     seqLabel.style.marginBottom = '0'
     const addSeqBtn = document.createElement('button')
     addSeqBtn.type = 'button'; addSeqBtn.classList.add('dialog-btn')
-    addSeqBtn.textContent = t('dlg.trigger.music_seq.add')
+    addSeqBtn.textContent = seqMulti ? t('dlg.trigger.slot.add') : isSeqLoop ? t('dlg.trigger.music_seq.add') : t('dlg.trigger.audio.add')
     addSeqBtn.style.cssText = 'padding:0.2rem 0.6rem;font-size:0.82rem'
-    if (isSeqLoop) seqHeaderRow.append(seqLabel, addSeqBtn)
+    if (isSeqLoop || multiAudio) seqHeaderRow.append(seqLabel, addSeqBtn)
     else seqHeaderRow.append(seqLabel)
     seqSection.appendChild(seqHeaderRow)
     const seqList = document.createElement('div')
     seqSection.appendChild(seqList)
     box.appendChild(seqSection)
+
+    // One audio layer within a slot: file + mono toggle + per-channel patch chips.
+    // getValues → { file, mono, patch }. Used by slot cards when >2 vChannels exist.
+    function buildAudioRow(cfg, { onRemove = null } = {}) {
+        cfg = cfg || {}
+        const row = document.createElement('div')
+        row.className = 'audio-row'
+
+        const fileRow = document.createElement('div')
+        fileRow.style.cssText = 'display:flex;gap:0.4rem;align-items:center;margin-bottom:0.3rem'
+        const fileComp = createAudioSelect(audioFiles, t('dlg.trigger.music.none'))
+        if (cfg.file) fileComp.setValue(cfg.file)
+        fileComp.element.style.flex = '1'
+        const monoBtn = document.createElement('button')
+        monoBtn.type = 'button'; monoBtn.className = 'dialog-btn audio-mono-btn'
+        monoBtn.textContent = t('dlg.trigger.audio.mono')
+        monoBtn.style.cssText = 'padding:0.15rem 0.6rem;font-size:0.8rem;flex-shrink:0'
+        let monoOn = !!cfg.mono
+        const syncMono = () => monoBtn.classList.toggle('active', monoOn)
+        syncMono()
+        fileRow.append(fileComp.element, monoBtn)
+        if (onRemove) {
+            const rm = document.createElement('button')
+            rm.type = 'button'; rm.className = 'cue-msg-card-remove'; rm.textContent = '✕'
+            rm.addEventListener('click', () => { row.remove(); onRemove() })
+            fileRow.appendChild(rm)
+        }
+
+        const patchWrap = document.createElement('div'); patchWrap.className = 'audio-patch'
+        let patchState = []
+        const seedFromCfg = (numCh) => {
+            patchState = []
+            for (let i = 0; i < numCh; i++) {
+                const entry = Array.isArray(cfg.patch) ? cfg.patch[i] : null
+                const names = entry == null ? [] : (Array.isArray(entry) ? entry : [entry])
+                patchState.push(new Set(names.filter(n => virtualChannels.some(v => v.name === n))))
+            }
+        }
+        const renderPatch = (numCh) => {
+            patchWrap.innerHTML = ''
+            for (let ch = 0; ch < numCh; ch++) {
+                const r = document.createElement('div'); r.className = 'audio-patch-row'
+                const lbl = document.createElement('span'); lbl.className = 'audio-patch-ch'
+                lbl.textContent = `${t('dlg.trigger.audio.channel')} ${ch + 1}`
+                r.appendChild(lbl)
+                for (const v of virtualChannels) {
+                    const chip = document.createElement('button')
+                    chip.type = 'button'; chip.className = 'audio-patch-chip'; chip.textContent = v.name
+                    if (patchState[ch]?.has(v.name)) chip.classList.add('active')
+                    chip.addEventListener('click', () => {
+                        if (patchState[ch].has(v.name)) patchState[ch].delete(v.name)
+                        else patchState[ch].add(v.name)
+                        chip.classList.toggle('active')
+                    })
+                    r.appendChild(chip)
+                }
+                patchWrap.appendChild(r)
+            }
+        }
+        const refreshPatch = async () => {
+            const file = fileComp.getValue()
+            if (!file) { patchState = []; patchWrap.innerHTML = ''; return }
+            const numCh = monoOn ? 1 : await detectChannelCount(file)
+            seedFromCfg(numCh); renderPatch(numCh)
+        }
+        monoBtn.addEventListener('click', () => { monoOn = !monoOn; syncMono(); refreshPatch() })
+        fileComp.onChange(refreshPatch)
+        refreshPatch()
+
+        row.append(fileRow, patchWrap)
+        row._fileComp = fileComp
+        row.getValues = () => ({ file: fileComp.getValue() || null, mono: monoOn, patch: patchState.map(s => Array.from(s)) })
+        return row
+    }
+
+    // fading_point control (number input + BPM/beats helper). Returns { row, getValue }.
+    function buildFadingPointRow(initial, getFileForCalc) {
+        const olRow = document.createElement('div')
+        olRow.style.cssText = 'display:flex;gap:0.4rem;align-items:center;margin-top:0.3rem'
+        const olLabel2 = document.createElement('span')
+        olLabel2.textContent = t('dlg.trigger.fading_point')
+        olLabel2.style.cssText = 'font-size:0.82rem;white-space:nowrap;color:#7a8394'
+        const olInput2 = document.createElement('input')
+        olInput2.type = 'number'; olInput2.min = '0'; olInput2.step = '0.001'
+        olInput2.className = 'no-spin'; olInput2.style.cssText = 'width:6rem'
+        olInput2.value = initial > 0 ? initial : ''
+        const bpm2 = document.createElement('input'); bpm2.type = 'number'; bpm2.min = '1'; bpm2.step = '1'; bpm2.className = 'no-spin'
+        bpm2.placeholder = t('dlg.trigger.fading_point.bpm'); bpm2.style.cssText = 'width:5rem'
+        const beats2 = document.createElement('input'); beats2.type = 'number'; beats2.min = '1'; beats2.step = '1'; beats2.className = 'no-spin'
+        beats2.placeholder = t('dlg.trigger.fading_point.beats'); beats2.style.cssText = 'width:5rem'
+        const calc2 = async () => {
+            const b = parseFloat(bpm2.value), n = parseFloat(beats2.value)
+            if (!(b > 0 && n > 0)) return
+            const tailDur = (n / b) * 60
+            const filename = getFileForCalc()
+            if (!filename) return
+            const fileDur = await new Promise(res => { const a = new Audio(audioBasePath + filename); a.addEventListener('loadedmetadata', () => res(a.duration)); a.addEventListener('error', () => res(null)) })
+            if (fileDur != null && fileDur > tailDur) olInput2.value = parseFloat((fileDur - tailDur).toFixed(4))
+        }
+        bpm2.addEventListener('input', calc2); beats2.addEventListener('input', calc2)
+        olRow.append(olLabel2, olInput2, bpm2, beats2)
+        return { row: olRow, getValue: () => parseFloat(olInput2.value) || 0 }
+    }
+
+    // One loop slot (primary or sequence) holding a list of simultaneous audios, each with its
+    // own channel patch. Used for SLF-Loop cues when >2 vChannels exist.
+    // getValues → { audios: [{file, mono, patch}], fading_point }.
+    function buildSlotCard(cfg, { isPrimary = false, showOutroLen = true, slotNum = 1 } = {}) {
+        cfg = cfg || {}
+        const card = document.createElement('div')
+        card.className = 'seq-entry-card'
+
+        const header = document.createElement('div')
+        header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem'
+        const title = document.createElement('span')
+        title.style.cssText = 'font-size:0.78rem;font-weight:700;color:#7a8394'
+        title.textContent = String(slotNum)
+        header.appendChild(title)
+        if (!isPrimary) {
+            const rm = document.createElement('button')
+            rm.type = 'button'; rm.className = 'cue-msg-card-remove'; rm.textContent = '✕'
+            rm.addEventListener('click', () => card.remove())
+            header.appendChild(rm)
+        }
+        card.appendChild(header)
+
+        const audioListEl = document.createElement('div')
+        card.appendChild(audioListEl)
+        const rows = []
+        const addAudio = (ac) => {
+            const r = buildAudioRow(ac, { onRemove: () => { const i = rows.indexOf(r); if (i >= 0) rows.splice(i, 1) } })
+            rows.push(r); audioListEl.appendChild(r)
+        }
+        const initialAudios = Array.isArray(cfg.audios) && cfg.audios.length ? cfg.audios
+            : (cfg.file ? [{ file: cfg.file, mono: cfg.mono, patch: cfg.patch }] : [{}])
+        for (const a of initialAudios) addAudio(a)
+
+        const addBtn = document.createElement('button')
+        addBtn.type = 'button'; addBtn.className = 'dialog-btn'
+        addBtn.textContent = t('dlg.trigger.audio.add')
+        addBtn.style.cssText = 'padding:0.15rem 0.6rem;font-size:0.8rem;margin-top:0.2rem'
+        addBtn.addEventListener('click', () => addAudio({}))
+        card.appendChild(addBtn)
+
+        const fp = buildFadingPointRow(cfg.fading_point ?? 0, () => rows[0]?._fileComp?.getValue())
+        if (showOutroLen) card.appendChild(fp.row)
+
+        card.getValues = () => ({
+            audios: rows.map(r => r.getValues()).filter(a => a.file),
+            fading_point: showOutroLen ? fp.getValue() : 0,
+        })
+        return card
+    }
 
     function buildSeqCard(cfg, { isPrimary = false, showOutroLen = true } = {}) {
         cfg = cfg || {}
@@ -7862,17 +8349,6 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
             removeBtn.addEventListener('click', () => card.remove())
             fileRow.append(fileComp.element, removeBtn)
         }
-
-        // Monitor selector row
-        const monRow = document.createElement('div')
-        monRow.style.cssText = 'display:flex;gap:0.4rem;align-items:center;margin-bottom:0.3rem'
-        const monLabel = document.createElement('span')
-        monLabel.textContent = t('dlg.trigger.monitor')
-        monLabel.style.cssText = 'font-size:0.82rem;white-space:nowrap;color:#7a8394'
-        const monComp2 = createAudioSelect(audioFiles, t('dlg.trigger.monitor.none'))
-        if (cfg.monitor) monComp2.setValue(cfg.monitor)
-        monComp2.element.style.flex = '1'
-        monRow.append(monLabel, monComp2.element)
 
         // fading_point row
         const olRow = document.createElement('div')
@@ -7909,60 +8385,125 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         bpm2.addEventListener('input', calc2); beats2.addEventListener('input', calc2)
         olRow.append(olLabel2, olInput2, bpm2, beats2)
 
-        if (showOutroLen) card.append(fileRow, monRow, olRow)
-        else card.append(fileRow, monRow)
+        // ── Mono toggle + channel patch (only when more than 2 vChannels) ──
+        let getMono = () => false
+        let getPatch = () => null
+        if (multiAudio) {
+            const monoBtn = document.createElement('button')
+            monoBtn.type = 'button'; monoBtn.className = 'dialog-btn audio-mono-btn'
+            monoBtn.textContent = t('dlg.trigger.audio.mono')
+            monoBtn.style.cssText = 'padding:0.15rem 0.6rem;font-size:0.8rem;margin:0.1rem 0 0.4rem'
+            let monoOn = !!cfg.mono
+            const syncMono = () => monoBtn.classList.toggle('active', monoOn)
+            syncMono()
+            getMono = () => monoOn
+
+            const patchWrap = document.createElement('div')
+            patchWrap.className = 'audio-patch'
+            let patchState = []   // per source channel: Set<vChannel name>
+
+            const seedFromCfg = (numCh) => {
+                patchState = []
+                for (let i = 0; i < numCh; i++) {
+                    const entry = Array.isArray(cfg.patch) ? cfg.patch[i] : null
+                    const names = entry == null ? [] : (Array.isArray(entry) ? entry : [entry])
+                    patchState.push(new Set(names.filter(n => virtualChannels.some(v => v.name === n))))
+                }
+            }
+            const renderPatch = (numCh) => {
+                patchWrap.innerHTML = ''
+                for (let ch = 0; ch < numCh; ch++) {
+                    const row = document.createElement('div')
+                    row.className = 'audio-patch-row'
+                    const lbl = document.createElement('span')
+                    lbl.className = 'audio-patch-ch'
+                    lbl.textContent = `${t('dlg.trigger.audio.channel')} ${ch + 1}`
+                    row.appendChild(lbl)
+                    for (const v of virtualChannels) {
+                        const chip = document.createElement('button')
+                        chip.type = 'button'; chip.className = 'audio-patch-chip'
+                        chip.textContent = v.name
+                        if (patchState[ch]?.has(v.name)) chip.classList.add('active')
+                        chip.addEventListener('click', () => {
+                            if (patchState[ch].has(v.name)) patchState[ch].delete(v.name)
+                            else patchState[ch].add(v.name)
+                            chip.classList.toggle('active')
+                        })
+                        row.appendChild(chip)
+                    }
+                    patchWrap.appendChild(row)
+                }
+            }
+            const refreshPatch = async () => {
+                const file = fileComp.getValue()
+                if (!file) { patchState = []; patchWrap.innerHTML = ''; return }
+                const numCh = monoOn ? 1 : await detectChannelCount(file)
+                seedFromCfg(numCh)
+                renderPatch(numCh)
+            }
+            monoBtn.addEventListener('click', () => { monoOn = !monoOn; syncMono(); refreshPatch() })
+            fileComp.onChange(refreshPatch)
+            refreshPatch()
+            getPatch = () => patchState.map(set => Array.from(set))
+
+            card.append(fileRow, monoBtn, patchWrap)
+            if (isPrimary && showOutroLen) card.appendChild(olRow)
+        } else {
+            if (showOutroLen) card.append(fileRow, olRow)
+            else card.append(fileRow)
+        }
 
         card._fileComp = fileComp
-        card._monComp  = monComp2
 
         card.getValues = () => ({
             file:      fileComp.getValue() || null,
-            monitor:   monComp2.getValue() || null,
+            mono:      getMono(),
+            patch:     getPatch(),
             fading_point: showOutroLen ? (parseFloat(olInput2.value) || 0) : 0,
         })
         return card
     }
 
-    // Populate seq entries — primary file card first (isPrimary), then music_seq entries
+    // Populate cards — primary audio first (isPrimary). For multi-audio cues, additional
+    // simultaneous audios from music.audios[1..]; for seq-loop cues, music_seq slots.
     {
-        const primaryCfg = {
-            file:         typeof existingYaml?.music === 'string' ? existingYaml.music : (existingYaml?.music?.file ?? ''),
-            monitor:      typeof existingYaml?.music === 'object' ? (existingYaml.music.monitor ?? '') : '',
-            fading_point: typeof existingYaml?.music === 'object' && existingYaml.music.fading_point > 0 ? existingYaml.music.fading_point : 0,
-        }
-        const primaryCard = buildSeqCard(primaryCfg, { isPrimary: true, showOutroLen })
-        seqList.appendChild(primaryCard)
-
-        // Wire monitor duration check to the card's selects (replaces standalone monWarning)
-        if (primaryCard._fileComp && primaryCard._monComp) {
-            const warnEl = document.createElement('div')
-            warnEl.style.cssText = 'color:#e5c07b;font-size:0.82rem;margin-top:0.3rem;display:none'
-            primaryCard.appendChild(warnEl)
-            const checkDur = async () => {
-                const f1 = primaryCard._fileComp.getValue(), f2 = primaryCard._monComp.getValue()
-                if (!f1 || !f2) { warnEl.style.display = 'none'; return }
-                const [d1, d2] = await Promise.all([
-                    new Promise(r => { const a = new Audio('audio/' + f1); a.addEventListener('loadedmetadata', () => r(a.duration)); a.addEventListener('error', () => r(null)) }),
-                    new Promise(r => { const a = new Audio('audio/' + f2); a.addEventListener('loadedmetadata', () => r(a.duration)); a.addEventListener('error', () => r(null)) }),
-                ])
-                if (d1 && d2 && Math.abs(d1 - d2) > 0.1) {
-                    warnEl.textContent = `⚠ Unterschiedliche Längen: ${d1.toFixed(2)}s vs ${d2.toFixed(2)}s`
-                    warnEl.style.display = 'block'
-                } else { warnEl.style.display = 'none' }
+        const musicObj = (existingYaml && typeof existingYaml.music === 'object') ? existingYaml.music : null
+        const audioList = musicObj && Array.isArray(musicObj.audios) ? musicObj.audios : null
+        if (seqMulti) {
+            // Each slot (primary + sequence) is a card holding its own audio list.
+            const primarySlotCfg = {
+                audios:       audioList,
+                file:         typeof existingYaml?.music === 'string' ? existingYaml.music : (musicObj?.file ?? ''),
+                fading_point: musicObj && musicObj.fading_point > 0 ? musicObj.fading_point : 0,
             }
-            primaryCard._fileComp.onChange(checkDur)
-            primaryCard._monComp.onChange(checkDur)
-            checkDur()
-        }
+            seqList.appendChild(buildSlotCard(primarySlotCfg, { isPrimary: true, showOutroLen, slotNum: 1 }))
+            if (Array.isArray(existingYaml?.music_seq))
+                existingYaml.music_seq.forEach((entry, i) =>
+                    seqList.appendChild(buildSlotCard(entry, { showOutroLen: true, slotNum: i + 2 })))
+        } else {
+            const primaryCfg = {
+                file:         typeof existingYaml?.music === 'string' ? existingYaml.music
+                              : (audioList ? (audioList[0]?.file ?? '') : (musicObj?.file ?? '')),
+                mono:         audioList ? !!audioList[0]?.mono : false,
+                patch:        audioList ? (audioList[0]?.patch ?? null) : null,
+                fading_point: musicObj && musicObj.fading_point > 0 ? musicObj.fading_point : 0,
+            }
+            seqList.appendChild(buildSeqCard(primaryCfg, { isPrimary: true, showOutroLen }))
 
-        if (isSeqLoop && Array.isArray(existingYaml?.music_seq)) {
-            for (const entry of existingYaml.music_seq) {
-                seqList.appendChild(buildSeqCard(entry))
+            if (multiAudio && audioList) {
+                for (const a of audioList.slice(1)) seqList.appendChild(buildSeqCard(a))
+            } else if (isSeqLoop && Array.isArray(existingYaml?.music_seq)) {
+                for (const entry of existingYaml.music_seq) seqList.appendChild(buildSeqCard(entry))
             }
         }
     }
     addSeqBtn.addEventListener('click', () => {
-        seqList.appendChild(buildSeqCard({}))
+        if (seqMulti) {
+            const n = seqList.querySelectorAll('.seq-entry-card').length + 1
+            seqList.appendChild(buildSlotCard({}, { showOutroLen: true, slotNum: n }))
+        } else {
+            seqList.appendChild(buildSeqCard({}))
+        }
     })
 
     // ── Hinweis ─────────────────────────────────────────────────────
@@ -8123,19 +8664,60 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         oscSection.append(pathIn, argRow)
         card.appendChild(oscSection)
 
+        // ─ HTTP fields ─
+        const httpSection = document.createElement('div')
+        const httpRow = document.createElement('div')
+        httpRow.style.cssText = 'display:flex;gap:0.4rem;margin-bottom:0.4rem'
+        const methodSel = document.createElement('select')
+        methodSel.classList.add('dialog-select'); methodSel.style.cssText = 'width:auto;flex-shrink:0'
+        for (const m of ['GET','POST','PUT','DELETE','PATCH']) {
+            const o = new Option(m, m)
+            if (m === (cfg.method || 'GET')) o.selected = true
+            methodSel.appendChild(o)
+        }
+        const httpPathIn = document.createElement('input')
+        httpPathIn.type = 'text'; httpPathIn.placeholder = '/pfad/zum/ziel'
+        httpPathIn.value = cfg.path || ''
+        httpPathIn.classList.add('dialog-select'); httpPathIn.style.flex = '1'
+        httpRow.append(methodSel, httpPathIn)
+        const bodyIn = document.createElement('textarea')
+        bodyIn.placeholder = t('dlg.trigger.http.body')
+        bodyIn.value = cfg.body || ''
+        bodyIn.classList.add('dialog-select'); bodyIn.style.cssText = 'width:100%;min-height:3rem;margin-bottom:0.4rem;font-family:inherit'
+        const ctIn = document.createElement('input')
+        ctIn.type = 'text'; ctIn.placeholder = 'application/json'
+        ctIn.value = cfg.content_type || ''
+        ctIn.classList.add('dialog-select'); ctIn.style.width = '100%'
+        httpSection.append(httpRow, mkLbl(t('dlg.trigger.http.body')), bodyIn, mkLbl(t('dlg.trigger.http.contentType')), ctIn)
+        card.appendChild(httpSection)
+
         function updateDevSections() {
             const selectedDev = outputDevices.find(d => d.name === devSel.value)
-            const isMidi = selectedDev ? selectedDev.type === 'midi' : true
-            midiSection.style.display = isMidi ? '' : 'none'
-            oscSection.style.display  = isMidi ? 'none' : ''
+            const type = selectedDev?.type || 'midi'
+            midiSection.style.display = type === 'midi' ? '' : 'none'
+            oscSection.style.display  = type === 'osc'  ? '' : 'none'
+            httpSection.style.display = type === 'http' ? '' : 'none'
         }
         devSel.addEventListener('change', updateDevSections)
         updateDevSections()
 
         card.getValues = () => {
             const selectedDev = outputDevices.find(d => d.name === devSel.value)
-            const isMidi = selectedDev ? selectedDev.type === 'midi' : true
-            if (isMidi) {
+            const type = selectedDev?.type || 'midi'
+            if (type === 'http') {
+                const out = { device: devSel.value || httpOutputDevices[0]?.name || '', method: methodSel.value, path: httpPathIn.value.trim() }
+                if (commentIn.value.trim()) out.comment = commentIn.value.trim()
+                if (bodyIn.value !== '') out.body = bodyIn.value
+                if (ctIn.value.trim()) out.content_type = ctIn.value.trim()
+                out._isHttp = true
+                return out
+            } else if (type === 'osc') {
+                const out = { device: devSel.value || oscOutputDevices[0]?.name || '', path: pathIn.value.trim() }
+                if (commentIn.value.trim()) out.comment = commentIn.value.trim()
+                if (argTypeSel.value !== 'none' && argIn.value.trim() !== '') { out.arg = argIn.value.trim(); out.arg_type = argTypeSel.value }
+                out._isOsc = true
+                return out
+            } else {
                 const tv = typeSel.value
                 const out = { type: tv, device: devSel.value || midiOutputDevices[0]?.name || '' }
                 if (commentIn.value.trim()) out.comment = commentIn.value.trim()
@@ -8144,12 +8726,6 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
                 else if (tv === 'pc') { out.ch = parseInt(pcCh.value) || 1; out.program = parseInt(pcPgm.value) || 0 }
                 else if (tv === 'sysex') { out.bytes = sysexIn.value.trim() }
                 out._isMidi = true
-                return out
-            } else {
-                const out = { device: devSel.value || oscOutputDevices[0]?.name || '', path: pathIn.value.trim() }
-                if (commentIn.value.trim()) out.comment = commentIn.value.trim()
-                if (argTypeSel.value !== 'none' && argIn.value.trim() !== '') { out.arg = argIn.value.trim(); out.arg_type = argTypeSel.value }
-                out._isOsc = true
                 return out
             }
         }
@@ -8164,6 +8740,10 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
     // Load existing OSC messages (tagged as osc)
     if ((isEdit || isCopy) && Array.isArray(existingYaml?.cue_osc)) {
         for (const m of existingYaml.cue_osc) buildMsgCard(m, 'osc')
+    }
+    // Load existing HTTP messages (tagged as http)
+    if ((isEdit || isCopy) && Array.isArray(existingYaml?.cue_http)) {
+        for (const m of existingYaml.cue_http) buildMsgCard(m, 'http')
     }
     addMsgBtn.addEventListener('click', () => buildMsgCard({}))
 
@@ -8305,33 +8885,85 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
             newYaml.mic = existingYaml.mic
         }
 
-        // music: always read from the primary seq card
-        const primaryCard = seqList.querySelector('.seq-entry-card')
-        const pv = primaryCard?.getValues?.() ?? {}
-        let mf = pv.file || '', mf2 = pv.monitor || '', resolvedOlVal = pv.fading_point ?? 0
-        if (mf) {
-            if ((isEdit || isCopy) && existingYaml?.music && typeof existingYaml.music === 'object') {
-                newYaml.music = { ...existingYaml.music, file: mf }
-            } else {
-                newYaml.music = mf
+        // Convert a slot card's {audios:[{file,mono,patch}], fading_point} into a YAML music
+        // entry — a plain `file` for a single default-patched audio, else an `audios` list.
+        const slotToEntry = (slotVals, base = {}) => {
+            const obj = { ...base }
+            const audios = (slotVals.audios || []).filter(a => a.file)
+            const needsList = audios.length > 1 ||
+                audios.some(a => a.mono || (Array.isArray(a.patch) && a.patch.some(p => p && p.length)))
+            if (needsList) {
+                obj.audios = audios.map(a => {
+                    const o = { file: a.file }
+                    if (a.mono) o.mono = true
+                    const patch = (a.patch || []).map(p => Array.isArray(p) ? p : [])
+                    if (patch.some(p => p.length)) o.patch = patch.map(p => p.length === 1 ? p[0] : p)
+                    return o
+                })
+            } else if (audios[0]) {
+                obj.file = audios[0].file
             }
-            // monitor
-            if (mf2) {
-                if (typeof newYaml.music === 'string') newYaml.music = { file: newYaml.music }
-                newYaml.music.monitor = mf2
-            } else if (typeof newYaml.music === 'object') {
-                delete newYaml.music.monitor
-            }
-        } else if (isEdit && existingYaml?.music && typeof existingYaml.music === 'object' && existingYaml.music.adjust) {
-            const { file, monitor, ...rest } = existingYaml.music
-            newYaml.music = rest
+            if (slotVals.fading_point > 0) obj.fading_point = slotVals.fading_point
+            return obj
         }
-        // fading_point
-        if (resolvedOlVal > 0) {
-            if (typeof newYaml.music === 'string') newYaml.music = { file: newYaml.music }
-            if (typeof newYaml.music === 'object') newYaml.music.fading_point = resolvedOlVal
-        } else if (typeof newYaml.music === 'object') {
-            delete newYaml.music.fading_point
+
+        if (seqMulti) {
+            // SLF-Loop: primary slot → music, sequence slots → music_seq (handled below).
+            const slotCards = [...seqList.querySelectorAll('.seq-entry-card')].filter(c => typeof c.getValues === 'function')
+            // Preserve existing music-level fields not edited in the slot UI (volume/start/end/
+            // fade*/loop/adjust); file/audios/fading_point come from the slot card.
+            const existingMusic = (isEdit || isCopy) && existingYaml?.music && typeof existingYaml.music === 'object' ? existingYaml.music : {}
+            const { file: _f, audios: _a, fading_point: _fp, monitor: _m, ...musicBase } = existingMusic
+            const primaryEntry = slotCards.length ? slotToEntry(slotCards[0].getValues(), musicBase) : { ...musicBase }
+            newYaml.music = Object.keys(primaryEntry).length ? primaryEntry : undefined
+            if (!newYaml.music) delete newYaml.music
+        } else {
+            // music: read from the primary card (and, in multi-audio mode, all audio cards)
+            const primaryCard = seqList.querySelector('.seq-entry-card')
+            const pv = primaryCard?.getValues?.() ?? {}
+            let mf = pv.file || '', resolvedOlVal = pv.fading_point ?? 0
+
+            // Collect simultaneous audios from all cards (multi-audio mode only).
+            const audioCards = multiAudio
+                ? [...seqList.querySelectorAll('.seq-entry-card')]
+                    .filter(c => typeof c.getValues === 'function')
+                    .map(c => c.getValues())
+                    .filter(e => e.file)
+                : []
+            // An audio needs the explicit list form when there are several, or when it carries
+            // mono / a non-empty patch. A lone default-patched audio stays a plain `file`.
+            const needsAudioList = multiAudio && (audioCards.length > 1 ||
+                audioCards.some(a => a.mono || (Array.isArray(a.patch) && a.patch.some(p => p && p.length))))
+
+            if (mf) {
+                if ((isEdit || isCopy) && existingYaml?.music && typeof existingYaml.music === 'object') {
+                    newYaml.music = { ...existingYaml.music, file: mf }
+                    delete newYaml.music.audios
+                } else {
+                    newYaml.music = mf
+                }
+                if (needsAudioList) {
+                    if (typeof newYaml.music === 'string') newYaml.music = { file: newYaml.music }
+                    delete newYaml.music.file
+                    newYaml.music.audios = audioCards.map(a => {
+                        const obj = { file: a.file }
+                        if (a.mono) obj.mono = true
+                        const patch = (a.patch || []).map(p => Array.isArray(p) ? p : [])
+                        if (patch.some(p => p.length)) obj.patch = patch.map(p => p.length === 1 ? p[0] : p)
+                        return obj
+                    })
+                }
+            } else if (isEdit && existingYaml?.music && typeof existingYaml.music === 'object' && existingYaml.music.adjust) {
+                const { file, monitor, audios, ...rest } = existingYaml.music
+                newYaml.music = rest
+            }
+            // fading_point
+            if (resolvedOlVal > 0) {
+                if (typeof newYaml.music === 'string') newYaml.music = { file: newYaml.music }
+                if (typeof newYaml.music === 'object') newYaml.music.fading_point = resolvedOlVal
+            } else if (typeof newYaml.music === 'object') {
+                delete newYaml.music.fading_point
+            }
         }
 
         // note
@@ -8351,8 +8983,10 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
             .map(c => c.getValues())
         const midiMsgs = allMsgs.filter(m => m._isMidi).map(({ _isMidi, ...m }) => m).filter(m => m.type !== 'sysex' || m.bytes)
         const oscMsgs  = allMsgs.filter(m => m._isOsc).map(({ _isOsc, ...m }) => m).filter(m => m.path)
+        const httpMsgs = allMsgs.filter(m => m._isHttp).map(({ _isHttp, ...m }) => m)
         if (midiMsgs.length) newYaml.cue_midi = midiMsgs
         if (oscMsgs.length)  newYaml.cue_osc  = oscMsgs
+        if (httpMsgs.length) newYaml.cue_http = httpMsgs
 
         // start_tc (only for root SLF cues; non-root members use derived TC)
         const tcVal = tcInput?.value.trim() ?? ''
@@ -8414,7 +9048,11 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         if (isEdit && existingYaml?.chain_end)  newYaml.chain_end  = existingYaml.chain_end
         if (isEdit && existingYaml?.loop_outro) newYaml.loop_outro = existingYaml.loop_outro
         // music_seq: collect additional cards (skip first = primary) when seq-loop, else preserve
-        if (isSeqLoop) {
+        if (seqMulti) {
+            const slotCards = [...seqList.querySelectorAll('.seq-entry-card')].filter(c => typeof c.getValues === 'function')
+            const seqEntries = slotCards.slice(1).map(c => slotToEntry(c.getValues())).filter(e => e.file || e.audios)
+            if (seqEntries.length > 0) newYaml.music_seq = seqEntries
+        } else if (isSeqLoop) {
             const allCards = [...seqList.querySelectorAll('.seq-entry-card')]
                 .filter(c => typeof c.getValues === 'function')
             // First card = primary (already saved to music:), rest = music_seq
@@ -8423,7 +9061,6 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
                 .filter(e => e.file)
                 .map(e => {
                     const obj = { file: e.file }
-                    if (e.monitor) obj.monitor = e.monitor
                     if (e.fading_point > 0) obj.fading_point = e.fading_point
                     return obj
                 })
@@ -8608,10 +9245,21 @@ function setArmedCue(idx) {
 }
 
 function setShowLock(locked) {
+    const wasLocked = showLock
     showLock = locked
     document.body.classList.toggle('show-locked', locked)
     document.querySelector('.lock-button')?.classList.toggle('active', locked)
     if (locked && inlineEditor) closeEditor(false)
+    // First unlock of an open-locked session → run the deferred startup dialogs/banner.
+    if (wasLocked && !locked && deferredStartupActions.length) flushDeferredStartupActions()
+}
+
+function flushDeferredStartupActions() {
+    const actions = deferredStartupActions
+    deferredStartupActions = []
+    ;(async () => {
+        for (const fn of actions) { try { await fn() } catch (e) { console.error('deferred startup action failed:', e) } }
+    })()
 }
 
 let _lockHintTimer = null
@@ -8823,6 +9471,7 @@ function triggerAction(cue) {
     if (ta && (ta.ws.isPlaying() || _seqActive)) {
         ta.stopAndReset()
         if (mtc && mtc.activeTcIndex === cue) mtc.stopAndClear()
+        cancelDelayAutoCuesFromSources([cue])   // stopping the source cancels its pending delay auto-cues
         return
     }
 
@@ -8882,6 +9531,7 @@ function triggerAction(cue) {
     sendOscMessage(cue)
     sendCueMidiMessages(cue)
     sendCueOscMessages(cue)
+    sendCueHttpMessages(cue)
 
     if (startTc && mtc) {
         if (ta) mtc.start(startTc, ta.ws, cue, ta.mp?.start ?? 0)
@@ -8902,6 +9552,9 @@ function triggerAction(cue) {
     cueHistory.push(cue)
     cueHistoryAuto.push(wasAuto)
     broadcastLiveState()
+
+    // Arm any delay-based auto-cues that point at this cue (fire after their delay)
+    armDelayAutoCues(cue)
 
     // Pre-decode next audio in background for gapless playback
     const gaplessNote = triggerYamls[cue]?.chain_end || triggerYamls[cue]?.loop_outro
@@ -9095,6 +9748,11 @@ function broadcastLiveState() {
                         }
                     }
                 }
+            }
+            // Delay-based auto-cue counting down → same live-view bar as audio auto-cues.
+            if (!autoCuePending) {
+                const dTimer = delayAutoTimers.get(cueIdx)
+                if (dTimer) autoCuePending = { currentTime: (performance.now() - dTimer.startedAt) / 1000, at: dTimer.delay, base: 0 }
             }
             // Check if this cue is the chain_end target of a currently playing Start cue (S→L transition).
             // Skip if already current — the transition already fired (tail may still be playing).
@@ -9351,6 +10009,9 @@ function backAction() {
         if (!isAuto) break   // stop after the first non-auto entry
     }
 
+    // Undoing a Go cancels any delay-based auto-cues that the undone cues had armed.
+    cancelDelayAutoCuesFromSources(popped)
+
     // Determine the cue Back lands on (last manual cue still in history) and whether its
     // loop will be resumed — so a popped finish/outro it handed off from can be handed back
     // with a short coordinated crossfade instead of a 500 ms overlap (phaser on shared
@@ -9430,15 +10091,16 @@ function backAction() {
     for (const pIdx of popped) {
         const ty = triggerYamls[pIdx]
         if (ty?.cue_midi?.length) {
-            for (const msg of ty.cue_midi) {
-                poppedDeviceKeys.add('midi:' + (msg.device || midiOutputDevices[0]?.name || ''))
-            }
+            for (const msg of ty.cue_midi)
+                if (msg.device) poppedDeviceKeys.add('midi:' + msg.device)
         }
         if (ty?.cue_osc?.length) {
-            for (const msg of ty.cue_osc) {
-                const dev = oscOutputDevices.find(d => d.name === (msg.device || '')) ?? oscOutputDevices[0]
-                poppedDeviceKeys.add('osc:' + (dev?.name || ''))
-            }
+            for (const msg of ty.cue_osc)
+                if (msg.device) poppedDeviceKeys.add('osc:' + msg.device)
+        }
+        if (ty?.cue_http?.length) {
+            for (const msg of ty.cue_http)
+                if (msg.device) poppedDeviceKeys.add('http:' + msg.device)
         }
     }
 
@@ -9503,6 +10165,7 @@ function backAction() {
             if (!state) continue
             if (state.type === 'midi') _sendMidiMsgArray(state.messages)
             else if (state.type === 'osc') _sendOscMsgArray(state.messages)
+            else if (state.type === 'http') _sendHttpMsgArray(state.messages)
         }
     }
 
@@ -9590,9 +10253,9 @@ function computeEffectiveDeviceStates(history) {
         if (ty.cue_midi?.length) {
             const byDev = new Map()
             for (const msg of ty.cue_midi) {
-                const dName = msg.device || midiOutputDevices[0]?.name || ''
-                if (!byDev.has(dName)) byDev.set(dName, [])
-                byDev.get(dName).push(msg)
+                if (!msg.device) continue
+                if (!byDev.has(msg.device)) byDev.set(msg.device, [])
+                byDev.get(msg.device).push(msg)
             }
             for (const [dName, msgs] of byDev) {
                 const key = 'midi:' + dName
@@ -9602,14 +10265,25 @@ function computeEffectiveDeviceStates(history) {
         if (ty.cue_osc?.length) {
             const byDev = new Map()
             for (const msg of ty.cue_osc) {
-                const dev = oscOutputDevices.find(d => d.name === (msg.device || '')) ?? oscOutputDevices[0]
-                const dName = dev?.name || ''
-                if (!byDev.has(dName)) byDev.set(dName, [])
-                byDev.get(dName).push(msg)
+                if (!msg.device) continue
+                if (!byDev.has(msg.device)) byDev.set(msg.device, [])
+                byDev.get(msg.device).push(msg)
             }
             for (const [dName, msgs] of byDev) {
                 const key = 'osc:' + dName
                 if (!result.has(key)) result.set(key, { type: 'osc', device: dName, messages: msgs })
+            }
+        }
+        if (ty.cue_http?.length) {
+            const byDev = new Map()
+            for (const msg of ty.cue_http) {
+                if (!msg.device) continue
+                if (!byDev.has(msg.device)) byDev.set(msg.device, [])
+                byDev.get(msg.device).push(msg)
+            }
+            for (const [dName, msgs] of byDev) {
+                const key = 'http:' + dName
+                if (!result.has(key)) result.set(key, { type: 'http', device: dName, messages: msgs })
             }
         }
     }
@@ -9617,11 +10291,14 @@ function computeEffectiveDeviceStates(history) {
 }
 
 function _sendMidiMsgArray(messages) {
+    if (remoteCuesBlocked) return
     for (const msg of messages) {
+        // Require an explicit, locally-configured device — no fall back to the first device.
         const devIdx = midiOutputDevices.findIndex(d => d.name === (msg.device || ''))
-        const dev  = devIdx >= 0 ? midiOutputDevices[devIdx] : midiOutputDevices[0]
-        if (dev && dev.enabled === false) continue
-        const port = (devIdx >= 0 ? midiOutputPorts[devIdx] : null) ?? midiOutputPorts[0]
+        if (devIdx < 0) continue
+        const dev = midiOutputDevices[devIdx]
+        if (!dev.enabled || dev.unconfigured) continue
+        const port = midiOutputPorts[devIdx]
         if (!port) continue
         if (msg.type === 'note') {
             const ch = ((parseInt(msg.ch) || 1) - 1) & 0xF
@@ -9648,9 +10325,10 @@ function _sendMidiMsgArray(messages) {
 
 function _sendOscMsgArray(messages) {
     if (!window.electronAPI?.sendOsc) return
+    if (remoteCuesBlocked) return
     for (const msg of messages) {
-        const dev = oscOutputDevices.find(d => d.name === (msg.device || '')) ?? oscOutputDevices[0]
-        if (!dev?.enabled) continue
+        const dev = oscOutputDevices.find(d => d.name === (msg.device || ''))
+        if (!dev || !dev.enabled || dev.unconfigured || !dev.host) continue
         const oscPath = String(msg.path || '').trim()
         if (!oscPath || !/^\/[\x20-\x7e]*$/.test(oscPath)) continue
         const args = []
@@ -9674,6 +10352,68 @@ function sendCueOscMessages(cue) {
     const ty = triggerYamls[cue]
     if (!ty?.cue_osc?.length) return
     _sendOscMsgArray(ty.cue_osc)
+}
+
+function _sendHttpMsgArray(messages) {
+    if (!window.electronAPI?.sendHttp) return
+    if (remoteCuesBlocked) return
+    for (const msg of messages) {
+        const dev = httpOutputDevices.find(d => d.name === (msg.device || ''))
+        if (!dev || !dev.enabled || dev.unconfigured || !dev.url) continue
+        window.electronAPI.sendHttp({
+            url:         dev.url,
+            method:      msg.method || 'GET',
+            path:        msg.path || '',
+            body:        msg.body ?? null,
+            contentType: msg.content_type || null,
+        }).then(res => {
+            if (res && res.ok === false) console.warn('[http] request failed:', res.error || res.status)
+        }).catch(e => console.warn('[http] send failed:', e))
+    }
+}
+
+function sendCueHttpMessages(cue) {
+    const ty = triggerYamls[cue]
+    if (!ty?.cue_http?.length) return
+    _sendHttpMsgArray(ty.cue_http)
+}
+
+// True if any cue references an output device that is actually configured & enabled on this
+// machine — i.e. opening the file could really command local gear. Drives the trust warning.
+function fileDrivesConfiguredDevice() {
+    const hasDev = (list, name) => list.some(d => d.name === name && d.enabled && !d.unconfigured)
+    for (const ty of triggerYamls) {
+        for (const m of ty?.cue_midi || []) if (hasDev(midiOutputDevices, m.device || '')) return true
+        for (const m of ty?.cue_osc  || []) if (hasDev(oscOutputDevices,  m.device || '')) return true
+        for (const m of ty?.cue_http || []) if (hasDev(httpOutputDevices, m.device || '')) return true
+    }
+    return false
+}
+
+let _trustPromptOpen = false
+// Warn (once) when the open file's last change happened on another machine and it actually
+// drives a configured output device — letting the user allow it or block all outputs for the
+// session. Re-checked on settings changes too, so configuring a matching device *after* opening
+// an untrusted file still triggers the prompt instead of silently arming its cues.
+async function maybeWarnUntrustedScript() {
+    if (window.__webPreview) return
+    if (remoteCuesBlocked || _trustPromptOpen) return
+    if (!fileDrivesConfiguredDevice()) return
+    if (await window.electronAPI.getScriptTrusted()) return
+    _trustPromptOpen = true
+    try {
+        const allow = await showConfirmDialog({
+            title: t('remote.warn.title'),
+            body: t('remote.warn.body'),
+            hint: t('remote.warn.hint'),
+            confirmLabel: t('remote.warn.allow'),
+            cancelLabel: t('remote.warn.block'),
+        })
+        if (allow) await window.electronAPI.ackScriptTrust()
+        else setOutputsBlocked(true)
+    } finally {
+        _trustPromptOpen = false
+    }
 }
 
 async function playMusic(cue) {
@@ -9897,6 +10637,7 @@ function stopall() {
         const _seqActive = _sd && _sd.total > 1 && _sd.idx > 0
         if (ta.ws.isPlaying() || _seqActive) fadeAdjustAudio(ta, 0.5)
     }
+    for (const target of [...delayAutoTimers.keys()]) cancelDelayAutoCue(target)
     if (mtc) mtc.stopAndClear()
 }
 
@@ -10102,29 +10843,30 @@ function initButtons() {
 }
 
 // Migrate to unified outputDevices array (backwards compat)
+// Build the runtime output-device list by merging the show's device declarations
+// (name/type/colour, from the .md) with the machine-local endpoints (address + flags,
+// from userData via `deviceEndpoints`). A declared device without a local endpoint is
+// `unconfigured` and never sends — addresses live only on this machine, never in the file.
 function _migrateOutputDevices(settings) {
-    if (Array.isArray(settings.outputDevices)) {
-        return settings.outputDevices.map((d, i) => ({
-            enabled: true,
-            sendTriggerNote: i === 0,
-            ...d,
-        }))
-    }
-    // Migrate old separate arrays — only if old data actually exists
-    const midiDevs = settings.midiOutputDevices?.length > 0
-        ? settings.midiOutputDevices
-        : settings.midiTriggerDevice
-            ? [{ name: 'Gerät 1', device: settings.midiTriggerDevice, sendTriggerNote: true }]
-            : []
-    const oscDevs = settings.oscOutputDevices?.length > 0
-        ? settings.oscOutputDevices
-        : settings.oscEnabled
-            ? [{ name: 'Gerät 1', enabled: true, host: settings.oscHost || '127.0.0.1', port: settings.oscPort ?? 8000, sendTriggerNote: false }]
-            : []
-    return [
-        ...midiDevs.map((d, i) => ({ enabled: true, sendTriggerNote: i === 0, ...d, type: 'midi' })),
-        ...oscDevs.map(d => ({ sendTriggerNote: false, ...d, type: 'osc' })),
-    ]
+    const endpoints = (settings.deviceEndpoints && typeof settings.deviceEndpoints === 'object') ? settings.deviceEndpoints : {}
+    const decls = Array.isArray(settings.outputDevices) ? settings.outputDevices : []
+    return decls.filter(d => d && d.name).map(d => {
+        const base = { name: d.name, type: d.type || 'midi', color: safeColor(d.color) }
+        const ep = endpoints[d.name]
+        if (!ep || typeof ep !== 'object') {
+            return { ...base, enabled: false, unconfigured: true, sendTriggerNote: false, sendTimecode: false }
+        }
+        return {
+            ...base,
+            enabled:         ep.enabled ?? true,
+            sendTriggerNote: !!ep.sendTriggerNote,
+            sendTimecode:    !!ep.sendTimecode,
+            device:          ep.device ?? null,
+            host:            ep.host,
+            port:            ep.port,
+            url:             ep.url,
+        }
+    })
 }
 
 // Migrate flat settings to micDevices array (backwards compat)
@@ -10368,23 +11110,23 @@ async function initApp() {
     } catch {}
 
     mainAudioDevice = resolveDeviceId(savedSettings.mainAudioDevice)
-    mainChannelL    = savedSettings.mainChannelL    ?? 0
-    mainChannelR    = savedSettings.mainChannelR    ?? 1
-    monitorEnabled  = savedSettings.monitorEnabled  ?? false
+    virtualChannels = buildVirtualChannels(savedSettings.virtualChannels, savedSettings.virtualChannelOutputs)
     appLanguage     = savedSettings.appLanguage     || 'de'
+    remoteCuesBlocked = savedSettings.outputsBlocked ?? false
     micGroupDisplay = savedSettings.micGroupDisplay ?? true
     mainTextZoom    = parseFloat(savedSettings.mainTextZoom) || 1
     applyMainZoom()
     document.getElementById('script-content').classList.toggle('show-md-line-numbers', !!(savedSettings.showMdLineNumbers))
     if (savedSettings.openLocked) { lockAutoActivated = false; setShowLock(true) }
+    // Opened with Lock → suppress startup dialogs/error banner until the first unlock.
+    const deferStartup = !!savedSettings.openLocked && !window.__webPreview
     window.applyI18n?.(appLanguage)
-    monitorChannelL = monitorEnabled ? (savedSettings.monitorChannelL ?? mainChannelL) : mainChannelL
-    monitorChannelR = monitorEnabled ? (savedSettings.monitorChannelR ?? mainChannelR) : mainChannelR
     editorApp       = savedSettings.editorApp || null
     outputDevices     = _migrateOutputDevices(savedSettings)
     midiOutputDevices = outputDevices.filter(d => d.type === 'midi')
     midiOutputPorts   = midiOutputDevices.map(() => null)
     oscOutputDevices  = outputDevices.filter(d => d.type === 'osc')
+    httpOutputDevices = outputDevices.filter(d => d.type === 'http')
     // Keep compat vars (used by sendOscMessage and other places) from first device
     const _firstOsc = oscOutputDevices[0] || {}
     oscEnabled = _firstOsc.enabled ?? false
@@ -10406,7 +11148,7 @@ async function initApp() {
         const scriptPath0 = await window.electronAPI.getScriptPath()
         const fileName = scriptPath0.split(/[\\/]/).pop()
         const backupName = fileName.replace(/\.md$/, '~unformatted.md')
-        const yes = await showConfirmDialog({
+        const formatDialogArgs = {
             title: 'Skript formatieren?',
             body:  `<strong>${escapeHtml(fileName)}</strong> entspricht nicht dem Formatierungsstandard.<br><br>` +
                    `Fehlende Leerzeilen werden ergänzt, lange Zeilen aufgeteilt.<br>` +
@@ -10414,8 +11156,18 @@ async function initApp() {
             confirmLabel: 'Formatieren',
             cancelLabel:  'Überspringen',
             img: 'assets/formatter.png',
-        })
-        if (yes) {
+        }
+        if (deferStartup) {
+            // Defer to first unlock: format the (already rendered) script, then reload.
+            deferredStartupActions.push(async () => {
+                if (!needsFormatting(scriptText)) return
+                if (await showConfirmDialog(formatDialogArgs)) {
+                    await window.electronAPI.backupScriptMd()
+                    await writeScriptMd(formatScriptText(scriptText))
+                    location.reload()
+                }
+            })
+        } else if (await showConfirmDialog(formatDialogArgs)) {
             await window.electronAPI.backupScriptMd()
             const formatted = formatScriptText(text)
             await writeScriptMd(formatted)
@@ -10449,18 +11201,30 @@ async function initApp() {
 
         const fileVersion = config?.app_version
         if (fileVersion && String(fileVersion) !== appVersion) {
-            await showVersionMismatchDialog(String(fileVersion), appVersion)
+            // Side effects apply immediately; only the dialog is deferred when opened locked.
             versionMismatchIgnored = true
             versionMismatchFileVersion = String(fileVersion)
             window.electronAPI.setSuppressVersionBump(true)
+            if (deferStartup) deferredStartupActions.push(() => showVersionMismatchDialog(String(fileVersion), appVersion))
+            else await showVersionMismatchDialog(String(fileVersion), appVersion)
         }
 
         if (!savedSettings.dismissedUpdatePopup) {
-            const dismissed = await showUpdateInfoDialog(appVersion)
-            if (dismissed) {
-                window.electronAPI.saveSettings({ ...savedSettings, dismissedUpdatePopup: true })
+            const showUpdate = async () => {
+                const dismissed = await showUpdateInfoDialog(appVersion)
+                if (dismissed) window.electronAPI.saveSettings({ ...savedSettings, dismissedUpdatePopup: true })
             }
+            if (deferStartup) deferredStartupActions.push(showUpdate)
+            else await showUpdate()
         }
+
+        // Security: a show file's cue_midi/cue_osc/cue_http blocks command this machine's
+        // configured devices (mixer, lighting, media server) over the trusted LAN — the same
+        // capability a sandboxed browser is denied. Warn whenever the file's last change
+        // happened on another machine (hash mismatch) and it actually drives a configured
+        // device, and let the user block all outputs for the session. Shown immediately even
+        // when opened locked, since auto/remote triggers could fire a cue before unlock.
+        await maybeWarnUntrustedScript()
     }
 
     colorText()
@@ -10471,7 +11235,23 @@ async function initApp() {
             parseErrors.push({ blockNum: null, line: null, message: `Doppelter Gerätename: „${d.name}" – Gerätenamen müssen eindeutig sein` })
         _devNames.add(d.name)
     }
-    showParseErrors()
+    // Warn about cue-referenced output devices that have no local address configured.
+    // Addresses live only on this machine (deviceEndpoints), so a shared file needs them set up here.
+    if (!window.__webPreview) {
+        const _referencedDevs = new Set()
+        for (const ty of triggerYamls) {
+            for (const m of ty?.cue_midi || []) if (m?.device) _referencedDevs.add(m.device)
+            for (const m of ty?.cue_osc  || []) if (m?.device) _referencedDevs.add(m.device)
+            for (const m of ty?.cue_http || []) if (m?.device) _referencedDevs.add(m.device)
+        }
+        for (const name of _referencedDevs) {
+            const dev = outputDevices.find(d => d.name === name)
+            if (dev?.unconfigured)
+                parseErrors.push({ blockNum: null, line: null, message: `Gerät „${name}" hat auf diesem Rechner keine Adresse – in den Einstellungen konfigurieren` })
+        }
+    }
+    if (deferStartup) deferredStartupActions.push(() => showParseErrors())
+    else showParseErrors()
     markControlledTriggers()
     groupSiblingTriggers()
     annotateBlocks()
@@ -10480,6 +11260,7 @@ async function initApp() {
     initButtons()
     setupAutoTriggers()
     buildSidebar()
+    updateOutputsBlockedBar()
 
     checkEmptyScript()
     // Initial load doesn't go through rerender(), so populate the top bar (current
@@ -10508,22 +11289,18 @@ async function initApp() {
         setupMidiInputListeners()
         // Re-enumerate to pick up newly connected devices, then resolve labels.
         const applyNew = () => {
-            const newML  = newSettings.mainChannelL    ?? 0
-            const newMR  = newSettings.mainChannelR    ?? 1
-            const monEn  = newSettings.monitorEnabled  ?? false
-            const newMoL = monEn ? (newSettings.monitorChannelL ?? newML) : newML
-            const newMoR = monEn ? (newSettings.monitorChannelR ?? newMR) : newMR
-            const changed = newML !== mainChannelL || newMR !== mainChannelR ||
-                            newMoL !== monitorChannelL || newMoR !== monitorChannelR
+            const newVChannels = buildVirtualChannels(newSettings.virtualChannels, newSettings.virtualChannelOutputs)
+            const changed = JSON.stringify(newVChannels) !== JSON.stringify(virtualChannels)
             mainAudioDevice = resolveDeviceId(newSettings.mainAudioDevice)
-            mainChannelL    = newML;  mainChannelR    = newMR
-            monitorEnabled  = monEn
-            monitorChannelL = newMoL; monitorChannelR = newMoR
+            virtualChannels = newVChannels
             editorApp       = newSettings.editorApp || null
             outputDevices     = _migrateOutputDevices(newSettings)
             midiOutputDevices = outputDevices.filter(d => d.type === 'midi')
             midiOutputPorts   = midiOutputDevices.map(() => null)
             oscOutputDevices  = outputDevices.filter(d => d.type === 'osc')
+            httpOutputDevices = outputDevices.filter(d => d.type === 'http')
+            remoteCuesBlocked = newSettings.outputsBlocked ?? false
+            updateOutputsBlockedBar()
             const _newFirstOsc = oscOutputDevices[0] || {}
             oscEnabled = _newFirstOsc.enabled ?? false
             oscHost    = _newFirstOsc.host    || '127.0.0.1'
@@ -10543,6 +11320,9 @@ async function initApp() {
                 for (const ta of triggerAudio.values()) { ta.decodedBuffer = null; ta._decoding = false }
             }
             applyAudioDevices()
+            // A device may have just become configured for a cue in an untrusted file — re-run
+            // the trust gate so its cues can't arm without consent (unless already blocked here).
+            if (!remoteCuesBlocked) maybeWarnUntrustedScript()
         }
         navigator.mediaDevices.enumerateDevices().then(devs => {
             audioOutputDevices = devs.filter(d => d.kind === 'audiooutput')

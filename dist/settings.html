@@ -183,23 +183,21 @@
                 <p class="hint" data-i18n="s.audio.hint">Für Monitor-Mix: Aggregate Device in macOS Audio-MIDI-Setup anlegen (Haupt + Monitor als ein Gerät), dann die Kanalpaare unten wählen.</p>
             </div>
             <div class="field">
-                <label style="display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf;margin-bottom:0.5rem">
-                    <input type="checkbox" id="monitor-enable" style="width:auto">
-                    <span data-i18n="s.monitor.enable">Monitor-Mix aktiviert</span>
-                </label>
-                <p class="hint" id="monitor-hint" style="margin:0 0 0.6rem"></p>
-                <table class="routing-table" id="routing-table">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem">
+                    <label style="text-transform:none;font-size:1rem;color:#abb2bf;margin:0" data-i18n="s.vch.title">Virtuelle Kanäle</label>
+                    <button type="button" id="vch-add-btn" class="dialog-btn" style="padding:0.2rem 0.6rem;font-size:0.82rem" data-i18n="s.vch.add">+ Kanal</button>
+                </div>
+                <p class="hint" id="vch-warn" style="color:#e06c75;margin:0 0 0.6rem;display:none"></p>
+                <table class="routing-table" id="vch-table">
                     <thead>
                         <tr>
-                            <th></th>
-                            <th class="col-main">Main L</th>
-                            <th class="col-main">Main R</th>
-                            <th class="col-mon" id="mon-th-l">Mon L</th>
-                            <th class="col-mon" id="mon-th-r">Mon R</th>
+                            <th data-i18n="s.vch.name">Name</th>
+                            <th data-i18n="s.vch.output">Physischer Ausgang</th>
+                            <th class="col-test"></th>
                             <th class="col-test"></th>
                         </tr>
                     </thead>
-                    <tbody id="routing-body"></tbody>
+                    <tbody id="vch-body"></tbody>
                 </table>
             </div>
         </div>
@@ -302,6 +300,13 @@
                     <input type="checkbox" id="show-md-line-numbers" style="width:auto">
                     <span data-i18n="s.show.md.lines">Markdown-Zeilennummern anzeigen</span>
                 </label>
+            </div>
+            <div class="field">
+                <label style="display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf">
+                    <input type="checkbox" id="outputs-blocked" style="width:auto">
+                    <span data-i18n="s.outputs.blocked">Geräte-Ausgänge blockieren (MIDI/OSC/HTTP)</span>
+                </label>
+                <div style="font-size:0.8rem;color:#7f848e;margin-top:0.3rem" data-i18n="s.outputs.blocked.hint">Verhindert, dass Cues Befehle an Geräte senden – z.B. zum Bearbeiten ohne angeschlossene Technik.</div>
             </div>
 
             <div class="section-title" data-i18n="s.lang">Sprache</div>
