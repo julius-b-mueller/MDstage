@@ -43,7 +43,7 @@ const TRIGGER_BLOCK_KEYS = new Set([
     'music', 'music_seq', 'osc', 'osc_arg', 'osc_arg_type',
     'qlcplus', 'projection', 'start_tc',
     'auto_trigger', 'chain_end', 'loop_outro',
-    'cue_midi', 'cue_osc', 'cue_http',
+    'cue_midi', 'cue_osc', 'cue_http', 'cue_display',
 ])
 
 // Allowed keys for nested objects inside a cue block — used to surface unknown
@@ -58,6 +58,7 @@ const AUTO_TRIGGER_KEYS = new Set(['trigger_note', 'at', 'delay'])
 const CUE_MIDI_KEYS     = new Set(['device', 'type', 'ch', 'note', 'vel', 'cc', 'value', 'program', 'bytes', 'comment'])
 const CUE_OSC_KEYS      = new Set(['device', 'path', 'arg', 'arg_type', 'comment'])
 const CUE_HTTP_KEYS     = new Set(['device', 'method', 'path', 'body', 'content_type', 'comment'])
+const CUE_DISPLAY_KEYS  = new Set(['device', 'markdown', 'announce'])
 
 function isPlainObject(v) { return v != null && typeof v === 'object' && !Array.isArray(v) }
 
@@ -121,6 +122,8 @@ function findUnknownYamlKeys(text) {
             parsed.cue_osc.forEach((item, i) => report(item, CUE_OSC_KEYS, `cue_osc[${i}].`))
         if (Array.isArray(parsed.cue_http))
             parsed.cue_http.forEach((item, i) => report(item, CUE_HTTP_KEYS, `cue_http[${i}].`))
+        if (Array.isArray(parsed.cue_display))
+            parsed.cue_display.forEach((item, i) => report(item, CUE_DISPLAY_KEYS, `cue_display[${i}].`))
     }
     return results
 }
@@ -153,6 +156,10 @@ async function writeScriptMd(content) {
     return window.electronAPI.writeScriptMd(content)
 }
 const slfDerivedTcBadges = new Map()  // triggerIndex → span element for derived TC badges
+// triggerIndex → 'HH:MM:SS' of the last time this cue was triggered. Session-only, never
+// written to the .md; can optionally be included on export. Overwritten on each re-trigger.
+const cueTimestamps = new Map()
+const cueTimestampBadges = new Map()  // triggerIndex → badge element (rebuilt each render)
 // cueIdx → {position, at} captured on every timeupdate, so Back can resume a track at
 // the position (or beat-compensated loop position) it had right before it was stopped.
 const lastPlaybackPos = new Map()
@@ -643,6 +650,7 @@ let currentCue = 0
 let cueHistory     = []
 let cueHistoryAuto = []   // parallel to cueHistory: true = fired automatically (auto_trigger YAML or chain_end transition), not by an operator action
 let pendingAutoTrigger = false  // set just before calling triggerAction from auto-trigger
+let cueClipboard = null   // in-app clipboard for copy/paste of a whole cue (session only)
 let liveViewOpen = false
 let showLock = false
 let lockAutoActivated = false
@@ -671,7 +679,9 @@ let midiOutputDevices = []   // [{name, device, sendTriggerNote, color}]  — de
 let midiOutputPorts   = []   // resolved MIDI output ports (parallel array)
 let oscOutputDevices  = []   // [{name, enabled, host, port, sendTriggerNote, color}] — derived from outputDevices
 let httpOutputDevices = []   // [{name, enabled, url, color}] — derived from outputDevices
-let remoteCuesBlocked = false // session gate: when set, no cue drives MIDI/OSC/HTTP outputs
+let displayOutputDevices = [] // [{name, enabled, slug, scrollSec, style, color}] — derived from outputDevices
+let displayClientRoster = []  // [{clientId, slug, name, voice, connected}] — presence, pushed from main
+let remoteCuesBlocked = false // session gate: when set, no cue drives MIDI/OSC/HTTP/Display outputs
 let appLanguage = 'de'
 let micGroupDisplay = true      // whether to bundle mic roles into group boxes in the UI
 let mainTextZoom = 1   // loaded from device prefs (editor-prefs.json) in initApp
@@ -3275,6 +3285,25 @@ function makeHtmlSafe(mdText) {
     return DOMPurify.sanitize(marked.parse(mdText), _purifyConfig)
 }
 
+// Short label for a display cue chip: first markdown heading, else first non-empty
+// line, cropped to 20 characters with an ellipsis.
+function displayChipLabel(markdown) {
+    const lines = String(markdown || '').split('\n')
+    let label = ''
+    for (const line of lines) {
+        const h = line.match(/^\s*#{1,6}\s+(.*\S)/)
+        if (h) { label = h[1].trim(); break }
+    }
+    if (!label) {
+        for (const line of lines) {
+            const s = line.trim()
+            if (s) { label = s; break }
+        }
+    }
+    label = label.replace(/[#*_`>-]/g, '').trim()
+    return label.length > 20 ? label.slice(0, 20) + '…' : label
+}
+
 class MTCTransmitter {
     constructor() {
         this.outputs = []
@@ -3660,6 +3689,7 @@ function rerender(newText) {
     triggerYamls = []
     triggerAudio.clear()
     slfDerivedTcBadges.clear()
+    cueTimestampBadges.clear()   // badges are DOM elements, rebuilt below; cueTimestamps persists
     fileToTriggers.clear()
     config = {}
     effectiveDeviceStates = new Map()
@@ -3805,6 +3835,9 @@ function validateCueFields(y, blockNum, lineNum) {
 
     if (y.cue_http != null && !Array.isArray(y.cue_http))
         parseErrors.push({ blockNum, line: lineNum, message: 'cue_http muss eine Liste sein' })
+
+    if (y.cue_display != null && !Array.isArray(y.cue_display))
+        parseErrors.push({ blockNum, line: lineNum, message: 'cue_display muss eine Liste sein' })
 }
 
 function validateYamlBlocks(text) {
@@ -3931,6 +3964,7 @@ function updateOutputsBlockedBar() {
 function setOutputsBlocked(blocked) {
     remoteCuesBlocked = blocked
     updateOutputsBlockedBar()
+    updateDisplayOutputs()   // re-push (or re-hold) display content on block/unblock
     // Machine-local flag → write only editor-prefs.json (no show-file rewrite/version bump).
     window.electronAPI?.saveEditorPrefs?.({ outputsBlocked: blocked })
 }
@@ -5080,6 +5114,11 @@ function buildTrigger(codeblockYaml, index) {
     triggerDiv.classList.add("trigger")
     triggerDiv.dataset.triggerIndex = index
 
+    // Bottom-right corner: holds the session timestamp and (if any) the TC badge side by side.
+    const cornerEl = document.createElement("div")
+    cornerEl.className = "trigger-corner"
+    triggerDiv.appendChild(cornerEl)
+
     // ── header row (always present) ─────────────────────────────────────
     const triggerRow = document.createElement("div")
     triggerRow.classList.add("trigger-row")
@@ -5292,6 +5331,35 @@ function buildTrigger(codeblockYaml, index) {
         triggerInfo.appendChild(httpRow)
     }
 
+    // cue_display chips
+    if (Array.isArray(codeblockYaml.cue_display) && codeblockYaml.cue_display.length > 0) {
+        const dispRow = document.createElement('div')
+        dispRow.classList.add('trigger-cue-osc')
+        for (const msg of codeblockYaml.cue_display) {
+            const chip = document.createElement('span')
+            chip.classList.add('cue-msg-chip', 'cue-msg-chip--osc')
+            const dispDevName = msg.device || displayOutputDevices[0]?.name || ''
+            const isUnknownDisp = !!msg.device && !displayOutputDevices.some(d => d.name === msg.device)
+            const dispDevColor = (displayOutputDevices.find(d => d.name === dispDevName) ?? displayOutputDevices[0])?.color || ''
+            if (isUnknownDisp) chip.classList.add('cue-msg-chip--unknown')
+            if (dispDevColor) chip.style.cssText = `border-color:${dispDevColor}55;background:${dispDevColor}12`
+            const badge = document.createElement('span')
+            badge.className = 'cue-type-badge'
+            badge.textContent = (isUnknownDisp ? '! ' : '') + (dispDevName || 'Display')
+            if (dispDevColor) badge.style.cssText = `background:${dispDevColor}30;color:${dispDevColor}`
+            const content = document.createElement('span')
+            content.className = 'cue-msg-content'
+            let dispLabel = displayChipLabel(msg.markdown)
+            if (msg.announce) dispLabel = '🔊 ' + (dispLabel || displayChipLabel(msg.announce))
+            else if (!dispLabel) dispLabel = '🧹 leeren'
+            content.textContent = dispLabel
+            chip.appendChild(badge)
+            chip.appendChild(content)
+            dispRow.appendChild(chip)
+        }
+        triggerInfo.appendChild(dispRow)
+    }
+
     // text note
     if (codeblockYaml.note) triggerNote.innerText = codeblockYaml.note
 
@@ -5310,7 +5378,7 @@ function buildTrigger(codeblockYaml, index) {
         tcBadge.className = 'trigger-tc-badge'
         tcBadge.textContent = '⏱ ' + codeblockYaml.start_tc
         tcBadge.title = 'Timecode-Offset'
-        triggerDiv.appendChild(tcBadge)
+        cornerEl.appendChild(tcBadge)
     }
     // Derived TC badge for non-root SLF members: filled in after triggerYamls[index] is set below
 
@@ -5777,6 +5845,8 @@ function buildTrigger(codeblockYaml, index) {
                 sendCueMidiMessages(nextIdx)
                 sendCueOscMessages(nextIdx)
                 sendCueHttpMessages(nextIdx)
+                fireCueDisplayAnnounce(nextIdx)
+                recordCueTimestamp(nextIdx)
                 cueHistory.push(nextIdx); cueHistoryAuto.push(isAuto)
                 broadcastLiveState()
                 return
@@ -7294,14 +7364,15 @@ function buildTrigger(codeblockYaml, index) {
                 tcBadge.textContent = `⏱ ↳ ${rootTc}`
                 tcBadge.title = 'Timecode abgeleitet vom Start-Cue (Audiodauer lädt…)'
                 slfDerivedTcBadges.set(index, tcBadge)
-                triggerDiv.appendChild(tcBadge)
+                cornerEl.appendChild(tcBadge)
             }
         }
     }
 
     // Capture phase: intercept button/control clicks while locked before their own handlers fire
     triggerDiv.addEventListener("mousedown", (e) => {
-        if (showLock && !pickModeCallback && e.target.closest('button, select, input')) {
+        // The arm-live button is exempt: arming a cue is allowed even when locked.
+        if (showLock && !pickModeCallback && e.target.closest('button, select, input') && !e.target.closest('.trigger-arm-live-btn')) {
             e.stopPropagation()
             e.preventDefault()
             showLockHint(e)
@@ -7464,6 +7535,52 @@ function buildTrigger(codeblockYaml, index) {
         showTriggerDialog({ insertAfterBlockIdx: blockIdxForTrigger(index), existingYaml: copy, isCopy: true, parentTriggerNote })
     })
     triggerDiv.querySelector('.trigger-actions').appendChild(copyBtn)
+
+    // ── Kopieren button (clipboard copy/paste) ────────────────────────────
+    const clipBtn = document.createElement("button")
+    clipBtn.classList.add("trigger-action-btn")
+    clipBtn.textContent = t('btn.copy')
+    clipBtn.title = t('btn.copy.title')
+    clipBtn.addEventListener("mousedown", e => e.stopPropagation())
+    clipBtn.addEventListener("click", e => {
+        e.stopPropagation()
+        cueClipboard = JSON.parse(JSON.stringify(codeblockYaml))
+        buildInsertZones()   // reveal paste buttons next to the + insert buttons
+        clipBtn.classList.add('trigger-action-btn--flash')
+        setTimeout(() => clipBtn.classList.remove('trigger-action-btn--flash'), 400)
+    })
+    triggerDiv.querySelector('.trigger-actions').appendChild(clipBtn)
+
+    // ── Arm-in-live button (open live view with this cue armed) ────────────
+    // Placed top-right, just left of the cue note (not in the bottom action row).
+    const armLiveBtn = document.createElement("button")
+    armLiveBtn.classList.add("trigger-action-btn", "trigger-arm-live-btn")
+    armLiveBtn.textContent = t('btn.armlive')
+    armLiveBtn.title = t('btn.armlive.title')
+    armLiveBtn.style.marginRight = '0.6rem'
+    armLiveBtn.style.alignSelf = 'flex-start'   // top-align, not centered against the big note
+    armLiveBtn.addEventListener("mousedown", e => e.stopPropagation())
+    armLiveBtn.addEventListener("click", e => {
+        e.stopPropagation()
+        setArmedCue(index)
+        const isSibling = !!triggerYamls[index]?.sibling
+        const hasNextSibling = !!(triggerYamls[index + 1]?.sibling)
+        if (isSibling || hasNextSibling) selectedVariant = index
+        broadcastLiveState()
+        window.electronAPI.openLiveWindow()
+    })
+    rightWrapper.insertBefore(armLiveBtn, triggerNoteDisplay)
+
+    // ── Trigger timestamp (session-only) — subtle, bottom-right; left of the TC badge
+    //    when one is present.
+    const tsBadge = document.createElement('span')
+    tsBadge.classList.add('trigger-timestamp-badge')
+    tsBadge.title = 'Zeit des letzten Auslösens (nur diese Sitzung)'
+    const _existingTs = cueTimestamps.get(index)
+    if (_existingTs) tsBadge.textContent = _existingTs
+    else tsBadge.style.display = 'none'
+    cueTimestampBadges.set(index, tsBadge)
+    cornerEl.insertBefore(tsBadge, cornerEl.firstChild)
 
     return triggerDiv
 }
@@ -7703,6 +7820,23 @@ function buildInsertZones() {
                 showTriggerDialog({ insertAfterBlockIdx })
             }
         })
+        // Paste button — only shown when a cue is on the in-app clipboard
+        if (cueClipboard) {
+            const pasteBtn = document.createElement('button')
+            pasteBtn.classList.add('paste-btn')
+            pasteBtn.textContent = t('btn.paste')
+            pasteBtn.title = t('btn.paste.title')
+            pasteBtn.addEventListener('mousedown', e => e.stopPropagation())
+            pasteBtn.addEventListener('click', (e) => {
+                e.stopPropagation()
+                if (!cueClipboard) return
+                const copy = JSON.parse(JSON.stringify(cueClipboard))
+                delete copy.trigger_note   // assignTriggerNotes() assigns a fresh one
+                delete copy.sibling        // pasted cue is standalone, not a variant
+                insertTriggerInScript(insertAfterBlockIdx, copy)
+            })
+            hotspot.appendChild(pasteBtn)
+        }
         if (i < blockEls.length) {
             content.insertBefore(zone, blockEls[i])
             const el = blockEls[i]
@@ -8556,16 +8690,17 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         cardHeader.append(commentIn, removeBtn)
         card.appendChild(cardHeader)
 
-        // Device select — all outputDevices
+        // Device select — all message-capable outputDevices (displays are handled separately)
+        const msgDevices = outputDevices.filter(d => d.type !== 'display')
         const devSel = document.createElement('select')
         devSel.classList.add('dialog-select')
         devSel.style.marginBottom = '0.4rem'
-        for (const d of outputDevices) {
+        for (const d of msgDevices) {
             const o = new Option(d.name, d.name)
             if (d.name === cfg.device) o.selected = true
             devSel.appendChild(o)
         }
-        if (!devSel.value && outputDevices.length) devSel.value = outputDevices.find(d => d.type === devType)?.name || outputDevices[0].name
+        if (!devSel.value && msgDevices.length) devSel.value = msgDevices.find(d => d.type === devType)?.name || msgDevices[0].name
         card.appendChild(devSel)
 
         // ─ MIDI fields ─
@@ -8746,6 +8881,81 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         for (const m of existingYaml.cue_http) buildMsgCard(m, 'http')
     }
     addMsgBtn.addEventListener('click', () => buildMsgCard({}))
+
+    // ── Displays (Markdown + TTS-Ansage) ─────────────────────────────────
+    // Add-message model like cue_midi/cue_osc: each message targets a display device.
+    //   markdown present            → show it (replace)
+    //   only announce (no markdown) → keep previous content + speak the announcement
+    //   neither markdown nor announce → clear the display
+    // A cue with no message for a device leaves that display untouched (persists).
+    const displayCardList = []   // [{ getValues }]
+    let dispListEl = null
+    if (displayOutputDevices.length) {
+        const existingDisplay = (isEdit || isCopy) && Array.isArray(existingYaml?.cue_display) ? existingYaml.cue_display : []
+        const dispSection = document.createElement('div')
+        dispSection.classList.add('dialog-field')
+        const headerRow = document.createElement('div')
+        headerRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem'
+        const dispLabel = document.createElement('label')
+        dispLabel.textContent = 'Displays'
+        dispLabel.style.marginBottom = '0'
+        const addDispBtn = document.createElement('button')
+        addDispBtn.type = 'button'
+        addDispBtn.classList.add('dialog-btn')
+        addDispBtn.textContent = '+ Display-Nachricht'
+        addDispBtn.style.cssText = 'padding:0.2rem 0.6rem;font-size:0.82rem'
+        headerRow.append(dispLabel, addDispBtn)
+        dispSection.appendChild(headerRow)
+        dispListEl = document.createElement('div')
+        dispSection.appendChild(dispListEl)
+
+        const buildDisplayCard = (cfg) => {
+            cfg = cfg || {}
+            const card = document.createElement('div')
+            card.className = 'cue-msg-card'
+            const cardHeader = document.createElement('div')
+            cardHeader.className = 'cue-msg-card-header'
+            const devSel = document.createElement('select')
+            devSel.classList.add('dialog-select')
+            devSel.style.flex = '1'
+            for (const d of displayOutputDevices) {
+                const o = new Option(d.name, d.name)
+                if (d.name === cfg.device) o.selected = true
+                devSel.appendChild(o)
+            }
+            if (!devSel.value && displayOutputDevices.length) devSel.value = displayOutputDevices[0].name
+            const removeBtn = document.createElement('button')
+            removeBtn.type = 'button'
+            removeBtn.className = 'cue-msg-card-remove'
+            removeBtn.textContent = '✕'
+            removeBtn.addEventListener('click', () => {
+                card.remove()
+                const i = displayCardList.findIndex(c => c.card === card)
+                if (i >= 0) displayCardList.splice(i, 1)
+            })
+            cardHeader.append(devSel, removeBtn)
+            const ta = document.createElement('textarea')
+            ta.className = 'dialog-input'
+            ta.rows = 4
+            ta.placeholder = '# Markdown … (leer lassen, um zu halten/leeren)'
+            ta.style.cssText = 'width:100%;margin-top:0.4rem;resize:vertical;font-family:monospace;box-sizing:border-box'
+            ta.value = cfg.markdown || ''
+            const annIn = document.createElement('input')
+            annIn.type = 'text'
+            annIn.className = 'dialog-input'
+            annIn.placeholder = '🔊 Ansage (Text-to-Speech, optional — hält den vorherigen Inhalt)'
+            annIn.style.cssText = 'width:100%;margin-top:0.4rem;box-sizing:border-box'
+            annIn.value = cfg.announce || ''
+            card.append(cardHeader, ta, annIn)
+            card.getValues = () => ({ device: devSel.value, markdown: ta.value, announce: annIn.value.trim() })
+            dispListEl.appendChild(card)
+            displayCardList.push({ card, getValues: card.getValues })
+        }
+
+        for (const m of existingDisplay) buildDisplayCard(m)
+        addDispBtn.addEventListener('click', () => buildDisplayCard({}))
+        box.appendChild(dispSection)
+    }
 
     // ── Start-Timecode ───────────────────────────────────────────────
     let tcInput = null
@@ -8987,6 +9197,19 @@ async function showTriggerDialog({ insertAfterBlockIdx = null, triggerIndex = nu
         if (midiMsgs.length) newYaml.cue_midi = midiMsgs
         if (oscMsgs.length)  newYaml.cue_osc  = oscMsgs
         if (httpMsgs.length) newYaml.cue_http = httpMsgs
+
+        // cue_display: each message targets a display device. An empty message (no markdown,
+        // no announce) is kept intentionally — it means "clear this display".
+        const displayMsgs = displayCardList
+            .map(c => c.getValues())
+            .filter(c => c.device)
+            .map(c => {
+                const entry = { device: c.device }
+                if (c.markdown.trim() !== '') entry.markdown = c.markdown
+                if (c.announce) entry.announce = c.announce
+                return entry
+            })
+        if (displayMsgs.length) newYaml.cue_display = displayMsgs
 
         // start_tc (only for root SLF cues; non-root members use derived TC)
         const tcVal = tcInput?.value.trim() ?? ''
@@ -9532,6 +9755,8 @@ function triggerAction(cue) {
     sendCueMidiMessages(cue)
     sendCueOscMessages(cue)
     sendCueHttpMessages(cue)
+    fireCueDisplayAnnounce(cue)
+    recordCueTimestamp(cue)
 
     if (startTc && mtc) {
         if (ta) mtc.start(startTc, ta.ws, cue, ta.mp?.start ?? 0)
@@ -9656,6 +9881,8 @@ function nextFocusCue() {
 
 function broadcastLiveState() {
     if (!window.electronAPI?.sendLiveState) return
+
+    updateDisplayOutputs()   // push current per-display markdown to the display server
 
     // If currentCue is a pending outro, treat the loop as still current for live display
     // so the live view only scrolls when the loop actually ends and the outro fires.
@@ -9810,6 +10037,7 @@ function broadcastLiveState() {
                 slfLabel,
                 cueMidi: ty.cue_midi || null,
                 cueOsc:  ty.cue_osc  || null,
+                cueDisplay: ty.cue_display || null,
             })
         } else {
             const hm = b.content.match(/^(#{1,2}) (.+)/)
@@ -9874,17 +10102,21 @@ function broadcastLiveState() {
     const _deviceOrder = new Map()
     midiOutputDevices.forEach((d, i) => _deviceOrder.set('midi:' + d.name, i))
     oscOutputDevices.forEach((d, i)  => _deviceOrder.set('osc:'  + d.name, midiOutputDevices.length + i))
+    displayOutputDevices.forEach((d, i) => _deviceOrder.set('display:' + d.name, midiOutputDevices.length + oscOutputDevices.length + i))
     const effectiveDeviceStatesArr = Array.from(_devStatesMap.values())
         .sort((a, b) => {
-            const ka = (a.type === 'midi' ? 'midi:' : 'osc:') + a.device
-            const kb = (b.type === 'midi' ? 'midi:' : 'osc:') + b.device
+            const ka = a.type + ':' + a.device
+            const kb = b.type + ':' + b.device
             return (_deviceOrder.get(ka) ?? 9999) - (_deviceOrder.get(kb) ?? 9999)
         })
+        // Display entries carry a short label for the info bar instead of a message list.
+        .map(s => s.type === 'display' ? { ...s, label: displayChipLabel(s.markdown) } : s)
 
     // Build device color lookup
     const deviceColors = {}
     for (const d of midiOutputDevices) { if (d.color) deviceColors['midi:' + d.name] = d.color }
     for (const d of oscOutputDevices)  { if (d.color) deviceColors['osc:'  + d.name] = d.color }
+    for (const d of displayOutputDevices) { if (d.color) deviceColors['display:' + d.name] = d.color }
 
     // Known device name sets for unknown-device warnings in live view
     const knownMidiDevices = midiOutputDevices.map(d => d.name)
@@ -9893,6 +10125,16 @@ function broadcastLiveState() {
     // Whether the focused next cue is operator-triggered (not an auto-cue). Used by
     // the live view to keep Go enabled while only an auto-cue is pending.
     const nextCueIsManual = nextCue !== null && !!triggerYamls[nextCue] && !triggerYamls[nextCue].auto_trigger
+
+    // Display-client presence, joined with the configured device names (slug ← slugified name).
+    const _slugToDevName = new Map()
+    for (const d of displayOutputDevices) { _slugToDevName.set(slugifyDeviceName(d.name), d.name) }
+    const displayClientsForLive = displayClientRoster.map(c => ({
+        clientId: c.clientId,
+        deviceName: _slugToDevName.get(c.slug) || c.slug,
+        name: c.name || '',
+        connected: !!c.connected,
+    }))
 
     window.electronAPI.sendLiveState({
         blocks: liveBlocks,
@@ -9911,6 +10153,7 @@ function broadcastLiveState() {
         effectiveMicColors: effectiveMics === 'muteall' ? null : (effectiveMicColors ?? undefined),
         hasMicState: effectiveMics !== null,
         showProgress: { current: liveCurrent, total: _progressCueCount, segments: _progressSegs },
+        displayClients: displayClientsForLive,
     })
 }
 
@@ -10286,8 +10529,62 @@ function computeEffectiveDeviceStates(history) {
                 if (!result.has(key)) result.set(key, { type: 'http', device: dName, messages: msgs })
             }
         }
+        if (ty.cue_display?.length) {
+            // Scanning newest → oldest. Per display device the newest *content-affecting*
+            // message wins: markdown = SET, empty = CLEAR. An announce-only message HOLDs
+            // (keeps whatever an older cue set), so it is transparent here and we keep looking.
+            for (const msg of ty.cue_display) {
+                if (!msg.device) continue
+                const key = 'display:' + msg.device
+                if (result.has(key)) continue
+                const hasMd = !!(msg.markdown && String(msg.markdown).trim() !== '')
+                const hasAnnounce = !!(msg.announce && String(msg.announce).trim() !== '')
+                if (hasMd)            result.set(key, { type: 'display', device: msg.device, markdown: msg.markdown })
+                else if (hasAnnounce) continue   // HOLD — transparent, keep scanning older cues
+                else                  result.set(key, { type: 'display', device: msg.device, markdown: '' })   // CLEAR
+            }
+        }
     }
     return result
+}
+
+// Turn a display device name into a clean URL slug: lowercase, umlauts → ae/oe/ue/ss,
+// other diacritics stripped, everything else collapsed to hyphens. Keep in sync with the
+// identical helper in dist/settings.js (used for the URL preview).
+function slugifyDeviceName(name) {
+    const s = String(name || '')
+        .toLowerCase()
+        .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+    return s || 'display'
+}
+
+// Compute the current markdown per display device from history, render it to safe
+// HTML, and push `{ slug, html, style, scrollSec }` to the main process, which serves
+// it over the display HTTP server. Called from broadcastLiveState (covers Go/Back/load).
+function updateDisplayOutputs() {
+    if (!window.electronAPI?.updateDisplays) return
+    if (!displayOutputDevices.length) return
+    const devStates = computeEffectiveDeviceStates(cueHistory)
+    const payload = []
+    for (const dev of displayOutputDevices) {
+        const slug = slugifyDeviceName(dev.name)   // URL path derived from the device name
+        if (!slug) continue
+        const state = devStates.get('display:' + dev.name)
+        // When outputs are blocked, don't push new content (keep previous on the wire).
+        const md = remoteCuesBlocked ? null : (state?.markdown ?? '')
+        payload.push({
+            slug,
+            name: dev.name || slug,   // human name for the display index page
+            html: md == null ? null : makeHtmlSafe(md),
+            style: dev.style || 'dark',
+            scrollSec: Number(dev.scrollSec) > 0 ? Number(dev.scrollSec) : 0,
+            lang: dev.lang || '',
+        })
+    }
+    if (payload.length) window.electronAPI.updateDisplays(payload)
 }
 
 function _sendMidiMsgArray(messages) {
@@ -10378,6 +10675,52 @@ function sendCueHttpMessages(cue) {
     _sendHttpMsgArray(ty.cue_http)
 }
 
+// Fire TTS announcements for a cue's display messages. Only on an actual trigger (Go/auto),
+// never on Back — Back restores content but must not re-announce.
+function fireCueDisplayAnnounce(cue) {
+    if (remoteCuesBlocked) return
+    const ty = triggerYamls[cue]
+    if (!ty?.cue_display?.length) return
+    if (!window.electronAPI?.announceDisplays) return
+    const payload = []
+    for (const msg of ty.cue_display) {
+        if (!msg.announce || !String(msg.announce).trim()) continue
+        const dev = displayOutputDevices.find(d => d.name === msg.device)
+        if (!dev) continue
+        const slug = slugifyDeviceName(dev.name)   // URL path derived from the device name
+        const entry = { slug, text: String(msg.announce) }
+        if (dev.repeat) {
+            entry.repeat = true
+            entry.repeatPhrase = repeatPhraseFor(dev.lang)
+        }
+        payload.push(entry)
+    }
+    if (payload.length) window.electronAPI.announceDisplays(payload)
+}
+
+// "I repeat" in the display device's TTS language (falls back to the app language, then German).
+const REPEAT_PHRASES = {
+    de: 'Ich wiederhole', en: 'I repeat', fr: 'Je répète', es: 'Repito', it: 'Ripeto',
+    nl: 'Ik herhaal', pt: 'Repito', pl: 'Powtarzam', ru: 'Повторяю', tr: 'Tekrar ediyorum',
+    cs: 'Opakuji', da: 'Jeg gentager', sv: 'Jag upprepar', nb: 'Jeg gjentar', fi: 'Toistan',
+    zh: '我重复', ja: '繰り返します', ko: '반복합니다', ar: 'أكرر',
+}
+function repeatPhraseFor(lang) {
+    const code = String(lang || '').toLowerCase().split('-')[0]
+    return REPEAT_PHRASES[code] || REPEAT_PHRASES[appLanguage] || REPEAT_PHRASES.de
+}
+
+// Record the wall-clock time a cue was triggered (session-only, overwritten on re-trigger)
+// and update its badge live. Not persisted; can be included on export.
+function recordCueTimestamp(cue) {
+    const d = new Date()
+    const p = n => String(n).padStart(2, '0')
+    const stamp = `${p(d.getHours())}:${p(d.getMinutes())}`   // HH:MM is enough (no seconds)
+    cueTimestamps.set(cue, stamp)
+    const badge = cueTimestampBadges.get(cue)
+    if (badge) { badge.textContent = stamp; badge.style.display = '' }
+}
+
 // True if any cue references an output device that is actually configured & enabled on this
 // machine — i.e. opening the file could really command local gear. Drives the trust warning.
 function fileDrivesConfiguredDevice() {
@@ -10386,6 +10729,7 @@ function fileDrivesConfiguredDevice() {
         for (const m of ty?.cue_midi || []) if (hasDev(midiOutputDevices, m.device || '')) return true
         for (const m of ty?.cue_osc  || []) if (hasDev(oscOutputDevices,  m.device || '')) return true
         for (const m of ty?.cue_http || []) if (hasDev(httpOutputDevices, m.device || '')) return true
+        for (const m of ty?.cue_display || []) if (hasDev(displayOutputDevices, m.device || '')) return true
     }
     return false
 }
@@ -10865,6 +11209,10 @@ function _migrateOutputDevices(settings) {
             host:            ep.host,
             port:            ep.port,
             url:             ep.url,
+            scrollSec:       ep.scrollSec,
+            style:           ep.style,
+            lang:            ep.lang,
+            repeat:          ep.repeat,
         }
     })
 }
@@ -11127,6 +11475,7 @@ async function initApp() {
     midiOutputPorts   = midiOutputDevices.map(() => null)
     oscOutputDevices  = outputDevices.filter(d => d.type === 'osc')
     httpOutputDevices = outputDevices.filter(d => d.type === 'http')
+    displayOutputDevices = outputDevices.filter(d => d.type === 'display')
     // Keep compat vars (used by sendOscMessage and other places) from first device
     const _firstOsc = oscOutputDevices[0] || {}
     oscEnabled = _firstOsc.enabled ?? false
@@ -11281,6 +11630,17 @@ async function initApp() {
         rerender(newText)
     })
 
+    // Display-client presence (green/red dots in the live view) — pushed from main on
+    // connect/disconnect/rename; also fetched once on startup.
+    window.electronAPI.onDisplayClients?.((list) => {
+        displayClientRoster = Array.isArray(list) ? list : []
+        broadcastLiveState()
+    })
+    window.electronAPI.getDisplayClients?.().then(list => {
+        displayClientRoster = Array.isArray(list) ? list : []
+        broadcastLiveState()
+    }).catch(() => {})
+
     window.electronAPI.onSettingsChanged((newSettings) => {
         // Sync scriptText so trigger-editing operations don't overwrite the newly
         // saved settings section in the config YAML block.
@@ -11299,8 +11659,10 @@ async function initApp() {
             midiOutputPorts   = midiOutputDevices.map(() => null)
             oscOutputDevices  = outputDevices.filter(d => d.type === 'osc')
             httpOutputDevices = outputDevices.filter(d => d.type === 'http')
+            displayOutputDevices = outputDevices.filter(d => d.type === 'display')
             remoteCuesBlocked = newSettings.outputsBlocked ?? false
             updateOutputsBlockedBar()
+            updateDisplayOutputs()   // re-push in case slug/style/scroll changed
             const _newFirstOsc = oscOutputDevices[0] || {}
             oscEnabled = _newFirstOsc.enabled ?? false
             oscHost    = _newFirstOsc.host    || '127.0.0.1'
@@ -11373,7 +11735,7 @@ function _slfRolesForExport(allYamls) {
     })
 }
 
-function buildExportData(withCues, withColors, withGroupedMics = true) {
+function buildExportData(withCues, withColors, withGroupedMics = true, withTimestamps = false) {
     const titleMatch = scriptText.match(/^# (.+)/m)
     const title = titleMatch ? titleMatch[1].trim() : 'Skript'
     const date = new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })
@@ -11407,6 +11769,7 @@ function buildExportData(withCues, withColors, withGroupedMics = true) {
             const cue = { type: 'cue', number: cueNumber }
             const slf = slfMap[cueNumber - 1]
             if (slf) cue.slf = slf
+            if (withTimestamps && cueTimestamps.has(cueNumber)) cue.timestamp = cueTimestamps.get(cueNumber)
             if (parsed.sibling)    cue.sibling = true
             if (parsed.trigger_note) {
                 const tn = parsed.trigger_note
@@ -11563,6 +11926,7 @@ function generateExportHtml(data) {
             if (item.projection) rows.push(`<tr><td class="cfl">Proj.</td><td class="cfv">${_esc(item.projection)}</td></tr>`)
             if (item.note)       rows.push(`<tr><td class="cfl">Notiz</td><td class="cfv">${_esc(item.note)}</td></tr>`)
             if (item.start_tc)   rows.push(`<tr><td class="cfl">TC</td><td class="cfv">${_esc(item.start_tc)}</td></tr>`)
+            if (item.timestamp)  rows.push(`<tr><td class="cfl">⏱ Zeit</td><td class="cfv">${_esc(item.timestamp)}</td></tr>`)
             if (item.auto_trigger) {
                 const at = item.auto_trigger
                 const ref = at.trigger ? `Cue ${_esc(at.trigger)}` : '?'
@@ -11654,12 +12018,20 @@ function showExportDialog() {
         labelColors.append(chkColors, t('dlg.export.colors'))
 
         const labelGrouped = document.createElement('label')
-        labelGrouped.style.cssText = chkStyle + ';margin-bottom:1.5rem'
+        labelGrouped.style.cssText = chkStyle
         const chkGrouped = document.createElement('input')
         chkGrouped.type = 'checkbox'
         chkGrouped.checked = true
         chkGrouped.style.cssText = 'width:15px;height:15px;cursor:pointer'
         labelGrouped.append(chkGrouped, t('dlg.export.grouped'))
+
+        const labelTs = document.createElement('label')
+        labelTs.style.cssText = chkStyle + ';margin-bottom:1.5rem'
+        const chkTs = document.createElement('input')
+        chkTs.type = 'checkbox'
+        chkTs.checked = false
+        chkTs.style.cssText = 'width:15px;height:15px;cursor:pointer'
+        labelTs.append(chkTs, t('dlg.export.timestamps'))
 
         const actions = document.createElement('div')
         actions.className = 'dialog-actions'
@@ -11674,15 +12046,15 @@ function showExportDialog() {
         const pdfBtn = document.createElement('button')
         pdfBtn.className = 'dialog-btn dialog-btn-primary'
         pdfBtn.textContent = t('dlg.export.pdf')
-        pdfBtn.addEventListener('click', () => close({ format: 'pdf', withCues: chkCues.checked, withColors: chkColors.checked, withGroupedMics: chkGrouped.checked }))
+        pdfBtn.addEventListener('click', () => close({ format: 'pdf', withCues: chkCues.checked, withColors: chkColors.checked, withGroupedMics: chkGrouped.checked, withTimestamps: chkTs.checked }))
 
         const docxBtn = document.createElement('button')
         docxBtn.className = 'dialog-btn dialog-btn-primary'
         docxBtn.textContent = t('dlg.export.docx')
-        docxBtn.addEventListener('click', () => close({ format: 'docx', withCues: chkCues.checked, withColors: chkColors.checked, withGroupedMics: chkGrouped.checked }))
+        docxBtn.addEventListener('click', () => close({ format: 'docx', withCues: chkCues.checked, withColors: chkColors.checked, withGroupedMics: chkGrouped.checked, withTimestamps: chkTs.checked }))
 
         actions.append(cancelBtn, pdfBtn, docxBtn)
-        box.append(h3, labelCues, labelColors, labelGrouped, actions)
+        box.append(h3, labelCues, labelColors, labelGrouped, labelTs, actions)
         overlay.append(box)
         document.body.appendChild(overlay)
         cancelBtn.focus()
@@ -11692,7 +12064,7 @@ function showExportDialog() {
 async function runExport() {
     const choice = await showExportDialog()
     if (!choice) return
-    const data = buildExportData(choice.withCues, choice.withColors, choice.withGroupedMics ?? true)
+    const data = buildExportData(choice.withCues, choice.withColors, choice.withGroupedMics ?? true, choice.withTimestamps)
     if (choice.format === 'pdf') {
         await window.electronAPI.exportPdf({ html: generateExportHtml(data), title: data.title })
     } else {

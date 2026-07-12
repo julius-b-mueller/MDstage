@@ -156,6 +156,7 @@ Every YAML block (except the config block) is a **cue** (trigger). It is display
 | `cue_midi: [...]` | List of MIDI messages sent when the cue fires (see [MIDI](#midi)). |
 | `cue_osc: [...]` | List of OSC messages sent when the cue fires (see [OSC Output](#osc-output)). |
 | `cue_http: [...]` | List of HTTP requests sent when the cue fires (see [HTTP Output](#http-output)). |
+| `cue_display: [...]` | List of `{device, markdown}` entries shown on Display web interfaces when the cue fires (see [Per-Cue Display Markdown](#per-cue-display-markdown-cue_display)). |
 | `sibling: true` | Marks the cue as a **variant** of the preceding cue (alternative audio/mic assignment). |
 
 ### Audio Object (Extended Format)
@@ -202,6 +203,10 @@ music:
 ### Editing a Cue
 
 Every trigger has an **✎ Edit** button that opens a dialog. New cues are added via the **+** button between two blocks.
+
+**Copy / paste (⧉):** The **⧉ Copy** button on a trigger copies the whole cue (all of its fields) to an in-app clipboard. A **📋 paste** button then appears next to every **+** insert zone, so the cue can be dropped in anywhere; the pasted copy is standalone (it gets a fresh trigger note and is never a variant). The clipboard is session-only.
+
+**◉ Live (arm in live view):** Opens the live view with this cue armed as the next Go — handy for jumping straight to a specific point during a rehearsal or top-of-scene. Arming is allowed even while the show is locked.
 
 ### Variants
 
@@ -563,6 +568,44 @@ cue_http:
 
 The request is sent to `<device base URL>` + `path`. `body` and `content_type` are optional (a body is only sent for non-GET/HEAD methods). If `device` is omitted, the first HTTP device is used. Like `cue_midi`/`cue_osc`, HTTP messages participate in Back's device state restoration (see [Cue History (Back)](#cue-history-back)).
 
+### Per-Cue Display Markdown (`cue_display`)
+
+A **Display device** exposes a web interface that shows per-cue markdown, reachable at `http://<address>:<port>/<slug>` — the slug is derived from the device name (lowercased, umlauts → `ae/oe/ue/ss`, everything else → hyphens; e.g. `Bühne Links` → `buehne-links`). The settings screen shows the exact URL. The bind interface (all networks / localhost / a specific adapter) and the port are single machine-local settings shared by all displays (default port `7590`); the settings screen shows the resulting address. A cue sets what a display shows:
+
+```yaml
+cue_display:
+    - device: "Stage Left"
+      markdown: |
+        # Scene 3
+        Cue in 4 bars
+      announce: "Scene three, standby"   # optional text-to-speech, spoken on Go
+```
+
+The markdown is rendered (headings, lists, emphasis, links, images) and pushed live to any connected browser via Server-Sent Events. Browser zoom (pinch / Ctrl-scroll) works, and if the content is taller than the viewport the page auto-scrolls page-by-page and back to the top every *N* seconds (configurable per device, `0` = off).
+
+**What a display shows per cue** — each `cue_display` message controls one display device:
+
+| Message content | Effect on that display |
+|---|---|
+| `markdown` set | Show the new markdown (replaces the previous content). |
+| only `announce` (no markdown) | **Keep** the current content and speak the announcement (a "hold"). |
+| neither `markdown` nor `announce` (an empty message) | **Clear** the display. |
+| *no message for the device* | Leave the display untouched — its content **persists** across cues, like MIDI/OSC device state. |
+
+On **Back**, the effective content is recomputed from the remaining cue history, so the previous state (including holds and clears) is restored exactly. Back never re-speaks announcements.
+
+Each display device chooses a stylesheet: a built-in **dark** (default), **light**, or **subtitle** (white text on black, centered), or a custom `.css` file dropped into a `css/` folder next to the show `.md`.
+
+**Announcements (`announce`):** When a cue fires (Go / auto), every browser client of that display device plays a theatrical front-of-house chime and reads the `announce` text aloud via the browser's text-to-speech. Back does **not** re-announce. The announcement is fired only on the trigger, independent of the markdown restoration. Per display device you can enable **repeat**, which speaks the announcement, then "I repeat" (translated to the device's language), then the announcement again.
+
+**Client presence & naming:** Each browser tab that opens a display URL is remembered and shown in the app's live view as a coloured dot — **green** while connected, **red** when the connection drops (the client retries automatically and turns green again on reconnect). Several clients can share one configured device. Each client has a small settings panel (⚙) to set a **name**, a **TTS voice** and a **zoom** level; the voice list only offers voices matching the device's configured language (set in MDstage's display-device settings). name and voice are also read from URL query params (`?name=Foyer&voice=Anna&zoom=1.5`) for direct kiosk setup and are stored as cookies (query param wins over cookie). Renaming a client updates its label in the live view live. The name, voice and zoom appear back in the URL so a configured client's URL can be reused as-is.
+
+**Landing page:** Opening the server root (`http://<address>:<port>/` with no slug) shows an index that lists every configured display device with a link to its page. Point a backstage browser at the bare address and pick the screen you need — no URL typing. The list updates as devices are added or removed.
+
+**Kiosk-friendly client:** On a display page the settings gear (⚙) stays hidden and only fades in while the mouse moves, then fades out again after a couple of seconds — so a permanent stage/foyer screen shows nothing but content. Because browsers block audio until the user interacts, the client probes on load whether audio is already permitted; if it is not (a normal browser), a one-tap **“🔊 Ton aktivieren / Enable audio”** button appears so announcements can play. On a kiosk configured to allow autoplay the audio starts unlocked and the button never appears.
+
+**Network binding & security:** The display server binds to **`127.0.0.1` (this computer only) by default**; to reach it from tablets or stage monitors over the LAN, switch the bind interface to *All networks (0.0.0.0)* or a specific adapter in the settings. The server is read-only for clients (they only receive content) and serves no files outside the built-in assets and the show's `css/` folder.
+
 ---
 
 ## Timecode (MTC)
@@ -633,7 +676,7 @@ To avoid a comb-filter/phaser artefact when the Devamp shares material with the 
 
 **Device state restoration (MIDI/OSC/HTTP):** When Back pops a cue, the app checks which output devices that cue addressed via `cue_midi` / `cue_osc` / `cue_http`. For each such device, it scans backwards through the remaining cue history and resends the message set from the most recent earlier cue that addressed the same device. If no earlier cue addressed that device, nothing is sent — the device is left in its current state.
 
-The old `osc:` field and `trigger_note` are **not** part of this restoration mechanism. Only `cue_midi`, `cue_osc` and `cue_http` messages participate in device state tracking.
+The old `osc:` field and `trigger_note` are **not** part of this restoration mechanism. Only `cue_midi`, `cue_osc`, `cue_http` and `cue_display` messages participate in device state tracking.
 
 ---
 
@@ -708,17 +751,18 @@ Mic assignments are shown as grouped chips by default. The display can be switch
 
 ### Output Devices (MIDI + OSC + HTTP)
 
-The unified device list manages all MIDI, OSC and HTTP output devices. Each device has:
+The unified device list manages all MIDI, OSC, HTTP and Display output devices. Each device has:
 
 | Property | Description |
 |---|---|
-| Name | Display name — used in `cue_midi` / `cue_osc` / `cue_http` to target the device |
-| Type | `midi`, `osc` or `http` |
+| Name | Display name — used in `cue_midi` / `cue_osc` / `cue_http` / `cue_display` to target the device |
+| Type | `midi`, `osc`, `http` or `display` |
 | Colour | Optional colour shown as a badge on trigger panels |
 | Send trigger note | MIDI/OSC only: if enabled, receives the cue's `trigger_note` when a cue fires |
 | Device (MIDI) | System MIDI port name |
 | Host / Port (OSC) | UDP target address |
 | Base URL (HTTP) | Base URL for `cue_http` requests, e.g. `http://192.168.1.50:8080` |
+| Scroll / Style / Language (Display) | Auto-scroll interval in seconds (`0` = off), stylesheet (dark/light/subtitle or a custom `css/…css` file), and the TTS **language** (the client then only offers voices for that language). The URL path is a **slug** derived from the device name (lowercase, umlauts → `ae/oe/ue/ss`, other characters → hyphens): `http://<address>:<port>/<slug>`. The bind **interface** (`0.0.0.0` / `127.0.0.1` / a specific adapter) and **port** are single machine-local settings shared by all displays; the settings screen lists **all addresses** the display is reachable from (every network adapter's IP for `0.0.0.0`). |
 
 **Addresses are machine-local.** Only the device **name, type and colour** are stored in the
 shared `script.md`. The actual endpoint (MIDI port / OSC host:port / HTTP base URL) and the
@@ -769,6 +813,7 @@ Settings are stored **per hostname** in the config block of the script file, so 
 - **Include cues:** Whether trigger blocks (mic, music, light, etc.) appear in the export
 - **Role colours:** Whether role names are shown in colour
 - **Grouped mics:** Whether mic assignments in cue tables are rendered as labelled group boxes (enabled) or as a flat list of role names (disabled)
+- **Include timestamps:** Whether the recorded trigger time (`HH:MM:SS`) of each cue is written into the cue tables. Timestamps are captured live whenever a cue is triggered (overwritten on each re-trigger) and are **session-only** — they are never saved to the show `.md`; this option is the only way they leave the app.
 
 **Output formats:**
 

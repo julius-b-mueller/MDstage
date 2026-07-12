@@ -24,6 +24,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     writeScriptMd: (content) => ipcRenderer.invoke('write-script-md', content),
     listAudioFiles: () => ipcRenderer.invoke('list-audio-files'),
     handleAudioDrop: (srcPath) => ipcRenderer.invoke('handle-audio-drop', srcPath),
+    listCssFiles: () => ipcRenderer.invoke('list-css-files'),
+    getLanIp: () => ipcRenderer.invoke('get-lan-ip'),
+    getNetworkInterfaces: () => ipcRenderer.invoke('get-network-interfaces'),
+    updateDisplays: (payload) => ipcRenderer.send('update-displays', payload),
+    announceDisplays: (payload) => ipcRenderer.send('announce-displays', payload),
+    getDisplayClients: () => ipcRenderer.invoke('get-display-clients'),
+    onDisplayClients: (callback) => {
+        const handler = (_, list) => callback(list)
+        ipcRenderer.on('display-clients', handler)
+        return () => ipcRenderer.removeListener('display-clients', handler)
+    },
     getPathForFile:  (file)    => webUtils.getPathForFile(file),
     getScriptPath: () => ipcRenderer.invoke('get-script-path'),
     backupScriptMd: () => ipcRenderer.invoke('backup-script-md'),

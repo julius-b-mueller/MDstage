@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=yes">
+    <title>MDstage Display</title>
+    <link id="style-link" rel="stylesheet" href="/__display/style/dark">
+    <style>
+        /* Minimal reset so the built-in/custom stylesheet fully controls appearance. */
+        html, body { margin: 0; padding: 0; }
+
+        /* Client settings panel — styled independently of the swappable display stylesheet. */
+        .dp-panel { position: fixed; top: 0; right: 0; z-index: 2147483647; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        .dp-toggle {
+            width: 2.2rem; height: 2.2rem; margin: 0.4rem;
+            border: none; border-radius: 50%;
+            background: rgba(40,44,52,0.45); color: rgba(255,255,255,0.75);
+            font-size: 1.1rem; cursor: pointer; opacity: 0; pointer-events: none; transition: opacity 0.3s;
+        }
+        /* Reveal the gear only while the mouse is moving (JS toggles .dp-visible); it fades
+           back out after a short idle so a kiosk screen stays clean. */
+        .dp-panel.dp-visible .dp-toggle { opacity: 0.5; pointer-events: auto; }
+        .dp-toggle:hover, .dp-panel.open .dp-toggle { opacity: 1; pointer-events: auto; }
+
+        /* One-tap audio unlock — shown only when autoplay is blocked (not on a kiosk that
+           already permits audio). */
+        .dp-audio-enable {
+            position: fixed; left: 50%; bottom: 8vh; transform: translateX(-50%);
+            z-index: 2147483647; border: none; border-radius: 999px;
+            background: #61afef; color: #10141a; font-weight: 600;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            font-size: 1.15rem; padding: 0.85rem 1.6rem; cursor: pointer;
+            box-shadow: 0 6px 24px rgba(0,0,0,0.45);
+        }
+        .dp-audio-enable[hidden] { display: none; }
+        .dp-audio-enable:hover { background: #74b9f0; }
+        .dp-body {
+            position: absolute; top: 3rem; right: 0.4rem;
+            background: #21252b; color: #e6e6e6;
+            border: 1px solid #3a3f4a; border-radius: 8px;
+            padding: 0.9rem; width: 15rem;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+            display: flex; flex-direction: column; gap: 0.7rem; font-size: 0.9rem;
+        }
+        .dp-body[hidden] { display: none; }
+        .dp-body label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.78rem; color: #9aa0aa; text-transform: uppercase; letter-spacing: 0.05em; }
+        .dp-body input, .dp-body select {
+            background: #383c44; color: #e6e6e6; border: 1px solid #4b5263;
+            border-radius: 5px; padding: 0.4rem 0.5rem; font-size: 0.95rem; font-family: inherit;
+        }
+        .dp-body input:focus, .dp-body select:focus { outline: none; border-color: #61afef; }
+        .dp-body button {
+            background: #3a4048; color: #e6e6e6; border: 1px solid #4b5263;
+            border-radius: 5px; padding: 0.45rem; font-size: 0.9rem; cursor: pointer;
+        }
+        .dp-body button:hover { background: #454c56; }
+        .dp-status { font-size: 0.72rem; color: #7f8794; text-transform: none; letter-spacing: 0; }
+        .dp-zoom-row { display: flex; align-items: center; gap: 0.4rem; }
+        .dp-zoom-row button { padding: 0.3rem 0.55rem; min-width: 2rem; }
+        .dp-zoom-row #dp-zoom-reset { min-width: auto; font-size: 0.8rem; }
+        .dp-zoom-row #dp-zoom-val { min-width: 3rem; text-align: center; font-variant-numeric: tabular-nums; }
+    </style>
+</head>
+<body>
+    <div id="content"></div>
+
+    <button type="button" id="dp-audio-enable" class="dp-audio-enable" hidden>🔊 Ton aktivieren</button>
+
+    <div class="dp-panel" id="dp-panel">
+        <button class="dp-toggle" id="dp-toggle" title="Einstellungen" aria-label="Einstellungen">⚙</button>
+        <div class="dp-body" id="dp-body" hidden>
+            <label>Name
+                <input type="text" id="dp-name" placeholder="z. B. Foyer">
+            </label>
+            <label>Stimme (TTS)
+                <select id="dp-voice"></select>
+            </label>
+            <label>Zoom
+                <span class="dp-zoom-row">
+                    <button type="button" id="dp-zoom-out">−</button>
+                    <span id="dp-zoom-val">100%</span>
+                    <button type="button" id="dp-zoom-in">+</button>
+                    <button type="button" id="dp-zoom-reset">Reset</button>
+                </span>
+            </label>
+            <button type="button" id="dp-test">Testansage</button>
+            <div class="dp-status" id="dp-status"></div>
+        </div>
+    </div>
+
+    <script src="/__display/app.js"></script>
+</body>
+</html>

@@ -37,7 +37,7 @@
   "url": "https://mdstage.org/",
   "applicationCategory": "MultimediaApplication",
   "operatingSystem": "macOS, Windows, Linux",
-  "softwareVersion": "1.15.0",
+  "softwareVersion": "1.16.0",
   "offers": {
     "@type": "Offer",
     "price": "0",
@@ -877,8 +877,55 @@ footer a:hover{text-decoration:underline}
       </div>
     </div>
 
-    <!-- Feature 5: Dual audio + Export -->
+    <!-- Feature: Displays & Durchsagen -->
     <div class="feat-block">
+      <div class="feat-graphic">
+        <!-- Displays + announcements SVG -->
+        <svg viewBox="0 0 280 200" width="280" height="200" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Source app -->
+          <rect x="6" y="66" width="80" height="66" rx="8" fill="#21252b" stroke="#383c44"/>
+          <text x="46" y="82" text-anchor="middle" font-size="8" fill="#abb2bf" font-weight="700">MDstage</text>
+          <rect x="16" y="92" width="60" height="30" rx="5" fill="#1e3a2a" stroke="#98c37966"/>
+          <rect x="16" y="92" width="3" height="30" rx="2" fill="#98c379"/>
+          <text x="26" y="104" font-size="6.5" fill="#98c379" data-de="Cue: Umbau" data-en="Cue: Change">Cue: Umbau</text>
+          <text x="26" y="115" font-size="7" fill="#5c6370">Go ▶</text>
+          <!-- Broadcast arcs -->
+          <circle cx="92" cy="100" r="2.6" fill="#61afef"/>
+          <path d="M96 100 q12 -16 26 -20" stroke="#61afef66" stroke-width="1.4" fill="none"/>
+          <path d="M96 100 q18 -5 34 0"    stroke="#61afef66" stroke-width="1.4" fill="none"/>
+          <path d="M96 100 q12 16 26 20"   stroke="#61afef66" stroke-width="1.4" fill="none"/>
+          <!-- Screen A: stage monitor -->
+          <rect x="150" y="12" width="122" height="78" rx="8" fill="#1e222a" stroke="#3a3f4a"/>
+          <rect x="150" y="12" width="122" height="16" rx="8" fill="#282c34"/>
+          <rect x="150" y="20" width="122" height="8" fill="#282c34"/>
+          <circle cx="160" cy="20" r="2" fill="#e06c75"/><circle cx="168" cy="20" r="2" fill="#e5c07b"/><circle cx="176" cy="20" r="2" fill="#98c379"/>
+          <text x="215" y="23" text-anchor="middle" font-size="6" fill="#5c6370" font-family="monospace">…/buehne</text>
+          <text x="162" y="46" font-size="10" fill="#e6e6e6" font-weight="700" data-de="Umbau Szene 3" data-en="Set change Sc. 3">Umbau Szene 3</text>
+          <rect x="162" y="54" width="70" height="5" rx="2" fill="#3a3f4a"/>
+          <rect x="162" y="64" width="92" height="5" rx="2" fill="#3a3f4a"/>
+          <rect x="162" y="74" width="52" height="5" rx="2" fill="#3a3f4a"/>
+          <circle cx="257" cy="46" r="9" fill="#c678dd22" stroke="#c678dd88"/>
+          <text x="257" y="49.5" text-anchor="middle" font-size="9">🔊</text>
+          <text x="150" y="100" font-size="7" fill="#5c6370" data-de="Monitor · Bühne" data-en="Monitor · stage">Monitor · Bühne</text>
+          <!-- Screen B: dressing room -->
+          <rect x="150" y="108" width="122" height="70" rx="8" fill="#000000" stroke="#3a3f4a"/>
+          <text x="211" y="139" text-anchor="middle" font-size="10" fill="#ffffff" font-weight="700" data-de="ANNA → Bühne" data-en="ANNA → stage">ANNA → Bühne</text>
+          <text x="211" y="153" text-anchor="middle" font-size="6.5" fill="#98c379" data-de="Einruf · in 2 Min" data-en="Call · in 2 min">Einruf · in 2 Min</text>
+          <circle cx="257" cy="120" r="8" fill="#c678dd22" stroke="#c678dd88"/>
+          <text x="257" y="123" text-anchor="middle" font-size="8">🔔</text>
+          <text x="150" y="189" font-size="7" fill="#5c6370" data-de="Tablet · Garderobe" data-en="Tablet · dressing room">Tablet · Garderobe</text>
+        </svg>
+      </div>
+      <div class="feat-text">
+        <h3 data-de="Displays &amp; Durchsagen im ganzen Haus" data-en="Displays &amp; announcements throughout the venue">Displays &amp; Durchsagen im ganzen Haus</h3>
+        <p data-de="Jeder Cue kann Text auf beliebige Bildschirme schicken – Umbaupläne hinter der Bühne, Szeneninfos auf dem Monitor, Einrufe in der Garderobe. Auf Wunsch liest ein Browser die Ansage per Sprachausgabe vor, mit Gong. Die Screens brauchen nur einen Browser und die Adresse; gesteuert wird alles aus dem Textbuch – von einer einzigen Person, ohne je live ins Mikro zu sprechen." data-en="Every cue can push text to any screen – set-change plans backstage, scene info on the monitor, calls in the dressing room. If you like, a browser reads the announcement aloud via text-to-speech, with a chime. The screens just need a browser and the address; everything is driven from the script – by a single person, without ever speaking a live mic call.">
+          Jeder Cue kann Text auf beliebige Bildschirme schicken – Umbaupläne hinter der Bühne, Szeneninfos auf dem Monitor, Einrufe in der Garderobe. Auf Wunsch liest ein Browser die Ansage per Sprachausgabe vor, mit Gong. Die Screens brauchen nur einen Browser und die Adresse; gesteuert wird alles aus dem Textbuch – von einer einzigen Person, ohne je live ins Mikro zu sprechen.
+        </p>
+      </div>
+    </div>
+
+    <!-- Feature 5: Dual audio + Export -->
+    <div class="feat-block reverse">
       <div class="feat-graphic">
         <!-- Dual audio routing SVG -->
         <svg viewBox="0 0 280 200" width="280" height="200" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -917,7 +964,7 @@ footer a:hover{text-decoration:underline}
     </div>
 
     <!-- Feature 6: Eine Datei, die ganze Show -->
-    <div class="feat-block reverse" style="margin-bottom:0">
+    <div class="feat-block" style="margin-bottom:0">
       <div class="feat-graphic">
         <!-- One file / Git SVG -->
         <svg viewBox="0 0 280 200" width="280" height="200" fill="none" xmlns="http://www.w3.org/2000/svg">

@@ -95,6 +95,8 @@ const defaultSettings = {
     cueTriggerInput: 'off', cueTriggerMidiDevice: null, cueTriggerOscPort: 8001, cueTriggerOscHost: '127.0.0.1',
     oscEnabled: false, oscHost: '127.0.0.1', oscPort: 8000,
     outputsBlocked: false,
+    displayPort: 7590,   // keep in sync with DEFAULT_DISPLAY_PORT
+    displayHost: '127.0.0.1',   // bind interface for the display server — local-only by default; opt into 0.0.0.0 for LAN access
     appLanguage: 'de',
     mainTextZoom: 1, liveTextZoom: 1,
 }
@@ -170,6 +172,335 @@ function setupCueOscServer(settings) {
         cueOscSocket = sock
     } catch (e) {
         console.error('Cue-OSC bind failed:', e.message)
+    }
+}
+
+// ── Display web server ────────────────────────────────────────────────────────
+// Serves per-cue markdown (rendered to HTML by the renderer) over HTTP so external
+// browsers (stage monitors, tablets, subtitle screens) can show it at
+// http://<host-ip>:<port>/<slug>. Live updates are pushed via Server-Sent Events.
+const DEFAULT_DISPLAY_PORT = 7590
+let displayServer = null
+let displayServerPort = null
+let displayServerHost = null
+const displayState   = new Map()   // slug -> { html, style, scrollSec }
+const displayClients = new Map()   // slug -> Set<ServerResponse> (open SSE streams, per slug)
+let   displayDevices = []          // [{slug, name}] — full current roster, rebuilt on every push; drives the index page
+// Presence tracking: every browser client that connected since program start is remembered
+// (keyed by a per-tab clientId), so the live view can show green/red dots even after a
+// client disconnects. Multiple clients can share one configured display device (slug).
+const displayClientMeta = new Map()  // clientId -> { slug, name, voice, connected }
+const displayClientConns = new Map() // clientId -> Set<ServerResponse> (active connections)
+// Bounds so unauthenticated LAN clients can't grow the roster without limit (memory DoS):
+// name/voice strings are capped, and disconnected entries are pruned oldest-first once the
+// roster exceeds MAX_DISPLAY_CLIENTS. Currently-connected clients are never pruned.
+const MAX_DISPLAY_CLIENTS = 200
+const MAX_CLIENT_FIELD_LEN = 80
+function clampClientField(v) { return String(v || '').slice(0, MAX_CLIENT_FIELD_LEN) }
+// Drop the oldest disconnected roster entries when we're over the cap. Map iteration order is
+// insertion order, so the first disconnected entries found are the oldest.
+function pruneDisplayClientMeta() {
+    let over = displayClientMeta.size - MAX_DISPLAY_CLIENTS
+    if (over <= 0) return
+    for (const [clientId, m] of displayClientMeta) {
+        if (over <= 0) break
+        if (!m.connected) { displayClientMeta.delete(clientId); displayClientConns.delete(clientId); over-- }
+    }
+}
+
+// Notify the editor renderer whenever the client roster changes, so it can fold the
+// presence info into the live-view state.
+function displayClientList() {
+    return Array.from(displayClientMeta, ([clientId, m]) =>
+        ({ clientId, slug: m.slug, name: m.name || '', voice: m.voice || '', connected: !!m.connected }))
+}
+function notifyDisplayClients() {
+    if (mainWindow) mainWindow.webContents.send('display-clients', displayClientList())
+}
+
+// Built-in stylesheets selectable per display device (no custom CSS needed).
+const DISPLAY_STYLES = {
+    dark: `html,body{margin:0;height:100%;background:#1e222a;color:#e6e6e6;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+#content{padding:4vh 5vw;font-size:5vh;line-height:1.4;box-sizing:border-box;}
+#content h1{font-size:1.6em;}#content h2{font-size:1.3em;}
+#content img{max-width:100%;}#content a{color:#61afef;}`,
+    light: `html,body{margin:0;height:100%;background:#ffffff;color:#111111;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+#content{padding:4vh 5vw;font-size:5vh;line-height:1.4;box-sizing:border-box;}
+#content h1{font-size:1.6em;}#content h2{font-size:1.3em;}
+#content img{max-width:100%;}#content a{color:#1a5fb4;}`,
+    subtitle: `html,body{margin:0;height:100%;background:#000000;color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+#content{min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:4vh 5vw;font-size:7vh;line-height:1.35;box-sizing:border-box;font-weight:600;}
+#content img{max-width:100%;}`,
+}
+
+function getDisplayPort() {
+    const p = parseInt(loadEditorPrefs().displayPort, 10)
+    if (Number.isInteger(p) && p >= 1 && p <= 65535) return p
+    return DEFAULT_DISPLAY_PORT
+}
+
+// os.networkInterfaces() reports `family` as the string 'IPv4' on some Node/Electron builds
+// and as the number 4 on others — accept both so adapters (incl. Wi-Fi) aren't dropped.
+function _isIPv4(a) { return a && (a.family === 'IPv4' || a.family === 4) }
+
+// IPv4 addresses of all network adapters (incl. loopback) — used to validate the display
+// bind host and to build address previews in settings.
+function listIPv4Interfaces() {
+    const out = []
+    try {
+        for (const [name, addrs] of Object.entries(os.networkInterfaces())) {
+            for (const a of addrs || []) {
+                if (_isIPv4(a)) out.push({ name, address: a.address, internal: !!a.internal })
+            }
+        }
+    } catch {}
+    return out
+}
+
+// Bind interface for the display server: 0.0.0.0 (all), 127.0.0.1 (local), or a specific
+// adapter IPv4 that actually exists on this machine. Falls back to 127.0.0.1 (local-only),
+// so an unset/invalid value never silently exposes the server to the whole network.
+function getDisplayHost() {
+    const h = loadEditorPrefs().displayHost
+    if (h === '0.0.0.0' || h === '127.0.0.1') return h
+    if (typeof h === 'string' && listIPv4Interfaces().some(i => i.address === h)) return h
+    return '127.0.0.1'
+}
+
+function stopDisplayServer() {
+    for (const set of displayClients.values()) {
+        for (const res of set) { try { res.end() } catch {} }
+    }
+    displayClients.clear()
+    displayClientConns.clear()
+    // Keep the roster but mark everything disconnected; clients reconnect after a restart.
+    let changed = false
+    for (const m of displayClientMeta.values()) { if (m.connected) { m.connected = false; changed = true } }
+    if (changed) notifyDisplayClients()
+    if (displayServer) {
+        try { displayServer.close() } catch {}
+        displayServer = null
+        displayServerPort = null
+        displayServerHost = null
+    }
+}
+
+// Push new per-display content and stream it to any connected browsers. Entries whose
+// html is null (outputs blocked) keep their previous content on the wire.
+function pushDisplays(payload) {
+    if (!Array.isArray(payload)) return
+    // The renderer always sends the complete current set of display devices, so rebuild the
+    // roster (slug + human name) that the index page lists from this payload.
+    const roster = []
+    for (const item of payload) {
+        if (!item || typeof item.slug !== 'string') continue
+        const slug = item.slug
+        roster.push({ slug, name: typeof item.name === 'string' && item.name ? item.name : slug })
+        const prev = displayState.get(slug) || {}
+        const next = {
+            html:      item.html == null ? (prev.html ?? '') : String(item.html),
+            style:     typeof item.style === 'string' ? item.style : (prev.style || 'dark'),
+            scrollSec: Number(item.scrollSec) >= 0 ? Number(item.scrollSec) : (prev.scrollSec || 0),
+            lang:      typeof item.lang === 'string' ? item.lang : (prev.lang || ''),
+        }
+        // Skip SSE churn when nothing actually changed.
+        if (prev.html === next.html && prev.style === next.style && prev.scrollSec === next.scrollSec && prev.lang === next.lang) continue
+        displayState.set(slug, next)
+        const set = displayClients.get(slug)
+        if (set) {
+            const line = 'data: ' + JSON.stringify({ type: 'content', ...next }) + '\n\n'
+            for (const res of set) { try { res.write(line) } catch {} }
+        }
+    }
+    displayDevices = roster
+}
+
+// Push a text-to-speech announcement to all clients of a display device (slug). Fired only
+// on an actual cue trigger (Go / auto), never on Back or state recompute.
+function pushAnnounce(payload) {
+    if (!Array.isArray(payload)) return
+    for (const item of payload) {
+        if (!item || typeof item.slug !== 'string' || !item.text) continue
+        const set = displayClients.get(item.slug)
+        if (!set) continue
+        const msg = { type: 'announce', text: String(item.text) }
+        if (item.repeat) { msg.repeat = true; msg.repeatPhrase = String(item.repeatPhrase || '') }
+        const line = 'data: ' + JSON.stringify(msg) + '\n\n'
+        for (const res of set) { try { res.write(line) } catch {} }
+    }
+}
+
+function safeReadFile(p, fallback) {
+    try { return fs.readFileSync(p, 'utf8') } catch { return fallback }
+}
+
+function _htmlEscape(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+// Landing page at http://<host>:<port>/ — lists the configured display devices, each linking
+// to its own display page. Rebuilt live from the current roster the renderer pushes; a light
+// meta-refresh picks up devices that get (un)configured while the page is open.
+function renderDisplayIndex() {
+    const rows = displayDevices.map(d => {
+        const href = '/' + encodeURIComponent(d.slug)
+        return `<li><a href="${_htmlEscape(href)}"><span class="nm">${_htmlEscape(d.name || d.slug)}</span><span class="sl">${_htmlEscape('/' + d.slug)}</span></a></li>`
+    }).join('')
+    const list = rows
+        ? `<ul class="devs">${rows}</ul>`
+        : `<p class="empty">Noch keine Display-Geräte konfiguriert. Lege in den Einstellungen ein Ausgabegerät vom Typ „Display" an.</p>`
+    return `<!doctype html>
+<html lang="de"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="20">
+<title>MDstage Displays</title>
+<style>
+  html,body{margin:0;height:100%;background:#1e222a;color:#e6e6e6;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+  .wrap{max-width:44rem;margin:0 auto;padding:8vh 6vw;box-sizing:border-box;}
+  h1{font-size:1.9rem;font-weight:600;margin:0 0 0.3rem;}
+  .sub{color:#9aa0aa;margin:0 0 2rem;font-size:0.95rem;}
+  ul.devs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:0.6rem;}
+  ul.devs a{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;
+    text-decoration:none;background:#272c35;border:1px solid #3a3f4a;border-radius:10px;
+    padding:0.9rem 1.1rem;color:#e6e6e6;transition:background 0.15s,border-color 0.15s;}
+  ul.devs a:hover{background:#2f3540;border-color:#61afef;}
+  ul.devs .nm{font-size:1.15rem;font-weight:500;}
+  ul.devs .sl{color:#7f8794;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:0.9rem;}
+  .empty{color:#9aa0aa;background:#272c35;border:1px solid #3a3f4a;border-radius:10px;padding:1.2rem;}
+</style></head><body>
+<div class="wrap">
+  <h1>MDstage Displays</h1>
+  <p class="sub">Verfügbare Anzeigegeräte — zum Öffnen antippen.</p>
+  ${list}
+</div>
+</body></html>`
+}
+
+function handleDisplayRequest(req, res) {
+    let url, pathname
+    // Both the URL parse and the decode can throw on a malformed request path (e.g. "/%").
+    // Catch both so a single bad request can never bubble up as an uncaughtException.
+    try {
+        url = new URL(req.url, 'http://localhost')
+        pathname = decodeURIComponent(url.pathname)
+    } catch { res.writeHead(400); return res.end() }
+
+    // Static client assets
+    if (pathname === '/__display/app.js') {
+        res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-cache' })
+        return res.end(safeReadFile(path.join(__dirname, '..', 'dist', 'display', 'app.js'), ''))
+    }
+
+    // Stylesheets: built-in name or custom file from the css/ folder next to the .md
+    const styleMatch = /^\/__display\/style\/([\w.-]+)$/.exec(pathname)
+    if (styleMatch) {
+        res.writeHead(200, { 'Content-Type': 'text/css; charset=utf-8', 'Cache-Control': 'no-cache' })
+        const name = styleMatch[1]
+        if (Object.prototype.hasOwnProperty.call(DISPLAY_STYLES, name)) return res.end(DISPLAY_STYLES[name])
+        if (/^[\w.-]+\.css$/.test(name) && scriptMdPath) {
+            const cssDir = path.join(path.dirname(scriptMdPath), 'css')
+            const filePath = path.join(cssDir, name)
+            if (path.resolve(filePath).startsWith(path.resolve(cssDir) + path.sep)) {
+                return res.end(safeReadFile(filePath, ''))
+            }
+        }
+        return res.end(DISPLAY_STYLES.dark)
+    }
+
+    // Client metadata update (name / voice) without touching the SSE connection. Upserts so
+    // it works even if it arrives before the SSE stream registers the client.
+    if (pathname === '/__display/meta') {
+        const clientId = url.searchParams.get('clientId')
+        if (clientId) {
+            const m = displayClientMeta.get(clientId) || { slug: '', name: '', voice: '', connected: false }
+            if (url.searchParams.has('name'))  m.name  = clampClientField(url.searchParams.get('name'))
+            if (url.searchParams.has('voice')) m.voice = clampClientField(url.searchParams.get('voice'))
+            if (url.searchParams.has('slug'))  m.slug  = clampClientField(url.searchParams.get('slug')) || m.slug
+            displayClientMeta.set(clientId, m)
+            pruneDisplayClientMeta()
+            notifyDisplayClients()
+        }
+        res.writeHead(204); return res.end()
+    }
+
+    // SSE event stream for one slug
+    const evMatch = /^\/__display\/events\/(.+)$/.exec(pathname)
+    if (evMatch) {
+        const slug = evMatch[1]
+        const clientId = url.searchParams.get('clientId') || ('anon-' + Math.random().toString(36).slice(2))
+        res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+        })
+        if (!displayClients.has(slug)) displayClients.set(slug, new Set())
+        displayClients.get(slug).add(res)
+
+        // Register / update presence for this client. Name/voice come exclusively via the
+        // /__display/meta endpoint so an automatic SSE reconnect never reverts a rename.
+        const prevMeta = displayClientMeta.get(clientId) || {}
+        displayClientMeta.set(clientId, {
+            slug,
+            name:  prevMeta.name  || '',
+            voice: prevMeta.voice || '',
+            connected: true,
+        })
+        if (!displayClientConns.has(clientId)) displayClientConns.set(clientId, new Set())
+        displayClientConns.get(clientId).add(res)
+        pruneDisplayClientMeta()
+        notifyDisplayClients()
+
+        // Send current state immediately (or an empty page if none yet).
+        const cur = displayState.get(slug) || { html: '', style: 'dark', scrollSec: 0, lang: '' }
+        res.write('data: ' + JSON.stringify({ type: 'content', ...cur }) + '\n\n')
+        const ka = setInterval(() => { try { res.write(': keep-alive\n\n') } catch {} }, 20000)
+        req.on('close', () => {
+            clearInterval(ka)
+            displayClients.get(slug)?.delete(res)
+            const conns = displayClientConns.get(clientId)
+            if (conns) {
+                conns.delete(res)
+                if (conns.size === 0) {
+                    const m = displayClientMeta.get(clientId)
+                    if (m) { m.connected = false; notifyDisplayClients() }
+                }
+            }
+        })
+        return
+    }
+
+    // Any other path is treated as a display slug → serve the display page.
+    const slug = pathname.replace(/^\//, '')
+    if (!slug) {
+        // Root path → landing page listing the available display devices.
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' })
+        return res.end(renderDisplayIndex())
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' })
+    return res.end(safeReadFile(path.join(__dirname, '..', 'dist', 'display', 'index.html'), '<!doctype html><title>Display</title>'))
+}
+
+function setupDisplayServer() {
+    const http = require('http')
+    const port = getDisplayPort()
+    const host = getDisplayHost()
+    if (displayServer && displayServerPort === port && displayServerHost === host) return   // already listening as configured
+    stopDisplayServer()
+    // Wrap the handler so an unexpected throw becomes a 500 instead of an uncaughtException
+    // that would take down the whole (live-show) main process.
+    const srv = http.createServer((req, res) => {
+        try { handleDisplayRequest(req, res) }
+        catch (e) {
+            console.error('Display request error:', e.message)
+            try { if (!res.headersSent) res.writeHead(500); res.end() } catch {}
+        }
+    })
+    srv.on('error', (e) => { console.error('Display server error:', e.message); if (displayServer === srv) { displayServer = null; displayServerPort = null; displayServerHost = null } })
+    try {
+        srv.listen(port, host, () => { displayServer = srv; displayServerPort = port; displayServerHost = host })
+    } catch (e) {
+        console.error('Display server listen failed:', e.message)
     }
 }
 
@@ -784,6 +1115,7 @@ function buildDocx(data) {
             if (item.projection) cueInfoRows.push({ label: 'Proj.',  value: item.projection })
             if (item.note)       cueInfoRows.push({ label: 'Notiz',  value: item.note })
             if (item.start_tc)   cueInfoRows.push({ label: 'TC',     value: item.start_tc })
+            if (item.timestamp)  cueInfoRows.push({ label: 'Zeit',   value: item.timestamp })
             if (item.auto_trigger) {
                 const at = item.auto_trigger
                 const ref = at.trigger ? `Cue ${at.trigger}` : '?'
@@ -943,6 +1275,7 @@ app.whenReady().then(async () => {
     ipcMain.handle('save-settings', (_, settings) => {
         persistSettings(settings)
         setupCueOscServer(settings)
+        setupDisplayServer()   // pick up a changed display port
         BrowserWindow.getAllWindows().forEach(win => {
             win.webContents.send('settings-changed', settings)
         })
@@ -953,6 +1286,7 @@ app.whenReady().then(async () => {
     // file. Used for zoom so it doesn't trigger a script rewrite/rerender.
     ipcMain.handle('save-editor-prefs', (_, partial) => {
         if (partial && typeof partial === 'object') saveEditorPrefs(partial)
+        if (partial && (Object.prototype.hasOwnProperty.call(partial, 'displayPort') || Object.prototype.hasOwnProperty.call(partial, 'displayHost'))) setupDisplayServer()
     })
 
     ipcMain.handle('get-hostname', () => hostname)
@@ -1061,6 +1395,36 @@ app.whenReady().then(async () => {
             return []
         }
     })
+
+    // Custom stylesheets for display devices — read from a css/ folder next to the .md.
+    ipcMain.handle('list-css-files', () => {
+        if (!scriptMdPath) return []
+        const cssDir = path.join(path.dirname(scriptMdPath), 'css')
+        try {
+            if (!fs.existsSync(cssDir)) return []
+            return fs.readdirSync(cssDir).filter(f => /^[\w.-]+\.css$/i.test(f)).sort()
+        } catch {
+            return []
+        }
+    })
+
+    // First non-internal IPv4 LAN address, for the display URL preview in settings.
+    ipcMain.handle('get-lan-ip', () => {
+        const iface = listIPv4Interfaces().find(i => !i.internal)
+        return iface ? iface.address : '127.0.0.1'
+    })
+
+    // All IPv4 network adapters (for the display bind-interface dropdown in settings).
+    ipcMain.handle('get-network-interfaces', () => listIPv4Interfaces())
+
+    // Renderer pushes current per-display markdown (rendered HTML) → stream to browsers.
+    ipcMain.on('update-displays', (_, payload) => pushDisplays(payload))
+
+    // Renderer pushes TTS announcements on cue trigger → stream to browsers of that slug.
+    ipcMain.on('announce-displays', (_, payload) => pushAnnounce(payload))
+
+    // Current display-client roster (presence) — requested by the renderer on init.
+    ipcMain.handle('get-display-clients', () => displayClientList())
 
     ipcMain.handle('handle-audio-drop', (_, srcPath) => {
         if (typeof srcPath !== 'string') return null
@@ -1191,6 +1555,7 @@ app.whenReady().then(async () => {
     Menu.setApplicationMenu(buildMenu())
     createMainWindow()
     setupCueOscServer(loadSettings())
+    setupDisplayServer()
 
     if (showWelcome) {
         mainWindow.webContents.once('did-finish-load', () => {

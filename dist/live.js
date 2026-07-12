@@ -2,6 +2,7 @@
         const clockEl    = document.getElementById('live-clock')
         const tcEl       = document.getElementById('live-tc')
         const infoBarEl  = document.getElementById('live-info-bar')
+        const presenceEl = document.getElementById('live-display-presence')
         const blocksEl   = document.getElementById('script-blocks')
         let liveTextZoom = 1   // loaded from device prefs (editor-prefs.json) below
         function applyLiveZoom() {
@@ -45,6 +46,15 @@
             return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
         }
         function safeColor(c) { return /^#[0-9a-f]{3,8}$/i.test(c) ? c : '' }
+        // First markdown heading (else first non-empty line), cropped to 20 chars with an ellipsis.
+        function displayChipLabel(markdown) {
+            const lines = String(markdown || '').split('\n')
+            let label = ''
+            for (const line of lines) { const h = line.match(/^\s*#{1,6}\s+(.*\S)/); if (h) { label = h[1].trim(); break } }
+            if (!label) { for (const line of lines) { const s = line.trim(); if (s) { label = s; break } } }
+            label = label.replace(/[#*_`>-]/g, '').trim()
+            return label.length > 20 ? label.slice(0, 20) + '…' : label
+        }
 
         let _deviceColors = {}
         let _knownMidiDevices = new Set()
@@ -146,6 +156,21 @@
                 }).join('')
                 cueOscRow = `<div class="trigger-cue-osc">${chips}</div>`
             }
+            let cueDisplayRow = ''
+            if (b.cueDisplay?.length) {
+                const chips = b.cueDisplay.map(msg => {
+                    const devName = msg.device || ''
+                    const devColor = safeColor(_deviceColors['display:' + devName] || '')
+                    const chipStyle = devColor ? ` style="border-color:${devColor}55;background:${devColor}12"` : ''
+                    const badgeStyle = devColor ? ` style="background:${devColor}30;color:${devColor}"` : ''
+                    const badgeLabel = esc(devName) || 'Display'
+                    let dispLabel = displayChipLabel(msg.markdown)
+                    if (msg.announce) dispLabel = '🔊 ' + (dispLabel || displayChipLabel(msg.announce))
+                    else if (!dispLabel) dispLabel = '🧹 leeren'
+                    return `<span class="cue-msg-chip cue-msg-chip--osc"${chipStyle}><span class="cue-type-badge"${badgeStyle}>${badgeLabel}</span><span class="cue-msg-content">${esc(dispLabel)}</span></span>`
+                }).join('')
+                cueDisplayRow = `<div class="trigger-cue-osc">${chips}</div>`
+            }
             const slfRow = b.slfLabel
                 ? `<div class="trigger-slf trigger-slf--${b.slfLabel.role.toLowerCase()}">${esc(b.slfLabel.role)} <span style="opacity:0.65;font-weight:normal">${esc(b.slfLabel.detail)}</span></div>` : ''
             const playDot = b.isPlaying
@@ -165,7 +190,7 @@
             return `
                 <div class="trigger-row">
                     <div class="trigger-info">
-                        ${micRow}${musicRow}${lightRow}${oscRow}${cueMidiRow}${cueOscRow}${slfRow}
+                        ${micRow}${musicRow}${lightRow}${oscRow}${cueMidiRow}${cueOscRow}${cueDisplayRow}${slfRow}
                     </div>
                     ${b.note ? `<div class="trigger-note">${esc(b.note)}</div>` : ''}
                     <div style="display:flex;align-items:center;gap:0.5rem;padding-right:0.5rem">${tnLabel}${playDot}</div>
@@ -447,10 +472,12 @@
 
             if (hasDevices) {
                 for (const item of effectiveDeviceStates) {
-                    const devColor = safeColor(deviceColors?.[(item.type === 'midi' ? 'midi:' : 'osc:') + item.device] || '')
+                    const devColor = safeColor(deviceColors?.[item.type + ':' + item.device] || '')
                     const colorStyle = devColor ? ` style="color:${devColor}"` : ''
                     let msgSummary = ''
-                    if (item.type === 'midi') {
+                    if (item.type === 'display') {
+                        msgSummary = esc(item.label || '')
+                    } else if (item.type === 'midi') {
                         msgSummary = (item.messages || []).map(m => {
                             if (m.comment) return esc(m.comment)
                             if (m.type === 'note') return `N${m.note}`
@@ -619,6 +646,42 @@
             syncAudio(audioProgress || [])
             updateInfoBar(state)
             updateProgressBar(state.showProgress)
+            if (state.displayClients) updateDisplayPresence(state.displayClients)
+        }
+
+        // ── Display-client presence dots (green = connected, red = lost) ────
+        function updateDisplayPresence(clients) {
+            if (!presenceEl) return
+            presenceEl.innerHTML = ''
+            if (!Array.isArray(clients) || clients.length === 0) return
+            // Group by configured device name.
+            const groups = new Map()
+            for (const c of clients) {
+                const key = c.deviceName || '—'
+                if (!groups.has(key)) groups.set(key, [])
+                groups.get(key).push(c)
+            }
+            let autoIdx = 0
+            for (const [devName, list] of groups) {
+                const grp = document.createElement('div')
+                grp.className = 'dp-group'
+                const gn = document.createElement('span')
+                gn.className = 'dp-group-name'
+                gn.textContent = devName
+                grp.appendChild(gn)
+                for (const c of list) {
+                    autoIdx++
+                    const chip = document.createElement('span')
+                    chip.className = 'dp-client' + (c.connected ? '' : ' dp-offline')
+                    const dot = document.createElement('span')
+                    dot.className = 'dp-dot'
+                    const label = document.createElement('span')
+                    label.textContent = c.name && c.name.trim() ? c.name : ('Client ' + autoIdx)
+                    chip.append(dot, label)
+                    grp.appendChild(chip)
+                }
+                presenceEl.appendChild(grp)
+            }
         }
 
         // ── Controls ─────────────────────────────────────────────────────

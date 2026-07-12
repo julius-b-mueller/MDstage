@@ -515,6 +515,68 @@
             const addOutputDeviceBtn = document.getElementById('add-output-device-btn')
             const outputDeviceStates = []
 
+            // Display devices: shared machine-local interface/port + custom CSS + adapter IPs for previews
+            const _urlPreviewUpdaters = []
+            let _cssFiles = []
+            let _lanIp = ''
+            let _netIfaces = []
+            const displayPortInput = document.getElementById('display-port')
+            const displayHostSel = document.getElementById('display-host')
+            if (displayPortInput) displayPortInput.value = settings.displayPort ?? ''
+            function getDisplayPortValue() {
+                const p = parseInt(displayPortInput?.value, 10)
+                return (Number.isInteger(p) && p >= 1 && p <= 65535) ? p : 7590
+            }
+            function getDisplayHostValue() { return displayHostSel?.value || '127.0.0.1' }
+            // URL slug from a device name — MUST match slugifyDeviceName() in src/main.js.
+            function slugifyDeviceName(name) {
+                const s = String(name || '')
+                    .toLowerCase()
+                    .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
+                    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+                    .replace(/[^a-z0-9]+/g, '-')
+                    .replace(/^-+|-+$/g, '')
+                return s || 'display'
+            }
+            // All addresses a display is reachable from, given the selected bind interface.
+            function reachableIps() {
+                const h = getDisplayHostValue()
+                if (h === '127.0.0.1') return ['127.0.0.1']
+                if (h && h !== '0.0.0.0') return [h]        // bound to one adapter → only that IP
+                // 0.0.0.0 → every adapter's IPv4 plus loopback
+                const ips = _netIfaces.filter(i => i.address).map(i => i.address)
+                if (!ips.includes('127.0.0.1')) ips.push('127.0.0.1')
+                return [...new Set(ips)]
+            }
+            // TTS languages a display device can be set to (code → label). Empty = all languages.
+            const DISPLAY_LANGS = [
+                ['', 'Alle Sprachen'], ['de', 'Deutsch'], ['en', 'Englisch'], ['fr', 'Französisch'],
+                ['es', 'Spanisch'], ['it', 'Italienisch'], ['nl', 'Niederländisch'], ['pt', 'Portugiesisch'],
+                ['pl', 'Polnisch'], ['ru', 'Russisch'], ['tr', 'Türkisch'], ['cs', 'Tschechisch'],
+                ['da', 'Dänisch'], ['sv', 'Schwedisch'], ['nb', 'Norwegisch'], ['fi', 'Finnisch'],
+                ['zh', 'Chinesisch'], ['ja', 'Japanisch'], ['ko', 'Koreanisch'], ['ar', 'Arabisch'],
+            ]
+            displayPortInput?.addEventListener('input', () => { for (const fn of _urlPreviewUpdaters) fn() })
+            try {
+                _cssFiles = (await window.electronAPI.listCssFiles?.()) || []
+                _lanIp = (await window.electronAPI.getLanIp?.()) || ''
+                _netIfaces = (await window.electronAPI.getNetworkInterfaces?.()) || []
+            } catch {}
+            if (displayHostSel) {
+                const mkOpt = (v, lbl) => { const o = new Option(lbl, v); displayHostSel.appendChild(o) }
+                mkOpt('127.0.0.1', 'Nur dieser Computer (127.0.0.1)')
+                mkOpt('0.0.0.0', 'Alle Netzwerke (0.0.0.0)')
+                for (const i of _netIfaces) {
+                    if (i.internal) continue
+                    mkOpt(i.address, `${i.name} (${i.address})`)
+                }
+                const curHost = settings.displayHost || '127.0.0.1'
+                // Keep a saved adapter address selectable even if it isn't currently present.
+                if (![...displayHostSel.options].some(o => o.value === curHost)) mkOpt(curHost, curHost)
+                displayHostSel.value = curHost
+                displayHostSel.addEventListener('change', () => { for (const fn of _urlPreviewUpdaters) fn() })
+            }
+
             const DEVICE_COLORS = {
                 blue: '#61afef', red: '#e06c75', green: '#98c379', yellow: '#e5c07b',
                 purple: '#c678dd', cyan: '#56b6c2', darkblue: '#317fbf', darkred: '#b03c45',
@@ -545,7 +607,7 @@
                 nameInput.value = cfg.name || `Gerät ${idx + 1}`
                 const typeSel = document.createElement('select')
                 typeSel.style.cssText = 'width:auto;background:#383c44;color:#abb2bf;border:1px solid #4b5263;padding:0.3rem 0.5rem;border-radius:4px;font-size:0.9rem;font-family:inherit;cursor:pointer;flex-shrink:0'
-                for (const [v, lbl] of [['midi','MIDI'],['osc','OSC'],['http','HTTP']]) {
+                for (const [v, lbl] of [['midi','MIDI'],['osc','OSC'],['http','HTTP'],['display','Display']]) {
                     const o = new Option(lbl, v)
                     if (v === (cfg.type || 'midi')) o.selected = true
                     typeSel.appendChild(o)
@@ -621,13 +683,61 @@
                 cardValidators.push([urlIn, v => /^https?:\/\/.+/i.test(v.trim())])
                 card.appendChild(httpSection)
 
+                // Display-specific section (scroll interval, stylesheet, URL preview).
+                // The device name is the URL path — no separate slug field.
+                const displaySection = document.createElement('div')
+                const scrollIn = document.createElement('input'); scrollIn.type = 'number'
+                scrollIn.min = '0'; scrollIn.placeholder = '0'
+                scrollIn.value = (cfg.scrollSec ?? '') === '' ? '' : cfg.scrollSec
+                const styleSel = document.createElement('select')
+                for (const [v, lbl] of [['dark','Dunkel (Standard)'],['light','Hell'],['subtitle','Untertitel']]) {
+                    const o = new Option(lbl, v); if (v === (cfg.style || 'dark')) o.selected = true
+                    styleSel.appendChild(o)
+                }
+                for (const f of (_cssFiles || [])) {
+                    const o = new Option('CSS: ' + f, f); if (f === cfg.style) o.selected = true
+                    styleSel.appendChild(o)
+                }
+                // Keep a custom style that no longer exists as a file so it isn't silently lost.
+                if (cfg.style && !['dark','light','subtitle'].includes(cfg.style) && !(_cssFiles || []).includes(cfg.style)) {
+                    const o = new Option('CSS: ' + cfg.style + ' (fehlt)', cfg.style); o.selected = true
+                    styleSel.appendChild(o)
+                }
+                const langSel = document.createElement('select')
+                for (const [v, lbl] of DISPLAY_LANGS) {
+                    const o = new Option(lbl, v); if (v === (cfg.lang || '')) o.selected = true
+                    langSel.appendChild(o)
+                }
+                const urlPreview = document.createElement('div'); urlPreview.className = 'hint'
+                urlPreview.style.whiteSpace = 'pre-line'
+                const updateUrlPreview = () => {
+                    const name = (nameInput.value.trim() || nameInput.placeholder)
+                    const port = getDisplayPortValue()
+                    const path = slugifyDeviceName(name)
+                    urlPreview.textContent = reachableIps().map(ip => `→ http://${ip}:${port}/${path}`).join('\n')
+                }
+                const repeatLabel = document.createElement('label')
+                repeatLabel.style.cssText = 'display:flex;align-items:center;gap:0.5rem;text-transform:none;font-size:1rem;color:#abb2bf;margin-top:0.5rem'
+                const repeatCb = document.createElement('input'); repeatCb.type = 'checkbox'; repeatCb.style.width = 'auto'
+                repeatCb.checked = !!cfg.repeat
+                repeatLabel.append(repeatCb, document.createTextNode('Ansage wiederholen (2×, mit „Ich wiederhole")'))
+                const repeatWrap = document.createElement('div'); repeatWrap.className = 'field'
+                repeatWrap.appendChild(repeatLabel)
+                nameInput.addEventListener('input', updateUrlPreview)
+                displaySection.append(mkField('Auto-Scroll-Intervall (Sek., 0 = aus)', scrollIn), mkField('Stil', styleSel), mkField('Sprache (TTS-Ansagen)', langSel), repeatWrap)
+                displaySection.appendChild(urlPreview)
+                card.appendChild(displaySection)
+                _urlPreviewUpdaters.push(updateUrlPreview)
+
                 function updateTypeVis() {
                     const type = typeSel.value
                     midiSection.style.display = type === 'midi' ? '' : 'none'
                     oscSection.style.display  = type === 'osc'  ? '' : 'none'
                     httpSection.style.display = type === 'http' ? '' : 'none'
+                    displaySection.style.display = type === 'display' ? '' : 'none'
                     tcWrap.style.display = type === 'midi' ? '' : 'none'
-                    trigNoteWrap.style.display = type === 'http' ? 'none' : ''
+                    trigNoteWrap.style.display = (type === 'http' || type === 'display') ? 'none' : ''
+                    if (type === 'display') updateUrlPreview()
                 }
                 typeSel.addEventListener('change', updateTypeVis)
 
@@ -675,9 +785,10 @@
 
                 function getValues() {
                     const type = typeSel.value
-                    const base = { name: nameInput.value.trim() || nameInput.placeholder, type, enabled: activatedCb.checked, sendTriggerNote: type === 'http' ? false : trigNoteCb.checked, sendTimecode: type === 'midi' ? tcCb.checked : false, color: DEVICE_COLORS[colorSel.value] || '' }
+                    const base = { name: nameInput.value.trim() || nameInput.placeholder, type, enabled: activatedCb.checked, sendTriggerNote: (type === 'http' || type === 'display') ? false : trigNoteCb.checked, sendTimecode: type === 'midi' ? tcCb.checked : false, color: DEVICE_COLORS[colorSel.value] || '' }
                     if (type === 'midi') return { ...base, device: midiSel.value || null }
                     if (type === 'http') return { ...base, url: urlIn.value.trim() }
+                    if (type === 'display') return { ...base, scrollSec: parseInt(scrollIn.value) || 0, style: styleSel.value || 'dark', lang: langSel.value || '', repeat: repeatCb.checked }
                     return { ...base, host: hostIn.value.trim() || '127.0.0.1', port: parseInt(portIn.value) || 8000 }
                 }
                 outputDeviceStates.push({ card, getValues, cardValidators, removeBtn })
@@ -695,6 +806,7 @@
                     sendTriggerNote: !!ep.sendTriggerNote,
                     sendTimecode: !!ep.sendTimecode,
                     device: ep.device ?? null, host: ep.host, port: ep.port, url: ep.url,
+                    scrollSec: ep.scrollSec, style: ep.style, lang: ep.lang, repeat: ep.repeat,
                 }
             })
             let _pendingOutputDevices = initialOutputDevices
@@ -1052,6 +1164,7 @@
                     const ep = { enabled: d.enabled, sendTriggerNote: d.sendTriggerNote, sendTimecode: d.sendTimecode }
                     if (d.type === 'midi')      ep.device = d.device ?? null
                     else if (d.type === 'http') ep.url = d.url || ''
+                    else if (d.type === 'display') { ep.scrollSec = d.scrollSec || 0; ep.style = d.style || 'dark'; ep.lang = d.lang || ''; ep.repeat = !!d.repeat }
                     else { ep.host = d.host; ep.port = d.port }
                     deviceEndpoints[d.name] = ep
                 }
@@ -1061,6 +1174,8 @@
                     virtualChannelOutputs: getVirtualChannelOutputs(),
                     outputDevices: outputDeviceDecls,
                     deviceEndpoints,
+                    displayPort: getDisplayPortValue(),
+                    displayHost: getDisplayHostValue(),
                     midiTCDevice:     null,
                     editorApp:        editorAppSel.value || null,
                     midiGoNote,

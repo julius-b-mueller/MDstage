@@ -29,6 +29,51 @@
         .live-header .clock    { font-size: 2.4rem; line-height: 2.8rem; width: auto; min-width: 9rem; margin-right: 0; }
         .live-header .tc-display { font-size: 1.5rem; line-height: 2.8rem; margin-right: 0; padding: 0 0.7rem; }
 
+        /* ── Display-client presence ─────────────────────────────────────── */
+        .live-display-presence {
+            margin-left: auto;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.3rem 0.9rem;
+            align-items: center;
+            justify-content: flex-end;
+            max-width: 55%;
+        }
+        .live-display-presence .dp-group {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+        .live-display-presence .dp-group-name {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: #7f8794;
+        }
+        .live-display-presence .dp-client {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.28rem;
+            font-size: 0.82rem;
+            color: #cfd4dc;
+            background: #2a2f38;
+            border-radius: 0.5rem;
+            padding: 0.1rem 0.45rem;
+        }
+        .live-display-presence .dp-dot {
+            width: 0.6rem;
+            height: 0.6rem;
+            border-radius: 50%;
+            background: #98c379;
+            box-shadow: 0 0 6px #98c37988;
+            flex-shrink: 0;
+        }
+        .live-display-presence .dp-client.dp-offline .dp-dot {
+            background: #e06c75;
+            box-shadow: 0 0 6px #e06c7588;
+        }
+        .live-display-presence .dp-client.dp-offline { color: #8b9099; }
+
         /* ── State info bar ──────────────────────────────────────────────── */
         .live-info-bar {
             display: flex;
@@ -391,6 +436,7 @@
     <div class="live-header">
         <div class="clock" id="live-clock">00:00:00</div>
         <div class="tc-display" id="live-tc">--:--:--:--</div>
+        <div class="live-display-presence" id="live-display-presence"></div>
     </div>
 
     <div class="live-info-bar empty" id="live-info-bar"></div>

@@ -209,6 +209,16 @@
             <div id="output-devices-list"></div>
             <button class="add-device-btn" id="add-output-device-btn">+ Gerät hinzufügen</button>
 
+            <div class="field" style="margin-top:0.9rem">
+                <label for="display-host">Display-Server-Interface (für alle Display-Geräte)</label>
+                <select id="display-host" style="max-width:22rem"></select>
+            </div>
+            <div class="field">
+                <label for="display-port">Display-Server-Port (für alle Display-Geräte)</label>
+                <input type="number" id="display-port" min="1" max="65535" placeholder="7590" style="max-width:10rem">
+                <p class="hint">Webinterface erreichbar unter <code>http://&lt;Adresse&gt;:&lt;Port&gt;/&lt;Gerätename&gt;</code>. Gilt maschinenlokal für alle Display-Geräte.</p>
+            </div>
+
             <div class="section-title" data-i18n="s.mischpult">Mischpult Fernbedienung</div>
             <div id="mic-devices-list"></div>
             <button class="add-device-btn" id="add-mic-device-btn">+ Gerät hinzufügen</button>
