@@ -445,12 +445,15 @@ impl LiveView {
         let size = if is_next { 21.0 } else { 16.0 };
 
         if is_next {
-            // A white edge with a glow around it: this is what Go fires.
-            for (grow, strength) in [(9.0, 10), (5.0, 22), (2.0, 40)] {
-                painter.rect_stroke(rect.expand(grow), 8.0 + grow, Stroke::new(grow, Color32::from_white_alpha((strength as f32 * alpha) as u8)), egui::StrokeKind::Middle);
-            }
-            painter.rect_filled(rect, 8.0, tint(NEXT_FILL));
-            painter.rect_stroke(rect, 8.0, Stroke::new(2.0_f32, tint(Color32::from_white_alpha(217))), egui::StrokeKind::Inside);
+            // This is what Go fires: a soft white light around the card, as the original
+            // has it (a near glow, a wide faint one, and a dark shadow to lift it off).
+            let radius = CornerRadius::same(8);
+            let light = |blur: u8, strength: f32| egui::Shadow { offset: [0, 0], blur, spread: 0, color: Color32::from_white_alpha((255.0 * strength * alpha) as u8) };
+            painter.add(egui::Shadow { offset: [0, 0], blur: 14, spread: 0, color: Color32::from_black_alpha((255.0 * alpha) as u8) }.as_shape(rect, radius));
+            painter.add(light(50, 0.12).as_shape(rect, radius));
+            painter.add(light(18, 0.35).as_shape(rect, radius));
+            painter.rect_filled(rect, radius, tint(NEXT_FILL));
+            painter.rect_stroke(rect, radius, Stroke::new(1.5_f32, tint(Color32::from_white_alpha(217))), egui::StrokeKind::Inside);
         } else {
             painter.rect_filled(rect, 6.0, tint(PANEL));
             let stripe = if is_current { YELLOW } else if fired { WAVE_DIM } else { BLUE };
