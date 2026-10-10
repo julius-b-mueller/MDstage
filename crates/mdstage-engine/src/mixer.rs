@@ -277,7 +277,15 @@ pub struct Mixer {
     commands: rtrb::Consumer<Command>,
     retired: rtrb::Producer<Voice>,
     frames: u64,
+    /// Gain of the output limiter; 1.0 while the mix stays below full scale.
+    limiter: f32,
+    limiting: bool,
 }
+
+/// The loudest the mix may get. Just under full scale, so no converter clips.
+const CEILING: f32 = 0.98;
+/// How fast the limiter lets go again, per frame (about 150 ms at 48 kHz).
+const LIMITER_RELEASE: f32 = 0.00015;
 
 /// Control-thread end of a mixer.
 pub struct MixerHandle {
@@ -303,9 +311,15 @@ impl Mixer {
         let (cmd_tx, cmd_rx) = rtrb::RingBuffer::new(256);
         let (ret_tx, ret_rx) = rtrb::RingBuffer::new(MAX_VOICES * 2);
         (
-            Mixer { voices: Vec::with_capacity(MAX_VOICES), commands: cmd_rx, retired: ret_tx, frames: 0 },
+            Mixer { voices: Vec::with_capacity(MAX_VOICES), commands: cmd_rx, retired: ret_tx, frames: 0, limiter: 1.0, limiting: false },
             MixerHandle { commands: cmd_tx, retired: ret_rx },
         )
+    }
+
+    /// Turn the output limiter on (for mixers that feed a soundcard).
+    pub fn limited(mut self) -> Mixer {
+        self.limiting = true;
+        self
     }
 
     /// Total frames rendered so far (the engine clock).
@@ -357,11 +371,33 @@ impl Mixer {
             }
         }
 
+        self.limit(out, out_channels);
         self.frames += (out.len() / out_channels) as u64;
         for v in &self.voices {
             v.spec.shared.publish(self.frames, v.pos as u64, v.state);
         }
         self.retire_done();
+    }
+
+    /// Keep the mix under the ceiling. Several loud cues at once would otherwise clip in
+    /// the converter; this turns the whole mix down for as long as needed instead. A mix
+    /// that stays below the ceiling passes through untouched.
+    fn limit(&mut self, out: &mut [f32], out_channels: usize) {
+        if !self.limiting {
+            return;
+        }
+        for frame in out.chunks_mut(out_channels) {
+            let peak = frame.iter().fold(0.0f32, |p, s| p.max(s.abs()));
+            if peak * self.limiter > CEILING {
+                self.limiter = CEILING / peak;
+            }
+            if self.limiter < 1.0 {
+                for s in frame.iter_mut() {
+                    *s *= self.limiter;
+                }
+                self.limiter = (self.limiter + (1.0 - self.limiter) * LIMITER_RELEASE).min(1.0);
+            }
+        }
     }
 
     fn drain_commands(&mut self) {
@@ -685,6 +721,27 @@ mod tests {
         handle.send(Command::Discard { id: 2 }).ok().unwrap();
         render(&mut mixer, 16, 16, 1);
         assert_eq!(mixer.voices.len(), 0);
+    }
+
+    #[test]
+    fn the_limiter_keeps_overlapping_cues_below_full_scale() {
+        let loud = Arc::new(Clip::from_planar(SR, vec![vec![0.9; 48_000]]));
+        let (mixer, mut handle) = Mixer::new();
+        let mut mixer = mixer.limited();
+        handle.send(Command::Add(spec(1, loud.clone(), AtTransition::Continue, false))).ok().unwrap();
+        let alone = render(&mut mixer, 480, 64, 1);
+        assert!(alone.iter().all(|&s| s == 0.9), "a mix below the ceiling is not touched");
+
+        handle.send(Command::Add(spec(2, loud, AtTransition::Continue, false))).ok().unwrap();
+        let both = render(&mut mixer, 480, 64, 1);
+        assert!(both.iter().all(|&s| s <= CEILING + 1e-6), "peak {}", both.iter().fold(0.0f32, |p, s| p.max(*s)));
+        assert!(both.iter().all(|&s| s > 0.9), "turned down, not muted");
+
+        // Once the second cue is gone the level comes back up by itself.
+        handle.send(Command::Fade { id: 2, target: 0.0, frames: 0, then_stop: true }).ok().unwrap();
+        let after = render(&mut mixer, 48_000 - 1024, 64, 1);
+        assert!(after[..64].iter().all(|&s| s < 0.9), "still held down right after");
+        assert!((after.last().unwrap() - 0.9).abs() < 1e-3, "released: {}", after.last().unwrap());
     }
 
     #[test]

@@ -105,6 +105,21 @@ pub enum MixerSetting {
     Osc { host: String, port: u16, on_path: String, on_arg: ArgSetting, off_path: String, off_arg: ArgSetting },
 }
 
+/// The emergency-light button: one message to switch it on, one to switch it off, sent
+/// to one of the configured MIDI or OSC devices.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EmergencyLightSetting {
+    /// Name of the output device.
+    pub device: String,
+    /// For a MIDI device: the message as hex bytes (`90 3C 7F`). For OSC: the path.
+    pub on: String,
+    pub off: String,
+    /// OSC arguments; unused for MIDI.
+    pub on_arg: ArgSetting,
+    pub off_arg: ArgSetting,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "from", rename_all = "lowercase")]
 pub enum CueTriggerSetting {
@@ -136,6 +151,7 @@ pub struct Settings {
     /// MIDI input for Go/Back; `None` listens on all.
     pub control_port: Option<String>,
     pub cue_trigger: CueTriggerSetting,
+    pub emergency_light: Option<EmergencyLightSetting>,
     /// Interface the display server listens on. `127.0.0.1` keeps it on this computer.
     pub display_host: String,
     pub display_port: u16,
@@ -159,6 +175,7 @@ impl Default for Settings {
             back_note: None,
             control_port: None,
             cue_trigger: CueTriggerSetting::Off,
+            emergency_light: None,
             display_host: "127.0.0.1".into(),
             display_port: 7590,
             language: "de".into(),
@@ -251,6 +268,22 @@ impl Settings {
             .collect()
     }
 
+    /// The message that switches the emergency light on or off, if one is configured.
+    pub fn emergency_light(&self, on: bool) -> Option<mdstage_core::effects::Effect> {
+        use mdstage_core::effects::Effect;
+        let light = self.emergency_light.as_ref()?;
+        let (message, arg) = if on { (&light.on, &light.on_arg) } else { (&light.off, &light.off_arg) };
+        self.devices.iter().find_map(|d| match d {
+            DeviceSetting::Midi { name, .. } if *name == light.device => {
+                let bytes: Vec<u8> = message.split_whitespace().filter_map(|b| u8::from_str_radix(b, 16).ok()).collect();
+                (!bytes.is_empty()).then(|| Effect::Midi { device: name.clone(), bytes, then_off: None })
+            }
+            DeviceSetting::Osc { name, .. } if *name == light.device => mdstage_core::effects::is_osc_path(message)
+                .then(|| Effect::Osc { device: name.clone(), path: message.clone(), args: arg.arg().into_iter().collect() }),
+            _ => None,
+        })
+    }
+
     /// MIDI ports that receive timecode.
     pub fn timecode_ports(&self) -> Vec<String> {
         self.devices
@@ -288,6 +321,28 @@ mod tests {
         assert!(settings.outputs(false).blocked, "an untrusted show file sends nothing");
         assert!(!settings.outputs(true).blocked);
         assert_eq!(settings.routing(&["L".into(), "R".into()]), Routing::positional(&["L".into(), "R".into()]));
+    }
+
+    #[test]
+    fn emergency_light_messages() {
+        use mdstage_core::effects::Effect;
+        let mut settings: Settings = serde_json::from_str(
+            r#"{"devices": [{"type": "midi", "name": "Licht", "port": "DMX"}, {"type": "osc", "name": "QLab", "host": "h", "port": 1}],
+                "emergency_light": {"device": "Licht", "on": "90 3C 7F", "off": "80 3c 00"}}"#,
+        )
+        .unwrap();
+        assert_eq!(settings.emergency_light(true), Some(Effect::Midi { device: "Licht".into(), bytes: vec![0x90, 0x3C, 0x7F], then_off: None }));
+        assert_eq!(settings.emergency_light(false), Some(Effect::Midi { device: "Licht".into(), bytes: vec![0x80, 0x3C, 0x00], then_off: None }));
+
+        let light = settings.emergency_light.as_mut().unwrap();
+        light.device = "QLab".into();
+        light.on = "/light/emergency".into();
+        light.on_arg = ArgSetting { kind: "int".into(), value: "1".into() };
+        assert_eq!(settings.emergency_light(true), Some(Effect::Osc { device: "QLab".into(), path: "/light/emergency".into(), args: vec![OscArg::Int(1)] }));
+        assert_eq!(settings.emergency_light(false), None, "\"80 3c 00\" is not an OSC path");
+        settings.emergency_light.as_mut().unwrap().device = "Gone".into();
+        assert_eq!(settings.emergency_light(true), None);
+        assert_eq!(Settings::default().emergency_light(true), None);
     }
 
     #[test]

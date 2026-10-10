@@ -4,6 +4,7 @@
 use std::path::Path;
 
 use eframe::egui::{self, RichText, Ui};
+use mdstage_core::cues::Note;
 use mdstage_core::mic::Cast;
 use mdstage_core::yaml::{self, Mapping, Value};
 
@@ -19,6 +20,33 @@ pub struct CueDialog {
     audio_files: Vec<String>,
     /// Other cues use Auto-Mic, so microphones cannot be chosen by hand.
     auto_mic_in_use: bool,
+    /// The other cues of the show that can be linked to: trigger note and a label.
+    cues: Vec<(Note, String)>,
+}
+
+fn note_of(value: Option<&Value>) -> Option<Note> {
+    let value = value?;
+    Some(Note { ch: value.get("ch")?.as_u64()?, note: value.get("note")?.as_u64()? })
+}
+
+fn note_value(note: Note) -> Value {
+    let mut map = Mapping::new();
+    map.insert("ch".into(), note.ch.into());
+    map.insert("note".into(), note.note.into());
+    Value::Mapping(map)
+}
+
+/// Choose one of the show's cues (or none). Returns the new choice if it changed.
+fn cue_picker(ui: &mut Ui, id: &str, cues: &[(Note, String)], current: Option<Note>) -> Option<Option<Note>> {
+    let label = |note: Note| cues.iter().find(|(n, _)| *n == note).map_or(format!("{note} (kein Cue mit dieser Note)"), |(_, l)| l.clone());
+    let mut choice = current;
+    egui::ComboBox::from_id_salt(id).selected_text(current.map_or("—".to_string(), label)).width(300.0).show_ui(ui, |ui| {
+        ui.selectable_value(&mut choice, None, "—");
+        for (note, text) in cues {
+            ui.selectable_value(&mut choice, Some(*note), text);
+        }
+    });
+    (choice != current).then_some(choice)
 }
 
 fn number(map: &Mapping, key: &str) -> Option<f64> {
@@ -41,7 +69,7 @@ fn seconds(ui: &mut Ui, map: &mut Mapping, key: &str, label: &str) -> bool {
 }
 
 impl CueDialog {
-    pub fn new(block: usize, is_new: bool, cue: Option<&Value>, audio_dir: &Path, auto_mic_in_use: bool) -> CueDialog {
+    pub fn new(block: usize, is_new: bool, cue: Option<&Value>, audio_dir: &Path, auto_mic_in_use: bool, cues: Vec<(Note, String)>) -> CueDialog {
         let yaml = cue.and_then(Value::as_mapping).cloned().unwrap_or_default();
         let mut audio_files: Vec<String> = std::fs::read_dir(audio_dir)
             .into_iter()
@@ -54,7 +82,7 @@ impl CueDialog {
             .collect();
         audio_files.sort();
         let text = yaml::dump(&Value::Mapping(yaml.clone()), true);
-        CueDialog { block, is_new, text: if yaml.is_empty() { String::new() } else { text }, yaml, text_error: None, audio_files, auto_mic_in_use }
+        CueDialog { block, is_new, text: if yaml.is_empty() { String::new() } else { text }, yaml, text_error: None, audio_files, auto_mic_in_use, cues }
     }
 
     /// The cue as edited.
@@ -222,6 +250,111 @@ impl CueDialog {
                 }
             }
         });
+
+        ui.add_space(10.0);
+        ui.label(RichText::new("VERKNÜPFUNGEN").size(12.0).color(MUTED));
+        let cues = self.cues.clone();
+        // S/L/F: either the audio chains into another cue at its end, or it loops until
+        // its outro is fired.
+        for (key, label) in [("chain_end", "Am Ende nahtlos weiter mit"), ("loop_outro", "Loop, bis dieses Outro kommt")] {
+            ui.horizontal(|ui| {
+                ui.label(label);
+                if let Some(choice) = cue_picker(ui, key, &cues, note_of(self.yaml.get(key))) {
+                    changed = true;
+                    match choice {
+                        Some(note) => drop(self.yaml.insert(key.into(), note_value(note))),
+                        None => drop(self.yaml.shift_remove(key)),
+                    }
+                }
+            });
+        }
+
+        // Auto-cue: this cue fires by itself, tied to another cue.
+        let auto = self.yaml.get("auto_trigger").cloned();
+        let source = note_of(auto.as_ref().and_then(|a| a.get("trigger_note")));
+        let delay = auto.as_ref().and_then(|a| a.get("delay")).and_then(Value::as_f64);
+        let mut by_delay = delay.is_some();
+        let mut amount = delay.or(auto.as_ref().and_then(|a| a.get("at")).and_then(Value::as_f64)).unwrap_or(0.0);
+        let mut new_source = source;
+        let mut auto_changed = false;
+        ui.horizontal(|ui| {
+            ui.label("Von selbst auslösen durch");
+            if let Some(choice) = cue_picker(ui, "auto-source", &cues, source) {
+                new_source = choice;
+                auto_changed = true;
+            }
+        });
+        if new_source.is_some() {
+            ui.horizontal(|ui| {
+                ui.add_space(16.0);
+                auto_changed |= ui.radio_value(&mut by_delay, false, "wenn dessen Audio bei").changed();
+                auto_changed |= ui.radio_value(&mut by_delay, true, "nach").changed();
+                auto_changed |= ui.add(egui::DragValue::new(&mut amount).speed(0.05).range(0.0..=36000.0).suffix(" s")).changed();
+                ui.label(if by_delay { "Verzögerung" } else { "ist" });
+            });
+        }
+        if auto_changed {
+            changed = true;
+            match new_source {
+                Some(note) => {
+                    let mut map = Mapping::new();
+                    map.insert("trigger_note".into(), note_value(note));
+                    map.insert(if by_delay { "delay" } else { "at" }.into(), ((amount * 1000.0).round() / 1000.0).into());
+                    self.yaml.insert("auto_trigger".into(), Value::Mapping(map));
+                }
+                None => drop(self.yaml.shift_remove("auto_trigger")),
+            }
+        }
+
+        // Adjust: what this cue does to another cue's audio. Stored with this cue's audio.
+        if self.yaml.contains_key("music") && !self.yaml.get("music").is_some_and(|m| m.get("audios").is_some()) {
+            let adjust = self.yaml.get("music").and_then(|m| m.get("adjust")).cloned();
+            let target = note_of(adjust.as_ref().and_then(|a| a.get("trigger_note")));
+            let mut fade_out = adjust.as_ref().and_then(|a| a.get("fadeout")).and_then(Value::as_bool) == Some(true);
+            let mut volume = adjust.as_ref().and_then(|a| a.get("volume")).and_then(Value::as_f64).unwrap_or(0.3);
+            let mut fade_time = adjust.as_ref().and_then(|a| a.get("fadetime")).and_then(Value::as_f64).unwrap_or(3.0);
+            let mut new_target = target;
+            let mut adjust_changed = false;
+            ui.horizontal(|ui| {
+                ui.label("Beim Auslösen anderes Audio anpassen");
+                if let Some(choice) = cue_picker(ui, "adjust-target", &cues, target) {
+                    new_target = choice;
+                    adjust_changed = true;
+                }
+            });
+            if new_target.is_some() {
+                ui.horizontal(|ui| {
+                    ui.add_space(16.0);
+                    adjust_changed |= ui.radio_value(&mut fade_out, true, "ausfaden").changed();
+                    adjust_changed |= ui.radio_value(&mut fade_out, false, "auf").changed();
+                    adjust_changed |= ui.add_enabled(!fade_out, egui::Slider::new(&mut volume, 0.0..=1.0)).changed();
+                    ui.label("in");
+                    adjust_changed |= ui.add(egui::DragValue::new(&mut fade_time).speed(0.05).range(0.0..=600.0).suffix(" s")).changed();
+                });
+            }
+            if adjust_changed {
+                changed = true;
+                if let Some(music) = self.music() {
+                    match new_target {
+                        Some(note) => {
+                            let mut map = Mapping::new();
+                            map.insert("trigger_note".into(), note_value(note));
+                            if fade_out {
+                                map.insert("fadeout".into(), true.into());
+                            } else {
+                                map.insert("volume".into(), ((volume * 100.0).round() / 100.0).into());
+                            }
+                            // 3 s is the default and is not written out.
+                            if (fade_time - 3.0).abs() > 1e-9 {
+                                map.insert("fadetime".into(), ((fade_time * 1000.0).round() / 1000.0).into());
+                            }
+                            music.insert("adjust".into(), Value::Mapping(map));
+                        }
+                        None => drop(music.shift_remove("adjust")),
+                    }
+                }
+            }
+        }
         changed
     }
 
@@ -234,7 +367,7 @@ impl CueDialog {
             }
             ui.add_space(10.0);
             ui.separator();
-            ui.label(RichText::new("YAML — alle Felder des Cues (S/L/F, Auto-Cue, Adjust, cue_midi, cue_osc, cue_http, cue_display …)").color(MUTED));
+            ui.label(RichText::new("YAML — alle Felder des Cues, auch die ohne Formularfeld (cue_midi, cue_osc, cue_http, cue_display, music_seq, mehrere Audios …)").color(MUTED));
             let editor = egui::TextEdit::multiline(&mut self.text).code_editor().desired_width(f32::INFINITY).desired_rows(10);
             if ui.add(editor).changed() {
                 match serde_yaml_from(&self.text) {

@@ -281,8 +281,12 @@ pub trait MidiPorts: Send {
 /// MIDI output ports of this machine, opened on first use.
 #[derive(Default)]
 pub struct SystemMidi {
-    open: HashMap<String, Option<midir::MidiOutputConnection>>,
+    /// Open connections, and for ports that could not be opened when that was last tried.
+    open: HashMap<String, std::result::Result<midir::MidiOutputConnection, Instant>>,
 }
+
+/// How long to wait before looking again for a port that was not there.
+const PORT_RETRY: Duration = Duration::from_secs(2);
 
 impl SystemMidi {
     /// Names of the MIDI output ports currently present.
@@ -299,14 +303,23 @@ impl SystemMidi {
 
 impl MidiPorts for SystemMidi {
     fn send(&mut self, port: &str, bytes: &[u8]) {
-        let connection = self.open.entry(port.to_string()).or_insert_with(|| {
+        let connect = || {
             let midi = midir::MidiOutput::new("MDstage").ok()?;
             let found = midi.ports().into_iter().find(|p| midi.port_name(p).is_ok_and(|n| n == port))?;
             midi.connect(&found, "MDstage").ok()
-        });
-        if let Some(connection) = connection {
+        };
+        // A device plugged in after the show started is picked up on a later send.
+        let retry = match self.open.get(port) {
+            None => true,
+            Some(Err(tried)) => tried.elapsed() >= PORT_RETRY,
+            Some(Ok(_)) => false,
+        };
+        if retry {
+            self.open.insert(port.to_string(), connect().ok_or_else(Instant::now));
+        }
+        if let Some(Ok(connection)) = self.open.get_mut(port) {
             if connection.send(bytes).is_err() {
-                // The device went away; try to reopen it next time.
+                // The device went away; look for it again next time.
                 self.open.remove(port);
             }
         }

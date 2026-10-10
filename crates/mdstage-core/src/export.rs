@@ -67,8 +67,9 @@ fn percent(volume: f64) -> String {
 }
 
 impl Script {
-    /// Lay the script out as a book. The title is the first top-level heading.
-    pub fn book(&self, cast: &Cast, options: Options) -> Book {
+    /// Lay the script out as a book. The title is the first top-level heading. `fired`
+    /// gives the time each cue (0-based) was last triggered, for a "Zeit" line in its box.
+    pub fn book(&self, cast: &Cast, options: Options, fired: &[(usize, String)]) -> Book {
         let cues = Cues::new(self);
         let note_label = |cue: usize| cues.get(cue).and_then(|c| c.note()).map_or("?".to_string(), |n| n.to_string());
         let mut title = None;
@@ -159,6 +160,9 @@ impl Script {
                             rows.push((label.into(), value.to_string()));
                         }
                     }
+                    if let Some((_, time)) = fired.iter().find(|(c, _)| *c == cue_index) {
+                        rows.push(("Zeit".into(), time.clone()));
+                    }
                     if let Some(auto) = cue.auto_trigger() {
                         let source = cues.find(auto.source).map_or("?".to_string(), |c| format!("Cue {}", c + 1));
                         rows.push((
@@ -231,7 +235,7 @@ Freier Text.
     fn lays_out_the_book() {
         let script = Script::parse(SHOW);
         let cast = Cast::from_script(&script, false);
-        let book = script.book(&cast, Options { cues: true, colours: true, grouped_mics: true });
+        let book = script.book(&cast, Options { cues: true, colours: true, grouped_mics: true }, &[]);
         assert_eq!(book.title, "Der Titel");
         assert_eq!(book.items.len(), 7);
         assert_eq!(book.items[1], Item::Heading { level: 2, text: "Szene 1".into() });
@@ -269,11 +273,13 @@ Freier Text.
     fn options_leave_out_cues_colours_and_groups() {
         let script = Script::parse(SHOW);
         let cast = Cast::from_script(&script, false);
-        let plain = script.book(&cast, Options { cues: false, colours: false, grouped_mics: false });
+        let plain = script.book(&cast, Options { cues: false, colours: false, grouped_mics: false }, &[]);
         assert!(!plain.items.iter().any(|i| matches!(i, Item::Cue(_))));
         assert!(matches!(&plain.items[3], Item::Role { names, .. } if names[0].1.is_empty()));
-        let flat = script.book(&cast, Options { cues: true, colours: false, grouped_mics: false });
+        let flat = script.book(&cast, Options { cues: true, colours: false, grouped_mics: false }, &[(1, "20:15:03".into())]);
         assert!(matches!(&flat.items[3], Item::Cue(c) if c.rows[0] == ("Mic".to_string(), "Anna, Ben".to_string())));
-        assert_eq!(Script::parse("Nur Text.\n").book(&cast, Options { cues: true, colours: true, grouped_mics: true }).title, "Skript");
+        assert!(matches!(&flat.items[3], Item::Cue(c) if !c.rows.iter().any(|r| r.0 == "Zeit")));
+        assert!(matches!(&flat.items[4], Item::Cue(c) if c.rows.contains(&("Zeit".to_string(), "20:15:03".to_string()))));
+        assert_eq!(Script::parse("Nur Text.\n").book(&cast, Options { cues: true, colours: true, grouped_mics: true }, &[]).title, "Skript");
     }
 }

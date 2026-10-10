@@ -149,7 +149,6 @@ Every YAML block (except the config block) is a **cue** (trigger). It is display
 | `mic: "Anna"` | Role name(s) or group name(s) whose microphone channels are opened. All others are muted. `muteall` mutes everyone. Group names expand to all member roles. Not used when Auto-Mic is active. |
 | `auto_mic: true` | Enables Auto-Mic for this cue (see [Auto-Mic](#auto-mic)). |
 | `music: file.wav` | Audio file from the `audio/` subfolder. Short form or object (see below). |
-| `light: "Scene A"` | Free-text note for the lighting operator (documentation only). |
 | `note: "Note"` | Internal note displayed on the trigger panel. |
 | `start_tc: "01:00:00:00"` | Start timecode (HH:MM:SS:FF, 25 fps) sent as MTC when the cue fires. |
 | `osc: "/path/{ch}"` | OSC message path sent when the cue fires (legacy — see [OSC Output](#osc-output)). |
@@ -810,7 +809,7 @@ Settings are stored **per hostname** in the config block of the script file, so 
 
 `Cmd/Ctrl+E` opens the export dialog:
 
-- **Include cues:** Whether trigger blocks (mic, music, light, etc.) appear in the export
+- **Include cues:** Whether trigger blocks (mic, music, etc.) appear in the export
 - **Role colours:** Whether role names are shown in colour
 - **Grouped mics:** Whether mic assignments in cue tables are rendered as labelled group boxes (enabled) or as a flat list of role names (disabled)
 - **Include timestamps:** Whether the recorded trigger time (`HH:MM:SS`) of each cue is written into the cue tables. Timestamps are captured live whenever a cue is triggered (overwritten on each re-trigger) and are **session-only** — they are never saved to the show `.md`; this option is the only way they leave the app.

@@ -66,6 +66,10 @@ impl ClipCache {
         self.clips.insert(file.to_string(), Arc::new(clip));
     }
 
+    pub fn contains(&self, file: &str) -> bool {
+        self.clips.contains_key(file)
+    }
+
     /// The clip for a file, decoding and resampling it on first use.
     pub fn get(&mut self, file: &str) -> Result<Arc<Clip>> {
         if let Some(clip) = self.clips.get(file) {

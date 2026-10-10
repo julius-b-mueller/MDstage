@@ -26,6 +26,8 @@ pub struct Output {
     pub sample_rate: u32,
     pub channels: usize,
     pub clock: Arc<EngineClock>,
+    /// Set when the stream reported an error (the device was unplugged, for instance).
+    pub failed: Arc<std::sync::atomic::AtomicBool>,
 }
 
 fn device_err(e: impl std::fmt::Display) -> Error {
@@ -85,7 +87,12 @@ pub fn open(mut mixer: Mixer, device_name: Option<&str>, max_channels: usize) ->
     let config = StreamConfig { channels, sample_rate: SampleRate(rate.0), buffer_size: cpal::BufferSize::Default };
     let clock = Arc::new(EngineClock::new(rate.0));
     let ch = channels as usize;
-    let on_error = |e| eprintln!("audio stream error: {e}");
+    let failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = failed.clone();
+    let on_error = move |e| {
+        eprintln!("audio stream error: {e}");
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+    };
 
     let stream = match format {
         SampleFormat::F32 => {
@@ -143,5 +150,5 @@ pub fn open(mut mixer: Mixer, device_name: Option<&str>, max_channels: usize) ->
     .map_err(device_err)?;
     stream.play().map_err(device_err)?;
 
-    Ok(Output { _stream: stream, device_name: name, sample_rate: rate.0, channels: ch, clock })
+    Ok(Output { _stream: stream, device_name: name, sample_rate: rate.0, channels: ch, clock, failed })
 }

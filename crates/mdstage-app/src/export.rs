@@ -252,7 +252,7 @@ mod tests {
             "```yaml\nconfig:\n    roles:\n        Anna: {color: blue}\n```\n\n# Ein \"Titel\" mit #Raute und $Dollar\n\n## Szene [1]\n\n*Licht* aus.\n\n```yaml\nmic: Anna\nmusic: a.wav\nnote: \"Zeile\\\\mit Backslash\"\ntrigger_note: {ch: 1, note: 1}\n```\n\n**Anna**\nHallo *(leise)* du.\nZweite @Zeile.\n",
         );
         let cast = Cast::from_script(&script, false);
-        script.book(&cast, Options { cues: true, colours: true, grouped_mics: true })
+        script.book(&cast, Options { cues: true, colours: true, grouped_mics: true }, &[])
     }
 
     #[test]

@@ -14,6 +14,7 @@ path = "src/main.rs"
 eframe = "0.31"
 rfd = "0.15"
 sha2 = "0.10"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 docx-rs = "0.4"
 typst = "0.13"
 typst-pdf = "0.13"

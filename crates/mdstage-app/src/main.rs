@@ -52,8 +52,8 @@ struct App {
     settings_ui: Option<SettingsUi>,
     cue_dialog: Option<CueDialog>,
     roles_ui: Option<RolesUi>,
-    /// The export dialog's options, while it is open.
-    export: Option<mdstage_core::export::Options>,
+    /// The export dialog's options (and whether to print trigger times), while it is open.
+    export: Option<(mdstage_core::export::Options, bool)>,
     /// A copied cue's fields, for pasting.
     copied: Option<mdstage_core::yaml::Value>,
     /// Show lock: no editing, clicks only arm.
@@ -190,7 +190,17 @@ impl App {
                     // Auto-Mic on any *other* cue rules out choosing microphones by hand.
                     let others_auto = show.script.blocks.iter().enumerate().any(|(i, b)| matches!(b, Block::Cue(c) if c.auto_mic() && (i != block || existing.is_none())));
                     let audio_dir = show.path.parent().unwrap_or(Path::new(".")).join("audio");
-                    self.cue_dialog = Some(CueDialog::new(block, existing.is_none(), existing, &audio_dir, others_auto));
+                    // The other cues, for linking to them (S/L/F, auto-cue, adjust).
+                    let mut number = 0;
+                    let mut links = Vec::new();
+                    for (i, b) in show.script.blocks.iter().enumerate() {
+                        let Block::Cue(cue) = b else { continue };
+                        number += 1;
+                        let Some(note) = cue.note().filter(|_| i != block || existing.is_none()) else { continue };
+                        let what = cue.text("note").map(str::to_string).or_else(|| cue.audio().map(|a| a.parts[0].audios[0].file.clone())).unwrap_or_default();
+                        links.push((note, format!("Cue {number}  ({note})  {what}").trim_end().to_string()));
+                    }
+                    self.cue_dialog = Some(CueDialog::new(block, existing.is_none(), existing, &audio_dir, others_auto, links));
                 }
                 Action::NewText(at) => {
                     let at = *at;
@@ -277,7 +287,7 @@ impl App {
             self.view.open_search();
         }
         if pressed(ctx, Key::E) && self.show.is_some() {
-            self.export.get_or_insert(EXPORT_DEFAULTS);
+            self.export.get_or_insert((EXPORT_DEFAULTS, false));
         }
         if pressed(ctx, Key::Comma) && self.settings_ui.is_none() {
             self.settings_ui = Some(SettingsUi::new(&self.settings));
@@ -334,7 +344,7 @@ impl App {
                 if ui.button(self.t("Exportieren…", "Export…")).clicked() {
                     ui.close_menu();
                     if self.show.is_some() {
-                        self.export.get_or_insert(EXPORT_DEFAULTS);
+                        self.export.get_or_insert((EXPORT_DEFAULTS, false));
                     }
                 }
                 if ui.button(self.t("Rolleneditor…", "Role Editor…")).clicked() {
@@ -388,12 +398,23 @@ impl App {
             if ui.add_enabled(has_show, egui::Button::new(RichText::new(self.t("Mics aus", "Mics Off")).color(RED))).clicked() {
                 self.request(Request::MicsOff);
             }
+            if self.settings.emergency_light.is_some() {
+                let on = self.snapshot.emergency_light;
+                let label = RichText::new(self.t("Notlicht", "Emergency Light")).color(if on { Color32::BLACK } else { RED });
+                let button = egui::Button::new(label).fill(if on { RED } else { Color32::TRANSPARENT });
+                if ui.add_enabled(has_show, button).clicked() {
+                    self.request(Request::EmergencyLight(!on));
+                }
+            }
             ui.separator();
             let (lock, lock_hint) = (self.t("🔒 Gesperrt", "🔒 Locked"), self.t("Kein Bearbeiten; Klicks schalten nur scharf", "No editing; clicks only arm"));
             let live = self.t("Live-Ansicht", "Live View");
             ui.toggle_value(&mut self.locked, lock).on_hover_text(lock_hint);
             ui.toggle_value(&mut self.live_open, live);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if let Some((done, total)) = self.snapshot.loading {
+                    ui.label(RichText::new(format!("{} {done}/{total}", self.t("Audio lädt", "Loading audio"))).color(YELLOW));
+                }
                 let output = match &self.snapshot.output {
                     Some(o) => format!("{} · {} Kanäle · {} Hz", o.name, o.channels, o.sample_rate),
                     None if has_show => self.t("kein Audiogerät", "no audio device").to_string(),
@@ -487,13 +508,14 @@ impl App {
     }
 
     fn export_window(&mut self, ctx: &egui::Context) {
-        let (Some(mut options), Some(show)) = (self.export, &self.show) else { return };
+        let (Some((mut options, mut times)), Some(show)) = (self.export, &self.show) else { return };
         let mut open = true;
         let mut format = None;
         egui::Window::new(self.t("Exportieren", "Export")).open(&mut open).resizable(false).show(ctx, |ui| {
             ui.checkbox(&mut options.cues, self.t("Cues einschließen", "Include cues"));
             ui.checkbox(&mut options.colours, self.t("Rollenfarben", "Role colours"));
             ui.checkbox(&mut options.grouped_mics, self.t("Mikrofone gruppiert", "Grouped mics"));
+            ui.checkbox(&mut times, self.t("Auslösezeiten dieser Sitzung", "Trigger times of this session"));
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 if ui.button("PDF…").clicked() {
@@ -504,9 +526,10 @@ impl App {
                 }
             });
         });
-        self.export = open.then_some(options);
+        self.export = open.then_some((options, times));
         let Some(format) = format else { return };
-        let book = show.script.book(&show.cast, options);
+        let fired: Vec<(usize, String)> = if times { self.snapshot.fired_at.iter().map(|&(cue, at)| (cue, store::clock_time(at))).collect() } else { Vec::new() };
+        let book = show.script.book(&show.cast, options, &fired);
         let name = format!("{}.{format}", book.title.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_"));
         let Some(path) = rfd::FileDialog::new().set_file_name(name).save_file() else { return };
         let date = store::today();
@@ -600,7 +623,7 @@ const EXPORT_DEFAULTS: mdstage_core::export::Options = mdstage_core::export::Opt
 /// `mdstage SHOW.md --export OUT.pdf|OUT.docx`: write the book and exit, without a window.
 fn export_from_command_line(show: &Path, out: &Path) -> Result<(), String> {
     let script = Script::parse(&std::fs::read_to_string(show).map_err(|e| format!("{}: {e}", show.display()))?);
-    let book = script.book(&Cast::from_script(&script, false), EXPORT_DEFAULTS);
+    let book = script.book(&Cast::from_script(&script, false), EXPORT_DEFAULTS, &[]);
     let date = store::today();
     let bytes = match out.extension().and_then(|e| e.to_str()) {
         Some("pdf") => export::pdf(&book, &date)?,

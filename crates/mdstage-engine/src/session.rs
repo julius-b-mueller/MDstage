@@ -48,6 +48,8 @@ pub enum Request {
     ClearProblems,
     /// The show file was edited.
     SetScript(Box<Script>),
+    /// Switch the emergency light on or off.
+    EmergencyLight(bool),
 }
 
 /// The audio output in use.
@@ -78,6 +80,11 @@ pub struct Snapshot {
     pub problems: Vec<String>,
     /// The last MIDI note that came in, for "MIDI learn".
     pub heard: Option<Note>,
+    /// Audio files decoded so far and in total, while the show's audio is still loading.
+    pub loading: Option<(usize, usize)>,
+    pub emergency_light: bool,
+    /// When each cue last fired (this session only).
+    pub fired_at: Vec<(usize, std::time::SystemTime)>,
 }
 
 pub struct Session {
@@ -148,7 +155,7 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
     };
 
     let (mixer, handle) = Mixer::new();
-    let (mut sink, handle, output) = match device::open(mixer, settings.audio_device.as_deref(), 64) {
+    let (mut sink, handle, output) = match device::open(mixer.limited(), settings.audio_device.as_deref(), 64) {
         Ok(out) => {
             let info = OutputInfo { name: out.device_name.clone(), sample_rate: out.sample_rate, channels: out.channels };
             (Sink::Device(out), handle, Some(info))
@@ -223,8 +230,40 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
         report(&mut problems, format!("Timecode: {e}"));
     }
 
+    // Decode all of the show's audio in the background right away, so that no cue has to
+    // wait for a file the first time it fires.
+    let mut files: Vec<String> = Vec::new();
+    for block in &show.script().blocks {
+        let mdstage_core::Block::Cue(cue) = block else { continue };
+        let audios = cue.audio().into_iter().flat_map(|a| a.parts).flat_map(|p| p.audios);
+        for audio in audios {
+            if !files.contains(&audio.file) {
+                files.push(audio.file);
+            }
+        }
+    }
+    let total_files = files.len();
+    let mut loaded_files = 0;
+    let (decoded, decoded_incoming) = channel();
+    let audio_dir = show_dir.join("audio");
+    let loader = thread::Builder::new().name("mdstage-audio-loader".into()).spawn(move || {
+        for file in files {
+            let clip = crate::clip::Clip::decode_file(&audio_dir.join(&file)).and_then(|c| c.resampled(sample_rate));
+            if decoded.send((file, clip)).is_err() {
+                break;
+            }
+        }
+    });
+    if let Err(e) = &loader {
+        report(&mut problems, format!("Audio wird erst beim Auslösen geladen: {e}"));
+    }
+
     let started = Instant::now();
     let mut heard = None;
+    let mut emergency_light = false;
+    let mut fired_at: Vec<(usize, std::time::SystemTime)> = Vec::new();
+    let mut fired_count = 0;
+    let mut device_failed = false;
     'show: loop {
         let tick_started = Instant::now();
         loop {
@@ -242,6 +281,13 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
                 Request::StopAll => show.stop_all(),
                 Request::MicsOff => Ok(show.mics_off()),
                 Request::ClearProblems => Ok(problems.clear()),
+                Request::EmergencyLight(on) => {
+                    emergency_light = on;
+                    if let (Some(wires), Some(effect)) = (&wires, settings.emergency_light(on)) {
+                        wires.send(outputs.wire(&[effect], &cast));
+                    }
+                    Ok(())
+                }
                 Request::SetScript(script) => {
                     cast = Cast::from_script(&script, settings.language == "en");
                     show.replace_script(*script)
@@ -278,6 +324,22 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
             }
         }
 
+        while let Ok((file, clip)) = decoded_incoming.try_recv() {
+            loaded_files += 1;
+            match clip {
+                // A cue fired in the meantime may already have loaded the file itself.
+                Ok(clip) if !show.player().cache().contains(&file) => show.player().cache().insert(&file, clip),
+                Ok(_) => {}
+                Err(e) => report(&mut problems, e.to_string()),
+            }
+        }
+        if let Sink::Device(out) = &sink {
+            if !device_failed && out.failed.load(std::sync::atomic::Ordering::SeqCst) {
+                device_failed = true;
+                report(&mut problems, "Audio: Das Ausgabegerät meldet einen Fehler (getrennt?). Show neu öffnen, um es wieder zu verbinden.".into());
+            }
+        }
+
         sink.pump();
         if let Err(e) = show.tick(started.elapsed().as_secs_f64()) {
             report(&mut problems, e.to_string());
@@ -303,6 +365,18 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
         }
         *feed.lock().unwrap() = show.timecode_seconds().map(|seconds| (seconds, Instant::now()));
 
+        // Note when cues fired; Back takes the entries of undone cues with it.
+        let fired: Vec<usize> = show.history().cues().collect();
+        if fired.len() > fired_count {
+            for &cue in &fired[fired_count..] {
+                fired_at.retain(|(c, _)| *c != cue);
+                fired_at.push((cue, std::time::SystemTime::now()));
+            }
+        } else if fired.len() < fired_count {
+            fired_at.retain(|(c, _)| fired.contains(c));
+        }
+        fired_count = fired.len();
+
         let mic = show.mic();
         *snapshot.lock().unwrap() = Snapshot {
             fired: show.history().cues().collect(),
@@ -318,6 +392,9 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
             output: output.clone(),
             problems: problems.clone(),
             heard,
+            loading: (loaded_files < total_files).then_some((loaded_files, total_files)),
+            emergency_light,
+            fired_at: fired_at.clone(),
         };
         thread::sleep(TICK.saturating_sub(tick_started.elapsed()));
     }

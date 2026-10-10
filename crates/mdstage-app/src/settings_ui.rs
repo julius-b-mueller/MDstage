@@ -5,7 +5,7 @@ use eframe::egui::{self, RichText, Ui};
 use mdstage_core::cues::Note;
 use mdstage_engine::inputs::Inputs;
 use mdstage_engine::outputs::SystemMidi;
-use mdstage_engine::settings::{CueTriggerSetting, DeviceSetting, MixerSetting, NoteSetting, Settings};
+use mdstage_engine::settings::{ArgSetting, CueTriggerSetting, DeviceSetting, EmergencyLightSetting, MixerSetting, NoteSetting, Settings};
 
 use crate::theme::*;
 
@@ -40,6 +40,19 @@ fn port_picker(ui: &mut Ui, id: impl std::hash::Hash, value: &mut String, option
             ui.label(RichText::new(format!("{value} (nicht angeschlossen)")).color(RED));
         }
     });
+}
+
+/// Type and value of an optional OSC argument.
+fn arg_fields(ui: &mut Ui, id: impl std::hash::Hash, arg: &mut ArgSetting) {
+    let shown = if arg.kind.is_empty() { "none" } else { arg.kind.as_str() }.to_string();
+    egui::ComboBox::from_id_salt(id).selected_text(shown).width(64.0).show_ui(ui, |ui| {
+        for kind in ["none", "int", "float", "string"] {
+            ui.selectable_value(&mut arg.kind, kind.to_string(), kind);
+        }
+    });
+    if arg.kind != "none" && !arg.kind.is_empty() {
+        ui.add(egui::TextEdit::singleline(&mut arg.value).desired_width(50.0));
+    }
 }
 
 fn note_fields(ui: &mut Ui, note: &mut Option<NoteSetting>) {
@@ -193,29 +206,157 @@ impl SettingsUi {
             for (i, mixer) in draft.mixers.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
                     ui.label(format!("Pult {}", i + 1));
-                    match mixer {
-                        MixerSetting::X32 { port } => {
-                            ui.label("X32 MIDI");
-                            port_picker(ui, ("mixer-port", i), port, &self.midi_outputs);
+                    // Changing the method keeps the port, where both have one.
+                    let kind = match mixer {
+                        MixerSetting::X32 { .. } => 0,
+                        MixerSetting::MidiNote { .. } => 1,
+                        MixerSetting::MidiCc { .. } => 2,
+                        MixerSetting::MidiProgram { .. } => 3,
+                        MixerSetting::MidiSysex { .. } => 4,
+                        MixerSetting::Osc { .. } => 5,
+                    };
+                    let names = ["X32 MIDI", "MIDI-Note", "MIDI-CC", "MIDI-Programm", "MIDI-SysEx", "OSC"];
+                    let mut chosen = kind;
+                    egui::ComboBox::from_id_salt(("mixer-method", i)).selected_text(names[kind]).show_ui(ui, |ui| {
+                        for (n, name) in names.iter().enumerate() {
+                            ui.selectable_value(&mut chosen, n, *name);
                         }
-                        other => {
-                            let kind = match other {
-                                MixerSetting::Osc { .. } => "eigenes OSC",
-                                _ => "eigenes MIDI",
-                            };
-                            ui.label(RichText::new(format!("{kind} — Details in settings.json")).color(MUTED));
-                        }
+                    });
+                    if chosen != kind {
+                        let port = match mixer {
+                            MixerSetting::X32 { port } | MixerSetting::MidiNote { port, .. } | MixerSetting::MidiCc { port, .. } => port.clone(),
+                            MixerSetting::MidiProgram { port, .. } | MixerSetting::MidiSysex { port, .. } => port.clone(),
+                            MixerSetting::Osc { .. } => String::new(),
+                        };
+                        let ch = || "{ch}".to_string();
+                        *mixer = match chosen {
+                            0 => MixerSetting::X32 { port },
+                            1 => MixerSetting::MidiNote { port, channel: "1".into(), note: ch(), on_velocity: 127, off_velocity: 0 },
+                            2 => MixerSetting::MidiCc { port, channel: "1".into(), controller: ch(), on_value: 127, off_value: 0 },
+                            3 => MixerSetting::MidiProgram { port, channel: "1".into(), on_program: 0, off_program: 1 },
+                            4 => MixerSetting::MidiSysex { port, unmute: String::new(), mute: String::new() },
+                            _ => MixerSetting::Osc {
+                                host: "192.168.1.1".into(),
+                                port: 10023,
+                                on_path: "/ch/{ch}/mix/on".into(),
+                                on_arg: ArgSetting { kind: "int".into(), value: "1".into() },
+                                off_path: "/ch/{ch}/mix/on".into(),
+                                off_arg: ArgSetting { kind: "int".into(), value: "0".into() },
+                            },
+                        };
                     }
                     if ui.small_button("✕").clicked() {
                         remove = Some(i);
                     }
                 });
+                let byte = |ui: &mut Ui, label: &str, value: &mut u8| {
+                    ui.label(label);
+                    ui.add(egui::DragValue::new(value).range(0..=127));
+                };
+                ui.horizontal_wrapped(|ui| {
+                    ui.add_space(16.0);
+                    match mixer {
+                        MixerSetting::X32 { port } => {
+                            port_picker(ui, ("mixer-port", i), port, &self.midi_outputs);
+                            ui.label(RichText::new("CC auf Kanal 2, Controller = Mic-Kanal − 1").color(MUTED));
+                        }
+                        MixerSetting::MidiNote { port, channel, note, on_velocity, off_velocity } => {
+                            port_picker(ui, ("mixer-port", i), port, &self.midi_outputs);
+                            ui.label("Kanal");
+                            field(ui, channel, "1", 44.0);
+                            ui.label("Note");
+                            field(ui, note, "{ch}", 54.0);
+                            byte(ui, "an", on_velocity);
+                            byte(ui, "aus", off_velocity);
+                        }
+                        MixerSetting::MidiCc { port, channel, controller, on_value, off_value } => {
+                            port_picker(ui, ("mixer-port", i), port, &self.midi_outputs);
+                            ui.label("Kanal");
+                            field(ui, channel, "1", 44.0);
+                            ui.label("Controller");
+                            field(ui, controller, "{ch}", 54.0);
+                            byte(ui, "an", on_value);
+                            byte(ui, "aus", off_value);
+                        }
+                        MixerSetting::MidiProgram { port, channel, on_program, off_program } => {
+                            port_picker(ui, ("mixer-port", i), port, &self.midi_outputs);
+                            ui.label("Kanal");
+                            field(ui, channel, "{ch}", 54.0);
+                            byte(ui, "Programm an", on_program);
+                            byte(ui, "aus", off_program);
+                        }
+                        MixerSetting::MidiSysex { port, unmute, mute } => {
+                            port_picker(ui, ("mixer-port", i), port, &self.midi_outputs);
+                            ui.label("an");
+                            field(ui, unmute, "F0 … {ch} {val} F7", 190.0);
+                            ui.label("aus");
+                            field(ui, mute, "F0 … {ch} {val} F7", 190.0);
+                        }
+                        MixerSetting::Osc { host, port, on_path, on_arg, off_path, off_arg } => {
+                            field(ui, host, "Host", 120.0);
+                            ui.add(egui::DragValue::new(port).range(1..=65535));
+                            for (label, path, arg, id) in [("an", on_path, on_arg, "on"), ("aus", off_path, off_arg, "off")] {
+                                ui.label(label);
+                                field(ui, path, "/ch/{ch}/mix/on", 150.0);
+                                arg_fields(ui, ("mixer-arg", i, id), arg);
+                            }
+                        }
+                    }
+                });
+                if !matches!(mixer, MixerSetting::X32 { .. }) {
+                    ui.label(RichText::new("    {ch} = Mic-Kanal der Rolle (MIDI: ab 0, OSC: ab 1, zweistellig)").color(MUTED));
+                }
             }
             if let Some(i) = remove {
                 draft.mixers.remove(i);
             }
-            if ui.button("+ X32-Pult").clicked() {
+            if ui.button("+ Pult").clicked() {
                 draft.mixers.push(MixerSetting::X32 { port: String::new() });
+            }
+
+            ui.add_space(12.0);
+            ui.heading("Notlicht");
+            let mut enabled = draft.emergency_light.is_some();
+            if ui.checkbox(&mut enabled, "Notlicht-Taste in der Werkzeugleiste").changed() {
+                draft.emergency_light = enabled.then(EmergencyLightSetting::default);
+            }
+            let targets: Vec<(String, bool)> = draft
+                .devices
+                .iter()
+                .filter_map(|d| match d {
+                    DeviceSetting::Midi { name, .. } => Some((name.clone(), false)),
+                    DeviceSetting::Osc { name, .. } => Some((name.clone(), true)),
+                    _ => None,
+                })
+                .collect();
+            if let Some(light) = &mut draft.emergency_light {
+                ui.horizontal(|ui| {
+                    ui.label("Gerät");
+                    egui::ComboBox::from_id_salt("light-device").selected_text(if light.device.is_empty() { "—" } else { light.device.as_str() }).width(200.0).show_ui(ui, |ui| {
+                        for (name, _) in &targets {
+                            ui.selectable_value(&mut light.device, name.clone(), name);
+                        }
+                    });
+                });
+                let is_osc = targets.iter().any(|(name, osc)| *name == light.device && *osc);
+                let hint = if is_osc { "/pfad" } else { "90 3C 7F" };
+                ui.horizontal(|ui| {
+                    ui.label("an");
+                    field(ui, &mut light.on, hint, 200.0);
+                    if is_osc {
+                        arg_fields(ui, "light-on-arg", &mut light.on_arg);
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("aus");
+                    field(ui, &mut light.off, hint, 200.0);
+                    if is_osc {
+                        arg_fields(ui, "light-off-arg", &mut light.off_arg);
+                    }
+                });
+                if !is_osc {
+                    ui.label(RichText::new("MIDI als Hex-Bytes, z. B. Note an Kanal 1: 90 3C 7F, Note aus: 80 3C 00").color(MUTED));
+                }
             }
 
             ui.add_space(12.0);
