@@ -73,6 +73,8 @@ struct App {
     /// Audio files a cue has just swapped for others while further cues still use
     /// them: `(old, new, how many cues)`. The operator is asked whether those follow.
     swap_prompt: Option<Vec<(String, String, usize)>>,
+    /// Where the pointer is while files are dragged over the window, if the system says.
+    drag_at: Option<egui::Pos2>,
     /// Files dropped onto the window, the pointer position known then, and when.
     pending_drop: Option<(Vec<PathBuf>, Option<egui::Pos2>, std::time::Instant)>,
     /// Problem lines the operator chose not to see any more (this session).
@@ -118,6 +120,7 @@ impl App {
             version_notice: None,
             upgrade_prompt: false,
             swap_prompt: None,
+            drag_at: None,
             pending_drop: None,
             ignored: Vec::new(),
             cleanup: None,
@@ -1494,6 +1497,19 @@ enum LinkDialog {
     Adjust { block: usize, target: mdstage_core::cues::Note, fadeout: bool, volume: f64, fadetime: f64 },
 }
 
+/// Where the pointer is in the window, asked of the system rather than taken from the
+/// window's own events (which stop while something is dragged in from another program).
+/// `None` where the system does not tell (Wayland) or the window's place is not known.
+fn system_pointer(ctx: &egui::Context) -> Option<egui::Pos2> {
+    use mouse_position::mouse_position::Mouse;
+    let Mouse::Position { x, y } = Mouse::get_mouse_position() else { return None };
+    let (inner, scale) = ctx.input(|i| (i.viewport().inner_rect, i.viewport().native_pixels_per_point.unwrap_or(1.0)));
+    // macOS reports points like the window does; elsewhere the pointer comes in pixels.
+    let scale = if cfg!(target_os = "macos") { 1.0 } else { scale };
+    let zoom = ctx.zoom_factor();
+    Some(((egui::pos2(x as f32, y as f32) / scale - inner?.min.to_vec2()).to_vec2() / zoom).to_pos2())
+}
+
 fn note_value(note: mdstage_core::cues::Note) -> mdstage_core::yaml::Value {
     let mut map = serde_yaml_mapping();
     map.insert("ch".into(), note.ch.into());
@@ -1532,10 +1548,26 @@ impl eframe::App for App {
         self.shortcuts(ctx);
         // Files dropped onto the window. Where they landed is only known once the pointer
         // reports in again (it does not while the system drags), so wait a moment for that.
+        // While audio files are dragged over the window, a line in the script shows where
+        // they would become cues. The window is not told where the pointer is during
+        // such a drag, so the system is asked.
+        let audio_hovers = ctx.input(|i| i.raw.hovered_files.iter().any(|f| f.path.as_ref().and_then(|p| p.file_name()?.to_str()).is_some_and(store::is_audio_name)));
+        let may_insert = self.show.is_some() && !self.locked && self.cue_dialog.is_none() && self.settings_ui.is_none() && self.roles_ui.is_none();
+        if audio_hovers {
+            self.drag_at = system_pointer(ctx);
+            ctx.request_repaint();
+        }
+        self.view.show_drop_line(self.drag_at.filter(|_| audio_hovers && may_insert));
         let dropped: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
         let pointer = ctx.input(|i| i.pointer.latest_pos());
         if !dropped.is_empty() {
-            self.pending_drop = Some((dropped, pointer, std::time::Instant::now()));
+            match self.drag_at.take() {
+                // Dropped where the line was.
+                Some(at) => self.audio_dropped(dropped, Some(at)),
+                None => self.pending_drop = Some((dropped, pointer, std::time::Instant::now())),
+            }
+        } else if !audio_hovers {
+            self.drag_at = None;
         }
         if let Some((files, before, since)) = self.pending_drop.take() {
             let landed = pointer.filter(|p| Some(*p) != before);

@@ -166,6 +166,8 @@ pub struct ScriptView {
     dragging: HashMap<usize, Marks>,
     /// Auto-cue markers being dragged: block of the auto-cue → seconds.
     auto_dragging: HashMap<usize, f64>,
+    /// Where audio files are being dragged over the window, if they would become cues.
+    drop_at: Option<egui::Pos2>,
     /// Playheads being dragged along their waveform: block → seconds.
     scrubbing: HashMap<usize, f64>,
     /// Volume sliders being dragged, by block.
@@ -707,6 +709,7 @@ impl ScriptView {
                 self.draw_block(ui, cx, i, rect, actions);
             }
             self.drawn_at = Some((origin, ui.clip_rect()));
+            self.drop_line(ui, cx, origin, width);
             self.jump_to_typed_scene(ui);
             if !cx.locked && self.editing.is_none() && self.picking.is_none() {
                 self.insert_zones(ui, cx, origin, viewport, actions);
@@ -791,6 +794,25 @@ impl ScriptView {
                 }
             }
         }
+    }
+
+    /// Audio files are being dragged over the window at this point (or not at all).
+    pub fn show_drop_line(&mut self, at: Option<egui::Pos2>) {
+        self.drop_at = at;
+    }
+
+    /// The line across the script at the place where files dragged over it would be
+    /// put in as cues.
+    fn drop_line(&self, ui: &Ui, cx: &Context, origin: egui::Pos2, width: f32) {
+        let Some(at) = self.drop_at.and_then(|point| self.insert_index_at(point, cx.script)) else { return };
+        let y = origin.y + self.offsets.get(at).copied().unwrap_or(0.0);
+        let painter = ui.painter();
+        painter.hline(origin.x - 14.0..=origin.x + width, y, Stroke::new(3.0_f32, GREEN));
+        painter.circle_filled(pos2(origin.x - 14.0, y), 5.0, GREEN);
+        let label = painter.layout_no_wrap(t("Hier als Cue einfügen", "Insert as a cue here").to_string(), FontId::proportional(12.0), Color32::BLACK);
+        let plate = Rect::from_min_size(pos2(origin.x + 8.0, y - 10.0), label.size() + vec2(12.0, 4.0));
+        painter.rect_filled(plate, 4.0, GREEN);
+        painter.galley(plate.min + vec2(6.0, 2.0), label, Color32::BLACK);
     }
 
     /// The place between two blocks nearest to a point on the screen, as the index a
