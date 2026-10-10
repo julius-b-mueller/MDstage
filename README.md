@@ -239,6 +239,22 @@ The computed microphone list is derived at runtime from the script text — edit
 
 Audio files (MP3 or WAV) are located in the `audio/` subfolder next to the `.md` file.
 
+### Renaming an Audio File
+
+The audio picker in the cue dialog has a **✏** button next to the selected file. It renames the
+file inside `audio/` **and rewrites every reference to it in the whole script** — other cues using
+the same file follow along automatically. The new name must be a plain file name (no path) with an
+audio extension; renaming to an existing name is rejected.
+
+### Moving Unused Audio Files
+
+**Move unused audio files…** (same menu as *Clean up YAML*) collects every file in `audio/` that no
+cue references and moves it into the fixed subfolder **`audio/_unused/`**, which is created if
+needed. The folder name is not configurable, so the same files are recognised again on the next
+run. Nothing is deleted — files can be moved back at any time. If the script contains
+YAML blocks that cannot be parsed, the action aborts, because unreadable blocks may hold
+references.
+
 ### Waveform View
 
 Every cue with an audio file shows an interactive waveform:

@@ -53,6 +53,8 @@ struct App {
     snapshot: Snapshot,
     view: ScriptView,
     live_open: bool,
+    /// Audio files no cue uses, waiting for the operator to confirm moving them away.
+    unused_audio: Option<Vec<String>>,
     settings_ui: Option<SettingsUi>,
     cue_dialog: Option<CueDialog>,
     roles_ui: Option<RolesUi>,
@@ -80,6 +82,7 @@ impl App {
             snapshot: Snapshot::default(),
             view: ScriptView::default(),
             live_open: false,
+            unused_audio: None,
             settings_ui: None,
             cue_dialog: None,
             roles_ui: None,
@@ -349,6 +352,10 @@ impl App {
                         None => {}
                     }
                 }
+                if ui.button(self.t("Unbenutzte Audiodateien verschieben…", "Move unused audio files…")).clicked() {
+                    ui.close_menu();
+                    self.find_unused_audio();
+                }
                 ui.separator();
                 if ui.button(self.t("Exportieren…", "Export…")).clicked() {
                     ui.close_menu();
@@ -610,7 +617,102 @@ impl App {
                 self.after_edit();
             }
             Some(false) => {}
-            None if open => self.cue_dialog = Some(dialog),
+            None if open => {
+                if let Some((from, to)) = dialog.rename_request.take() {
+                    match self.rename_audio(&from, &to) {
+                        Ok(()) => dialog.audio_renamed(&from, &to),
+                        Err(e) => self.message = Some(format!("{}: {e}", lang::t("Umbenennen fehlgeschlagen", "Rename failed"))),
+                    }
+                }
+                self.cue_dialog = Some(dialog);
+            }
+            None => {}
+        }
+    }
+
+    /// Rename a file in the show's `audio/` folder and follow it through every cue.
+    fn rename_audio(&mut self, from: &str, to: &str) -> Result<(), String> {
+        let Some(show) = &mut self.show else { return Ok(()) };
+        let audio_dir = show.path.parent().unwrap_or(Path::new(".")).join("audio");
+        store::rename_audio_file(&audio_dir, from, to).map_err(|e| e.message().to_string())?;
+        let before = show.script.clone();
+        if show.script.rename_audio(from, to) == 0 {
+            return Ok(());
+        }
+        // A show file that cannot be written must not be left naming a file that is gone:
+        // put both back.
+        if let Err(e) = store::save(&show.path, &show.script, &mut self.settings, show.trusted) {
+            show.script = before;
+            let _ = store::rename_audio_file(&audio_dir, to, from);
+            return Err(format!("{} ({e})", store::RenameError::Io.message()));
+        }
+        self.after_edit();
+        Ok(())
+    }
+
+    /// Menu: look for audio files no cue uses and offer to move them away.
+    fn find_unused_audio(&mut self) {
+        let Some(show) = &self.show else { return };
+        let (used, unreadable) = show.script.audio_files_used();
+        if unreadable > 0 {
+            self.message = Some(
+                self.t(
+                    "Das Skript enthält fehlerhafte YAML-Blöcke. Solange die nicht gelesen werden können, lässt sich nicht sicher bestimmen, welche Audiodateien verwendet werden.",
+                    "The script contains YAML blocks with errors. While those cannot be read, it is not possible to tell reliably which audio files are in use.",
+                )
+                .into(),
+            );
+            return;
+        }
+        let unused = store::unused_audio(&show.path.parent().unwrap_or(Path::new(".")).join("audio"), &used);
+        if unused.is_empty() {
+            self.message = Some(self.t("Alle Audiodateien im audio-Ordner werden im Skript verwendet.", "Every audio file in the audio folder is used by the script.").into());
+        } else {
+            self.unused_audio = Some(unused);
+        }
+    }
+
+    fn unused_audio_window(&mut self, ctx: &egui::Context) {
+        let (Some(files), Some(show)) = (self.unused_audio.take(), &self.show) else { return };
+        const SHOWN: usize = 30;
+        let mut open = true;
+        let mut result = None;
+        egui::Window::new(lang::t("Unbenutzte Audiodateien verschieben", "Move unused audio files")).open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
+            let folder = store::UNUSED_AUDIO_DIR;
+            ui.label(if lang::english() { format!("{} file(s) will be moved to “audio/{folder}”:", files.len()) } else { format!("{} Datei(en) werden nach „audio/{folder}“ verschoben:", files.len()) });
+            ui.add_space(6.0);
+            egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                for file in files.iter().take(SHOWN) {
+                    ui.label(RichText::new(file).color(BRIGHT));
+                }
+                if files.len() > SHOWN {
+                    ui.label(RichText::new(format!("… {} {}", files.len() - SHOWN, lang::t("weitere", "more"))).color(MUTED));
+                }
+            });
+            ui.add_space(6.0);
+            ui.label(RichText::new(lang::t("Nichts wird gelöscht.", "Nothing is deleted.")).color(MUTED));
+            ui.separator();
+            ui.horizontal(|ui| {
+                if ui.button(lang::t("Verschieben", "Move")).clicked() {
+                    result = Some(true);
+                }
+                if ui.button(lang::t("Abbrechen", "Cancel")).clicked() {
+                    result = Some(false);
+                }
+            });
+        });
+        match result {
+            Some(true) => {
+                let folder = store::UNUSED_AUDIO_DIR;
+                let (moved, failed) = store::move_unused_audio(&show.path.parent().unwrap_or(Path::new(".")).join("audio"), &files);
+                let mut text = if lang::english() { format!("Moved {} file(s) to “audio/{folder}”.", moved.len()) } else { format!("{} Datei(en) nach „audio/{folder}“ verschoben.", moved.len()) };
+                if !failed.is_empty() {
+                    text += &if lang::english() { format!(" {} file(s) could not be moved.", failed.len()) } else { format!(" {} Datei(en) konnten nicht verschoben werden.", failed.len()) };
+                }
+                self.message = Some(text);
+            }
+            Some(false) => {}
+            None if open => self.unused_audio = Some(files),
             None => {}
         }
     }
@@ -770,6 +872,7 @@ impl eframe::App for App {
         self.cue_window(ctx);
         self.roles_window(ctx);
         self.export_window(ctx);
+        self.unused_audio_window(ctx);
     }
 }
 

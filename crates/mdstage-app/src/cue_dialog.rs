@@ -23,6 +23,11 @@ pub struct CueDialog {
     auto_mic_in_use: bool,
     /// The other cues of the show that can be linked to: trigger note and a label.
     cues: Vec<(Note, String)>,
+    /// The new name being typed for the cue's audio file.
+    renaming: Option<String>,
+    /// Set when the operator asked for an audio file to be renamed: `(from, to)`. The
+    /// app does it (on disk and in every cue) and answers with `audio_renamed`.
+    pub rename_request: Option<(String, String)>,
 }
 
 fn note_of(value: Option<&Value>) -> Option<Note> {
@@ -72,18 +77,22 @@ fn seconds(ui: &mut Ui, map: &mut Mapping, key: &str, label: &str) -> bool {
 impl CueDialog {
     pub fn new(block: usize, is_new: bool, cue: Option<&Value>, audio_dir: &Path, auto_mic_in_use: bool, cues: Vec<(Note, String)>) -> CueDialog {
         let yaml = cue.and_then(Value::as_mapping).cloned().unwrap_or_default();
-        let mut audio_files: Vec<String> = std::fs::read_dir(audio_dir)
-            .into_iter()
-            .flatten()
-            .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
-            .filter(|name| {
-                let lower = name.to_lowercase();
-                ["mp3", "wav", "aiff", "aif", "flac", "ogg", "aac", "m4a"].iter().any(|ext| lower.ends_with(&format!(".{ext}")))
-            })
-            .collect();
-        audio_files.sort();
+        let audio_files = crate::store::audio_files(audio_dir);
         let text = yaml::dump(&Value::Mapping(yaml.clone()), true);
-        CueDialog { block, is_new, text: if yaml.is_empty() { String::new() } else { text }, yaml, text_error: None, audio_files, auto_mic_in_use, cues }
+        CueDialog { block, is_new, text: if yaml.is_empty() { String::new() } else { text }, yaml, text_error: None, audio_files, auto_mic_in_use, cues, renaming: None, rename_request: None }
+    }
+
+    /// An audio file got a new name: follow it in the file list and in the cue as it
+    /// stands in this dialog.
+    pub fn audio_renamed(&mut self, from: &str, to: &str) {
+        for name in self.audio_files.iter_mut().filter(|name| *name == from) {
+            *name = to.to_string();
+        }
+        self.audio_files.sort();
+        let mut cue = Value::Mapping(std::mem::take(&mut self.yaml));
+        mdstage_core::edit::rename_audio_in(&mut cue, from, to);
+        self.yaml = cue.as_mapping().cloned().unwrap_or_default();
+        self.sync_text();
     }
 
     /// The cue as edited.
@@ -197,8 +206,35 @@ impl CueDialog {
                 });
                 if !file.is_empty() && !self.audio_files.contains(&file) {
                     ui.label(RichText::new(t("nicht im Ordner audio/", "not in the audio/ folder")).color(RED));
+                } else if !file.is_empty() && self.renaming.is_none() {
+                    let hint = t("Audiodatei umbenennen (wirkt in allen Cues)", "Rename audio file (applies to every cue)");
+                    if ui.button("✏").on_hover_text(hint).clicked() {
+                        self.renaming = Some(file.clone());
+                    }
                 }
             });
+            if let Some(mut name) = self.renaming.take().filter(|_| file == current && !file.is_empty()) {
+                let mut keep = true;
+                ui.horizontal(|ui| {
+                    ui.label(t("Neuer Name", "New name"));
+                    let field = ui.add(egui::TextEdit::singleline(&mut name).desired_width(260.0));
+                    let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    if ui.button(t("Umbenennen", "Rename")).clicked() || entered {
+                        let wanted = name.trim();
+                        if !wanted.is_empty() && wanted != file {
+                            self.rename_request = Some((file.clone(), wanted.to_string()));
+                        }
+                        keep = false;
+                    }
+                    if ui.button(t("Abbrechen", "Cancel")).clicked() {
+                        keep = false;
+                    }
+                });
+                ui.label(RichText::new(t("Die Datei wird im audio-Ordner umbenannt. Alle Cues, die sie verwenden, werden mit angepasst.", "The file is renamed in the audio folder. Every cue using it is updated as well.")).color(MUTED));
+                if keep {
+                    self.renaming = Some(name);
+                }
+            }
             if file != current {
                 changed = true;
                 if file.is_empty() {
