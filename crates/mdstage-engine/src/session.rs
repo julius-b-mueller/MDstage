@@ -84,6 +84,8 @@ pub struct OutputInfo {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Snapshot {
     pub fired: Vec<usize>,
+    /// The cues fired in the current pass through the script (since the last jump back).
+    pub done: Vec<usize>,
     pub current: Option<usize>,
     pub next: Option<usize>,
     /// The variant chosen for the next Go, if the operator chose one.
@@ -472,6 +474,7 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
         let mic = show.mic();
         *snapshot.lock().unwrap() = Snapshot {
             fired: show.history().cues().collect(),
+            done: show.history().this_pass().collect(),
             current: show.current(),
             next: show.next(),
             selected_variant: show.selected_variant(),

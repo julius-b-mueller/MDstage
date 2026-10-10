@@ -381,7 +381,7 @@ impl LiveView {
             .filter_map(|cue| {
                 let rows = ScriptView::cue_rows(cx, cues.block_index(cue)?, cue, cues.get(cue)?, &none);
                 // As `card` sets them: after the label column, up to the right margin.
-                Some(rows.iter().map(|(_, spans)| ScriptView::flow_spans(ui, None, spans, &font, 18.0 + size * 3.6, each - 16.0, 0.0, size + 7.0)).sum::<usize>())
+                Some(rows.iter().map(|row| ScriptView::flow_spans(ui, None, &row.spans, &font, 18.0 + size * 3.6, each - 16.0, 0.0, size + 7.0)).sum::<usize>())
             })
             .max()
             .unwrap_or(0)
@@ -550,7 +550,8 @@ impl LiveView {
             painter.text(pos2(rect.right() - 16.0, y + 2.0), Align2::RIGHT_TOP, note.to_string(), FontId::proportional(size - 3.0), tint(MUTED));
         }
         y += size + 9.0;
-        for (label, spans) in ScriptView::cue_rows(cx, block, cue, c, &HashMap::new()) {
+        for row in ScriptView::cue_rows(cx, block, cue, c, &HashMap::new()) {
+            let (label, spans) = (row.label, row.spans);
             painter.text(pos2(left, y), Align2::LEFT_TOP, label, FontId::proportional(size - 2.0), tint(MUTED));
             let spans: Vec<(String, Color32)> = spans.into_iter().map(|(text, colour)| (text, tint(colour))).collect();
             let lines = ScriptView::flow_spans(ui, Some(&painter), &spans, &FontId::proportional(size), left + size * 3.6, rect.right() - 16.0, y, size + 7.0);

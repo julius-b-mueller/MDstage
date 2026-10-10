@@ -264,6 +264,12 @@ impl History {
         self.cues().any(|c| c == cue)
     }
 
+    /// The cues fired in the operator's current pass through the script: since the last
+    /// jump back. These are the ones Go steps over.
+    pub fn this_pass(&self) -> impl Iterator<Item = usize> + '_ {
+        self.entries[self.pass_start()..].iter().map(|e| e.0)
+    }
+
     /// Record that a cue fired.
     pub fn push(&mut self, cue: usize, auto: bool) {
         self.entries.push((cue, auto));

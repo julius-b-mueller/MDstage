@@ -150,6 +150,65 @@ struct Search {
 /// One coloured piece of a row in a cue panel.
 type Span = (String, Color32);
 
+/// A row of a cue panel: a label and coloured spans. `links` says which of the spans
+/// name another cue (span index, cue); those can be clicked to go there.
+pub(crate) struct Row {
+    pub label: &'static str,
+    pub spans: Vec<Span>,
+    pub links: Vec<(usize, usize)>,
+}
+
+impl Row {
+    fn plain(label: &'static str, spans: Vec<Span>) -> Row {
+        Row { label, spans, links: Vec::new() }
+    }
+
+    /// A row of words and references to other cues (`Some(cue)`; `None` inside is a
+    /// reference that leads nowhere).
+    fn linked(label: &'static str, parts: Vec<(String, Color32, Option<Option<usize>>)>) -> Row {
+        let links = parts.iter().enumerate().filter_map(|(i, part)| Some((i, part.2??))).collect();
+        let spans = parts.into_iter().map(|(text, colour, target)| (if target.is_some() && text.is_empty() { "?".to_string() } else { text }, colour)).collect();
+        Row { label, spans, links }
+    }
+}
+
+/// What ties one cue to another, as drawn in the margin.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tie {
+    /// Carries on with the other, or loops until the other comes (S/L/F).
+    Chain,
+    /// Fires the other by itself (auto-cue).
+    Auto,
+    /// Changes the other's audio.
+    Adjust,
+}
+
+impl Tie {
+    fn colour(self) -> Color32 {
+        match self {
+            Tie::Chain => BLUE,
+            Tie::Auto => GREEN,
+            Tie::Adjust => PURPLE,
+        }
+    }
+}
+
+/// A line in the margin from one cue's block to another's, in one of a few lanes.
+struct Relation {
+    from: usize,
+    to: usize,
+    tie: Tie,
+    lane: usize,
+}
+
+/// The colour of what changes another cue's audio.
+const PURPLE: Color32 = Color32::from_rgb(0xc6, 0x78, 0xdd);
+/// Distance between two lanes of connection lines in the margin.
+const LANE: f32 = 8.0;
+const MAX_LANES: usize = 4;
+/// How long a cue that was gone to stays outlined, in seconds.
+const FLASH: f64 = 1.4;
+
 #[derive(Default)]
 pub struct ScriptView {
     /// Height of every block and its top edge (`offsets` has one extra entry: the total).
@@ -202,8 +261,19 @@ pub struct ScriptView {
     picking: Option<(Link, usize)>,
     /// Lengths of the audio files seen so far, in seconds.
     durations: HashMap<String, f64>,
+    /// Where the view is scrolling to (it glides there over a few frames).
     scroll_to: Option<f32>,
     scroll_y: f32,
+    /// The connections between cues, and how many lanes they take in the margin.
+    relations: Vec<Relation>,
+    lanes: usize,
+    /// The cue block under the pointer in this frame and in the one before.
+    hovered: Option<usize>,
+    hovered_before: Option<usize>,
+    /// The cue block whose buttons were shown last (they stay while a menu of theirs is open).
+    buttons_of: Option<usize>,
+    /// A cue block that was gone to, and when: it is outlined for a moment.
+    flash: Option<(usize, f64)>,
     waveforms: Option<Waveforms>,
     search: Option<Search>,
 }
@@ -344,6 +414,83 @@ impl ScriptView {
         }
     }
 
+    /// Go to a cue that another one refers to, and outline it for a moment so that the
+    /// eye finds it.
+    fn go_to_cue(&mut self, cue: usize, now: f64) {
+        self.scroll_to_cue(cue);
+        self.flash = self.block_of_cue.get(cue).map(|&block| (block, now));
+    }
+
+    /// Work out which cues are tied to which, and give every tie a lane in the margin:
+    /// short ones innermost, and no two in one lane that would run over each other.
+    fn relate(&mut self, script: &Script) {
+        let cues = Cues::new(script);
+        let mut found = Vec::new();
+        for cue in 0..cues.len() {
+            let Some(c) = cues.get(cue) else { continue };
+            let mut tie = |from: Option<usize>, to: Option<usize>, tie: Tie| {
+                if let (Some(from), Some(to)) = (from.and_then(|c| cues.block_index(c)), to.and_then(|c| cues.block_index(c))) {
+                    if from != to {
+                        found.push(Relation { from, to, tie, lane: 0 });
+                    }
+                }
+            };
+            tie(Some(cue), c.chain_end().and_then(|n| cues.find(n)), Tie::Chain);
+            tie(Some(cue), c.loop_outro().and_then(|n| cues.find(n)), Tie::Chain);
+            tie(c.auto_trigger().and_then(|a| cues.find(a.source)), Some(cue), Tie::Auto);
+            tie(Some(cue), c.adjust().and_then(|a| cues.find(a.target)), Tie::Adjust);
+        }
+        found.sort_by_key(|r| r.from.abs_diff(r.to));
+        // Per lane: the stretches taken, and whether each runs downwards. Two that run
+        // downwards may meet in one cue: one arrives at its top, the other leaves below.
+        let mut lanes: Vec<Vec<(usize, usize, bool)>> = Vec::new();
+        for relation in &mut found {
+            let (low, high, down) = (relation.from.min(relation.to), relation.from.max(relation.to), relation.from < relation.to);
+            let clear = |taken: &Vec<(usize, usize, bool)>| taken.iter().all(|&(l, h, d)| if down && d { high <= l || low >= h } else { high < l || low > h });
+            let lane = match lanes.iter().position(clear) {
+                Some(lane) => lane,
+                None if lanes.len() < MAX_LANES => {
+                    lanes.push(Vec::new());
+                    lanes.len() - 1
+                }
+                None => MAX_LANES - 1,
+            };
+            lanes[lane].push((low, high, down));
+            relation.lane = lane;
+        }
+        self.lanes = lanes.len();
+        self.relations = found;
+    }
+
+    /// Width of the part of the margin that holds the connection lines.
+    fn rail(&self) -> f32 {
+        if self.lanes == 0 { 0.0 } else { self.lanes as f32 * LANE + 6.0 }
+    }
+
+    /// The connections between cues, in the margin left of them: a line from the cue
+    /// that acts (a dot) to the one it leads to or changes (an arrow). They are faint
+    /// until the pointer is on one of their two cues.
+    fn draw_relations(&self, ui: &Ui, origin: egui::Pos2, viewport: Rect) {
+        let painter = ui.painter();
+        let edge = origin.x - 2.0;
+        for relation in &self.relations {
+            let at = |block: usize, down: f32| origin.y + self.offsets.get(block).copied().unwrap_or(0.0) + 4.0 + down;
+            // Arriving near the top of a card, leaving a little below.
+            let (from, to) = (at(relation.from, 27.0), at(relation.to, 13.0));
+            if from.max(to) < origin.y + viewport.min.y || from.min(to) > origin.y + viewport.max.y {
+                continue;
+            }
+            let strong = self.hovered_before.is_some_and(|h| h == relation.from || h == relation.to);
+            let colour = relation.tie.colour().gamma_multiply(if strong { 1.0 } else { 0.45 });
+            let x = origin.x - 10.0 - relation.lane as f32 * LANE;
+            let bend = (to - from).signum() * 4.0;
+            let points = vec![pos2(edge, from), pos2(x + 4.0, from), pos2(x, from + bend), pos2(x, to - bend), pos2(x + 4.0, to), pos2(edge - 5.0, to)];
+            painter.add(egui::epaint::PathShape::line(points, Stroke::new(if strong { 2.0_f32 } else { 1.5_f32 }, colour)));
+            painter.circle_filled(pos2(edge, from), 2.5, colour);
+            painter.add(egui::Shape::convex_polygon(vec![pos2(edge + 1.0, to), pos2(edge - 5.5, to - 4.0), pos2(edge - 5.5, to + 4.0)], colour, Stroke::NONE));
+        }
+    }
+
     fn role_colour(cast: &Cast, name: &str) -> Color32 {
         let role = cast.role(name).and_then(|r| r.color.as_deref());
         let group = cast.groups.iter().find(|g| g.name == name).and_then(|g| g.color.as_deref());
@@ -384,6 +531,8 @@ impl ScriptView {
         let mut job = LayoutJob::default();
         job.wrap.max_width = width;
         let plain = |size: f32, color| TextFormat { font_id: FontId::proportional(size * scale), color, ..Default::default() };
+        // Running text gets a little air between its lines.
+        let body = |size: f32, color| TextFormat { line_height: Some(size * scale * 1.38), ..plain(size, color) };
         match block {
             Block::Heading { level, text } => {
                 let size = match level {
@@ -396,7 +545,7 @@ impl ScriptView {
                 }
                 job.append(text, 0.0, plain(size, BRIGHT));
             }
-            Block::Stage(text) => job.append(text, 0.0, TextFormat { italics: true, ..plain(16.0, MUTED) }),
+            Block::Stage(text) => job.append(text, 0.0, TextFormat { italics: true, ..body(16.0, MUTED) }),
             Block::Role { names, text } => {
                 let colour = names.first().map_or(BRIGHT, |n| Self::role_colour(cast, n));
                 for (i, name) in names.iter().enumerate() {
@@ -411,14 +560,14 @@ impl ScriptView {
                     let mut rest = text.as_str();
                     while let Some(open) = rest.find("*(") {
                         let Some(close) = rest[open..].find(")*") else { break };
-                        job.append(&rest[..open], 0.0, plain(17.0, colour));
-                        job.append(&rest[open + 1..open + close + 1], 0.0, TextFormat { italics: true, ..plain(17.0, MUTED) });
+                        job.append(&rest[..open], 0.0, body(17.0, colour));
+                        job.append(&rest[open + 1..open + close + 1], 0.0, TextFormat { italics: true, ..body(17.0, MUTED) });
                         rest = &rest[open + close + 2..];
                     }
-                    job.append(rest, 0.0, plain(17.0, colour));
+                    job.append(rest, 0.0, body(17.0, colour));
                 }
             }
-            Block::Text(text) => job.append(text, 0.0, plain(17.0, TEXT)),
+            Block::Text(text) => job.append(text, 0.0, body(17.0, TEXT)),
             Block::Config(_) | Block::Cue(_) => return None,
         }
         Some(job)
@@ -455,15 +604,15 @@ impl ScriptView {
         Some(base.zip(length).map(|(base, length)| base + length))
     }
 
-    pub(crate) fn cue_rows(cx: &Context, block: usize, cue_index: usize, cue: &Cue, durations: &HashMap<String, f64>) -> Vec<(&'static str, Vec<Span>)> {
+    pub(crate) fn cue_rows(cx: &Context, block: usize, cue_index: usize, cue: &Cue, durations: &HashMap<String, f64>) -> Vec<Row> {
         let mut rows = Vec::new();
         if cue.invalid {
-            rows.push(("YAML", vec![(t("nicht lesbar", "unreadable").to_string(), RED)]));
+            rows.push(Row::plain("YAML", vec![(t("nicht lesbar", "unreadable").to_string(), RED)]));
             return rows;
         }
         let mic = cx.script.mic_for_cue(block, cx.cast);
         match &mic {
-            Mic::MuteAll => rows.push(("Mic", vec![(t("alle aus", "all off").to_string(), MUTED)])),
+            Mic::MuteAll => rows.push(Row::plain("Mic", vec![(t("alle aus", "all off").to_string(), MUTED)])),
             Mic::Open(_) => {
                 let mut spans = Vec::new();
                 for chip in cx.cast.chips(&mic, cx.group_mics) {
@@ -479,14 +628,14 @@ impl ScriptView {
                 if cue.auto_mic() {
                     spans.push(("(auto)".to_string(), MUTED));
                 }
-                rows.push(("Mic", spans));
+                rows.push(Row::plain("Mic", spans));
             }
-            Mic::Unchanged if cue.auto_mic() => rows.push(("Mic", vec![(t("(auto, niemand spricht)", "(auto, nobody speaks)").to_string(), MUTED)])),
+            Mic::Unchanged if cue.auto_mic() => rows.push(Row::plain("Mic", vec![(t("(auto, niemand spricht)", "(auto, nobody speaks)").to_string(), MUTED)])),
             Mic::Unchanged => {}
         }
         for (label, key) in [(t("Notiz", "Note"), "note"), ("TC", "start_tc"), ("OSC", "osc"), ("Proj.", "projection"), ("QLC+", "qlcplus")] {
             if let Some(value) = cue.text(key) {
-                rows.push((label, vec![(value.to_string(), TEXT)]));
+                rows.push(Row::plain(label, vec![(value.to_string(), TEXT)]));
             }
         }
         if let Some(audio) = cue.audio() {
@@ -500,78 +649,92 @@ impl ScriptView {
             if audio.looped || audio.parts.len() > 1 || cue.loop_outro().is_some() {
                 spans.push(("⟳".to_string(), BLUE));
             }
-            rows.push(("♬", spans));
+            rows.push(Row::plain("♬", spans));
         }
         let cues = Cues::new(cx.script);
         if cue.text("start_tc").is_none() {
             if let Some(derived) = Self::derived_timecode(&cues, cue_index, durations, 0) {
                 let timecode = derived.map_or("--:--:--:--".to_string(), |seconds| Timecode::from_frames((seconds * mdstage_engine::mtc::FPS as f64).round() as u64).to_string());
-                rows.push(("TC", vec![(timecode, TEXT), (t("(abgeleitet)", "(derived)").to_string(), MUTED)]));
+                rows.push(Row::plain("TC", vec![(timecode, TEXT), (t("(abgeleitet)", "(derived)").to_string(), MUTED)]));
             }
         }
         // Compressed files carry padding at their edges: a handover is not seamless.
         let in_chain = cue.chain_end().is_some() || cue.loop_outro().is_some() || Self::predecessor(&cues, cue_index).is_some();
         let compressed = |file: &str| [".mp3", ".aac", ".m4a", ".ogg"].iter().any(|ext| file.to_lowercase().ends_with(ext));
         if in_chain && cue.audio().is_some_and(|a| a.parts.iter().flat_map(|p| &p.audios).any(|a| compressed(&a.file))) {
-            rows.push(("!", vec![(t("Kein nahtloser Übergang – MP3/AAC haben Encoder-Padding. WAV verwenden.", "No seamless transition – MP3/AAC carry encoder padding. Use WAV.").to_string(), YELLOW)]));
+            rows.push(Row::plain("!", vec![(t("Kein nahtloser Übergang – MP3/AAC haben Encoder-Padding. WAV verwenden.", "No seamless transition – MP3/AAC carry encoder padding. Use WAV.").to_string(), YELLOW)]));
         }
-        let cue_label = |target: Option<usize>| target.map_or("?".to_string(), |c| format!("Cue {}", c + 1));
+        // References to other cues: each "Cue N" is a span of its own that can be clicked.
+        let word = |text: &str, colour: Color32| (text.to_string(), colour, None);
+        let to = |target: Option<usize>| (target.map_or(String::new(), |c| format!("Cue {}", c + 1)), BRIGHT, Some(target));
         match cues.slf(cue_index) {
-            Some(Slf::Start { next }) => rows.push(("S/L/F", vec![(format!("Start → {}", cue_label(cues.find(next))), BLUE)])),
-            Some(Slf::Loop { outro }) => rows.push(("S/L/F", vec![(format!("Loop ↩ {}", cue_label(cues.find(outro))), BLUE)])),
-            Some(Slf::Finish { from }) => rows.push(("S/L/F", vec![(format!("Finish ← {}", cue_label(from.first().copied())), BLUE)])),
-            Some(Slf::Bridge { from, next }) => {
-                rows.push(("S/L/F", vec![(format!("Bridge ← {} → {}", cue_label(from.first().copied()), cue_label(cues.find(next))), BLUE)]))
-            }
+            Some(Slf::Start { next }) => rows.push(Row::linked("S/L/F", vec![word("Start →", BLUE), to(cues.find(next))])),
+            Some(Slf::Loop { outro }) => rows.push(Row::linked("S/L/F", vec![word("Loop ↩", BLUE), to(cues.find(outro))])),
+            Some(Slf::Finish { from }) => rows.push(Row::linked("S/L/F", vec![word("Finish ←", BLUE), to(from.first().copied())])),
+            Some(Slf::Bridge { from, next }) => rows.push(Row::linked("S/L/F", vec![word("Bridge ←", BLUE), to(from.first().copied()), word("→", BLUE), to(cues.find(next))])),
             None => {}
         }
         if let Some(auto) = cue.auto_trigger() {
-            let source = cue_label(cues.find(auto.source));
-            let text = match auto.when {
-                AutoWhen::At(at) => if crate::lang::english() { format!("automatically at {at} s into {source}") } else { format!("automatisch bei {at} s in {source}") },
-                AutoWhen::Delay(delay) => if crate::lang::english() { format!("automatically {delay} s after {source}") } else { format!("automatisch {delay} s nach {source}") },
+            let text = match (auto.when, crate::lang::english()) {
+                (AutoWhen::At(at), true) => format!("automatically at {at} s into"),
+                (AutoWhen::At(at), false) => format!("automatisch bei {at} s in"),
+                (AutoWhen::Delay(delay), true) => format!("automatically {delay} s after"),
+                (AutoWhen::Delay(delay), false) => format!("automatisch {delay} s nach"),
             };
-            rows.push(("Auto", vec![(text, GREEN)]));
+            rows.push(Row::linked("Auto", vec![word(&text, GREEN), to(cues.find(auto.source))]));
         }
         if let Some(adjust) = cue.adjust() {
-            let target = cue_label(cues.find(adjust.target));
-            let text = match (adjust.fadeout, adjust.volume) {
-                (true, _) => if crate::lang::english() { format!("fade out {target}") } else { format!("{target} ausfaden") },
-                (false, Some(v)) => format!("{target} {} {} %", t("auf", "to"), (v * 100.0).round()),
-                _ => target,
-            };
-            rows.push(("⇢", vec![(text, TEXT)]));
+            let target = to(cues.find(adjust.target));
+            let seconds = adjust.fadetime.map_or(String::new(), |s| format!(" ({s} s)"));
+            rows.push(Row::linked("⇢", match (adjust.fadeout, adjust.volume) {
+                (true, _) if crate::lang::english() => vec![word("fade out", PURPLE), target, word(seconds.trim(), MUTED)],
+                (true, _) => vec![target, word(&format!("ausfaden{seconds}"), PURPLE)],
+                (false, Some(v)) => vec![target, word(&format!("{} {} %{seconds}", t("auf", "to"), (v * 100.0).round()), PURPLE)],
+                _ => vec![target],
+            }));
         }
-        // What the cue sends, per device.
-        let mut sends: Vec<(String, usize)> = Vec::new();
-        let mut count = |label: String| match sends.iter_mut().find(|(l, _)| *l == label) {
-            Some(entry) => entry.1 += 1,
-            None => sends.push((label, 1)),
+        // What the cue sends: one row per device, saying what goes there.
+        let mut sends: Vec<(&'static str, String, Vec<String>)> = Vec::new();
+        let mut add = |kind: &'static str, device: &str, message: String| match sends.iter_mut().find(|(k, d, _)| *k == kind && d == device) {
+            Some(entry) => entry.2.push(message),
+            None => sends.push((kind, device.to_string(), vec![message])),
         };
         for effect in cue.fire_effects() {
             match effect {
-                Effect::Midi { device, .. } => count(format!("MIDI {device}")),
-                Effect::Osc { device, .. } => count(format!("OSC {device}")),
-                Effect::Http { device, .. } => count(format!("HTTP {device}")),
-                Effect::Announce { device, .. } => count(format!("{} {device}", t("Durchsage", "Announce"))),
+                Effect::Midi { device, bytes, .. } => add("MIDI", &device, midi_text(&bytes)),
+                Effect::Osc { device, path, args } => {
+                    let args: Vec<String> = args.iter().map(|arg| match arg {
+                        mdstage_core::effects::OscArg::Int(i) => i.to_string(),
+                        mdstage_core::effects::OscArg::Float(f) => f.to_string(),
+                        mdstage_core::effects::OscArg::Text(text) => format!("\"{text}\""),
+                    }).collect();
+                    add("OSC", &device, clip(&format!("{path} {}", args.join(" ")), 60));
+                }
+                Effect::Http { device, method, path, .. } => add("HTTP", &device, clip(&format!("{method} {path}"), 60)),
+                Effect::Announce { device, text } => add(t("Ansage", "Announce"), &device, clip(&format!("\"{text}\""), 60)),
                 _ => {}
             }
         }
         if let Some(list) = cue.yaml.get("cue_display").and_then(|v| v.as_sequence()) {
-            for device in list.iter().filter_map(|m| m.get("device")?.as_str()) {
-                count(format!("Display {device}"));
+            for message in list {
+                let Some(device) = message.get("device").and_then(|d| d.as_str()) else { continue };
+                let shown = message.get("markdown").and_then(|m| m.as_str()).and_then(|m| m.lines().map(|l| l.trim_start_matches('#').trim()).find(|l| !l.is_empty()));
+                match shown {
+                    Some(line) => add("Display", device, clip(line, 60)),
+                    // Neither content nor an announcement: the display is cleared.
+                    None if message.get("announce").is_none() => add("Display", device, t("leeren", "clear").to_string()),
+                    None => {}
+                }
             }
         }
-        if !sends.is_empty() {
-            // A device can be given a colour where the show file declares it.
-            let declared = cx.script.config().and_then(|c| c.get("outputDevices")).and_then(|d| d.as_sequence()).cloned().unwrap_or_default();
-            let colour = |label: &str| {
-                let device = label.split_once(' ').map_or(label, |(_, device)| device);
-                let entry = declared.iter().find(|d| d.get("name").and_then(|n| n.as_str()) == Some(device));
-                named(entry.and_then(|d| d.get("color")).and_then(|c| c.as_str())).unwrap_or(YELLOW)
-            };
-            let spans = sends.into_iter().map(|(label, n)| (if n > 1 { format!("{label} ×{n}") } else { label.clone() }, colour(&label))).collect();
-            rows.push((t("Sendet", "Sends"), spans));
+        // A device can be given a colour where the show file declares it.
+        let declared = cx.script.config().and_then(|c| c.get("outputDevices")).and_then(|d| d.as_sequence()).cloned().unwrap_or_default();
+        for (kind, device, messages) in sends {
+            let entry = declared.iter().find(|d| d.get("name").and_then(|n| n.as_str()) == Some(device.as_str()));
+            let colour = named(entry.and_then(|d| d.get("color")).and_then(|c| c.as_str())).unwrap_or(YELLOW);
+            let mut spans = vec![(device, colour)];
+            spans.extend(messages.into_iter().enumerate().map(|(i, message)| (if i > 0 { format!("· {message}") } else { message }, TEXT)));
+            rows.push(Row::plain(kind, spans));
         }
         rows
     }
@@ -581,6 +744,12 @@ impl ScriptView {
     /// With a painter they are drawn; either way the number of lines used comes back.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn flow_spans(ui: &Ui, painter: Option<&egui::Painter>, spans: &[Span], font: &FontId, left: f32, right: f32, top: f32, line: f32) -> usize {
+        Self::flow(ui, painter, spans, font, left, right, top, line, None)
+    }
+
+    /// As `flow_spans`; `places` is given where each span was set.
+    #[allow(clippy::too_many_arguments)]
+    fn flow(ui: &Ui, painter: Option<&egui::Painter>, spans: &[Span], font: &FontId, left: f32, right: f32, top: f32, line: f32, mut places: Option<&mut Vec<Rect>>) -> usize {
         let width = (right - left).max(60.0);
         let (mut x, mut lines) = (left, 1usize);
         for (text, colour) in spans {
@@ -590,8 +759,12 @@ impl ScriptView {
                 lines += 1;
                 x = left;
             }
+            let place = pos2(x, top + (lines - 1) as f32 * line);
+            if let Some(places) = places.as_deref_mut() {
+                places.push(Rect::from_min_size(place, galley.size()));
+            }
             if let Some(painter) = painter {
-                painter.galley(pos2(x, top + (lines - 1) as f32 * line), galley.clone(), *colour);
+                painter.galley(place, galley.clone(), *colour);
             }
             x += galley.size().x + 8.0;
             if rows > 1 {
@@ -604,19 +777,24 @@ impl ScriptView {
     }
 
     /// How many lines a cue's rows take when its panel is `width` wide.
-    fn cue_lines(ui: &Ui, rows: &[(&'static str, Vec<Span>)], width: f32) -> usize {
+    fn cue_lines(ui: &Ui, rows: &[Row], width: f32) -> usize {
         let font = FontId::proportional(15.0);
-        rows.iter().map(|(_, spans)| Self::flow_spans(ui, None, spans, &font, 0.0, width - 16.0 - 56.0 - 12.0, 0.0, ROW)).sum()
+        rows.iter().map(|row| Self::flow_spans(ui, None, &row.spans, &font, 0.0, width - 16.0 - 56.0 - 12.0, 0.0, ROW)).sum()
     }
 
-    /// Below this width a cue's buttons no longer fit beside its number and marks and
-    /// get a line of their own.
-    const BUTTONS_BESIDE: f32 = 820.0;
-
-    fn cue_height(rows: usize, has_audio: bool, width: f32) -> f32 {
+    fn cue_height(rows: usize, has_audio: bool) -> f32 {
         let wave = if has_audio { WAVE_HEIGHT + 10.0 + CONTROLS + 4.0 } else { 0.0 };
-        let buttons = if width < Self::BUTTONS_BESIDE { ROW + 4.0 } else { 0.0 };
-        8.0 + 10.0 + ROW + buttons + rows as f32 * ROW + wave + 10.0
+        8.0 + 10.0 + ROW + rows as f32 * ROW + wave + 10.0
+    }
+
+    /// Room above and below a heading: a new scene stands clear of what came before.
+    fn heading_room(block: &Block) -> (f32, f32) {
+        match block {
+            Block::Heading { level: 1, .. } => (22.0, 10.0),
+            Block::Heading { level: 2, .. } => (12.0, 2.0),
+            Block::Heading { .. } => (6.0, 0.0),
+            _ => (0.0, 0.0),
+        }
     }
 
     /// Measure every block for the given width. Runs once per width change or edit.
@@ -642,11 +820,12 @@ impl ScriptView {
                 Block::Config(_) => 0.0,
                 Block::Cue(cue) => {
                     let rows = Self::cue_rows(cx, i, self.cue_of_block[i].unwrap_or(0), cue, &self.durations);
-                    Self::cue_height(Self::cue_lines(ui, &rows, width), cue.audio().is_some(), width)
+                    Self::cue_height(Self::cue_lines(ui, &rows, width), cue.audio().is_some())
                 }
                 block => {
                     let job = Self::job(cx.cast, block, width, self.numbers.get(i).copied().flatten()).unwrap_or_default();
-                    ui.fonts(|f| f.layout_job(job)).size().y + 2.0 * BLOCK_PAD
+                    let (above, below) = Self::heading_room(block);
+                    ui.fonts(|f| f.layout_job(job)).size().y + 2.0 * BLOCK_PAD + above + below
                 }
             };
         }
@@ -681,17 +860,41 @@ impl ScriptView {
         if let Some(waveforms) = &mut self.waveforms {
             waveforms.poll();
         }
-        // With line numbers the left margin is wide enough to hold them.
-        let margin = if cx.line_numbers { MARGIN + 30.0 } else { MARGIN };
+        self.hovered_before = self.hovered.take();
+        if self.dirty || self.heights.len() != cx.script.blocks.len() {
+            self.relate(cx.script);
+        }
+        // The margin holds the connection lines and, if wanted, the line numbers.
+        let rail = self.rail();
+        let margin = MARGIN + rail + if cx.line_numbers { 30.0 } else { 0.0 };
         let width = (ui.available_width() - margin - MARGIN).max(200.0);
         if self.dirty || self.heights.len() != cx.script.blocks.len() || (width - self.layout_width).abs() > 0.5 {
             self.measure(ui, cx, width);
         }
-        let mut area = egui::ScrollArea::vertical().auto_shrink([false, false]);
-        if let Some(y) = self.scroll_to.take() {
-            area = area.vertical_scroll_offset(y);
-        }
         let total = self.offsets.last().copied().unwrap_or(0.0);
+        let mut area = egui::ScrollArea::vertical().auto_shrink([false, false]);
+        // The view glides to where it is sent instead of jumping, so that the eye can
+        // follow. Scrolling by hand takes over at once.
+        if let Some(target) = self.scroll_to {
+            let height = ui.available_height();
+            let target = target.clamp(0.0, (total + 200.0 - height).max(0.0));
+            let by_hand = ui.input(|i| i.raw_scroll_delta.y != 0.0 || i.pointer.any_pressed());
+            let gap = target - self.scroll_y;
+            if by_hand {
+                self.scroll_to = None;
+            } else if gap.abs() < 1.0 {
+                area = area.vertical_scroll_offset(target);
+                self.scroll_to = None;
+            } else {
+                // From far away the glide begins a screen and a half before the place.
+                let from = if gap.abs() > 1.5 * height { target - gap.signum() * 1.5 * height } else { self.scroll_y };
+                let dt = ui.input(|i| i.stable_dt).min(0.05);
+                let step = (target - from) * (1.0 - (-dt * 12.0).exp());
+                let step = if step.abs() < 2.0 { (target - from).signum() * (target - from).abs().min(2.0) } else { step };
+                area = area.vertical_scroll_offset(from + step);
+                ui.ctx().request_repaint();
+            }
+        }
         let output = area.show_viewport(ui, |ui, viewport| {
             ui.set_height(total + 200.0);
             ui.set_width(ui.available_width());
@@ -704,10 +907,12 @@ impl ScriptView {
                 let rect = Rect::from_min_size(origin + vec2(0.0, self.offsets[i]), vec2(width, self.heights[i]));
                 if let Some(line) = self.lines.get(i).filter(|_| cx.line_numbers && self.heights[i] > 0.0) {
                     let top = if matches!(cx.script.blocks[i], Block::Cue(_)) { 14.0 } else { BLOCK_PAD + 4.0 };
-                    ui.painter().text(pos2(rect.left() - 10.0, rect.top() + top), Align2::RIGHT_TOP, line.to_string(), FontId::monospace(11.0), WAVE_DIM);
+                    let top = top + Self::heading_room(&cx.script.blocks[i]).0;
+                    ui.painter().text(pos2(rect.left() - 10.0 - rail, rect.top() + top), Align2::RIGHT_TOP, line.to_string(), FontId::monospace(11.0), WAVE_DIM);
                 }
                 self.draw_block(ui, cx, i, rect, actions);
             }
+            self.draw_relations(ui, origin, viewport);
             self.drawn_at = Some((origin, ui.clip_rect()));
             self.drop_line(ui, cx, origin, width);
             self.jump_to_typed_scene(ui);
@@ -742,7 +947,12 @@ impl ScriptView {
             ui.painter().rect_filled(rect.expand2(vec2(8.0, 0.0)), 4.0, PANEL);
         }
         let galley = ui.fonts(|f| f.layout_job(job));
-        ui.painter().galley(rect.min + vec2(0.0, BLOCK_PAD), galley, TEXT);
+        let (above, below) = Self::heading_room(block);
+        ui.painter().galley(rect.min + vec2(0.0, BLOCK_PAD + above), galley, TEXT);
+        if matches!(block, Block::Heading { level: 1, .. }) {
+            // A fine line closes a scene's heading off from its text.
+            ui.painter().hline(rect.x_range(), rect.bottom() - below / 2.0, Stroke::new(1.0_f32, BORDER));
+        }
         if response.clicked() && shift && !cx.locked {
             self.edit(cx.script, index, false);
         }
@@ -1256,15 +1466,32 @@ impl ScriptView {
         let panel = rect.shrink2(vec2(0.0, 4.0));
         let response = ui.interact(panel, Id::new(("cue", block)), Sense::click());
         let painter = ui.painter().clone();
+        let under_pointer = ui.rect_contains_pointer(panel);
+        if under_pointer {
+            self.hovered = Some(block);
+        }
         painter.rect_filled(panel, 4.0, if response.hovered() { RAISED } else { PANEL });
-        let bar = match () {
-            _ if is_current => GREEN,
-            _ if waits => YELLOW,
-            _ if is_next => YELLOW,
-            _ if snapshot.fired.contains(&cue_index) => WAVE_DIM,
-            _ => BLUE,
+        // The bar at the left edge says one thing, where the cue stands in the show, and
+        // says it in the colour of the word beside the cue's number:
+        // green = the operator's current cue, yellow = the next Go (or an outro waiting
+        // for its loop), blue = its audio is playing, faint = done in this pass,
+        // grey = still to come.
+        let done = snapshot.done.contains(&cue_index);
+        let (bar, thick) = match () {
+            _ if is_current => (GREEN, true),
+            _ if waits || is_next => (YELLOW, true),
+            _ if sounding => (BLUE, true),
+            _ if done => (BORDER, false),
+            _ => (MUTED, false),
         };
-        painter.rect_filled(Rect::from_min_size(panel.min, vec2(if is_current || is_next { 6.0 } else { 4.0 }, panel.height())), 0.0, bar);
+        painter.rect_filled(Rect::from_min_size(panel.min, vec2(if thick { 6.0 } else { 3.0 }, panel.height())), 0.0, bar);
+        let now = ui.input(|i| i.time);
+        if let Some((_, since)) = self.flash.filter(|(flashed, since)| *flashed == block && now - since < FLASH) {
+            // Just gone to from another cue: outlined, fading.
+            let strength = (1.0 - (now - since) / FLASH) as f32;
+            painter.rect_stroke(panel, 4.0, Stroke::new(2.0_f32, BRIGHT.gamma_multiply(strength)), egui::StrokeKind::Outside);
+            ui.ctx().request_repaint();
+        }
         if let Some(fraction) = delay {
             // A delay auto-cue counting down fills the panel from the left.
             let filled = Rect::from_min_size(panel.min, vec2(panel.width() * fraction as f32, panel.height()));
@@ -1274,7 +1501,7 @@ impl ScriptView {
         let left = panel.left() + 16.0;
         let mut y = panel.top() + 10.0;
         let font = FontId::proportional(15.0);
-        let mut x = painter.text(pos2(left, y), Align2::LEFT_TOP, format!("Cue {}", cue_index + 1), FontId::proportional(16.0), BRIGHT).right() + 12.0;
+        let mut x = painter.text(pos2(left, y), Align2::LEFT_TOP, format!("Cue {}", cue_index + 1), FontId::proportional(16.0), if done && !is_current && !is_next && !sounding { MUTED } else { BRIGHT }).right() + 12.0;
         let mut badge = |text: &str, colour: Color32| {
             x = painter.text(pos2(x, y + 1.0), Align2::LEFT_TOP, text, FontId::proportional(13.0), colour).right() + 10.0;
         };
@@ -1292,17 +1519,41 @@ impl ScriptView {
         if sounding {
             badge(t("♪ läuft", "♪ playing"), BLUE);
         }
-        // The buttons: beside the number and marks, or in a narrow window below them.
-        let beside = panel.width() >= Self::BUTTONS_BESIDE;
-        let top = if beside { panel.top() + 6.0 } else { y + ROW };
-        self.cue_buttons(ui, cx, block, cue_index, cue, Rect::from_min_max(pos2(if beside { x } else { left }, top), pos2(panel.right() - 10.0, top + ROW + 4.0)), actions);
+        if done && !is_current && !is_next && !waits {
+            badge(t("erledigt", "done"), MUTED);
+        }
+        // The buttons show while the pointer is on the cue (or a connection is being set
+        // up from it, or one of its menus is open); otherwise only the trigger note.
+        let full = under_pointer || matches!(self.picking, Some((_, from)) if from == block) || (self.buttons_of == Some(block) && ui.memory(|m| m.any_popup_open()));
+        if full {
+            self.buttons_of = Some(block);
+        }
+        let top = panel.top() + 6.0;
+        self.cue_buttons(ui, cx, block, cue_index, cue, full, Rect::from_min_max(pos2(x, top), pos2(panel.right() - 10.0, top + ROW + 4.0)), actions);
         self.learn_durations(cx, cue_index);
-        y += if beside { ROW } else { 2.0 * ROW + 4.0 };
-        for (label, spans) in Self::cue_rows(cx, block, cue_index, cue, &self.durations) {
-            painter.text(pos2(left, y), Align2::LEFT_TOP, label, font.clone(), MUTED);
+        y += ROW;
+        let mut go_to = None;
+        for row in Self::cue_rows(cx, block, cue_index, cue, &self.durations) {
+            painter.text(pos2(left, y), Align2::LEFT_TOP, row.label, font.clone(), MUTED);
             // Long rows (many microphones, a long note) go on in further lines.
-            let lines = Self::flow_spans(ui, Some(&painter), &spans, &font, left + 56.0, panel.right() - 12.0, y, ROW);
+            let mut places = Vec::new();
+            let lines = Self::flow(ui, Some(&painter), &row.spans, &font, left + 56.0, panel.right() - 12.0, y, ROW, Some(&mut places));
+            // A reference to another cue is underlined; a click goes there.
+            for (span, target) in row.links {
+                let Some(place) = places.get(span) else { continue };
+                let link = ui.interact(place.expand(2.0), Id::new(("cue-link", block, row.label, span)), Sense::click());
+                painter.hline(place.x_range(), place.bottom(), Stroke::new(1.0_f32, if link.hovered() { BRIGHT } else { MUTED }));
+                if link.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+                if link.on_hover_text(t("Zu diesem Cue gehen", "Go to this cue")).clicked() {
+                    go_to = Some(target);
+                }
+            }
             y += lines as f32 * ROW;
+        }
+        if let Some(cue) = go_to {
+            self.go_to_cue(cue, now);
         }
         if let Some(audio) = cue.audio() {
             let width = panel.right() - 12.0 - left;
@@ -1376,13 +1627,16 @@ impl ScriptView {
     /// The buttons in a cue's top line, from the right: its trigger note, arm in the
     /// live view, edit, variant, and the connections to other cues.
     #[allow(clippy::too_many_arguments)]
-    fn cue_buttons(&mut self, ui: &mut Ui, cx: &Context, block: usize, cue_index: usize, cue: &Cue, rect: Rect, actions: &mut Vec<Action>) {
+    fn cue_buttons(&mut self, ui: &mut Ui, cx: &Context, block: usize, cue_index: usize, cue: &Cue, full: bool, rect: Rect, actions: &mut Vec<Action>) {
         let mut row = ui.new_child(UiBuilder::new().id_salt(("cue-buttons", block)).max_rect(rect).layout(egui::Layout::right_to_left(egui::Align::Center)));
         row.spacing_mut().item_spacing.x = 4.0;
         row.spacing_mut().button_padding = vec2(6.0, 1.0);
         if let Some(note) = cue.note() {
             row.label(RichText::new(note.to_string()).size(14.0).color(MUTED));
             row.add_space(4.0);
+        }
+        if !full {
+            return;
         }
         let shift = row.input(|i| i.modifiers.shift);
         let small = |text: &str, colour: Color32| egui::Button::new(RichText::new(text).size(13.0).color(colour));
@@ -1783,9 +2037,105 @@ impl ScriptView {
     }
 }
 
+/// Text cut to `most` characters, with an ellipsis where something was left out.
+fn clip(text: &str, most: usize) -> String {
+    let text = text.trim();
+    if text.chars().count() <= most { text.to_string() } else { format!("{}…", text.chars().take(most - 1).collect::<String>().trim_end()) }
+}
+
+/// A MIDI message in words: "Ch 1 · CC 7 = 100".
+fn midi_text(bytes: &[u8]) -> String {
+    let Some(&status) = bytes.first() else { return String::new() };
+    let data = |n: usize| bytes.get(n).copied().unwrap_or(0);
+    let what = match status & 0xf0 {
+        0x90 => format!("Note {} ({})", data(1), data(2)),
+        0x80 => format!("Note {} {}", data(1), t("aus", "off")),
+        0xb0 => format!("CC {} = {}", data(1), data(2)),
+        0xc0 => format!("{} {}", t("Programm", "Program"), data(1)),
+        _ => return bytes.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "),
+    };
+    format!("Ch {} · {what}", (status & 0x0f) + 1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn midi_messages_are_put_in_words() {
+        assert_eq!(midi_text(&[0xb1, 7, 100]), "Ch 2 · CC 7 = 100");
+        assert_eq!(midi_text(&[0x90, 60, 127]), "Ch 1 · Note 60 (127)");
+        assert_eq!(midi_text(&[0xf0, 0x7f]), "F0 7F");
+        assert_eq!(clip("  kurz ", 10), "kurz");
+        assert_eq!(clip("ein langer Text", 8), "ein lan…");
+    }
+
+    /// The view draws a script with connected cues, and glides to where it is sent
+    /// instead of jumping there.
+    #[test]
+    fn the_view_glides_to_a_cue() {
+        let mut text = String::from("# Stück\n\n# Szene\n\n");
+        for n in 0..40 {
+            let more = match n {
+                0 => "music: a.wav\nchain_end: {ch: 1, note: 1}\ncue_midi:\n    - {device: Pult, cc: 7, value: 100}",
+                1 => "music: b.wav",
+                30 => "auto_trigger: {trigger_note: {ch: 1, note: 0}, delay: 2}",
+                _ => "note: Licht",
+            };
+            text.push_str(&format!("```yaml\ntrigger_note: {{ch: 1, note: {n}}}\n{more}\n```\n\n**Anna**\nEin Satz.\n\n"));
+        }
+        let script = Script::parse(&text);
+        let cast = Cast::from_script(&script, false);
+        let snapshot = Snapshot { done: vec![0], current: Some(1), next: Some(2), ..Default::default() };
+        let cx = Context { script: &script, cast: &cast, snapshot: &snapshot, locked: false, line_numbers: true, group_mics: false, can_paste: false, has_editor: false, vim: false };
+        let ctx = egui::Context::default();
+        egui_extras::install_image_loaders(&ctx);
+        crate::theme::apply(&ctx);
+        let mut view = ScriptView::default();
+        view.dirty = true;
+        let mut seen = Vec::new();
+        for frame in 0..200 {
+            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 600.0))), time: Some(frame as f64 / 60.0), predicted_dt: 1.0 / 60.0, ..Default::default() };
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| view.show(ui, &cx, &mut Vec::new()));
+            });
+            if frame == 2 {
+                view.go_to_cue(30, 2.0 / 60.0);
+            }
+            seen.push(view.scroll_y);
+        }
+        let target = view.offsets[view.block_of_cue[30]] - 120.0;
+        assert!(view.scroll_to.is_none(), "it arrived");
+        assert!((view.scroll_y - target).abs() < 1.5, "at {} instead of {target}", view.scroll_y);
+        let on_the_way = seen.iter().filter(|&&y| y > 1.0 && y < target - 1.5).count();
+        assert!(on_the_way >= 8, "only {on_the_way} frames between start and arrival");
+        assert!(seen.windows(2).all(|pair| pair[1] >= pair[0] - 0.01), "never backwards");
+        assert_eq!(view.lanes, 2);
+    }
+
+    /// Ties get lanes so that no two lines lie on each other; a chain running down the
+    /// page shares one.
+    #[test]
+    fn connections_between_cues_are_given_lanes() {
+        let cue = |n: usize, more: &str| format!("```yaml\ntrigger_note: {{ch: 1, note: {n}}}\n{more}\n```\n\n");
+        let text = [
+            cue(0, "music: a.wav\nchain_end: {ch: 1, note: 1}"),
+            cue(1, "music: b.wav\nloop_outro: {ch: 1, note: 2}"),
+            cue(2, "music: c.wav"),
+            cue(3, "auto_trigger: {trigger_note: {ch: 1, note: 0}, delay: 2}"),
+        ]
+        .concat();
+        let mut view = ScriptView::default();
+        view.relate(&Script::parse(&text));
+        let lanes: Vec<(usize, usize, usize)> = view.relations.iter().map(|r| (r.from, r.to, r.lane)).collect();
+        assert_eq!(view.relations.len(), 3);
+        let lane_of = |from: usize, to: usize| lanes.iter().find(|l| (l.0, l.1) == (from, to)).map(|l| l.2);
+        let blocks: Vec<usize> = Script::parse(&text).blocks.iter().enumerate().filter(|(_, b)| matches!(b, Block::Cue(_))).map(|(i, _)| i).collect();
+        assert_eq!(lane_of(blocks[0], blocks[1]), Some(0));
+        assert_eq!(lane_of(blocks[1], blocks[2]), Some(0), "the chain goes on in the same lane");
+        assert_eq!(lane_of(blocks[0], blocks[3]), Some(1), "the long one goes around them");
+        assert_eq!(view.lanes, 2);
+    }
 
     #[test]
     fn role_names_complete_in_the_first_line_and_below_the_names() {
