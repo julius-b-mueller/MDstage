@@ -259,6 +259,11 @@ impl Show {
         self.player.fade(cue, volume.clamp(0.0, 1.0), 0.03)
     }
 
+    /// The variant chosen for the next Go, if one was.
+    pub fn selected_variant(&self) -> Option<usize> {
+        self.selected_variant
+    }
+
     /// Make a cue the next Go, whatever the position (jump, "arm in live view").
     pub fn arm(&mut self, cue: Option<usize>) {
         self.armed = cue;

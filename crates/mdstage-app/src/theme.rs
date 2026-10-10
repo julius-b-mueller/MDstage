@@ -163,7 +163,7 @@ mod tests {
         let ctx = egui::Context::default();
         apply(&ctx);
         let _ = ctx.run(Default::default(), |ctx| {
-            let missing: Vec<&str> = ["☰", "🔒", "«", "›", "✏", "⏺", "⏸", "⏹", "⟳", "🔊", "⇢", "⊕", "📋", "◉", "▲", "▼", "⚠", "↺", "→", "↩", "←", "♬", "●", "▶", "♪", "⏱", "·", "—", "…", "×", "„", "“", "−"]
+            let missing: Vec<&str> = ["☰", "🔒", "«", "›", "✏", "◀", "⏺", "⏸", "⏹", "⟳", "🔊", "⇢", "⊕", "📋", "◉", "▲", "▼", "⚠", "↺", "→", "↩", "←", "♬", "●", "▶", "♪", "⏱", "·", "—", "…", "×", "„", "“", "−"]
                 .into_iter()
                 .filter(|symbol| !ctx.fonts(|f| f.has_glyphs(&egui::FontId::proportional(14.0), symbol)))
                 .collect();

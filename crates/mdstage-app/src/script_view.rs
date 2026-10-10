@@ -285,9 +285,15 @@ impl ScriptView {
 
     /// Text layout of a block; `None` for blocks that are not plain text.
     fn job(cast: &Cast, block: &Block, width: f32) -> Option<LayoutJob> {
+        Self::text_job(cast, block, width, 1.0)
+    }
+
+    /// A text block laid out for a given width; `scale` enlarges the type (the live view
+    /// is read from further away).
+    pub(crate) fn text_job(cast: &Cast, block: &Block, width: f32, scale: f32) -> Option<LayoutJob> {
         let mut job = LayoutJob::default();
         job.wrap.max_width = width;
-        let plain = |size: f32, color| TextFormat { font_id: FontId::proportional(size), color, ..Default::default() };
+        let plain = |size: f32, color| TextFormat { font_id: FontId::proportional(size * scale), color, ..Default::default() };
         match block {
             Block::Heading { level, text } => {
                 let size = match level {
@@ -356,7 +362,7 @@ impl ScriptView {
         Some(base.zip(length).map(|(base, length)| base + length))
     }
 
-    fn cue_rows(cx: &Context, block: usize, cue_index: usize, cue: &Cue, durations: &HashMap<String, f64>) -> Vec<(&'static str, Vec<Span>)> {
+    pub(crate) fn cue_rows(cx: &Context, block: usize, cue_index: usize, cue: &Cue, durations: &HashMap<String, f64>) -> Vec<(&'static str, Vec<Span>)> {
         let mut rows = Vec::new();
         if cue.invalid {
             rows.push(("YAML", vec![(t("nicht lesbar", "unreadable").to_string(), RED)]));

@@ -86,6 +86,8 @@ pub struct Snapshot {
     pub fired: Vec<usize>,
     pub current: Option<usize>,
     pub next: Option<usize>,
+    /// The variant chosen for the next Go, if the operator chose one.
+    pub selected_variant: Option<usize>,
     /// `(loop, outro)` pairs waiting for the loop's end.
     pub pending_outros: Vec<(usize, usize)>,
     /// The microphones as the fired cues left them; `None` before any cue set them.
@@ -472,6 +474,7 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
             fired: show.history().cues().collect(),
             current: show.current(),
             next: show.next(),
+            selected_variant: show.selected_variant(),
             pending_outros: show.pending_outros().to_vec(),
             mic: (mic != Mic::Unchanged).then_some(mic),
             audio: show.audio_status(),

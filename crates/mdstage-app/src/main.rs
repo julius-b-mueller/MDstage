@@ -64,6 +64,7 @@ struct App {
     /// Audio files no cue uses, waiting for the operator to confirm moving them away.
     unused_audio: Option<Vec<String>>,
     about_open: bool,
+    live: live::LiveView,
     /// The file just opened was saved by another version: tell the operator once.
     version_notice: Option<Option<String>>,
     /// An edit is waiting to be saved into a file of another version: ask first.
@@ -112,6 +113,7 @@ impl App {
             live_open: false,
             unused_audio: None,
             about_open: false,
+            live: Default::default(),
             version_notice: None,
             upgrade_prompt: false,
             swap_prompt: None,
@@ -171,6 +173,7 @@ impl App {
             }
         };
         self.view.reset(dir.join("audio"), ctx);
+        self.live.invalidate();
         let file_version = loaded.script.app_version();
         let saved_by_other = (file_version.as_deref() != Some(VERSION)).then_some(file_version);
         let saved_by_other_shown = saved_by_other.clone();
@@ -229,6 +232,7 @@ impl App {
         }
         show.session.send(Request::SetScript(Box::new(show.script.clone())));
         self.view.invalidate();
+        self.live.invalidate();
         self.save_settings();
     }
 
@@ -1429,11 +1433,9 @@ impl App {
         let cx = Context { script: &show.script, cast: &show.cast, snapshot: &self.snapshot, locked: self.locked, line_numbers: self.settings.line_numbers, group_mics: self.settings.group_mics, has_editor: !self.settings.editor_command.trim().is_empty(), can_paste: self.copied.is_some() };
         let mut requests = Vec::new();
         let mut close = false;
-        let builder = egui::ViewportBuilder::default().with_title(self.t("MDstage — Live-Ansicht", "MDstage — Live View")).with_inner_size([620.0, 720.0]);
+        let builder = egui::ViewportBuilder::default().with_title(self.t("MDstage — Live-Ansicht", "MDstage — Live View")).with_inner_size([980.0, 860.0]);
         ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("live"), builder, |ctx, _| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| requests = live::show(ui, &cx));
-            });
+            requests = self.live.show(ctx, &cx);
             if !ctx.wants_keyboard_input() {
                 if ctx.input(|i| i.key_pressed(Key::Space)) {
                     requests.push(Request::Go);
