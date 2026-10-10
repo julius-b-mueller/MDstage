@@ -585,6 +585,13 @@ pub fn rename_audio_in(cue: &mut Value, from: &str, to: &str) -> usize {
     hits
 }
 
+/// The audio files one cue names, in the order they stand in it (repeats included).
+pub fn audio_files_in(cue: &Value) -> Vec<String> {
+    let mut files = Vec::new();
+    audio_refs(&mut cue.clone(), &mut |file| files.push(file.as_str().and_then(crate::audio::sanitize_path).unwrap_or_default()));
+    files
+}
+
 impl Script {
     /// Every audio file the cues name, and how many cue blocks cannot be read. Those may
     /// name files too, so with any of them the list is not to be relied on.
@@ -965,6 +972,8 @@ config:
         assert!(script.blocks[4] == untouched, "a cue that does not name the file keeps its text");
         assert!(script.to_markdown().contains("note: [broken"), "as does one that cannot be read");
         assert_eq!(script.rename_audio("missing.wav", "x.wav"), 0);
+        let Block::Cue(second) = &script.blocks[2] else { panic!("a cue") };
+        assert_eq!(audio_files_in(&second.yaml), ["b.wav", "intro.wav", "c.wav", "intro.wav"]);
     }
 
     #[test]

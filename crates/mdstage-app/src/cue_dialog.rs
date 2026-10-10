@@ -1,12 +1,12 @@
-//! The cue dialog: the common fields as form controls, and the cue's whole YAML as text
-//! for everything else. Both edit the same data; changing one updates the other.
+//! The cue dialog: every field of a cue as form controls. What it edits is the cue's
+//! YAML, but the operator never has to see that.
 
 use std::path::Path;
 
 use eframe::egui::{self, RichText, Ui};
 use mdstage_core::cues::Note;
 use mdstage_core::mic::Cast;
-use mdstage_core::yaml::{self, Mapping, Value};
+use mdstage_core::yaml::{Mapping, Value};
 
 use crate::lang::t;
 use crate::theme::*;
@@ -16,8 +16,6 @@ pub struct CueDialog {
     pub block: usize,
     pub is_new: bool,
     yaml: Mapping,
-    text: String,
-    text_error: Option<String>,
     audio_files: Vec<String>,
     /// Other cues use Auto-Mic, so microphones cannot be chosen by hand.
     auto_mic_in_use: bool,
@@ -86,8 +84,7 @@ impl CueDialog {
     pub fn new(block: usize, is_new: bool, cue: Option<&Value>, audio_dir: &Path, auto_mic_in_use: bool, cues: Vec<(Note, String)>) -> CueDialog {
         let yaml = cue.and_then(Value::as_mapping).cloned().unwrap_or_default();
         let audio_files = crate::store::audio_files(audio_dir);
-        let text = yaml::dump(&Value::Mapping(yaml.clone()), true);
-        CueDialog { block, is_new, text: if yaml.is_empty() { String::new() } else { text }, yaml, text_error: None, audio_files, auto_mic_in_use, cues, channels: vec!["L".into(), "R".into()], devices: Default::default(), audio_dir: audio_dir.to_path_buf(), info: Default::default(), tempo: (120.0, 4.0), renaming: None, rename_request: None }
+        CueDialog { block, is_new, yaml, audio_files, auto_mic_in_use, cues, channels: vec!["L".into(), "R".into()], devices: Default::default(), audio_dir: audio_dir.to_path_buf(), info: Default::default(), tempo: (120.0, 4.0), renaming: None, rename_request: None }
     }
 
     /// An audio file got a new name: follow it in the file list and in the cue as it
@@ -100,7 +97,6 @@ impl CueDialog {
         let mut cue = Value::Mapping(std::mem::take(&mut self.yaml));
         mdstage_core::edit::rename_audio_in(&mut cue, from, to);
         self.yaml = cue.as_mapping().cloned().unwrap_or_default();
-        self.sync_text();
     }
 
     /// Tell the dialog the show's virtual channels and this machine's devices.
@@ -118,11 +114,6 @@ impl CueDialog {
     /// The cue as edited.
     pub fn value(&self) -> Value {
         Value::Mapping(self.yaml.clone())
-    }
-
-    fn sync_text(&mut self) {
-        self.text = if self.yaml.is_empty() { String::new() } else { yaml::dump(&Value::Mapping(self.yaml.clone()), true) };
-        self.text_error = None;
     }
 
     /// The `music` entry as a mapping, converting the short form `music: file.wav`.
@@ -531,29 +522,11 @@ impl CueDialog {
     pub fn show(&mut self, ui: &mut Ui, cast: &Cast) -> Option<bool> {
         let mut result = None;
         egui::ScrollArea::vertical().auto_shrink([false, false]).max_height(ui.available_height() - 44.0).show(ui, |ui| {
-            if self.fields(ui, cast) {
-                self.sync_text();
-            }
-            ui.add_space(10.0);
-            ui.separator();
-            ui.label(RichText::new(t("YAML — alle Felder des Cues, auch die ohne Formularfeld (cue_midi, cue_osc, cue_http, cue_display, music_seq, mehrere Audios …)", "YAML — all fields of the cue, including those without a form field (cue_midi, cue_osc, cue_http, cue_display, music_seq, several audio files …)")).color(MUTED));
-            let editor = egui::TextEdit::multiline(&mut self.text).code_editor().desired_width(f32::INFINITY).desired_rows(10);
-            if ui.add(editor).changed() {
-                match serde_yaml_from(&self.text) {
-                    Ok(map) => {
-                        self.yaml = map;
-                        self.text_error = None;
-                    }
-                    Err(e) => self.text_error = Some(e),
-                }
-            }
-            if let Some(error) = &self.text_error {
-                ui.label(RichText::new(error).color(RED));
-            }
+            self.fields(ui, cast);
         });
         ui.separator();
         ui.horizontal(|ui| {
-            if ui.add_enabled(self.text_error.is_none(), egui::Button::new(t("Speichern", "Save"))).clicked() {
+            if ui.button(t("Speichern", "Save")).clicked() {
                 result = Some(true);
             }
             if ui.button(t("Abbrechen", "Cancel")).clicked() {
@@ -561,18 +534,6 @@ impl CueDialog {
             }
         });
         result
-    }
-}
-
-/// Parse cue YAML typed by the operator: a mapping, or nothing at all.
-fn serde_yaml_from(text: &str) -> Result<Mapping, String> {
-    if text.trim().is_empty() {
-        return Ok(Mapping::new());
-    }
-    match mdstage_core::Script::parse(&format!("```yaml\n{text}\n```\n")).blocks.into_iter().next() {
-        Some(mdstage_core::Block::Cue(cue)) if !cue.invalid => cue.yaml.as_mapping().cloned().ok_or_else(|| t("Ein Cue besteht aus Feldern (name: wert).", "A cue consists of fields (name: value).").to_string()),
-        Some(mdstage_core::Block::Config(_)) => Err(t("Das ist ein Config-Block, kein Cue.", "This is a config block, not a cue.").into()),
-        _ => Err(t("YAML nicht lesbar.", "Cannot read the YAML.").into()),
     }
 }
 
@@ -605,7 +566,7 @@ mod tests {
                     egui::CentralPanel::default().show(ctx, |ui| assert_eq!(dialog.show(ui, &cast), None));
                 });
             }
-            assert!(dialog.value() == cue.yaml, "the dialog changed block {block}:\n{}", yaml::dump(&dialog.value(), true));
+            assert!(dialog.value() == cue.yaml, "the dialog changed block {block}:\n{}", mdstage_core::yaml::dump(&dialog.value(), true));
         }
     }
 }

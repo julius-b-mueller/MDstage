@@ -58,6 +58,9 @@ struct App {
     /// Audio files no cue uses, waiting for the operator to confirm moving them away.
     unused_audio: Option<Vec<String>>,
     about_open: bool,
+    /// Audio files a cue has just swapped for others while further cues still use
+    /// them: `(old, new, how many cues)`. The operator is asked whether those follow.
+    swap_prompt: Option<Vec<(String, String, usize)>>,
     /// Files dropped onto the window, the pointer position known then, and when.
     pending_drop: Option<(Vec<PathBuf>, Option<egui::Pos2>, std::time::Instant)>,
     /// Problem lines the operator chose not to see any more (this session).
@@ -99,6 +102,7 @@ impl App {
             live_open: false,
             unused_audio: None,
             about_open: false,
+            swap_prompt: None,
             pending_drop: None,
             ignored: Vec::new(),
             cleanup: None,
@@ -965,6 +969,7 @@ impl App {
         let title = if dialog.is_new { lang::t("Neuer Cue", "New cue") } else { lang::t("Cue bearbeiten", "Edit cue") };
         let mut open = true;
         let mut result = None;
+        let mut swapped: Vec<(String, String)> = Vec::new();
         egui::Window::new(title).open(&mut open).default_size([640.0, 600.0]).show(ctx, |ui| result = dialog.show(ui, &show.cast));
         match result {
             Some(true) => {
@@ -973,7 +978,17 @@ impl App {
                     show.script.insert_block(dialog.block, cue);
                 } else if let Some(Block::Cue(cue)) = show.script.blocks.get_mut(dialog.block) {
                     let before = cue.note();
+                    let files_before = mdstage_core::edit::audio_files_in(&cue.yaml);
                     cue.set_yaml(dialog.value());
+                    // Files that were swapped for others, place by place.
+                    let files_after = mdstage_core::edit::audio_files_in(&cue.yaml);
+                    if files_before.len() == files_after.len() {
+                        for (was, now) in files_before.into_iter().zip(files_after) {
+                            if was != now && !was.is_empty() && !now.is_empty() && !swapped.iter().any(|(w, _)| *w == was) {
+                                swapped.push((was, now));
+                            }
+                        }
+                    }
                     // A changed trigger note takes along every link other cues have to it.
                     if let (Some(before), Some(after)) = (before, cue.note()) {
                         if before != after {
@@ -983,7 +998,20 @@ impl App {
                     // A cue must keep a trigger note even if it was deleted from the YAML.
                     show.script.assign_trigger_notes();
                 }
+                // Other cues still playing a file this one has just swapped: ask whether
+                // they should follow.
+                let cues = Cues::new(&show.script);
+                let others: Vec<(String, String, usize)> = swapped
+                    .into_iter()
+                    .filter_map(|(was, now)| {
+                        let users = (0..cues.len()).filter(|&c| cues.get(c).is_some_and(|cue| mdstage_core::edit::audio_files_in(&cue.yaml).contains(&was))).count();
+                        (users > 0).then_some((was, now, users))
+                    })
+                    .collect();
                 self.after_edit();
+                if !others.is_empty() {
+                    self.swap_prompt = Some(others);
+                }
             }
             Some(false) => {}
             None if open => {
@@ -1063,6 +1091,46 @@ impl App {
     fn reload(&mut self, ctx: &egui::Context) {
         if let Some(path) = self.show.as_ref().map(|s| s.path.clone()) {
             self.open(&path, ctx);
+        }
+    }
+
+    /// Asked after a cue's audio file was swapped while other cues still play the old one.
+    fn swap_window(&mut self, ctx: &egui::Context) {
+        let Some(swaps) = self.swap_prompt.take() else { return };
+        let mut open = true;
+        let mut result = None;
+        egui::Window::new(lang::t("Audiodatei auch in anderen Cues austauschen?", "Swap the audio file in other cues too?")).open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
+            for (was, now, users) in &swaps {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new(was).color(BRIGHT));
+                    ui.label("→");
+                    ui.label(RichText::new(now).color(BRIGHT));
+                });
+                ui.label(RichText::new(if lang::english() { format!("{users} other cue(s) still use “{was}”.") } else { format!("{users} weitere(r) Cue(s) verwenden „{was}“ noch.") }).color(MUTED));
+                ui.add_space(4.0);
+            }
+            ui.separator();
+            ui.horizontal(|ui| {
+                if ui.button(lang::t("In allen Cues austauschen", "Swap in all cues")).clicked() {
+                    result = Some(true);
+                }
+                if ui.button(lang::t("Nur in diesem Cue", "Only in this cue")).clicked() {
+                    result = Some(false);
+                }
+            });
+        });
+        match result {
+            Some(true) => {
+                if let Some(show) = &mut self.show {
+                    for (was, now, _) in &swaps {
+                        show.script.rename_audio(was, now);
+                    }
+                }
+                self.after_edit();
+            }
+            Some(false) => {}
+            None if open => self.swap_prompt = Some(swaps),
+            None => {}
         }
     }
 
@@ -1432,6 +1500,7 @@ impl eframe::App for App {
         self.auto_mic_window(ctx);
         self.cleanup_window(ctx);
         self.about_window(ctx);
+        self.swap_window(ctx);
     }
 }
 
