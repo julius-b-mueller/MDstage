@@ -605,9 +605,14 @@ impl ScriptView {
         rows.iter().map(|(_, spans)| Self::flow_spans(ui, None, spans, &font, 0.0, width - 16.0 - 56.0 - 12.0, 0.0, ROW)).sum()
     }
 
-    fn cue_height(rows: usize, has_audio: bool) -> f32 {
+    /// Below this width a cue's buttons no longer fit beside its number and marks and
+    /// get a line of their own.
+    const BUTTONS_BESIDE: f32 = 820.0;
+
+    fn cue_height(rows: usize, has_audio: bool, width: f32) -> f32 {
         let wave = if has_audio { WAVE_HEIGHT + 10.0 + CONTROLS + 4.0 } else { 0.0 };
-        8.0 + 10.0 + ROW + rows as f32 * ROW + wave + 10.0
+        let buttons = if width < Self::BUTTONS_BESIDE { ROW + 4.0 } else { 0.0 };
+        8.0 + 10.0 + ROW + buttons + rows as f32 * ROW + wave + 10.0
     }
 
     /// Measure every block for the given width. Runs once per width change or edit.
@@ -633,7 +638,7 @@ impl ScriptView {
                 Block::Config(_) => 0.0,
                 Block::Cue(cue) => {
                     let rows = Self::cue_rows(cx, i, self.cue_of_block[i].unwrap_or(0), cue, &self.durations);
-                    Self::cue_height(Self::cue_lines(ui, &rows, width), cue.audio().is_some())
+                    Self::cue_height(Self::cue_lines(ui, &rows, width), cue.audio().is_some(), width)
                 }
                 block => {
                     let job = Self::job(cx.cast, block, width, self.numbers.get(i).copied().flatten()).unwrap_or_default();
@@ -1263,9 +1268,12 @@ impl ScriptView {
         if sounding {
             badge(t("♪ läuft", "♪ playing"), BLUE);
         }
-        self.cue_buttons(ui, cx, block, cue_index, cue, Rect::from_min_max(pos2(x, panel.top() + 6.0), pos2(panel.right() - 10.0, panel.top() + 6.0 + ROW + 4.0)), actions);
+        // The buttons: beside the number and marks, or in a narrow window below them.
+        let beside = panel.width() >= Self::BUTTONS_BESIDE;
+        let top = if beside { panel.top() + 6.0 } else { y + ROW };
+        self.cue_buttons(ui, cx, block, cue_index, cue, Rect::from_min_max(pos2(if beside { x } else { left }, top), pos2(panel.right() - 10.0, top + ROW + 4.0)), actions);
         self.learn_durations(cx, cue_index);
-        y += ROW;
+        y += if beside { ROW } else { 2.0 * ROW + 4.0 };
         for (label, spans) in Self::cue_rows(cx, block, cue_index, cue, &self.durations) {
             painter.text(pos2(left, y), Align2::LEFT_TOP, label, font.clone(), MUTED);
             // Long rows (many microphones, a long note) go on in further lines.
