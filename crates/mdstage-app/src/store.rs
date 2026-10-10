@@ -41,6 +41,18 @@ fn backup_once(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Keep a copy of a show file as an earlier version of MDstage left it
+/// (`name~v1.16.0.md`), before this version saves it as its own. Returns the copy's name.
+pub fn backup_version(path: &Path, version: &str) -> std::io::Result<String> {
+    let clean: String = version.chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-')).collect();
+    let name = format!("{}~v{clean}.md", path.file_stem().unwrap_or_default().to_string_lossy());
+    let backup = path.with_file_name(&name);
+    if !backup.exists() {
+        std::fs::copy(path, backup)?;
+    }
+    Ok(name)
+}
+
 /// A show file read from disk and brought up to standard.
 pub struct Loaded {
     pub script: Script,

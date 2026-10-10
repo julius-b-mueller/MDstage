@@ -614,7 +614,7 @@ impl ScriptView {
     }
 
     /// Between any two blocks, at the left edge: a "+" that shows when the pointer is
-    /// there. A click adds a cue at that place, Shift+click a text block; with a cue on
+    /// there. A click adds a text block at that place, Shift+click a cue; with a cue on
     /// the clipboard there is a paste button beside it.
     fn insert_zones(&mut self, ui: &mut Ui, cx: &Context, origin: egui::Pos2, viewport: Rect, actions: &mut Vec<Action>) {
         let blocks = &cx.script.blocks;
@@ -636,9 +636,9 @@ impl ScriptView {
             let colour = if shift { BLUE } else { GREEN };
             ui.painter().circle_filled(button.center(), 10.0, if plus.hovered() { colour } else { colour.gamma_multiply(0.8) });
             ui.painter().text(button.center(), Align2::CENTER_CENTER, "+", FontId::proportional(16.0), Color32::BLACK);
-            let plus = plus.on_hover_text(t("Klick: Cue hier einfügen · Shift+Klick: Text hier einfügen", "Click: insert a cue here · Shift+click: insert text here"));
+            let plus = plus.on_hover_text(t("Klick: Text hier einfügen · Shift+Klick: Cue hier einfügen", "Click: insert text here · Shift+click: insert a cue here"));
             if plus.clicked() {
-                actions.push(if shift { Action::NewText(at) } else { Action::NewCue(at) });
+                actions.push(if shift { Action::NewCue(at) } else { Action::NewText(at) });
             }
             if cx.can_paste {
                 let paste = Rect::from_center_size(pos2(origin.x + 22.0, origin.y + y), vec2(26.0, 20.0));

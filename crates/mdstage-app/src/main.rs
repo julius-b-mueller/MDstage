@@ -47,7 +47,13 @@ struct OpenShow {
     report: Report,
     /// What opening changed in the file.
     notes: Vec<String>,
+    /// Another version of MDstage saved the file last (`Some(None)`: it does not say
+    /// which). Before this version saves it as its own, the operator is asked.
+    saved_by_other: Option<Option<String>>,
 }
+
+/// This version of MDstage, as it is noted in show files.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 struct App {
     settings: Settings,
@@ -58,6 +64,10 @@ struct App {
     /// Audio files no cue uses, waiting for the operator to confirm moving them away.
     unused_audio: Option<Vec<String>>,
     about_open: bool,
+    /// The file just opened was saved by another version: tell the operator once.
+    version_notice: Option<Option<String>>,
+    /// An edit is waiting to be saved into a file of another version: ask first.
+    upgrade_prompt: bool,
     /// Audio files a cue has just swapped for others while further cues still use
     /// them: `(old, new, how many cues)`. The operator is asked whether those follow.
     swap_prompt: Option<Vec<(String, String, usize)>>,
@@ -102,6 +112,8 @@ impl App {
             live_open: false,
             unused_audio: None,
             about_open: false,
+            version_notice: None,
+            upgrade_prompt: false,
             swap_prompt: None,
             pending_drop: None,
             ignored: Vec::new(),
@@ -159,6 +171,10 @@ impl App {
             }
         };
         self.view.reset(dir.join("audio"), ctx);
+        let file_version = loaded.script.app_version();
+        let saved_by_other = (file_version.as_deref() != Some(VERSION)).then_some(file_version);
+        let saved_by_other_shown = saved_by_other.clone();
+        self.upgrade_prompt = false;
         self.show = Some(OpenShow {
             path: path.to_path_buf(),
             cast: Cast::from_script(&loaded.script, self.english()),
@@ -167,7 +183,9 @@ impl App {
             session,
             trusted: loaded.trusted,
             notes: loaded.notes,
+            saved_by_other,
         });
+        self.version_notice = saved_by_other_shown;
         store::remember(path, &mut self.settings);
         self.save_settings();
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!("MDstage — {}", path.file_name().unwrap_or_default().to_string_lossy())));
@@ -199,6 +217,13 @@ impl App {
         let Some(show) = &mut self.show else { return };
         show.cast = Cast::from_script(&show.script, english);
         show.report = show.script.validate();
+        if show.saved_by_other.is_some() {
+            // Nothing is written into a file of another version before the operator
+            // has agreed; until then the edit only exists in this window.
+            self.upgrade_prompt = true;
+            self.view.invalidate();
+            return;
+        }
         if let Err(e) = store::save(&show.path, &show.script, &mut self.settings, show.trusted) {
             self.message = Some(format!("{}: {e}", lang::t("Nicht gespeichert", "Not saved")));
         }
@@ -1030,6 +1055,9 @@ impl App {
     /// Rename a file in the show's `audio/` folder and follow it through every cue.
     fn rename_audio(&mut self, from: &str, to: &str) -> Result<(), String> {
         let Some(show) = &mut self.show else { return Ok(()) };
+        if show.saved_by_other.is_some() {
+            return Err(lang::t("Die Datei stammt aus einer anderen Version. Erst etwas bearbeiten und das Speichern mit der aktuellen Version bestätigen.", "The file comes from another version. Edit something first and confirm saving with the current version.").to_string());
+        }
         let audio_dir = show.path.parent().unwrap_or(Path::new(".")).join("audio");
         store::rename_audio_file(&audio_dir, from, to).map_err(|e| e.message().to_string())?;
         let before = show.script.clone();
@@ -1130,6 +1158,77 @@ impl App {
             }
             Some(false) => {}
             None if open => self.swap_prompt = Some(swaps),
+            None => {}
+        }
+    }
+
+    /// The notice on opening a file another version of MDstage saved, and the question
+    /// before the first edit is written into it.
+    fn version_windows(&mut self, ctx: &egui::Context) {
+        if let Some(version) = self.version_notice.clone() {
+            let mut open = true;
+            let mut ok = false;
+            egui::Window::new(lang::t("Andere Version", "Another version")).open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
+                ui.label(match (&version, lang::english()) {
+                    (Some(version), true) => format!("This file was saved with version {version}."),
+                    (Some(version), false) => format!("Diese Datei wurde mit Version {version} gespeichert."),
+                    (None, true) => "This file does not say which version saved it.".to_string(),
+                    (None, false) => "Diese Datei gibt nicht an, mit welcher Version sie gespeichert wurde.".to_string(),
+                });
+                ui.label(format!("{}: {VERSION}", lang::t("Aktuelle Version", "Current version")));
+                ui.add_space(6.0);
+                ui.label(RichText::new(lang::t("Die Datei kann weiterhin verwendet werden. Wird sie bearbeitet, fragt MDstage nach und speichert sie dann mit der aktuellen Version; vorher wird eine Sicherung angelegt.", "The file can be used as it is. When it is edited, MDstage asks and then saves it with the current version; a backup is made first.")).color(MUTED));
+                ui.add_space(6.0);
+                ok = ui.button("OK").clicked();
+            });
+            if ok || !open {
+                self.version_notice = None;
+            }
+        }
+
+        if !self.upgrade_prompt {
+            return;
+        }
+        let Some(version) = self.show.as_ref().and_then(|s| s.saved_by_other.clone()) else {
+            self.upgrade_prompt = false;
+            return;
+        };
+        let mut choice = None;
+        egui::Window::new(lang::t("Skript wird aktualisiert", "The script is being updated")).collapsible(false).resizable(false).show(ctx, |ui| {
+            let was = version.clone().unwrap_or_else(|| lang::t("unbekannt", "unknown").to_string());
+            ui.label(if lang::english() { format!("This script was saved with version {was} and will now be saved with version {VERSION}.") } else { format!("Dieses Skript wurde mit Version {was} gespeichert und wird jetzt mit Version {VERSION} gespeichert.") });
+            ui.label(RichText::new(lang::t("Bestehende Cues und Einstellungen können davon betroffen sein. Vorher wird eine Sicherungskopie neben der Datei angelegt.", "Existing cues and settings may be affected. A backup copy is put next to the file first.")).color(MUTED));
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui.button(lang::t("Trotzdem speichern", "Save anyway")).clicked() {
+                    choice = Some(true);
+                }
+                if ui.button(lang::t("Änderung verwerfen", "Discard the change")).clicked() {
+                    choice = Some(false);
+                }
+            });
+        });
+        match choice {
+            Some(true) => {
+                self.upgrade_prompt = false;
+                let Some(show) = &mut self.show else { return };
+                let name = version.unwrap_or_else(|| "unbekannt".to_string());
+                match store::backup_version(&show.path, &name) {
+                    Ok(backup) => {
+                        show.saved_by_other = None;
+                        show.script.set_app_version(VERSION);
+                        self.after_edit();
+                        self.message = Some(format!("{}: {backup}", lang::t("Mit der aktuellen Version gespeichert. Sicherung", "Saved with the current version. Backup")));
+                    }
+                    // Without the copy nothing is written.
+                    Err(e) => self.message = Some(format!("{}: {e}", lang::t("Sicherungskopie nicht geschrieben, nichts gespeichert", "Backup not written, nothing saved"))),
+                }
+            }
+            Some(false) => {
+                // Back to what is on disk.
+                self.upgrade_prompt = false;
+                self.reload(ctx);
+            }
             None => {}
         }
     }
@@ -1500,6 +1599,7 @@ impl eframe::App for App {
         self.auto_mic_window(ctx);
         self.cleanup_window(ctx);
         self.about_window(ctx);
+        self.version_windows(ctx);
         self.swap_window(ctx);
     }
 }

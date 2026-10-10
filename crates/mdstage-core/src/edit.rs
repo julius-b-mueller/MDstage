@@ -71,6 +71,27 @@ impl Script {
         hits
     }
 
+    /// The version of MDstage the show file says it was last saved with.
+    pub fn app_version(&self) -> Option<String> {
+        match self.config()?.get("app_version")? {
+            Value::String(version) => Some(version.clone()),
+            Value::Number(version) => Some(version.to_string()),
+            _ => None,
+        }
+    }
+
+    /// Note in the config block which version of MDstage saves the file.
+    pub fn set_app_version(&mut self, version: &str) {
+        for block in &mut self.blocks {
+            let Block::Config(config) = block else { continue };
+            let mut yaml = config.yaml.clone();
+            if let Some(Value::Mapping(inner)) = yaml.get_mut("config") {
+                inner.insert("app_version".into(), version.into());
+                config.set_yaml(yaml);
+            }
+        }
+    }
+
     /// Declare the show's output devices in the config block: `(name, type, colour)`,
     /// the colour optional. Addresses are not part of the show file.
     pub fn set_output_devices(&mut self, devices: &[(String, String, Option<String>)]) {
@@ -1011,6 +1032,16 @@ config:
         // The cue's own note is the caller's business, and other notes are left alone.
         assert_eq!(cues.get(1).unwrap().note(), Some(from));
         assert_eq!(cues.get(1).unwrap().loop_outro(), Some(Note { ch: 1, note: 3 }));
+    }
+
+    #[test]
+    fn the_app_version_is_read_and_set() {
+        let mut script = Script::parse("```yaml\nconfig:\n    app_version: 1.16.0\n    roles: {}\n```\n\n# Akt\n");
+        assert_eq!(script.app_version().as_deref(), Some("1.16.0"));
+        script.set_app_version("2.0.0");
+        assert_eq!(script.app_version().as_deref(), Some("2.0.0"));
+        assert!(script.to_markdown().contains("app_version: 2.0.0"));
+        assert_eq!(Script::parse("# Nur Text\n").app_version(), None);
     }
 
     #[test]
