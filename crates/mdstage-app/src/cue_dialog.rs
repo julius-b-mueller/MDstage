@@ -95,6 +95,11 @@ impl CueDialog {
         self.sync_text();
     }
 
+    /// Files were added to the audio folder: list them.
+    pub fn refresh_audio(&mut self, audio_dir: &Path) {
+        self.audio_files = crate::store::audio_files(audio_dir);
+    }
+
     /// The cue as edited.
     pub fn value(&self) -> Value {
         Value::Mapping(self.yaml.clone())

@@ -60,6 +60,8 @@ pub enum Action {
     AutoMic { block: usize, on: bool },
     /// Open the live view with this cue as the next Go.
     ArmLive(usize),
+    /// Open an existing text block for editing.
+    EditText(usize),
     /// A click on a cue.
     Fire(usize),
     /// A block was edited.
@@ -502,7 +504,7 @@ impl ScriptView {
             .iter()
             .enumerate()
             .filter_map(|(i, block)| match block {
-                Block::Heading { level, text } if *level <= 2 => Some((i, *level, text.clone())),
+                Block::Heading { level, text } if *level <= 3 => Some((i, *level, text.clone())),
                 _ => None,
             })
             .collect();
@@ -636,6 +638,19 @@ impl ScriptView {
         let tab = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Tab));
         let commit = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
         let cancel = ui.input(|i| i.key_pressed(Key::Escape));
+        // Arrow up on the first line and arrow down on the last leave for the text block
+        // above or below.
+        let cursor = egui::TextEdit::load_state(ui.ctx(), id).and_then(|state| state.cursor.char_range()).map(|range| range.primary.index);
+        let before: String = editing.buffer.chars().take(cursor.unwrap_or(0)).collect();
+        let after: String = editing.buffer.chars().skip(cursor.unwrap_or(0)).collect();
+        let is_text = |i: usize| !matches!(cx.script.blocks.get(i), Some(Block::Cue(_) | Block::Config(_)) | None);
+        let leave = if cursor.is_some() && !before.contains('\n') && ui.input(|i| i.key_pressed(Key::ArrowUp)) {
+            (0..index).rev().find(|&i| is_text(i))
+        } else if cursor.is_some() && !after.contains('\n') && ui.input(|i| i.key_pressed(Key::ArrowDown)) {
+            (index + 1..cx.script.blocks.len()).find(|&i| is_text(i))
+        } else {
+            None
+        };
         if tab {
             if let Some((name, _)) = &ghost {
                 editing.buffer = format!("**{name}**\n");
@@ -678,13 +693,27 @@ impl ScriptView {
                 actions.push(Action::Delete(index));
             }
             self.dirty = true;
-        } else if commit {
+        } else if commit || leave.is_some() {
             // Whatever was typed becomes one block. An emptied editor leaves an existing
             // block as it was and removes one that was only just inserted.
+            let mut removed = false;
             match Script::parse(&editing.buffer.replace("\n\n", "\n")).blocks.into_iter().next() {
-                Some(with) => actions.push(Action::Replace { block: index, with }),
-                None if editing.fresh => actions.push(Action::Delete(index)),
+                Some(with) => {
+                    actions.push(Action::Replace { block: index, with });
+                    // Enter carries on writing in a new block below.
+                    if commit {
+                        actions.push(Action::NewText(index + 1));
+                    }
+                }
+                None if editing.fresh => {
+                    actions.push(Action::Delete(index));
+                    removed = true;
+                }
                 None => {}
+            }
+            if let Some(to) = leave.filter(|_| !commit) {
+                // With this block gone, the ones after it have moved up by one.
+                actions.push(Action::EditText(if removed && to > index { to - 1 } else { to }));
             }
             self.dirty = true;
         } else {
@@ -1168,7 +1197,7 @@ impl ScriptView {
             let mut jump = None;
             for (n, (index, level, text)) in self.headings.iter().enumerate() {
                 let colour = if active == Some(n) { BLUE } else if *level > 1 { TEXT } else { BRIGHT };
-                let indent = if *level > 1 { "    " } else { "" };
+                let indent = "    ".repeat((*level as usize).saturating_sub(1));
                 let mut label = egui::RichText::new(format!("{indent}{text}")).color(colour);
                 if *level == 1 {
                     label = label.strong();

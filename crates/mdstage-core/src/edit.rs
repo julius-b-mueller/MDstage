@@ -35,6 +35,61 @@ impl Script {
         }
     }
 
+    /// Set the names of the show's virtual audio channels. `renames` (`(old, new)`) are
+    /// followed through the patches of every cue, so audio stays on its channel.
+    pub fn set_virtual_channels(&mut self, names: &[String], renames: &[(String, String)]) {
+        fn rename_in(entry: &mut Value, renames: &[(String, String)]) -> bool {
+            let mut changed = false;
+            let Some(Value::Sequence(audios)) = entry.get_mut("audios") else { return false };
+            for patch in audios.iter_mut().filter_map(|a| a.get_mut("patch")).filter_map(Value::as_sequence_mut) {
+                for target in patch.iter_mut() {
+                    let names: Vec<&mut Value> = match target {
+                        Value::Sequence(list) => list.iter_mut().collect(),
+                        single => vec![single],
+                    };
+                    for name in names {
+                        if let Some((_, to)) = renames.iter().find(|(from, _)| name.as_str() == Some(from)) {
+                            *name = to.as_str().into();
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            changed
+        }
+        for block in &mut self.blocks {
+            match block {
+                Block::Config(config) => {
+                    let mut yaml = config.yaml.clone();
+                    let Some(Value::Mapping(inner)) = yaml.get_mut("config") else { continue };
+                    let list: Vec<Value> = names
+                        .iter()
+                        .map(|name| {
+                            let mut channel = serde_yaml_ng::Mapping::new();
+                            channel.insert("name".into(), name.as_str().into());
+                            Value::Mapping(channel)
+                        })
+                        .collect();
+                    inner.insert("virtualChannels".into(), Value::Sequence(list));
+                    config.set_yaml(yaml);
+                }
+                Block::Cue(cue) if !cue.invalid && !renames.is_empty() => {
+                    let mut yaml = cue.yaml.clone();
+                    let mut changed = yaml.get_mut("music").is_some_and(|music| rename_in(music, renames));
+                    if let Some(Value::Sequence(parts)) = yaml.get_mut("music_seq") {
+                        for part in parts {
+                            changed |= rename_in(part, renames);
+                        }
+                    }
+                    if changed {
+                        cue.set_yaml(yaml);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Give every cue without a `trigger_note` the lowest free one (channel 1 first,
     /// notes 1–127). Returns whether anything changed. Empty and unreadable cues are skipped.
     pub fn assign_trigger_notes(&mut self) -> bool {
@@ -833,5 +888,19 @@ config:
         assert!(script.blocks[4] == untouched, "a cue that does not name the file keeps its text");
         assert!(script.to_markdown().contains("note: [broken"), "as does one that cannot be read");
         assert_eq!(script.rename_audio("missing.wav", "x.wav"), 0);
+    }
+
+    #[test]
+    fn virtual_channels_are_set_and_renames_reach_the_patches() {
+        let mut script = Script::parse("```yaml\nconfig:\n    roles: {}\n```\n\n```yaml\nmusic:\n    audios:\n        - file: a.wav\n          patch: [L, [R, Sub]]\n```\n\n```yaml\nmusic: b.wav\n```\n");
+        let untouched = script.blocks[2].clone();
+        script.set_virtual_channels(&["Saal L".to_string(), "R".into(), "Sub".into()], &[("L".to_string(), "Saal L".to_string())]);
+        assert_eq!(script.virtual_channels(), ["Saal L", "R", "Sub"]);
+        let patch = script.blocks.iter().find_map(|b| match b {
+            Block::Cue(cue) => cue.audio().and_then(|a| a.parts[0].audios[0].patch.clone()),
+            _ => None,
+        });
+        assert_eq!(patch, Some(vec![vec!["Saal L".to_string()], vec!["R".to_string(), "Sub".to_string()]]));
+        assert!(script.blocks[2] == untouched);
     }
 }

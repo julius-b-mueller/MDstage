@@ -587,6 +587,20 @@ impl Player {
         Ok(())
     }
 
+    /// Play a short tone on one physical output (0-based), to check the wiring.
+    pub fn test_tone(&mut self, output: usize) -> Result<()> {
+        let rate = self.sample_rate as f32;
+        let tone: Vec<f32> = (0..(rate * 0.7) as usize).map(|n| (std::f32::consts::TAU * 440.0 * n as f32 / rate).sin() * 0.25).collect();
+        let fade = (rate / 40.0) as u32;
+        let spec = VoiceSpec {
+            routes: vec![Route { src: 0, out: output as u16, gain: 1.0 }],
+            fade_in: fade,
+            fade_out: fade,
+            ..VoiceSpec::whole(VoiceId::MAX, Arc::new(Clip::from_planar(self.sample_rate, vec![tone])))
+        };
+        self.send(Command::Add(spec))
+    }
+
     /// Ramp a cue's audio to `volume` over `seconds` and keep it playing.
     pub fn fade(&mut self, cue: usize, volume: f64, seconds: f64) -> Result<()> {
         let frames = self.frames(seconds) as u32;
@@ -940,6 +954,19 @@ mod tests {
         if let Some(n) = (0..whole.len()).find(|&n| streamed[n] != whole[n]) {
             panic!("sample {n} (frame {}): streamed {}, in memory {}", n / 2, streamed[n], whole[n]);
         }
+    }
+
+    #[test]
+    fn the_test_tone_comes_out_of_the_output_asked_for() {
+        let (mut mixer, mut player) = setup(&[], &["L", "R"]);
+        player.test_tone(2).unwrap();
+        let mut buf = vec![0.0f32; 4 * 64];
+        mixer.render(&mut buf, 4);
+        mixer.render(&mut buf, 4);
+        for frame in buf.chunks(4) {
+            assert_eq!((frame[0], frame[1], frame[3]), (0.0, 0.0, 0.0));
+        }
+        assert!(buf.chunks(4).any(|frame| frame[2].abs() > 0.05));
     }
 
     #[test]

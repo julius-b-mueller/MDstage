@@ -24,6 +24,11 @@ pub struct SettingsUi {
     midi_outputs: Vec<String>,
     midi_inputs: Vec<String>,
     learning: Option<(Learning, Option<Note>)>,
+    /// The show's virtual channels as edited: the name each had when the window opened
+    /// (`None` for a new one) and its name now.
+    pub channels: Vec<(Option<String>, String)>,
+    /// Set when a channel's test button was pressed: the physical output (0-based).
+    pub test_output: Option<usize>,
 }
 
 /// A text field that takes the remaining room up to `width`.
@@ -77,13 +82,41 @@ impl SettingsUi {
             midi_outputs: SystemMidi::port_names(),
             midi_inputs: Inputs::port_names(),
             learning: None,
+            channels: Vec::new(),
+            test_output: None,
         }
+    }
+
+    /// Edit the virtual channels of the open show along with the settings.
+    pub fn with_channels(mut self, names: Vec<String>) -> SettingsUi {
+        self.channels = names.into_iter().map(|name| (Some(name.clone()), name)).collect();
+        self
+    }
+
+    /// What is wrong with the channel names, if anything.
+    pub fn channel_problem(&self) -> Option<&'static str> {
+        let names: Vec<&str> = self.channels.iter().map(|(_, name)| name.trim()).collect();
+        if names.iter().any(|name| name.is_empty()) {
+            return Some(t("Jeder Kanal braucht einen Namen.", "Every channel needs a name."));
+        }
+        let twice = names.iter().enumerate().any(|(i, name)| names[..i].contains(name));
+        twice.then(|| t("Namen müssen eindeutig sein.", "Names must be unique."))
+    }
+
+    /// The channel names as edited, and the renames `(old, new)` among them.
+    pub fn channel_names(&self) -> (Vec<String>, Vec<(String, String)>) {
+        let names = self.channels.iter().map(|(_, name)| name.trim().to_string()).collect();
+        let renames = self.channels.iter().filter_map(|(was, name)| Some((was.clone()?, name.trim().to_string()))).filter(|(was, name)| was != name).collect();
+        (names, renames)
     }
 
     /// Draw the form. `channels` are the open show's virtual channels, `heard` the last
     /// MIDI note that came in. Returns `Some(true)` on Save, `Some(false)` on Cancel.
-    pub fn show(&mut self, ui: &mut Ui, channels: &[String], heard: Option<Note>) -> Option<bool> {
+    pub fn show(&mut self, ui: &mut Ui, has_show: bool, heard: Option<Note>) -> Option<bool> {
         let mut result = None;
+        let problem = self.channel_problem();
+        let channels = &mut self.channels;
+        let mut test_output = None;
         egui::ScrollArea::vertical().auto_shrink([false, false]).max_height(ui.available_height() - 44.0).show(ui, |ui| {
             let draft = &mut self.draft;
             ui.heading(t("Allgemein", "General"));
@@ -110,19 +143,39 @@ impl SettingsUi {
                 });
             });
             ui.label(RichText::new(t("Ein anderes Gerät wird sofort übernommen, wenn es die Abtastrate der geöffneten Show kann.", "Another device is switched to at once if it can run at the sample rate of the open show.")).color(MUTED));
-            if !channels.is_empty() {
+            if has_show {
+                ui.add_space(6.0);
                 ui.label(t("Virtuelle Kanäle → Ausgang des Geräts", "Virtual channels → output of the device"));
+                ui.label(RichText::new(t("Die Namen stehen in der Show-Datei, die Ausgänge gelten nur auf diesem Rechner. Umbenennen passt die Patches aller Cues an.", "The names are kept in the show file, the outputs apply to this machine only. Renaming follows through the patches of all cues.")).color(MUTED));
+                let mut remove = None;
                 egui::Grid::new("routing").show(ui, |ui| {
-                    for (i, name) in channels.iter().enumerate() {
+                    for (i, (was, name)) in channels.iter_mut().enumerate() {
+                        ui.add(egui::TextEdit::singleline(name).desired_width(140.0));
+                        // Routing is kept by name: under the old one until the rename is saved.
+                        let key = was.clone().unwrap_or_else(|| name.clone());
                         // Shown 1-based, stored 0-based.
-                        let mut output = draft.routing.get(name).copied().unwrap_or(i) + 1;
-                        ui.label(name);
-                        if ui.add(egui::DragValue::new(&mut output).range(1..=64)).changed() {
-                            draft.routing.insert(name.clone(), output - 1);
+                        let mut output = draft.routing.get(&key).copied().unwrap_or(i) + 1;
+                        if ui.add(egui::DragValue::new(&mut output).range(1..=64).prefix(t("Ausgang ", "Output "))).changed() {
+                            draft.routing.insert(key, output - 1);
+                        }
+                        if ui.small_button("▶").on_hover_text(t("Testton auf diesem Ausgang", "Test tone on this output")).clicked() {
+                            test_output = Some(output - 1);
+                        }
+                        if ui.small_button("×").on_hover_text(t("Kanal entfernen", "Remove channel")).clicked() {
+                            remove = Some(i);
                         }
                         ui.end_row();
                     }
                 });
+                if let Some(i) = remove {
+                    channels.remove(i);
+                }
+                if ui.button(t("+ Kanal", "+ Channel")).clicked() {
+                    channels.push((None, String::new()));
+                }
+                if let Some(problem) = problem {
+                    ui.label(RichText::new(problem).color(RED));
+                }
             }
 
             ui.add_space(12.0);
@@ -433,9 +486,10 @@ impl SettingsUi {
             }
         });
 
+        self.test_output = test_output;
         ui.separator();
         ui.horizontal(|ui| {
-            if ui.button(t("Speichern", "Save")).clicked() {
+            if ui.add_enabled(problem.is_none(), egui::Button::new(t("Speichern", "Save"))).clicked() {
                 result = Some(true);
             }
             if ui.button(t("Abbrechen", "Cancel")).clicked() {

@@ -56,6 +56,8 @@ pub enum Request {
     StopCue(usize),
     /// Set the level of a cue's audio while it plays.
     Volume(usize, f64),
+    /// Play a short tone on a physical output (0-based).
+    TestTone(usize),
     /// Emergency: fade all audio out.
     StopAll,
     /// Emergency: mute all microphones.
@@ -328,6 +330,7 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
                 Request::Seek(cue, seconds) => show.seek(cue, seconds),
                 Request::StopCue(cue) => show.stop_cue(cue),
                 Request::Volume(cue, volume) => show.set_volume(cue, volume),
+                Request::TestTone(output) => show.player().test_tone(output),
                 Request::StopAll => show.stop_all(),
                 Request::MicsOff => Ok(show.mics_off()),
                 Request::ClearProblems => Ok(problems.clear()),

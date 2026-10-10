@@ -56,6 +56,7 @@ struct App {
     live_open: bool,
     /// Audio files no cue uses, waiting for the operator to confirm moving them away.
     unused_audio: Option<Vec<String>>,
+    about_open: bool,
     /// What "Clean up YAML" would remove (`(YAML block, key)`), waiting to be confirmed.
     cleanup: Option<Vec<(usize, String)>>,
     /// A connection between two cues whose details are being asked for.
@@ -92,6 +93,7 @@ impl App {
             view: ScriptView::default(),
             live_open: false,
             unused_audio: None,
+            about_open: false,
             cleanup: None,
             link_dialog: None,
             auto_mic_prompt: None,
@@ -470,6 +472,11 @@ impl App {
                     cue.set_yaml(yaml);
                     self.after_edit();
                 }
+                Action::EditText(block) => {
+                    if let Some(show) = &self.show {
+                        self.view.edit(&show.script, *block, false);
+                    }
+                }
                 Action::ArmLive(cue) => {
                     self.live_open = true;
                     self.request(Request::Arm(Some(*cue)));
@@ -528,7 +535,7 @@ impl App {
             self.export.get_or_insert((EXPORT_DEFAULTS, false));
         }
         if pressed(ctx, Key::Comma) && self.settings_ui.is_none() {
-            self.settings_ui = Some(SettingsUi::new(&self.settings));
+            self.settings_ui = Some(SettingsUi::new(&self.settings).with_channels(self.show.as_ref().map(|s| s.script.virtual_channels()).unwrap_or_default()));
         }
         // Go and Back only when nothing is being typed.
         if self.show.is_some() && !self.view.is_editing() && !ctx.wants_keyboard_input() {
@@ -564,7 +571,19 @@ impl App {
                             self.open(Path::new(&file), &ctx);
                         }
                     }
+                    if !self.settings.recent_files.is_empty() {
+                        ui.separator();
+                        if ui.button(self.t("Verlauf löschen", "Clear Recent Files")).clicked() {
+                            ui.close_menu();
+                            self.settings.recent_files.clear();
+                            self.save_settings();
+                        }
+                    }
                 });
+                if ui.add_enabled(self.show.is_some(), egui::Button::new(self.t("Neu laden", "Reload"))).on_hover_text(self.t("Die Datei neu von der Platte lesen", "Read the file from disk again")).clicked() {
+                    ui.close_menu();
+                    self.reload(&ctx);
+                }
                 ui.separator();
                 if ui.button(self.t("YAML aufräumen…", "Clean up YAML…")).clicked() {
                     ui.close_menu();
@@ -591,7 +610,7 @@ impl App {
                 }
                 if ui.button(self.t("Einstellungen…", "Settings…")).clicked() {
                     ui.close_menu();
-                    self.settings_ui = Some(SettingsUi::new(&self.settings));
+                    self.settings_ui = Some(SettingsUi::new(&self.settings).with_channels(self.show.as_ref().map(|s| s.script.virtual_channels()).unwrap_or_default()));
                 }
                 if ui.button(self.t("Beenden", "Quit")).clicked() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -616,6 +635,12 @@ impl App {
                     if let Some(cue) = self.snapshot.current.or(self.snapshot.next) {
                         self.view.scroll_to_cue(cue);
                     }
+                }
+            });
+            ui.menu_button(self.t("Hilfe", "Help"), |ui| {
+                if ui.button(self.t("Über MDstage…", "About MDstage…")).clicked() {
+                    ui.close_menu();
+                    self.about_open = true;
                 }
             });
         });
@@ -670,6 +695,10 @@ impl App {
                         self.view.scroll_to_cue(cue);
                     }
                 }
+                if ui.add_enabled(has_show, theme::tool_button(RichText::new("↺").size(20.0))).on_hover_text(self.t("Datei neu von der Platte lesen", "Read the file from disk again")).clicked() {
+                    let ctx = ui.ctx().clone();
+                    self.reload(&ctx);
+                }
                 let lock_hint = self.t("Bearbeitungssperre: kein Bearbeiten, Klicks schalten nur scharf", "Edit lock: no editing, clicks only arm");
                 if ui.add(theme::tool_toggle("🔒", self.locked)).on_hover_text(lock_hint).clicked() {
                     self.locked = !self.locked;
@@ -716,6 +745,20 @@ impl App {
                 }
             });
         }
+        if self.settings.outputs_blocked {
+            let mut unblock = false;
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(self.t("Geräte-Ausgänge blockiert – MIDI/OSC/HTTP werden nicht gesendet", "Device outputs blocked – MIDI/OSC/HTTP are not sent")).color(RED));
+                unblock = ui.small_button(self.t("Entsperren", "Unblock")).clicked();
+            });
+            if unblock {
+                self.settings.outputs_blocked = false;
+                self.save_settings();
+                if let Some(trusted) = self.show.as_ref().map(|s| s.trusted) {
+                    self.request(Request::Configure(Box::new(self.settings.clone()), trusted));
+                }
+            }
+        }
         let Some(show) = &self.show else { return };
         let mut allow = false;
         if !show.trusted {
@@ -755,14 +798,28 @@ impl App {
 
     fn settings_window(&mut self, ctx: &egui::Context) {
         let Some(mut form) = self.settings_ui.take() else { return };
-        let channels = self.show.as_ref().map(|s| s.script.virtual_channels()).unwrap_or_default();
         let mut open = true;
         let mut result = None;
+        let has_show = self.show.is_some();
         egui::Window::new(self.t("Einstellungen", "Settings")).open(&mut open).default_size([760.0, 620.0]).show(ctx, |ui| {
-            result = form.show(ui, &channels, self.snapshot.heard);
+            result = form.show(ui, has_show, self.snapshot.heard);
         });
+        if let Some(output) = form.test_output.take() {
+            self.request(Request::TestTone(output));
+        }
         match result {
             Some(true) => {
+                // The channel names belong to the show file; a rename takes its routing along.
+                let (names, renames) = form.channel_names();
+                for (was, name) in &renames {
+                    if let Some(output) = form.draft.routing.remove(was) {
+                        form.draft.routing.insert(name.clone(), output);
+                    }
+                }
+                if let Some(show) = self.show.as_mut().filter(|s| s.script.virtual_channels() != names) {
+                    show.script.set_virtual_channels(&names, &renames);
+                    self.after_edit();
+                }
                 let restart = form.draft.display_host != self.settings.display_host || form.draft.display_port != self.settings.display_port;
                 self.settings = form.draft;
                 self.save_settings();
@@ -891,6 +948,63 @@ impl App {
             self.message = Some(self.t("Alle Audiodateien im audio-Ordner werden im Skript verwendet.", "Every audio file in the audio folder is used by the script.").into());
         } else {
             self.unused_audio = Some(unused);
+        }
+    }
+
+    fn reload(&mut self, ctx: &egui::Context) {
+        if let Some(path) = self.show.as_ref().map(|s| s.path.clone()) {
+            self.open(&path, ctx);
+        }
+    }
+
+    fn about_window(&mut self, ctx: &egui::Context) {
+        if !self.about_open {
+            return;
+        }
+        let mut open = true;
+        egui::Window::new(lang::t("Über MDstage", "About MDstage")).open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
+            ui.label(RichText::new("MDstage").size(26.0).color(BRIGHT).strong());
+            ui.label(lang::t("Das interaktive Inspizientenbuch", "The interactive prompt book"));
+            ui.add_space(8.0);
+            ui.label(format!("{}: {}", lang::t("Installierte Version", "Installed version"), env!("CARGO_PKG_VERSION")));
+            ui.add_space(8.0);
+            ui.label(RichText::new(lang::t("MDstage prüft nicht automatisch auf Updates – die Software verwendet kein Internet.", "MDstage does not check for updates by itself – the software does not use the internet.")).color(MUTED));
+            ui.label(RichText::new(lang::t("Schau gelegentlich auf GitHub nach, ob eine neue Version verfügbar ist.", "Have a look on GitHub now and then for a new version.")).color(MUTED));
+            ui.hyperlink_to(lang::t("GitHub Releases öffnen", "Open GitHub Releases"), "https://github.com/julius-b-mueller/MDstage/releases");
+        });
+        self.about_open = open;
+    }
+
+    /// Audio files were dropped onto the window: copy them into the show's `audio/`
+    /// folder. A file of the same name that is there already is left alone.
+    fn audio_dropped(&mut self, files: Vec<PathBuf>) {
+        let Some(show) = &self.show else { return };
+        let audio_dir = show.path.parent().unwrap_or(Path::new(".")).join("audio");
+        let (mut copied, mut present, mut failed) = (0, 0, 0);
+        for file in files {
+            let Some(name) = file.file_name().and_then(|n| n.to_str()).filter(|n| store::is_audio_name(n)) else { continue };
+            let target = audio_dir.join(name);
+            if target.exists() {
+                present += 1;
+            } else if std::fs::create_dir_all(&audio_dir).and_then(|()| std::fs::copy(&file, &target)).is_ok() {
+                copied += 1;
+            } else {
+                failed += 1;
+            }
+        }
+        if copied + present + failed == 0 {
+            return;
+        }
+        let mut text = if lang::english() { format!("{copied} audio file(s) copied to audio/.") } else { format!("{copied} Audiodatei(en) nach audio/ kopiert.") };
+        if present > 0 {
+            text += &if lang::english() { format!(" {present} already there, left as they are.") } else { format!(" {present} gab es schon, unverändert gelassen.") };
+        }
+        if failed > 0 {
+            text += &if lang::english() { format!(" {failed} could not be copied.") } else { format!(" {failed} konnten nicht kopiert werden.") };
+        }
+        self.message = Some(text);
+        if let Some(dialog) = &mut self.cue_dialog {
+            dialog.refresh_audio(&audio_dir);
         }
     }
 
@@ -1088,6 +1202,10 @@ impl eframe::App for App {
             ctx.request_repaint_after(Duration::from_millis(33));
         }
         self.shortcuts(ctx);
+        let dropped: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
+        if !dropped.is_empty() {
+            self.audio_dropped(dropped);
+        }
 
         let bar = |fill, x, y| egui::Frame::new().fill(fill).inner_margin(egui::Margin::symmetric(x, y));
         egui::TopBottomPanel::top("menu").frame(bar(PANEL, 8, 2)).show_separator_line(false).show(ctx, |ui| self.menu(ui));
@@ -1173,6 +1291,7 @@ impl eframe::App for App {
         self.link_window(ctx);
         self.auto_mic_window(ctx);
         self.cleanup_window(ctx);
+        self.about_window(ctx);
     }
 }
 
