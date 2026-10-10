@@ -412,8 +412,8 @@ impl App {
             ui.toggle_value(&mut self.locked, lock).on_hover_text(lock_hint);
             ui.toggle_value(&mut self.live_open, live);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if let Some((done, total)) = self.snapshot.loading {
-                    ui.label(RichText::new(format!("{} {done}/{total}", self.t("Audio lädt", "Loading audio"))).color(YELLOW));
+                if let Some(files) = self.snapshot.loading {
+                    ui.label(RichText::new(format!("{} ({files})", self.t("Audio lädt", "Loading audio"))).color(YELLOW));
                 }
                 let output = match &self.snapshot.output {
                     Some(o) => format!("{} · {} Kanäle · {} Hz", o.name, o.channels, o.sample_rate),

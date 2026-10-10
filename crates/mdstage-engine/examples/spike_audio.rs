@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let (mixer, mut handle) = Mixer::new();
-    let output = device::open(mixer, None, 8)?;
+    let output = device::open(mixer, None, 8, None)?;
     println!("Opened \"{}\": {} channels at {} Hz", output.device_name, output.channels, output.sample_rate);
 
     let load = |file: &str| -> Result<Arc<Clip>, Box<dyn std::error::Error>> {

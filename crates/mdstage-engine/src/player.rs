@@ -84,6 +84,17 @@ impl ClipCache {
     pub fn clear(&mut self) {
         self.clips.clear();
     }
+
+    /// Drop every clip `keep` does not ask for. Audio that is playing is unaffected: a
+    /// voice holds on to its clip until it ends.
+    pub fn retain(&mut self, keep: impl Fn(&str) -> bool) {
+        self.clips.retain(|file, _| keep(file));
+    }
+
+    /// Seconds of audio held, summed over all clips and their channels.
+    pub fn held_seconds(&self) -> f64 {
+        self.clips.values().map(|c| c.duration() * c.channel_count() as f64).sum()
+    }
 }
 
 /// What a cue's audio does when it reaches its end (or its fading point).

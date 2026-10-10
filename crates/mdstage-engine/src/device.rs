@@ -53,9 +53,11 @@ pub fn list_outputs() -> Result<Vec<OutputInfo>> {
 /// Open an output device and start rendering `mixer` to it.
 ///
 /// `device_name` selects a device by name (`None` = system default). The stream uses as
-/// many channels as the device offers, up to `max_channels`, at the device's default
-/// sample rate; clips must be resampled to `Output::sample_rate` by the caller.
-pub fn open(mut mixer: Mixer, device_name: Option<&str>, max_channels: usize) -> Result<Output> {
+/// many channels as the device offers, up to `max_channels`. It runs at `preferred_rate`
+/// if the device supports that (the rate of the show's audio files: no resampling and
+/// half the memory of a device idling at 96 kHz), otherwise at the device's default rate.
+/// Clips must be resampled to `Output::sample_rate` by the caller.
+pub fn open(mut mixer: Mixer, device_name: Option<&str>, max_channels: usize, preferred_rate: Option<u32>) -> Result<Output> {
     let host = cpal::default_host();
     let device = match device_name {
         Some(name) => host
@@ -67,9 +69,12 @@ pub fn open(mut mixer: Mixer, device_name: Option<&str>, max_channels: usize) ->
     };
     let name = device.name().unwrap_or_default();
     let default = device.default_output_config().map_err(device_err)?;
-    let rate = default.sample_rate();
+    let supported = |rate: SampleRate| {
+        device.supported_output_configs().is_ok_and(|mut configs| configs.any(|c| c.min_sample_rate() <= rate && rate <= c.max_sample_rate()))
+    };
+    let rate = preferred_rate.map(SampleRate).filter(|r| supported(*r)).unwrap_or(default.sample_rate());
 
-    // Among the configs that support the default rate, take the most channels we may use,
+    // Among the configs that support that rate, take the most channels we may use,
     // preferring f32 so no conversion is needed.
     let supports_rate = |c: &SupportedStreamConfigRange| c.min_sample_rate() <= rate && rate <= c.max_sample_rate();
     let best = device

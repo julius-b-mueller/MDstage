@@ -27,6 +27,8 @@ use crate::show::{DelayProgress, Show};
 
 /// How often the show logic runs.
 const TICK: Duration = Duration::from_millis(2);
+/// How many cues with audio are kept decoded ahead of the operator's position.
+const AHEAD: usize = 6;
 /// Sample rate and block size of the stand-in used when no audio device can be opened.
 const NULL_RATE: u32 = 48_000;
 const MAX_PROBLEMS: usize = 20;
@@ -80,8 +82,10 @@ pub struct Snapshot {
     pub problems: Vec<String>,
     /// The last MIDI note that came in, for "MIDI learn".
     pub heard: Option<Note>,
-    /// Audio files decoded so far and in total, while the show's audio is still loading.
-    pub loading: Option<(usize, usize)>,
+    /// How many audio files are being decoded in the background right now.
+    pub loading: Option<usize>,
+    /// Decoded audio held in memory, in megabytes.
+    pub audio_memory_mb: f32,
     pub emergency_light: bool,
     /// When each cue last fired (this session only).
     pub fired_at: Vec<(usize, std::time::SystemTime)>,
@@ -126,6 +130,28 @@ impl Drop for Session {
     }
 }
 
+/// The audio files of the cues numbered `cues` (0-based, in script order), without repeats.
+/// Cues that chain or hand off to others bring those along, so a transition never waits.
+fn audio_files(script: &Script, cues: std::ops::Range<usize>) -> Vec<String> {
+    let all = mdstage_core::cues::Cues::new(script);
+    let mut files: Vec<String> = Vec::new();
+    let mut add = |cue: usize| {
+        for audio in all.get(cue).and_then(|c| c.audio()).into_iter().flat_map(|a| a.parts).flat_map(|p| p.audios) {
+            if !files.contains(&audio.file) {
+                files.push(audio.file);
+            }
+        }
+    };
+    for cue in cues.start.min(all.len())..cues.end.min(all.len()) {
+        add(cue);
+        let links = all.get(cue).map(|c| [c.chain_end(), c.loop_outro()]).unwrap_or_default();
+        for target in links.into_iter().flatten().filter_map(|note| all.find(note)) {
+            add(target);
+        }
+    }
+    files
+}
+
 /// Where the mixer's audio goes.
 enum Sink {
     Device(device::Output),
@@ -154,8 +180,20 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
         }
     };
 
+    // Run the device at the rate most of the show's audio has, if it can.
+    let mut rates: Vec<(u32, usize)> = Vec::new();
+    for file in audio_files(&script, 0..usize::MAX) {
+        if let Some(rate) = crate::clip::Clip::probe_rate(&show_dir.join("audio").join(&file)) {
+            match rates.iter_mut().find(|(r, _)| *r == rate) {
+                Some(entry) => entry.1 += 1,
+                None => rates.push((rate, 1)),
+            }
+        }
+    }
+    let preferred_rate = rates.iter().max_by_key(|(_, count)| *count).map(|(rate, _)| *rate);
+
     let (mixer, handle) = Mixer::new();
-    let (mut sink, handle, output) = match device::open(mixer.limited(), settings.audio_device.as_deref(), 64) {
+    let (mut sink, handle, output) = match device::open(mixer.limited(), settings.audio_device.as_deref(), 64, preferred_rate) {
         Ok(out) => {
             let info = OutputInfo { name: out.device_name.clone(), sample_rate: out.sample_rate, channels: out.channels };
             (Sink::Device(out), handle, Some(info))
@@ -230,24 +268,14 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
         report(&mut problems, format!("Timecode: {e}"));
     }
 
-    // Decode all of the show's audio in the background right away, so that no cue has to
-    // wait for a file the first time it fires.
-    let mut files: Vec<String> = Vec::new();
-    for block in &show.script().blocks {
-        let mdstage_core::Block::Cue(cue) = block else { continue };
-        let audios = cue.audio().into_iter().flat_map(|a| a.parts).flat_map(|p| p.audios);
-        for audio in audios {
-            if !files.contains(&audio.file) {
-                files.push(audio.file);
-            }
-        }
-    }
-    let total_files = files.len();
-    let mut loaded_files = 0;
+    // Audio is decoded in the background, a few cues ahead of the show, and dropped again
+    // once the show has moved on — so memory holds a handful of files, not the whole show,
+    // and no cue has to wait for a file when it fires.
+    let (wanted_files, loader_requests) = channel::<String>();
     let (decoded, decoded_incoming) = channel();
     let audio_dir = show_dir.join("audio");
     let loader = thread::Builder::new().name("mdstage-audio-loader".into()).spawn(move || {
-        for file in files {
+        for file in loader_requests {
             let clip = crate::clip::Clip::decode_file(&audio_dir.join(&file)).and_then(|c| c.resampled(sample_rate));
             if decoded.send((file, clip)).is_err() {
                 break;
@@ -257,6 +285,9 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
     if let Err(e) = &loader {
         report(&mut problems, format!("Audio wird erst beim Auslösen geladen: {e}"));
     }
+    // Files asked of the loader and not back yet.
+    let mut pending: Vec<String> = Vec::new();
+    let mut window_for: Option<(Option<usize>, Option<usize>, usize)> = None;
 
     let started = Instant::now();
     let mut heard = None;
@@ -324,8 +355,34 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
             }
         }
 
+        // Keep the audio of the cues around the operator's position decoded: the current
+        // cue, the next few, whatever is armed or playing — and forget the rest.
+        let position = (show.current(), show.next(), show.script().blocks.len());
+        if window_for != Some(position) {
+            window_for = Some(position);
+            // Two stretches: from the operator's cue onwards, and from the next Go onwards
+            // (the same place, unless a cue further away has been armed).
+            let from = show.current().unwrap_or(0).saturating_sub(1);
+            let mut wanted = audio_files(show.script(), from..from + 1 + AHEAD);
+            if let Some(next) = show.next() {
+                for file in audio_files(show.script(), next..next + AHEAD) {
+                    if !wanted.contains(&file) {
+                        wanted.push(file);
+                    }
+                }
+            }
+            for cue in show.player().active_cues() {
+                wanted.extend(audio_files(show.script(), cue..cue + 1));
+            }
+            for file in &wanted {
+                if !pending.contains(file) && !show.player().cache().contains(file) && wanted_files.send(file.clone()).is_ok() {
+                    pending.push(file.clone());
+                }
+            }
+            show.player().cache().retain(|file| wanted.iter().any(|w| w == file));
+        }
         while let Ok((file, clip)) = decoded_incoming.try_recv() {
-            loaded_files += 1;
+            pending.retain(|p| *p != file);
             match clip {
                 // A cue fired in the meantime may already have loaded the file itself.
                 Ok(clip) if !show.player().cache().contains(&file) => show.player().cache().insert(&file, clip),
@@ -392,7 +449,8 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
             output: output.clone(),
             problems: problems.clone(),
             heard,
-            loading: (loaded_files < total_files).then_some((loaded_files, total_files)),
+            loading: (!pending.is_empty()).then_some(pending.len()),
+            audio_memory_mb: (show.player().cache().held_seconds() * sample_rate as f64 * 4.0 / 1e6) as f32,
             emergency_light,
             fired_at: fired_at.clone(),
         };

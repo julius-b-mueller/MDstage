@@ -76,6 +76,17 @@ impl Clip {
             .collect()
     }
 
+    /// The sample rate of an audio file, read from its header without decoding it.
+    pub fn probe_rate(path: &Path) -> Option<u32> {
+        let stream = MediaSourceStream::new(Box::new(File::open(path).ok()?), Default::default());
+        let mut hint = Hint::new();
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            hint.with_extension(ext);
+        }
+        let probed = symphonia::default::get_probe().format(&hint, stream, &FormatOptions::default(), &MetadataOptions::default()).ok()?;
+        probed.format.tracks().iter().find(|t| t.codec_params.codec != CODEC_TYPE_NULL)?.codec_params.sample_rate
+    }
+
     /// Decode a whole audio file (WAV, AIFF, FLAC, MP3, Ogg Vorbis, AAC/M4A).
     /// Encoder delay and padding of MP3/AAC are trimmed where the file declares them.
     pub fn decode_file(path: &Path) -> Result<Clip> {
