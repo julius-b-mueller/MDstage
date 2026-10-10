@@ -552,7 +552,7 @@ mod tests {
         crate::theme::apply(&ctx);
         egui_extras::install_image_loaders(&ctx);
         for snapshot in &states {
-            let cx = Context { script: &script, cast: &cast, snapshot, locked: false, line_numbers: false, group_mics: true, has_editor: false, can_paste: false };
+            let cx = Context { script: &script, cast: &cast, snapshot, locked: false, line_numbers: false, group_mics: true, has_editor: false, vim: false, can_paste: false };
             for _ in 0..2 {
                 let mut asked = None;
                 let _ = ctx.run(egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 700.0))), ..Default::default() }, |ctx| asked = Some(live.show(ctx, &cx, true)));

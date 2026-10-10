@@ -16,6 +16,7 @@ use mdstage_engine::mtc::Timecode;
 use mdstage_engine::session::Snapshot;
 
 use crate::lang::t;
+use crate::vim::{self, Vim};
 use crate::theme::*;
 use crate::waveform::{WaveState, Waveforms};
 
@@ -118,6 +119,8 @@ pub struct Context<'a> {
     pub can_paste: bool,
     /// An editor command is set up: blocks can be opened in the text editor.
     pub has_editor: bool,
+    /// Text is edited with Vim keys.
+    pub vim: bool,
 }
 
 struct Editing {
@@ -166,6 +169,11 @@ pub struct ScriptView {
     following: std::collections::HashSet<usize>,
     /// The line of the show file each block begins on.
     lines: Vec<usize>,
+    /// Vim keys: the mode, what was yanked, and so on.
+    vim: Vim,
+    /// The block about to be edited was reached with `k` from the one below: the cursor
+    /// belongs on its last line.
+    vim_from_below: bool,
     /// Where the script was drawn last: the screen position of its top left corner
     /// (scrolled along) and the part of the window it shows in.
     drawn_at: Option<(egui::Pos2, Rect)>,
@@ -749,23 +757,110 @@ impl ScriptView {
         let id = Id::new("block-editor");
         let ghost = Self::ghost(cx.cast, &editing.buffer);
 
+        let cursor = egui::TextEdit::load_state(ui.ctx(), id).and_then(|state| state.cursor.char_range()).map(|range| range.primary.index);
+        let is_text = |i: usize| !matches!(cx.script.blocks.get(i), Some(Block::Cue(_) | Block::Config(_)) | None);
+        let above = (0..index).rev().find(|&i| is_text(i));
+        let below = (index + 1..cx.script.blocks.len()).find(|&i| is_text(i));
+
+        // Vim keys come first: in normal mode they take every key, in insert mode Escape.
+        let mut vim_outcome = vim::Outcome::Stay;
+        let mut vim_cursor = None;
+        // (Not while the keyboard belongs to a field elsewhere, such as a dialog's.)
+        let elsewhere = ui.memory(|m| m.focused()).is_some_and(|focused| focused != id);
+        if cx.vim && !elsewhere {
+            if !editing.focused {
+                self.vim.begin(if editing.fresh { vim::Mode::Insert } else { vim::Mode::Normal });
+            }
+            // The text field's cursor is still the previous block's on the first frame.
+            let cursor = cursor.filter(|_| editing.focused);
+            let mut keys = Vec::new();
+            let normal = self.vim.mode == vim::Mode::Normal;
+            ui.input_mut(|i| {
+                if !normal {
+                    if i.consume_key(Modifiers::NONE, Key::Escape) {
+                        keys.push(vim::Key::Escape);
+                    }
+                    return;
+                }
+                i.events.retain(|event| match event {
+                    egui::Event::Text(text) => {
+                        keys.extend(text.chars().map(vim::Key::Char));
+                        false
+                    }
+                    // Shortcuts with Cmd/Ctrl (copy, select all, …) stay the text field's.
+                    egui::Event::Key { modifiers, .. } if modifiers.command || modifiers.ctrl => true,
+                    egui::Event::Key { key, pressed, .. } => {
+                        let known = match key {
+                            Key::Escape => Some(vim::Key::Escape),
+                            Key::Enter => Some(vim::Key::Enter),
+                            Key::ArrowLeft | Key::Backspace => Some(vim::Key::Char('h')),
+                            Key::ArrowRight => Some(vim::Key::Char('l')),
+                            Key::ArrowUp => Some(vim::Key::Char('k')),
+                            Key::ArrowDown => Some(vim::Key::Char('j')),
+                            _ => None,
+                        };
+                        keys.extend(known.filter(|_| *pressed));
+                        false
+                    }
+                    egui::Event::Paste(_) | egui::Event::Cut => false,
+                    _ => true,
+                });
+            });
+            // Where the cursor starts in a block just opened: at its top, or on its last
+            // line when it was reached from below; behind the text of a new block.
+            let length = editing.buffer.chars().count();
+            let mut at = cursor.unwrap_or_else(|| match (editing.fresh, std::mem::take(&mut self.vim_from_below)) {
+                (true, _) => length,
+                (false, true) => editing.buffer.rfind('\n').map_or(0, |newline| editing.buffer[..=newline].chars().count()),
+                (false, false) => 0,
+            });
+            for key in &keys {
+                vim_outcome = self.vim.key(*key, &mut editing.buffer, &mut at);
+                if vim_outcome != vim::Outcome::Stay {
+                    break;
+                }
+            }
+            if !keys.is_empty() || cursor.is_none() {
+                let mut state = egui::TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
+                state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(at))));
+                state.store(ui.ctx(), id);
+            }
+            if let Some(text) = self.vim.copied.take() {
+                ui.ctx().copy_text(text);
+            }
+            vim_cursor = (self.vim.mode == vim::Mode::Normal).then_some(at);
+        }
+
         // Keys the editor handles itself must be taken before the text field sees them.
         let tab = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Tab));
-        let commit = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
-        let cancel = ui.input(|i| i.key_pressed(Key::Escape));
+        let mut commit = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
+        let mut cancel = !cx.vim && ui.input(|i| i.key_pressed(Key::Escape));
         // Arrow up on the first line and arrow down on the last leave for the text block
         // above or below.
-        let cursor = egui::TextEdit::load_state(ui.ctx(), id).and_then(|state| state.cursor.char_range()).map(|range| range.primary.index);
         let before: String = editing.buffer.chars().take(cursor.unwrap_or(0)).collect();
         let after: String = editing.buffer.chars().skip(cursor.unwrap_or(0)).collect();
-        let is_text = |i: usize| !matches!(cx.script.blocks.get(i), Some(Block::Cue(_) | Block::Config(_)) | None);
-        let leave = if cursor.is_some() && !before.contains('\n') && ui.input(|i| i.key_pressed(Key::ArrowUp)) {
-            (0..index).rev().find(|&i| is_text(i))
+        let mut leave = if cursor.is_some() && !before.contains('\n') && ui.input(|i| i.key_pressed(Key::ArrowUp)) {
+            above
         } else if cursor.is_some() && !after.contains('\n') && ui.input(|i| i.key_pressed(Key::ArrowDown)) {
-            (index + 1..cx.script.blocks.len()).find(|&i| is_text(i))
+            below
         } else {
             None
         };
+        // What a Vim key asked for beyond the text.
+        let (mut close, mut open_above, mut delete_block) = (false, false, false);
+        match vim_outcome {
+            vim::Outcome::Stay => {}
+            vim::Outcome::Close => close = true,
+            vim::Outcome::Discard => cancel = true,
+            vim::Outcome::LeaveUp => {
+                leave = above;
+                self.vim_from_below = above.is_some();
+            }
+            vim::Outcome::LeaveDown => leave = below,
+            vim::Outcome::OpenBelow => commit = true,
+            vim::Outcome::OpenAbove => open_above = true,
+            vim::Outcome::DeleteBlock => delete_block = true,
+        }
         // Backspace with nothing typed after the names takes the last name away again.
         if let Some((names, "")) = Self::role_header(&editing.buffer) {
             if cursor == Some(editing.buffer.chars().count()) && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Backspace)) {
@@ -802,7 +897,20 @@ impl ScriptView {
             output.response.request_focus();
             editing.focused = true;
         }
-        if let Some((_, rest)) = Self::ghost(cx.cast, &editing.buffer) {
+        if cx.vim {
+            // The mode at the right edge; in normal mode a block cursor on its character.
+            let normal = self.vim.mode == vim::Mode::Normal;
+            let label = if normal { format!("NORMAL {}", self.vim.pending()) } else { "INSERT".to_string() };
+            child.painter().text(pos2(rect.right(), rect.top() + 2.0), Align2::RIGHT_TOP, label.trim_end(), FontId::monospace(10.0), if normal { BLUE } else { GREEN });
+            if let Some(at) = vim_cursor {
+                let here = output.galley.pos_from_cursor(&output.galley.from_ccursor(CCursor::new(at)));
+                let next = output.galley.pos_from_cursor(&output.galley.from_ccursor(CCursor::new(at + 1)));
+                let width = if (next.top() - here.top()).abs() < 1.0 && next.left() > here.left() { next.left() - here.left() } else { 9.0 };
+                let block = Rect::from_min_size(output.galley_pos + here.left_top().to_vec2(), vec2(width, here.height().max(18.0)));
+                child.painter().rect_filled(block, 1.0, BRIGHT.gamma_multiply(0.35));
+            }
+        }
+        if let Some((_, rest)) = Self::ghost(cx.cast, &editing.buffer).filter(|_| vim_cursor.is_none()) {
             let end = output.galley.pos_from_cursor(&output.galley.end());
             let pos = output.galley_pos + end.right_top().to_vec2();
             child.painter().text(pos, Align2::LEFT_TOP, format!("{rest}  Tab"), FontId::proportional(17.0), MUTED);
@@ -820,16 +928,28 @@ impl ScriptView {
                 actions.push(Action::Delete(index));
             }
             self.dirty = true;
-        } else if commit || leave.is_some() {
+        } else if delete_block {
+            // `dd` on a block's only line takes the block; go on in the one after it.
+            actions.push(Action::Delete(index));
+            if let Some(to) = below.map(|b| b - 1).or(above) {
+                actions.push(Action::EditText(to));
+            }
+            self.dirty = true;
+        } else if commit || close || open_above || leave.is_some() {
             // Whatever was typed becomes one block. With nothing left in the editor the
             // block goes: a new one that was left empty, or one whose text was all taken out.
             let mut removed = false;
             match Self::typed_block(&editing.buffer) {
                 Some(with) => {
-                    actions.push(Action::Replace { block: index, with });
-                    // Enter carries on writing in a new block below.
+                    // A block that was only looked at is not written again.
+                    if cx.script.blocks.get(index) != Some(&with) {
+                        actions.push(Action::Replace { block: index, with });
+                    }
+                    // Enter (and `o`) carry on writing in a new block below, `O` above.
                     if commit {
                         actions.push(Action::NewText(index + 1));
+                    } else if open_above {
+                        actions.push(Action::NewText(index));
                     }
                 }
                 None => {
@@ -837,7 +957,7 @@ impl ScriptView {
                     removed = true;
                 }
             }
-            if let Some(to) = leave.filter(|_| !commit) {
+            if let Some(to) = leave.filter(|_| !commit && !open_above && !close) {
                 // With this block gone, the ones after it have moved up by one.
                 actions.push(Action::EditText(if removed && to > index { to - 1 } else { to }));
             }

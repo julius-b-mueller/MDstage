@@ -169,6 +169,8 @@ pub struct Settings {
     pub sidebar_hidden: bool,
     /// Show the line of the show file each block begins on.
     pub line_numbers: bool,
+    /// Edit text with Vim keys (normal and insert mode) in the inline editor.
+    pub vim_keys: bool,
     /// Command that opens a line of the show file in a text editor: `{file}` and
     /// `{line}` are filled in. Empty: no such command.
     pub editor_command: String,
@@ -200,6 +202,7 @@ impl Default for Settings {
             language: "de".into(),
             sidebar_hidden: false,
             line_numbers: false,
+            vim_keys: false,
             editor_command: String::new(),
             open_locked: false,
             group_mics: true,

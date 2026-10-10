@@ -17,6 +17,7 @@ mod script_view;
 mod settings_ui;
 mod store;
 mod theme;
+mod vim;
 mod waveform;
 
 use std::path::{Path, PathBuf};
@@ -1430,7 +1431,7 @@ impl App {
             return;
         }
         let Some(show) = &self.show else { return };
-        let cx = Context { script: &show.script, cast: &show.cast, snapshot: &self.snapshot, locked: self.locked, line_numbers: self.settings.line_numbers, group_mics: self.settings.group_mics, has_editor: !self.settings.editor_command.trim().is_empty(), can_paste: self.copied.is_some() };
+        let cx = Context { script: &show.script, cast: &show.cast, snapshot: &self.snapshot, locked: self.locked, line_numbers: self.settings.line_numbers, group_mics: self.settings.group_mics, has_editor: !self.settings.editor_command.trim().is_empty(), vim: self.settings.vim_keys, can_paste: self.copied.is_some() };
         let mut requests = Vec::new();
         let mut close = false;
         let builder = egui::ViewportBuilder::default().with_title(self.t("MDstage — Live-Ansicht", "MDstage — Live View")).with_inner_size([980.0, 860.0]);
@@ -1564,7 +1565,7 @@ impl eframe::App for App {
         }
         egui::CentralPanel::default().show(ctx, |ui| match &self.show {
             Some(show) => {
-                let cx = Context { script: &show.script, cast: &show.cast, snapshot: &self.snapshot, locked: self.locked, line_numbers: self.settings.line_numbers, group_mics: self.settings.group_mics, has_editor: !self.settings.editor_command.trim().is_empty(), can_paste: self.copied.is_some() };
+                let cx = Context { script: &show.script, cast: &show.cast, snapshot: &self.snapshot, locked: self.locked, line_numbers: self.settings.line_numbers, group_mics: self.settings.group_mics, has_editor: !self.settings.editor_command.trim().is_empty(), vim: self.settings.vim_keys, can_paste: self.copied.is_some() };
                 self.view.show(ui, &cx, &mut actions);
             }
             None => {
