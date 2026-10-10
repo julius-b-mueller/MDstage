@@ -186,7 +186,7 @@ enum Tie {
 impl Tie {
     fn colour(self) -> Color32 {
         match self {
-            Tie::Chain => YELLOW,
+            Tie::Chain => ORANGE,
             Tie::Auto => PURPLE,
             Tie::Adjust => GREEN,
         }
@@ -207,9 +207,11 @@ struct Relation {
 
 /// Each kind of connection has one colour for everything about it — the row in the
 /// card, the button, the line in the margin: auto-cues purple, adjusting another cue's
-/// audio green, start/loop/finish yellow.
+/// audio green, start/loop/finish orange (as the loop point on the waveform).
 /// The colour of auto-cues: their marker on the waveform, their row and their line.
 const PURPLE: Color32 = Color32::from_rgb(0xc6, 0x78, 0xdd);
+/// The colour of start/loop/finish and of a loop's point on its waveform.
+const ORANGE: Color32 = Color32::from_rgb(0xd1, 0x9a, 0x66);
 /// Height of the line above a waveform that names its auto-cue markers.
 const AUTO_NAMES: f32 = 14.0;
 /// From a cue's left edge to the first lane: room for an arrowhead and a straight piece
@@ -708,7 +710,7 @@ impl ScriptView {
                 spans.push((part.audios.iter().map(|a| a.file.as_str()).collect::<Vec<_>>().join(" + "), TEXT));
             }
             if audio.looped || audio.parts.len() > 1 || cue.loop_outro().is_some() {
-                spans.push(("⟳".to_string(), YELLOW));
+                spans.push(("⟳".to_string(), ORANGE));
             }
             rows.push(Row::plain("♬", spans));
         }
@@ -729,10 +731,10 @@ impl ScriptView {
         let word = |text: &str, colour: Color32| (text.to_string(), colour, None);
         let to = |target: Option<usize>| (target.map_or(String::new(), |c| format!("Cue {}", c + 1)), BRIGHT, Some(target));
         match cues.slf(cue_index) {
-            Some(Slf::Start { next }) => rows.push(Row::linked("S/L/F", vec![word("Start →", YELLOW), to(cues.find(next))])),
-            Some(Slf::Loop { outro }) => rows.push(Row::linked("S/L/F", vec![word("Loop ↩", YELLOW), to(cues.find(outro))])),
-            Some(Slf::Finish { from }) => rows.push(Row::linked("S/L/F", vec![word("Finish ←", YELLOW), to(from.first().copied())])),
-            Some(Slf::Bridge { from, next }) => rows.push(Row::linked("S/L/F", vec![word("Bridge ←", YELLOW), to(from.first().copied()), word("→", YELLOW), to(cues.find(next))])),
+            Some(Slf::Start { next }) => rows.push(Row::linked("S/L/F", vec![word("Start →", ORANGE), to(cues.find(next))])),
+            Some(Slf::Loop { outro }) => rows.push(Row::linked("S/L/F", vec![word("Loop ↩", ORANGE), to(cues.find(outro))])),
+            Some(Slf::Finish { from }) => rows.push(Row::linked("S/L/F", vec![word("Finish ←", ORANGE), to(from.first().copied())])),
+            Some(Slf::Bridge { from, next }) => rows.push(Row::linked("S/L/F", vec![word("Bridge ←", ORANGE), to(from.first().copied()), word("→", ORANGE), to(cues.find(next))])),
             None => {}
         }
         if let Some(auto) = cue.auto_trigger() {
@@ -1768,7 +1770,7 @@ impl ScriptView {
             None => "S/L/F",
         };
         let linked = cue.chain_end().is_some() || cue.loop_outro().is_some();
-        let label = RichText::new(slf).size(13.0).color(if matches!(self.picking, Some((Link::Chain | Link::LoopOutro, b)) if b == block) { BRIGHT } else if slf != "S/L/F" { YELLOW } else { TEXT });
+        let label = RichText::new(slf).size(13.0).color(if matches!(self.picking, Some((Link::Chain | Link::LoopOutro, b)) if b == block) { BRIGHT } else if slf != "S/L/F" { ORANGE } else { TEXT });
         row.add_enabled_ui(has_audio, |row| {
             row.menu_button(label, |ui| {
                 if ui.button(t("Start: am Ende nahtlos weiter mit … (Cue anklicken)", "Start: at the end carry straight on with … (click a cue)")).clicked() {
@@ -2039,7 +2041,7 @@ impl ScriptView {
         }
 
         if let Some(point) = part.fading_point.filter(|p| *p > marks.start && *p < marks.end) {
-            painter.vline(x_of(point), rect.y_range(), Stroke::new(2.0_f32, Color32::from_rgb(0xd1, 0x9a, 0x66)));
+            painter.vline(x_of(point), rect.y_range(), Stroke::new(2.0_f32, ORANGE));
         }
 
         // Cues that fire by themselves at a place in this audio.
