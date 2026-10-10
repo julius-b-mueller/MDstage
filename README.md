@@ -205,7 +205,9 @@ Every trigger has an **✎ Edit** button that opens a dialog. New cues are added
 
 **Copy / paste (⧉):** The **⧉ Copy** button on a trigger copies the whole cue (all of its fields) to an in-app clipboard. A **📋 paste** button then appears next to every **+** insert zone, so the cue can be dropped in anywhere; the pasted copy is standalone (it gets a fresh trigger note and is never a variant). The clipboard is session-only.
 
-**◉ Live (arm in live view):** Opens the live view with this cue armed as the next Go — handy for jumping straight to a specific point during a rehearsal or top-of-scene. Arming is allowed even while the show is locked.
+**◉ Live (arm in live view):** Opens the live view with this cue armed as the next Go — handy for jumping straight to a specific point during a rehearsal or top-of-scene. While the show is locked the button is hidden.
+
+**Show lock:** With the lock on, the script takes one interaction only: a click on a cue. With the live view closed it fires the cue, with the live view open it arms it as the next Go. Waveforms cannot be scrolled, zoomed or dragged, the transport row and the cue buttons are off, and nothing can be edited.
 
 ### Variants
 

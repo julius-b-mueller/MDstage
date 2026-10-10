@@ -1563,7 +1563,7 @@ impl ScriptView {
         }
         // The buttons show while the pointer is on the cue (or a connection is being set
         // up from it, or one of its menus is open); otherwise only the trigger note.
-        let full = under_pointer || matches!(self.picking, Some((_, from)) if from == block) || (self.buttons_of == Some(block) && ui.memory(|m| m.any_popup_open()));
+        let full = !cx.locked && (under_pointer || matches!(self.picking, Some((_, from)) if from == block) || (self.buttons_of == Some(block) && ui.memory(|m| m.any_popup_open())));
         if full {
             self.buttons_of = Some(block);
         }
@@ -1578,7 +1578,7 @@ impl ScriptView {
             let mut places = Vec::new();
             let lines = Self::flow(ui, Some(&painter), &row.spans, &font, left + 56.0, panel.right() - 12.0, y, ROW, Some(&mut places));
             // A reference to another cue is underlined; a click goes there.
-            for (span, target) in row.links {
+            for (span, target) in row.links.into_iter().filter(|_| !cx.locked) {
                 let Some(place) = places.get(span) else { continue };
                 let link = ui.interact(place.expand(2.0), Id::new(("cue-link", block, row.label, span)), Sense::click());
                 painter.hline(place.x_range(), place.bottom(), Stroke::new(1.0_f32, if link.hovered() { BRIGHT } else { MUTED }));
@@ -1628,6 +1628,10 @@ impl ScriptView {
             }
             None if response.clicked() => actions.push(Action::Fire(cue_index)),
             None => {}
+        }
+        if cx.locked {
+            // Under the show lock a cue can be clicked and nothing else.
+            return;
         }
         response.context_menu(|ui| {
             let mut pick = |ui: &mut Ui, label: &str, action: Action| {
@@ -1764,6 +1768,10 @@ impl ScriptView {
         row.spacing_mut().item_spacing.x = 6.0;
         row.spacing_mut().button_padding = vec2(7.0, 2.0);
         row.spacing_mut().slider_width = 110.0;
+        if cx.locked {
+            // Under the show lock the row only shows; a click on it goes to the cue.
+            row.disable();
+        }
         let play_hint = if sounding { t("Pause", "Pause") } else { t("Nur das Audio dieses Cues abspielen", "Play this cue's audio by itself") };
         if row.add(egui::Button::image(if sounding { Icon::Pause } else { Icon::Play }.image(13.0, TEXT))).on_hover_text(play_hint).clicked() {
             actions.push(Action::PlayPause(cue));
@@ -1861,7 +1869,9 @@ impl ScriptView {
         let mut marks = self.dragging.get(&block).copied().unwrap_or(saved);
 
         // The stretch of the file in view: all of it, unless zoomed in.
-        let area = ui.interact(rect, Id::new(("wave", block)), Sense::click_and_drag());
+        // Under the show lock the waveform is only looked at: it takes no drag and no
+        // scrolling, and a click on it goes to the cue like anywhere else on the card.
+        let area = ui.interact(rect, Id::new(("wave", block)), if cx.locked { Sense::hover() } else { Sense::click_and_drag() });
         let (zoom, mut view_start) = self.zoom.get(&block).copied().unwrap_or((1.0, 0.0));
         let view_len = duration / zoom as f64;
         if zoom > 1.0 {
@@ -1873,7 +1883,7 @@ impl ScriptView {
             if playing && self.following.contains(&block) && !in_view(view_start) {
                 view_start = cursor.unwrap_or(view_start) - 0.1 * view_len;
             }
-            if area.hovered() {
+            if area.hovered() && !cx.locked {
                 view_start -= ui.input(|i| i.smooth_scroll_delta.x) as f64 / rect.width() as f64 * view_len;
             }
             view_start = view_start.clamp(0.0, duration - view_len);

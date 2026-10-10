@@ -413,7 +413,7 @@ impl App {
         for action in actions {
             match &action {
                 // With the live view open a click only chooses the next Go.
-                Action::Fire(cue) if self.live_open || self.locked => self.request(Request::Arm(Some(*cue))),
+                Action::Fire(cue) if self.live_open => self.request(Request::Arm(Some(*cue))),
                 Action::Fire(cue) => self.request(Request::Fire(*cue)),
                 Action::Arm(cue) => self.request(Request::Arm(Some(*cue))),
                 Action::EditCue(block) | Action::NewCue(block) => {
