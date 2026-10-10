@@ -161,6 +161,9 @@ pub struct ScriptView {
     volumes: HashMap<usize, f64>,
     /// Waveforms that are zoomed in: block → (factor, where the view begins in seconds).
     zoom: HashMap<usize, (f32, f64)>,
+    /// Zoomed waveforms whose playback position was in view when last drawn. Only those
+    /// follow the position; one the operator has scrolled away from stays where it is.
+    following: std::collections::HashSet<usize>,
     /// The line of the show file each block begins on.
     lines: Vec<usize>,
     /// Where the script was drawn last: the screen position of its top left corner
@@ -1147,13 +1150,22 @@ impl ScriptView {
         let (zoom, mut view_start) = self.zoom.get(&block).copied().unwrap_or((1.0, 0.0));
         let view_len = duration / zoom as f64;
         if zoom > 1.0 {
+            // The view turns the page when the playback position walks out of it (or a
+            // loop takes it back to the start) — but only if it was in view before. After
+            // scrolling away by hand the view is left alone, so that a place further on
+            // can be found and clicked while the audio plays.
+            let in_view = |start: f64| cursor.is_some_and(|at| at >= start && at <= start + view_len);
+            if playing && self.following.contains(&block) && !in_view(view_start) {
+                view_start = cursor.unwrap_or(view_start) - 0.1 * view_len;
+            }
             if area.hovered() {
                 view_start -= ui.input(|i| i.smooth_scroll_delta.x) as f64 / rect.width() as f64 * view_len;
             }
-            if let Some(at) = cursor.filter(|at| playing && (*at < view_start || *at > view_start + view_len)) {
-                view_start = at - 0.1 * view_len;
-            }
             view_start = view_start.clamp(0.0, duration - view_len);
+            match in_view(view_start) {
+                true => drop(self.following.insert(block)),
+                false => drop(self.following.remove(&block)),
+            }
             self.zoom.insert(block, (zoom, view_start));
         } else {
             view_start = 0.0;
