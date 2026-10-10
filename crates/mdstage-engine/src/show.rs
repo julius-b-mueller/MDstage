@@ -83,6 +83,8 @@ pub struct Show {
     stopped_at: HashMap<usize, (usize, f64)>,
     timecode: Option<TimecodeSource>,
     effects: Vec<Effect>,
+    /// Things that went wrong and the operator should know about.
+    problems: Vec<String>,
     /// Display content as last reported, by device.
     shown: HashMap<String, String>,
     now: f64,
@@ -107,6 +109,7 @@ impl Show {
             stopped_at: HashMap::new(),
             timecode: None,
             effects: Vec::new(),
+            problems: Vec::new(),
             shown: HashMap::new(),
             now: 0.0,
         }
@@ -159,6 +162,17 @@ impl Show {
     /// Take the effects collected since the last call, in the order they should be sent.
     pub fn take_effects(&mut self) -> Vec<Effect> {
         std::mem::take(&mut self.effects)
+    }
+
+    /// Take the problems reported since the last call (audio that could not be loaded).
+    pub fn take_problems(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.problems)
+    }
+
+    /// Cues with audio loaded, and where each one is.
+    pub fn audio_status(&self) -> Vec<(usize, crate::player::Status)> {
+        let clock = self.clock.as_deref();
+        self.player.active_cues().into_iter().filter_map(|cue| Some((cue, self.player.status(cue, clock)?))).collect()
     }
 
     /// Make a cue the next Go, whatever the position (jump, "arm in live view").
@@ -285,18 +299,25 @@ impl Show {
 
         let audio = c.audio();
         let then = self.then(cue);
-        if let (Some(audio), false) = (&audio, started) {
-            self.player.start(cue, audio, Start::now(then))?;
-        }
-        if let (Some(audio), Then::Chain(next)) = (&audio, then) {
-            if let Some(next_audio) = self.audio(next).filter(|_| !self.chains.contains(&(cue, next))) {
-                self.player.start(next, &next_audio, Start::armed(self.then(next)))?;
-                self.chains.push((cue, next));
+        // Audio that cannot be loaded must not hold up the rest of the cue: the show goes
+        // on, and the problem is reported.
+        let mut audio = audio;
+        if let (Some(loaded), false) = (&audio, started) {
+            if let Err(e) = self.player.start(cue, loaded, Start::now(then)) {
+                self.problems.push(format!("Cue {}: {e}", cue + 1));
+                audio = None;
             }
-            let _ = audio;
+        }
+        if let (Some(_), Then::Chain(next)) = (&audio, then) {
+            if let Some(next_audio) = self.audio(next).filter(|_| !self.chains.contains(&(cue, next))) {
+                match self.player.start(next, &next_audio, Start::armed(self.then(next))) {
+                    Ok(()) => self.chains.push((cue, next)),
+                    Err(e) => self.problems.push(format!("Cue {}: {e}", next + 1)),
+                }
+            }
         }
         if let Some(audio) = &audio {
-            let spans = self.player.spans(audio)?;
+            let spans = self.player.spans(audio).unwrap_or_default();
             // Where the audio is in its cycle right now (0 for a fresh start).
             let into = self.player.status(cue, self.clock.as_deref()).filter(|_| started).map_or(0.0, |s| {
                 spans[..s.part.min(spans.len())].iter().map(|(a, b)| b - a).sum::<f64>() + (s.seconds - s.start)
@@ -885,6 +906,20 @@ mod tests {
         rig.show.stop_all().unwrap();
         rig.run(640);
         assert_eq!(rig.show.timecode_seconds(), None);
+    }
+
+    #[test]
+    fn a_cue_with_missing_audio_still_fires_everything_else() {
+        let mut rig = rig(&["music: missing.wav\nmic: Anna\ncue_midi:\n    - {device: Licht, type: pc, program: 3}", "light: next"], &[]);
+        rig.show.go().unwrap();
+        assert_eq!(rig.fired(), [0]);
+        let effects = rig.show.take_effects();
+        assert!(effects.contains(&Effect::Midi { device: "Licht".into(), bytes: vec![0xC0, 3], then_off: None }));
+        assert!(matches!(effects[0], Effect::Mic(_)));
+        let problems = rig.show.take_problems();
+        assert_eq!(problems.len(), 1);
+        assert!(problems[0].starts_with("Cue 1: ") && problems[0].contains("missing.wav"), "{problems:?}");
+        assert_eq!(rig.show.next(), Some(1), "and the show goes on");
     }
 
     #[test]

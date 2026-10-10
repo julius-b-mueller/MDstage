@@ -375,6 +375,13 @@ impl Player {
         })
     }
 
+    /// The cues that have audio loaded (playing, ringing out or armed), in cue order.
+    pub fn active_cues(&self) -> Vec<usize> {
+        let mut cues: Vec<usize> = self.active.keys().copied().collect();
+        cues.sort_unstable();
+        cues
+    }
+
     /// Whether a cue's audio is audible (playing or ringing out).
     pub fn is_sounding(&self, cue: usize) -> bool {
         self.active.get(&cue).is_some_and(|a| a.states().any(|s| matches!(s, VoiceState::Playing | VoiceState::Tail)))

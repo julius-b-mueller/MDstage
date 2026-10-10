@@ -7,10 +7,14 @@
 pub mod clip;
 pub mod clock;
 pub mod device;
+pub mod display;
+pub mod inputs;
 pub mod mixer;
 pub mod mtc;
 pub mod outputs;
 pub mod player;
+pub mod session;
+pub mod settings;
 pub mod show;
 
 #[derive(Debug, thiserror::Error)]
