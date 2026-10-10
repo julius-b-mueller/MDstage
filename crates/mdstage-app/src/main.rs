@@ -430,14 +430,12 @@ impl App {
                     let others_auto = show.script.blocks.iter().enumerate().any(|(i, b)| matches!(b, Block::Cue(c) if c.auto_mic() && (i != block || existing.is_none())));
                     let audio_dir = show.path.parent().unwrap_or(Path::new(".")).join("audio");
                     // The other cues, for linking to them (S/L/F, auto-cue, adjust).
-                    let mut number = 0;
                     let mut links = Vec::new();
                     for (i, b) in show.script.blocks.iter().enumerate() {
                         let Block::Cue(cue) = b else { continue };
-                        number += 1;
                         let Some(note) = cue.note().filter(|_| i != block || existing.is_none()) else { continue };
                         let what = cue.text("note").map(str::to_string).or_else(|| cue.audio().map(|a| a.parts[0].audios[0].file.clone())).unwrap_or_default();
-                        links.push((note, format!("Cue {number}  ({note})  {what}").trim_end().to_string()));
+                        links.push((note, format!("Cue {note}  {what}").trim_end().to_string()));
                     }
                     let mut devices = cue_forms::Devices::default();
                     for device in &self.settings.devices {
@@ -448,7 +446,15 @@ impl App {
                             mdstage_engine::settings::DeviceSetting::Display { name, .. } => devices.display.push(name.clone()),
                         }
                     }
-                    self.cue_dialog = Some(CueDialog::new(block, existing.is_none(), existing, &audio_dir, others_auto, links).with_setup(show.script.virtual_channels(), devices));
+                    // The notes other cues have: this one must not take one of them. The
+                    // variants of the cue being edited share its note and do not count.
+                    let cues = Cues::new(&show.script);
+                    let own_group: Vec<usize> = match existing {
+                        Some(_) => (0..cues.len()).find(|&c| cues.block_index(c) == Some(block)).map(|c| cues.group(c).collect()).unwrap_or_default(),
+                        None => Vec::new(),
+                    };
+                    let taken: Vec<mdstage_core::cues::Note> = (0..cues.len()).filter(|c| !own_group.contains(c)).filter_map(|c| cues.get(c)?.note()).collect();
+                    self.cue_dialog = Some(CueDialog::new(block, existing.is_none(), existing, &audio_dir, others_auto, links).with_setup(show.script.virtual_channels(), devices).with_taken(taken));
                 }
                 Action::InsertCue(at) => {
                     if let Some(show) = &mut self.show {
@@ -875,7 +881,7 @@ impl App {
             let unknown = p.message.strip_prefix("Unbekannter Schlüssel: ").map(|key| (p.block, key.to_string()));
             (format!("{} {}: {}", lang::t("YAML-Block", "YAML block"), p.block, p.message), RED, unknown)
         }));
-        lines.extend(show.report.note_conflicts.iter().map(|c| (if lang::english() { format!("Trigger note {} used twice: YAML blocks {} and {}", c.note, c.first, c.second) } else { format!("Trigger-Note {} doppelt: YAML-Blöcke {} und {}", c.note, c.first, c.second) }, RED, None)));
+        lines.extend(show.report.note_conflicts.iter().map(|c| (if lang::english() { format!("Trigger note {} is used by two cues (YAML blocks {} and {}). Every cue needs a note of its own; only variants share one.", c.note, c.first, c.second) } else { format!("Trigger-Note {} haben zwei Cues (YAML-Blöcke {} und {}). Jeder Cue braucht eine eigene Note; nur Varianten teilen sich eine.", c.note, c.first, c.second) }, RED, None)));
         // Devices the cues send to that this machine has no address for.
         let mut missing: Vec<&str> = Vec::new();
         for cue in show.script.blocks.iter().filter_map(|b| match b {
@@ -1070,6 +1076,21 @@ impl App {
                     if let (Some(before), Some(after)) = (before, cue.note()) {
                         if before != after {
                             show.script.renumber_note(before, after);
+                            // Variants share their cue's note: the rest of the group follows.
+                            let cues = Cues::new(&show.script);
+                            let edited = (0..cues.len()).find(|&c| cues.block_index(c) == Some(dialog.block));
+                            let group: Vec<usize> = edited.map(|c| cues.group(c).filter_map(|member| cues.block_index(member)).collect()).unwrap_or_default();
+                            for member in group {
+                                if let Some(Block::Cue(other)) = show.script.blocks.get_mut(member) {
+                                    if other.note() == Some(before) {
+                                        let mut yaml = other.yaml.clone();
+                                        if let Some(map) = yaml.as_mapping_mut() {
+                                            map.insert("trigger_note".into(), note_value(after));
+                                        }
+                                        other.set_yaml(yaml);
+                                    }
+                                }
+                            }
                         }
                     }
                     // A cue must keep a trigger note even if it was deleted from the YAML.

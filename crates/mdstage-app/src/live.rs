@@ -360,7 +360,7 @@ impl LiveView {
                                 ui.label(RichText::new("⟳ Loop").size(12.0).color(PURPLE));
                             });
                         }
-                        ui.add(egui::Label::new(RichText::new(format!("Cue {}  {}", cue + 1, summary(cx.script, *cue))).size(16.0).color(TEXT)).truncate());
+                        ui.add(egui::Label::new(RichText::new(format!("{}  {}", Cues::new(cx.script).name(*cue), summary(cx.script, *cue))).size(16.0).color(TEXT)).truncate());
                     });
                     let time = if tail { t("klingt aus", "ringing out").to_string() } else { format!("{:.1} / {:.1} s", status.seconds - from, to - from) };
                     let colour = if looped { PURPLE } else { GREEN };
@@ -543,7 +543,7 @@ impl LiveView {
 
         let left = rect.left() + 18.0;
         let mut y = rect.top() + 14.0;
-        let title = painter.text(pos2(left, y), Align2::LEFT_TOP, format!("Cue {}", cue + 1), FontId::proportional(size + 2.0), tint(BRIGHT));
+        let title = painter.text(pos2(left, y), Align2::LEFT_TOP, Cues::new(cx.script).name(cue), FontId::proportional(size + 2.0), tint(BRIGHT));
         let sounding = snapshot.audio.iter().any(|(a, s)| *a == cue && matches!(s.state, VoiceState::Playing | VoiceState::Tail));
         let mut x = title.right() + 12.0;
         if is_current {
@@ -551,9 +551,6 @@ impl LiveView {
         }
         if sounding {
             painter.text(pos2(x, y + 2.0), Align2::LEFT_TOP, "♪", FontId::proportional(size - 2.0), tint(GREEN));
-        }
-        if let Some(note) = c.note() {
-            painter.text(pos2(rect.right() - 16.0, y + 2.0), Align2::RIGHT_TOP, note.to_string(), FontId::proportional(size - 3.0), tint(MUTED));
         }
         y += size + 9.0;
         for row in ScriptView::cue_rows(cx, block, cue, c, &HashMap::new()) {

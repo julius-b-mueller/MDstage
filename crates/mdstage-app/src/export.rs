@@ -90,13 +90,10 @@ pub fn typst_source(book: &Book, date: &str) -> String {
                 }
                 out.push_str("]\n");
             }
-            Item::Cue(CueBox { number, title, trigger, rows }) => {
+            Item::Cue(CueBox { title, trigger, rows, .. }) => {
                 out.push_str("#block(width: 100%, stroke: 0.5pt + luma(136), inset: 6pt, breakable: false)[#set text(size: 10pt)\n");
-                out.push_str(&format!(
-                    "#grid(columns: (1fr, auto), text(weight: \"bold\", {}), text(fill: luma(102), {}))\n",
-                    lit(&format!("Cue {number}  {title}")),
-                    lit(trigger)
-                ));
+                // A cue is called after its trigger note.
+                out.push_str(&format!("#text(weight: \"bold\", {})\n\n", lit(format!("Cue {trigger}  {title}").trim_end())));
                 // The header grid is a block of its own, so only later rows need a line break.
                 for (n, (label, value)) in rows.iter().enumerate() {
                     let lead = if n == 0 { "#v(-4pt)" } else { "#linebreak()" };
@@ -223,9 +220,9 @@ pub fn docx(book: &Book, date: &str) -> Result<Vec<u8>, String> {
                 }
                 doc.add_paragraph(paragraph)
             }
-            Item::Cue(CueBox { number, title, trigger, rows }) => {
+            Item::Cue(CueBox { title, trigger, rows, .. }) => {
                 let mut paragraph = Paragraph::new().indent(Some(170), None, None, None);
-                paragraph = paragraph.add_run(run(&format!("▌ Cue {number}  {title}")).bold().size(20)).add_run(run(&format!("    {trigger}")).color(grey).size(20));
+                paragraph = paragraph.add_run(run(format!("▌ Cue {trigger}  {title}").trim_end()).bold().size(20));
                 for (label, value) in rows {
                     paragraph = paragraph
                         .add_run(Run::new().add_break(BreakType::TextWrapping))

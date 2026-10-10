@@ -26,7 +26,7 @@ impl Note {
 
 impl std::fmt::Display for Note {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}/{}", self.ch, self.note)
+        write!(f, "{}.{}", self.ch, self.note)
     }
 }
 
@@ -179,6 +179,15 @@ impl<'a> Cues<'a> {
     /// Index of the cue's block in the script.
     pub fn block_index(&self, cue: usize) -> Option<usize> {
         self.blocks.get(cue).copied()
+    }
+
+    /// What a cue is called: "Cue 1.47", after its trigger note (channel.note). The
+    /// name stays the same when cues are added or moved; variants of a cue share it.
+    pub fn name(&self, cue: usize) -> String {
+        match self.get(cue).and_then(Cue::note) {
+            Some(note) => format!("Cue {note}"),
+            None => "Cue ?".to_string(),
+        }
     }
 
     /// The first cue carrying this trigger note.
@@ -444,7 +453,7 @@ mod tests {
         assert!(cues.get(3).unwrap().is_variant());
         assert_eq!(cues.find(note(2)), Some(2));
         assert_eq!(cues.find(note(9)), None);
-        assert_eq!(note(7).to_string(), "1/7");
+        assert_eq!(note(7).to_string(), "1.7");
     }
 
     #[test]

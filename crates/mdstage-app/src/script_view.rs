@@ -786,7 +786,7 @@ impl ScriptView {
         }
         // References to other cues: each "Cue N" is a span of its own that can be clicked.
         let word = |text: &str, colour: Color32| (text.to_string(), colour, None);
-        let to = |target: Option<usize>| (target.map_or(String::new(), |c| format!("Cue {}", c + 1)), BRIGHT, Some(target));
+        let to = |target: Option<usize>| (target.map_or(String::new(), |c| cues.name(c)), BRIGHT, Some(target));
         match cues.slf(cue_index) {
             Some(Slf::Start { next }) => rows.push(Row::linked("S/L/F", vec![word("Start →", PURPLE), to(cues.find(next))])),
             Some(Slf::Loop { outro }) => rows.push(Row::linked("S/L/F", vec![word("Loop ↩", PURPLE), to(cues.find(outro))])),
@@ -1657,7 +1657,7 @@ impl ScriptView {
         let left = panel.left() + 16.0;
         let mut y = panel.top() + 10.0;
         let font = FontId::proportional(15.0);
-        let mut x = painter.text(pos2(left, y), Align2::LEFT_TOP, format!("Cue {}", cue_index + 1), FontId::proportional(16.0), if done && !is_current && !just_fired && !is_next && !sounding { MUTED } else { BRIGHT }).right() + 12.0;
+        let mut x = painter.text(pos2(left, y), Align2::LEFT_TOP, cue.note().map_or("Cue ?".to_string(), |note| format!("Cue {note}")), FontId::proportional(16.0), if done && !is_current && !just_fired && !is_next && !sounding { MUTED } else { BRIGHT }).right() + 12.0;
         let mut badge = |text: &str, colour: Color32| {
             x = painter.text(pos2(x, y + 1.0), Align2::LEFT_TOP, text, FontId::proportional(13.0), colour).right() + 10.0;
         };
@@ -1805,10 +1805,6 @@ impl ScriptView {
         let mut row = ui.new_child(UiBuilder::new().id_salt(("cue-buttons", block)).max_rect(rect).layout(egui::Layout::right_to_left(egui::Align::Center)));
         row.spacing_mut().item_spacing.x = 4.0;
         row.spacing_mut().button_padding = vec2(6.0, 1.0);
-        if let Some(note) = cue.note() {
-            row.label(RichText::new(note.to_string()).size(14.0).color(MUTED));
-            row.add_space(4.0);
-        }
         if !full {
             return;
         }
@@ -2168,7 +2164,7 @@ impl ScriptView {
                 painter.vline(x_of(at), rect.y_range(), Stroke::new(1.5_f32, colour));
 // Its name stands above the waveform, over the marker.
                 if rect.x_range().contains(x_of(at)) {
-                    let name = ui.painter().layout_no_wrap(format!("Auto {}", target + 1), FontId::proportional(11.0), colour);
+                    let name = ui.painter().layout_no_wrap(cues.get(target).and_then(|c| c.note()).map_or("?".to_string(), |note| note.to_string()), FontId::proportional(11.0), colour);
                     let x = (x_of(at) - name.size().x / 2.0).clamp(rect.left(), (rect.right() - name.size().x).max(rect.left()));
                     ui.painter().galley(pos2(x, rect.top() - 1.0 - name.size().y), name, colour);
                 }

@@ -139,7 +139,13 @@ The dialogue text always keeps the colour of the **first** role in the block, re
 
 ## Cue System (Triggers)
 
-Every YAML block (except the config block) is a **cue** (trigger). It is displayed as a numbered control panel in the script.
+Every YAML block (except the config block) is a **cue** (trigger). It is displayed as a control panel in the script, named after its trigger note.
+
+### Cue Names
+
+A cue is called after its trigger note: `trigger_note: {ch: 1, note: 47}` is **Cue 1.47** (channel.note). The name appears on the cue's card, in references from other cues, on auto-cue markers in a waveform (just `1.47`), in the live view and in exports. It does not change when cues are added, removed or moved.
+
+Every cue needs a trigger note of its own; only the variants of a cue share its note. A show file in which two separate cues carry the same note is reported as an error when it is opened, and the cue dialog does not save a note another cue already has. Changing a cue's note updates every reference to it (`chain_end`, `loop_outro`, `auto_trigger`, `music.adjust`) and the notes of its variants.
 
 ### Cue Fields
 

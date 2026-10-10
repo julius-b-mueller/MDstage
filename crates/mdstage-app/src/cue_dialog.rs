@@ -19,6 +19,8 @@ pub struct CueDialog {
     audio_files: Vec<String>,
     /// Other cues use Auto-Mic, so microphones cannot be chosen by hand.
     auto_mic_in_use: bool,
+    /// The trigger notes of the other cues (not counting this cue's own variants).
+    taken: Vec<Note>,
     /// The other cues of the show that can be linked to: trigger note and a label.
     cues: Vec<(Note, String)>,
     /// The names of the show's virtual channels and of the devices set up on this machine.
@@ -88,7 +90,7 @@ impl CueDialog {
     pub fn new(block: usize, is_new: bool, cue: Option<&Value>, audio_dir: &Path, auto_mic_in_use: bool, cues: Vec<(Note, String)>) -> CueDialog {
         let yaml = cue.and_then(Value::as_mapping).cloned().unwrap_or_default();
         let audio_files = crate::store::audio_files(audio_dir);
-        CueDialog { block, is_new, yaml, audio_files, auto_mic_in_use, cues, channels: vec!["L".into(), "R".into()], devices: Default::default(), audio_dir: audio_dir.to_path_buf(), info: Default::default(), tempo: (120.0, 4.0), renaming: None, rename_focus: false, rename_error: None, rename_request: None }
+        CueDialog { block, is_new, yaml, audio_files, auto_mic_in_use, taken: Vec::new(), cues, channels: vec!["L".into(), "R".into()], devices: Default::default(), audio_dir: audio_dir.to_path_buf(), info: Default::default(), tempo: (120.0, 4.0), renaming: None, rename_focus: false, rename_error: None, rename_request: None }
     }
 
     /// An audio file got a new name: follow it in the file list and in the cue as it
@@ -101,6 +103,19 @@ impl CueDialog {
         let mut cue = Value::Mapping(std::mem::take(&mut self.yaml));
         mdstage_core::edit::rename_audio_in(&mut cue, from, to);
         self.yaml = cue.as_mapping().cloned().unwrap_or_default();
+    }
+
+    /// Tell the dialog which trigger notes other cues have.
+    pub fn with_taken(mut self, taken: Vec<Note>) -> CueDialog {
+        self.taken = taken;
+        self
+    }
+
+    /// Whether the note chosen belongs to another cue already. A variant shares the
+    /// note of the cue it is a variant of.
+    fn note_taken(&self) -> bool {
+        let variant = self.yaml.get("sibling").and_then(Value::as_bool) == Some(true);
+        !variant && note_of(self.yaml.get("trigger_note")).is_some_and(|note| self.taken.contains(&note))
     }
 
     /// Tell the dialog the show's virtual channels and this machine's devices.
@@ -146,6 +161,9 @@ impl CueDialog {
                     }
                 }
                 None => drop(ui.label(RichText::new(t("wird beim Speichern vergeben", "is assigned on saving")).color(MUTED))),
+            }
+            if let Some(note) = note_of(self.yaml.get("trigger_note")) {
+                ui.label(RichText::new(format!("= Cue {note}")).color(MUTED)).on_hover_text(t("Der Cue heißt nach seiner Trigger-Note.", "The cue is called after its trigger note."));
             }
             ui.add_space(12.0);
             let mut variant = self.yaml.get("sibling").and_then(Value::as_bool) == Some(true);
@@ -541,11 +559,15 @@ impl CueDialog {
         });
         ui.separator();
         ui.horizontal(|ui| {
-            if ui.button(t("Speichern", "Save")).clicked() {
+            let taken = self.note_taken();
+            if ui.add_enabled(!taken, egui::Button::new(t("Speichern", "Save"))).clicked() {
                 result = Some(true);
             }
             if ui.button(t("Abbrechen", "Cancel")).clicked() {
                 result = Some(false);
+            }
+            if taken {
+                ui.label(RichText::new(t("Diese Trigger-Note hat schon ein anderer Cue. Jeder Cue braucht eine eigene; nur Varianten teilen sich eine.", "Another cue has this trigger note already. Every cue needs one of its own; only variants share one.")).color(RED));
             }
         });
         result

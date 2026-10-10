@@ -459,7 +459,7 @@ impl Show {
         let mut audio = audio;
         if let (Some(loaded), false) = (&audio, started) {
             if let Err(e) = self.player.start(cue, loaded, Start::now(then)) {
-                self.problems.push(format!("Cue {}: {e}", cue + 1));
+                self.problems.push(format!("{}: {e}", cues.name(cue)));
                 audio = None;
             }
         }
@@ -467,7 +467,7 @@ impl Show {
             if let Some(next_audio) = self.audio(next).filter(|_| !self.chains.contains(&(cue, next))) {
                 match self.player.start(next, &next_audio, Start::armed(self.then(next))) {
                     Ok(()) => self.chains.push((cue, next)),
-                    Err(e) => self.problems.push(format!("Cue {}: {e}", next + 1)),
+                    Err(e) => self.problems.push(format!("{}: {e}", cues.name(next))),
                 }
             }
         }
@@ -1308,7 +1308,7 @@ mod tests {
         assert!(matches!(effects[0], Effect::Mic(_)));
         let problems = rig.show.take_problems();
         assert_eq!(problems.len(), 1);
-        assert!(problems[0].starts_with("Cue 1: ") && problems[0].contains("missing.wav"), "{problems:?}");
+        assert!(problems[0].starts_with("Cue 1.0: ") && problems[0].contains("missing.wav"), "{problems:?}");
         assert_eq!(rig.show.next(), Some(1), "and the show goes on");
     }
 

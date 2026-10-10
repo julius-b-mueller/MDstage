@@ -146,7 +146,7 @@ impl Script {
                         }
                         text.push_str(&format!(" ({})", details.join(", ")));
                         if let Some(adjust) = cue.adjust() {
-                            let target = cues.find(adjust.target).map_or("?".to_string(), |c| format!("Cue {}", c + 1));
+                            let target = cues.find(adjust.target).map_or("?".to_string(), |c| cues.name(c));
                             match (adjust.fadeout, adjust.volume) {
                                 (true, _) => text.push_str(&format!(" → {target} ausfaden")),
                                 (false, Some(v)) => text.push_str(&format!(" → {target} auf {}", percent(v))),
@@ -164,7 +164,7 @@ impl Script {
                         rows.push(("Zeit".into(), time.clone()));
                     }
                     if let Some(auto) = cue.auto_trigger() {
-                        let source = cues.find(auto.source).map_or("?".to_string(), |c| format!("Cue {}", c + 1));
+                        let source = cues.find(auto.source).map_or("?".to_string(), |c| cues.name(c));
                         rows.push((
                             "Auto".into(),
                             match auto.when {
@@ -244,7 +244,7 @@ Freier Text.
             book.items[3],
             Item::Cue(CueBox {
                 number: 1,
-                title: "Loop ↩ 1/2".into(),
+                title: "Loop ↩ 1.2".into(),
                 trigger: "1.1".into(),
                 rows: vec![
                     ("Mic".into(), "Duo (Anna, Ben)".into()),
@@ -257,9 +257,9 @@ Freier Text.
             book.items[4],
             Item::Cue(CueBox {
                 number: 2,
-                title: "[Variante]  Finish ← 1/1".into(),
+                title: "[Variante]  Finish ← 1.1".into(),
                 trigger: "1.2".into(),
-                rows: vec![("♬".into(), "out.wav (Vol 80 %) → Cue 1 auf 20 %".into()), ("Auto".into(), "4 s nach Cue 1".into())],
+                rows: vec![("♬".into(), "out.wav (Vol 80 %) → Cue 1.1 auf 20 %".into()), ("Auto".into(), "4 s nach Cue 1.1".into())],
             })
         );
         assert_eq!(
