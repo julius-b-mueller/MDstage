@@ -116,6 +116,43 @@ fn word_end(text: &[char], at: usize) -> usize {
     i.min(text.len().saturating_sub(1))
 }
 
+/// The names in the first line of a role block (`**Anna/Ben**`), as the ranges of
+/// characters they take up. `None` if the text does not begin with such a line.
+pub fn role_names(text: &[char]) -> Option<Vec<std::ops::Range<usize>>> {
+    let end = line_end(text, 0);
+    let line = &text[..end];
+    let marked = end > 4 && line.starts_with(&['*', '*']) && line.ends_with(&['*', '*']) && !line[2..end - 2].contains(&'*');
+    if !marked {
+        return None;
+    }
+    let mut names = Vec::new();
+    let mut from = 2;
+    for at in 2..=end - 2 {
+        if at == end - 2 || line[at] == '/' {
+            names.push(from..at);
+            from = at + 1;
+        }
+    }
+    Some(names)
+}
+
+/// Take the role at `at` out of a role block's first line, with the slash beside it.
+/// Returns where the cursor belongs afterwards; `None` (and nothing removed) if `at` is
+/// not in such a line or the role is the only one.
+pub fn remove_role(text: &mut Vec<char>, at: usize) -> Option<usize> {
+    let names = role_names(text)?;
+    if names.len() < 2 || at > line_end(text, 0) {
+        return None;
+    }
+    let which = names.iter().position(|name| at <= name.end).unwrap_or(names.len() - 1);
+    let name = names[which].clone();
+    // The last role takes the slash before it, any other the one after it.
+    let gone = if which + 1 == names.len() { name.start - 1..name.end } else { name.start..name.end + 1 };
+    let cursor = gone.start;
+    text.drain(gone);
+    Some(cursor)
+}
+
 impl Vim {
     /// A block is opened for editing.
     pub fn begin(&mut self, mode: Mode) {
@@ -176,7 +213,11 @@ impl Vim {
                     _ => Outcome::Stay,
                 },
             },
-            (Mode::Normal, Key::Enter) => Outcome::Stay,
+            // Enter goes on in a new block below, as it does while typing.
+            (Mode::Normal, Key::Enter) => {
+                self.pending.clear();
+                Outcome::OpenBelow
+            }
             (Mode::Normal, Key::Backspace) => self.command('h', &mut text, &mut at),
             (Mode::Normal, Key::Char(c)) => self.command(c, &mut text, &mut at),
         };
@@ -197,6 +238,42 @@ impl Vim {
         let (start, end) = (line_start(text, *at), line_end(text, *at));
         let save = |vim: &mut Vim, text: &Vec<char>, at: usize| vim.undo.push((text.iter().collect(), at));
         let first_letter = |text: &Vec<char>| start + text[start..end].iter().take_while(|c| c.is_whitespace()).count();
+        // In the line of a role block's names only whole roles go (or the whole line,
+        // with `dd`): the asterisks around them are not to be picked apart.
+        if start == 0 {
+            if let Some(names) = role_names(text) {
+                let name = names.iter().find(|name| *at <= name.end).or(names.last()).cloned().unwrap_or(2..2);
+                match (pending.as_str(), c) {
+                    ("", 'x' | 'D') | ("d", 'w') => {
+                        let before: String = text.iter().collect();
+                        if let Some(cursor) = remove_role(text, *at) {
+                            self.undo.push((before, *at));
+                            *at = cursor;
+                        }
+                        return Outcome::Stay;
+                    }
+                    // Changing a role: its name goes, the cursor waits in its place.
+                    ("", 'C') | ("c", 'w') => {
+                        save(self, text, *at);
+                        text.drain(name.clone());
+                        *at = name.start;
+                        self.mode = Mode::Insert;
+                        return Outcome::Stay;
+                    }
+                    ("c", 'c') => {
+                        save(self, text, *at);
+                        text.drain(2..end - 2);
+                        *at = 2;
+                        self.mode = Mode::Insert;
+                        return Outcome::Stay;
+                    }
+                    // Nothing is joined onto the names, pasted into them or put above them.
+                    ("", 'J' | 'P' | 'O') => return Outcome::Stay,
+                    ("", 'p') if !self.register.as_ref().is_some_and(|(_, linewise)| *linewise) => return Outcome::Stay,
+                    _ => {}
+                }
+            }
+        }
         match (pending.as_str(), c) {
             // Moving.
             ("", 'h') => *at = at.saturating_sub(1).max(start),
@@ -238,20 +315,20 @@ impl Vim {
                 self.insert(text, *at);
                 *at = end;
             }
-            // A new line in a block that has several; a new block next to one that is a
-            // single line (a line above a role's name would not belong to the role).
-            ("", 'o') if text.contains(&'\n') => {
+            // A new line in the block, below or above the cursor's.
+            ("", 'o') => {
                 self.insert(text, *at);
                 text.insert(end, '\n');
                 *at = end + 1;
             }
-            ("", 'O') if text.contains(&'\n') && start > 0 => {
+            ("", 'O') => {
                 self.insert(text, *at);
                 text.insert(start, '\n');
                 *at = start;
             }
-            ("", 'o') => return Outcome::OpenBelow,
-            ("", 'O') => return Outcome::OpenAbove,
+            // A new block, below or above this one.
+            ("g", 'o') => return Outcome::OpenBelow,
+            ("g", 'O') => return Outcome::OpenAbove,
 
             // Deleting and changing.
             ("", 'x') if *at < end => {
@@ -460,7 +537,7 @@ mod tests {
     }
 
     #[test]
-    fn o_adds_a_line_to_a_block_of_several_and_a_block_next_to_a_single_line() {
+    fn o_adds_a_line_to_the_block_and_go_a_block() {
         let mut vim = Vim::default();
         assert_eq!(run(&mut vim, TEXT, 12, "o"), ("**Anna**\nHallo, du da.\n\nUnd weiter".to_string(), 23, Outcome::Stay));
         assert_eq!(vim.mode, Mode::Insert);
@@ -468,16 +545,56 @@ mod tests {
         assert_eq!(run(&mut vim, TEXT, 12, "O"), ("**Anna**\n\nHallo, du da.\nUnd weiter".to_string(), 9, Outcome::Stay));
         assert_eq!(vim.mode, Mode::Insert);
         assert_eq!(normal(TEXT, 30, "o").0, "**Anna**\nHallo, du da.\nUnd weiter\n");
-        // Above a role's name there is no line of the role: that is a new block.
-        assert_eq!(normal(TEXT, 3, "O").2, Outcome::OpenAbove);
-        assert_eq!(normal("Licht aus.", 3, "o").2, Outcome::OpenBelow);
-        assert_eq!(normal("Licht aus.", 3, "O").2, Outcome::OpenAbove);
+        assert_eq!(normal("Licht aus.", 3, "o"), ("Licht aus.\n".to_string(), 11, Outcome::Stay));
+        assert_eq!(normal("Licht aus.", 3, "O"), ("\nLicht aus.".to_string(), 0, Outcome::Stay));
+        // Above a role's names there is no line of the role.
+        assert_eq!(normal(TEXT, 3, "O"), (TEXT.to_string(), 3, Outcome::Stay));
+        assert_eq!(normal(TEXT, 3, "o").0, "**Anna**\n\nHallo, du da.\nUnd weiter");
+        // New blocks: go and gO, and Enter for one below.
+        assert_eq!(normal(TEXT, 12, "go").2, Outcome::OpenBelow);
+        assert_eq!(normal(TEXT, 12, "gO").2, Outcome::OpenAbove);
+        assert_eq!(normal(TEXT, 12, "\n").2, Outcome::OpenBelow);
+    }
+
+    #[test]
+    fn a_roles_names_only_go_whole() {
+        const TRIO: &str = "**Anna/Ben/Clara**\nHallo.";
+        let chars = |text: &str| text.chars().collect::<Vec<char>>();
+        assert_eq!(role_names(&chars(TRIO)), Some(vec![2..6, 7..10, 11..16]));
+        assert_eq!(role_names(&chars("**Anna*\nHallo.")), None);
+        assert_eq!(role_names(&chars("Licht aus.")), None);
+
+        // x, dw and D take the role the cursor is on; the asterisks stay.
+        assert_eq!(normal(TRIO, 0, "x"), ("**Ben/Clara**\nHallo.".to_string(), 2, Outcome::Stay));
+        assert_eq!(normal(TRIO, 8, "x").0, "**Anna/Clara**\nHallo.");
+        assert_eq!(normal(TRIO, 17, "x").0, "**Anna/Ben**\nHallo.", "on the closing asterisks: the last role");
+        assert_eq!(normal(TRIO, 8, "dw").0, "**Anna/Clara**\nHallo.");
+        assert_eq!(normal(TRIO, 8, "D").0, "**Anna/Clara**\nHallo.");
+        assert_eq!(normal(TRIO, 8, "xu").0, TRIO);
+        assert_eq!(normal(TEXT, 3, "x").0, TEXT, "the only role stays; dd takes the line");
+        assert_eq!(normal(TEXT, 3, "dd").0, "Hallo, du da.\nUnd weiter");
+        // Changing puts the cursor where the name was.
+        let mut vim = Vim::default();
+        assert_eq!(run(&mut vim, TRIO, 8, "cw"), ("**Anna//Clara**\nHallo.".to_string(), 7, Outcome::Stay));
+        assert_eq!(vim.mode, Mode::Insert);
+        let mut vim = Vim::default();
+        assert_eq!(run(&mut vim, TRIO, 8, "cc"), ("****\nHallo.".to_string(), 2, Outcome::Stay));
+        // Nothing is joined onto the names or pasted into them.
+        assert_eq!(normal(TRIO, 8, "J").0, TRIO);
+        assert_eq!(normal(TRIO, 20, "ywggp").0, TRIO);
+        assert_eq!(normal(TRIO, 20, "yyggp").0, "**Anna/Ben/Clara**\nHallo.\nHallo.");
+        // Below the names everything is as usual.
+        assert_eq!(normal(TRIO, 19, "x").0, "**Anna/Ben/Clara**\nallo.");
+
+        let mut text = chars(TRIO);
+        assert_eq!(remove_role(&mut text, 12), Some(10));
+        assert_eq!(text.iter().collect::<String>(), "**Anna/Ben**\nHallo.");
+        assert_eq!(remove_role(&mut chars("**Anna**\nHallo."), 3), None);
     }
 
     #[test]
     fn the_editor_is_left_with_a_command_line_and_never_with_escape() {
         assert_eq!(normal(TEXT, 12, "<<<"), (TEXT.to_string(), 12, Outcome::Stay));
-        assert_eq!(normal(TEXT, 12, "\n").2, Outcome::Stay);
         assert_eq!(normal(TEXT, 12, ":w\n").2, Outcome::Close);
         assert_eq!(normal(TEXT, 12, ":wq\n").2, Outcome::Close);
         assert_eq!(normal(TEXT, 12, ":x\n").2, Outcome::Close);

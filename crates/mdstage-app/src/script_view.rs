@@ -719,7 +719,8 @@ impl ScriptView {
     /// file has no other use for a bare paragraph.
     fn typed_block(buffer: &str) -> Option<Block> {
         // Lines with nothing on them (or only spaces) are dropped, as is space at the edges.
-        let lines: Vec<&str> = buffer.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        // (So are the bare asterisks left when all of a role block's names were taken out.)
+        let lines: Vec<&str> = buffer.lines().map(str::trim).filter(|line| !line.is_empty() && *line != "****").collect();
         match Script::parse(&lines.join("\n")).blocks.into_iter().next()? {
             // An asterisk inside would end the direction early when the file is read again.
             Block::Text(text) if !text.contains('*') && !text.trim().is_empty() => Some(Block::Stage(text.trim().to_string())),
@@ -864,6 +865,32 @@ impl ScriptView {
             vim::Outcome::OpenAbove => open_above = true,
             vim::Outcome::DeleteBlock => delete_block = true,
         }
+        // In the line of a role block's names, Backspace and Delete take a whole role (the
+        // only one: the whole line). The asterisks around the names cannot be picked apart.
+        let typing = !(cx.vim && !elsewhere && self.vim.mode == vim::Mode::Normal);
+        let range = egui::TextEdit::load_state(ui.ctx(), id).and_then(|state| state.cursor.char_range());
+        if let Some(at) = range.filter(|r| typing && r.primary == r.secondary).map(|r| r.primary.index) {
+            let mut text: Vec<char> = editing.buffer.chars().collect();
+            let names_end = text.iter().position(|c| *c == '\n').unwrap_or(text.len());
+            if vim::role_names(&text).is_some() && at <= names_end {
+                let back = at > 0 && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Backspace));
+                let forward = !back && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Delete));
+                // Delete at the very end would pull the text up into the names: nothing happens.
+                if back || (forward && at < names_end) {
+                    let place = match vim::remove_role(&mut text, if back { at - 1 } else { at }) {
+                        Some(place) => place,
+                        None => {
+                            text.drain(..(names_end + 1).min(text.len()));
+                            0
+                        }
+                    };
+                    editing.buffer = text.into_iter().collect();
+                    let mut state = egui::TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
+                    state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(place))));
+                    state.store(ui.ctx(), id);
+                }
+            }
+        }
         // Backspace with nothing typed after the names takes the last name away again.
         if let Some((names, "")) = Self::role_header(&editing.buffer) {
             if cursor == Some(editing.buffer.chars().count()) && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Backspace)) {
@@ -891,6 +918,8 @@ impl ScriptView {
         let beside = if cx.vim { 84.0 } else { 0.0 };
         let field = Rect::from_min_size(rect.min + vec2(0.0, BLOCK_PAD), vec2(rect.width() - beside, 0.0));
         let mut child = ui.new_child(UiBuilder::new().max_rect(field));
+        let before_typing = editing.buffer.clone();
+        let range_before = egui::TextEdit::load_state(ui.ctx(), id).and_then(|state| state.cursor.char_range());
         let output = egui::TextEdit::multiline(&mut editing.buffer)
             .id(id)
             .font(FontId::proportional(17.0))
@@ -901,6 +930,21 @@ impl ScriptView {
         if !editing.focused {
             output.response.request_focus();
             editing.focused = true;
+        }
+        // Whatever else was typed or cut: if it left a role's names with their asterisks
+        // damaged (one deleted, the text pulled up into the line), it did not happen. The
+        // names may change and grow, and the whole line may go.
+        if editing.buffer != before_typing && vim::role_names(&before_typing.chars().collect::<Vec<_>>()).is_some() {
+            let now: Vec<char> = editing.buffer.chars().collect();
+            let first = editing.buffer.lines().next().unwrap_or_default();
+            let intact = vim::role_names(&now).is_some() || !(first.starts_with('*') || first.contains("**"));
+            if !intact {
+                editing.buffer = before_typing;
+                let mut state = egui::TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
+                state.cursor.set_char_range(range_before);
+                state.store(ui.ctx(), id);
+                ui.ctx().request_repaint();
+            }
         }
         if cx.vim {
             // The mode at the right edge; in normal mode a block cursor on its character.
@@ -1500,6 +1544,7 @@ mod tests {
         assert_eq!(ScriptView::typed_block("# Akt 2"), Some(Block::Heading { level: 1, text: "Akt 2".into() }));
         assert_eq!(ScriptView::typed_block("**Anna**\nHallo."), Some(Block::Role { names: vec!["Anna".into()], text: "Hallo.".into() }));
         assert_eq!(ScriptView::typed_block(""), None);
+        assert_eq!(ScriptView::typed_block("****\nHallo."), Some(Block::Stage("Hallo.".into())), "emptied role names leave no fragment");
         assert_eq!(ScriptView::typed_block("  \n\t\n "), None, "nothing but space is nothing");
         assert_eq!(ScriptView::typed_block("  Licht aus.  \n\n   \n"), Some(Block::Stage("Licht aus.".into())));
         assert_eq!(ScriptView::typed_block("**Anna**\n\n  Hallo.  \n \nNoch was.\n"), Some(Block::Role { names: vec!["Anna".into()], text: "Hallo.\nNoch was.".into() }));
