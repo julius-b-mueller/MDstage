@@ -71,8 +71,9 @@ pub fn reference() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 ("j  k", t("eine Zeile nach unten / oben; am Rand in den Textblock darunter / darüber", "one line down / up; at the edge into the text block below / above")),
                 ("w  b  e", t("nächstes Wort / Wortanfang zurück / Wortende", "next word / back to the start of a word / end of a word")),
                 ("0  ^  $", t("Zeilenanfang / erstes Zeichen / Zeilenende", "start of the line / first character / end of the line")),
+                (t("f x  F x", "f x  F x"), t("zum nächsten / vorherigen x in der Zeile (x = beliebiges Zeichen)", "to the next / previous x in the line (x = any character)")),
                 ("gg  G", t("erste / letzte Zeile des Blocks", "first / last line of the block")),
-                (t("Zahl davor", "a number first"), t("wiederholt die Bewegung (3j, 2w); 3G springt zu Zeile 3", "repeats the movement (3j, 2w); 3G goes to line 3")),
+                (t("Zahl davor", "a number first"), t("wiederholt die Bewegung (3j, 2w, 2fa); 3G springt zu Zeile 3", "repeats the movement (3j, 2w, 2fa); 3G goes to line 3")),
                 (t("Pfeiltasten", "arrow keys"), t("wie h j k l", "like h j k l")),
             ],
         ),
@@ -320,7 +321,7 @@ impl Vim {
             }
             (Mode::Normal, Key::Backspace) => self.command('h', &mut text, &mut at),
             // A number before a movement (a lone 0 is the movement to the line's start).
-            (Mode::Normal, Key::Char(c)) if c.is_ascii_digit() && (c != '0' || self.count > 0) && !matches!(self.pending.as_str(), "d" | "c" | "y" | "da" | "ya" | "Z") => {
+            (Mode::Normal, Key::Char(c)) if c.is_ascii_digit() && (c != '0' || self.count > 0) && !matches!(self.pending.as_str(), "d" | "c" | "y" | "da" | "ya" | "Z" | "f" | "F") => {
                 self.count = (self.count * 10 + c as usize - '0' as usize).min(9999);
                 Outcome::Stay
             }
@@ -352,6 +353,24 @@ impl Vim {
         let save = |vim: &mut Vim, text: &Vec<char>, at: usize| vim.undo.push((text.iter().collect(), at));
         let first_letter = |text: &Vec<char>| start + text[start..end].iter().take_while(|c| c.is_whitespace()).count();
         let times = self.count.max(1);
+        // f and F: on to the next (back to the previous) place the character typed after
+        // them stands in the line; with a number, to that many places on.
+        if pending == "f" || pending == "F" {
+            let mut found = *at;
+            for _ in 0..times {
+                let next = match pending.as_str() {
+                    "f" => (found + 1..end).find(|&i| text[i] == c),
+                    _ => (start..found).rev().find(|&i| text[i] == c),
+                };
+                match next {
+                    Some(next) => found = next,
+                    // Not that often in the line: the cursor stays where it is.
+                    None => return Outcome::Stay,
+                }
+            }
+            *at = found;
+            return Outcome::Stay;
+        }
         // In the line of a role block's names only whole roles go (or the whole line,
         // with `dd`): the asterisks around them are not to be picked apart.
         if start == 0 {
@@ -565,7 +584,7 @@ impl Vim {
             ("Z", 'Q') => return Outcome::Discard,
 
             // The first key of a two-key command.
-            ("", 'd' | 'c' | 'y' | 'g' | 'Z' | ':') => self.pending.push(c),
+            ("", 'd' | 'c' | 'y' | 'g' | 'Z' | ':' | 'f' | 'F') => self.pending.push(c),
             _ => {}
         }
         Outcome::Stay
@@ -646,6 +665,28 @@ mod tests {
         assert_eq!(normal(LINES, 0, "3x").0, "ins zwei drei vier\nb\nc\nd\ne");
         assert_eq!(normal(LINES, 0, "3xl").1, 1);
         assert_eq!(normal(LINES, 0, "3<l").1, 1, "Escape drops the number");
+    }
+
+    #[test]
+    fn f_and_capital_f_find_a_character_in_the_line() {
+        // "Hallo, du da." begins at 9: H9 a10 l11 l12 o13 ,14 _15 d16 u17 _18 d19 a20 .21
+        assert_eq!(normal(TEXT, 9, "fd").1, 16);
+        assert_eq!(normal(TEXT, 9, "2fd").1, 19);
+        assert_eq!(normal(TEXT, 9, "fdfd").1, 19, "from where it is, on to the next");
+        assert_eq!(normal(TEXT, 9, "f.").1, 21);
+        assert_eq!(normal(TEXT, 9, "f ").1, 15, "a space can be looked for too");
+        assert_eq!(normal(TEXT, 21, "Fd").1, 19);
+        assert_eq!(normal(TEXT, 21, "2Fd").1, 16);
+        assert_eq!(normal(TEXT, 21, "Fl").1, 12);
+        // Only within the line, and only if it is there (often enough).
+        assert_eq!(normal(TEXT, 9, "fU").1, 9, "the U is in the next line");
+        assert_eq!(normal(TEXT, 9, "3fd").1, 9);
+        assert_eq!(normal(TEXT, 16, "FA").1, 16);
+        // The character looked for is not taken for a command or a number.
+        assert_eq!(normal(TEXT, 9, "fx"), (TEXT.to_string(), 9, Outcome::Stay));
+        assert_eq!(normal("a1b2c1d", 0, "f1").1, 1);
+        assert_eq!(normal("a1b2c1d", 0, "2f1").1, 5);
+        assert_eq!(normal(TEXT, 9, "f<x").0, "**Anna**\nallo, du da.\nUnd weiter", "Escape drops the f");
     }
 
     #[test]
