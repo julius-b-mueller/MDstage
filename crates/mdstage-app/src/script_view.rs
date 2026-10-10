@@ -186,9 +186,9 @@ enum Tie {
 impl Tie {
     fn colour(self) -> Color32 {
         match self {
-            Tie::Chain => BLUE,
+            Tie::Chain => YELLOW,
             Tie::Auto => PURPLE,
-            Tie::Adjust => CYAN,
+            Tie::Adjust => GREEN,
         }
     }
 }
@@ -205,10 +205,13 @@ struct Relation {
     to_place: (usize, usize),
 }
 
+/// Each kind of connection has one colour for everything about it — the row in the
+/// card, the button, the line in the margin: auto-cues purple, adjusting another cue's
+/// audio green, start/loop/finish yellow.
 /// The colour of auto-cues: their marker on the waveform, their row and their line.
 const PURPLE: Color32 = Color32::from_rgb(0xc6, 0x78, 0xdd);
-/// The colour of what changes another cue's audio.
-const CYAN: Color32 = Color32::from_rgb(0x56, 0xb6, 0xc2);
+/// Height of the line above a waveform that names its auto-cue markers.
+const AUTO_NAMES: f32 = 14.0;
 /// From a cue's left edge to the first lane: room for an arrowhead and a straight piece
 /// of line before the corner.
 const FIRST_LANE: f32 = 18.0;
@@ -705,7 +708,7 @@ impl ScriptView {
                 spans.push((part.audios.iter().map(|a| a.file.as_str()).collect::<Vec<_>>().join(" + "), TEXT));
             }
             if audio.looped || audio.parts.len() > 1 || cue.loop_outro().is_some() {
-                spans.push(("⟳".to_string(), BLUE));
+                spans.push(("⟳".to_string(), YELLOW));
             }
             rows.push(Row::plain("♬", spans));
         }
@@ -726,10 +729,10 @@ impl ScriptView {
         let word = |text: &str, colour: Color32| (text.to_string(), colour, None);
         let to = |target: Option<usize>| (target.map_or(String::new(), |c| format!("Cue {}", c + 1)), BRIGHT, Some(target));
         match cues.slf(cue_index) {
-            Some(Slf::Start { next }) => rows.push(Row::linked("S/L/F", vec![word("Start →", BLUE), to(cues.find(next))])),
-            Some(Slf::Loop { outro }) => rows.push(Row::linked("S/L/F", vec![word("Loop ↩", BLUE), to(cues.find(outro))])),
-            Some(Slf::Finish { from }) => rows.push(Row::linked("S/L/F", vec![word("Finish ←", BLUE), to(from.first().copied())])),
-            Some(Slf::Bridge { from, next }) => rows.push(Row::linked("S/L/F", vec![word("Bridge ←", BLUE), to(from.first().copied()), word("→", BLUE), to(cues.find(next))])),
+            Some(Slf::Start { next }) => rows.push(Row::linked("S/L/F", vec![word("Start →", YELLOW), to(cues.find(next))])),
+            Some(Slf::Loop { outro }) => rows.push(Row::linked("S/L/F", vec![word("Loop ↩", YELLOW), to(cues.find(outro))])),
+            Some(Slf::Finish { from }) => rows.push(Row::linked("S/L/F", vec![word("Finish ←", YELLOW), to(from.first().copied())])),
+            Some(Slf::Bridge { from, next }) => rows.push(Row::linked("S/L/F", vec![word("Bridge ←", YELLOW), to(from.first().copied()), word("→", YELLOW), to(cues.find(next))])),
             None => {}
         }
         if let Some(auto) = cue.auto_trigger() {
@@ -745,9 +748,9 @@ impl ScriptView {
             let target = to(cues.find(adjust.target));
             let seconds = adjust.fadetime.map_or(String::new(), |s| format!(" ({s} s)"));
             rows.push(Row::linked("⇢", match (adjust.fadeout, adjust.volume) {
-                (true, _) if crate::lang::english() => vec![word("fade out", CYAN), target, word(seconds.trim(), MUTED)],
-                (true, _) => vec![target, word(&format!("ausfaden{seconds}"), CYAN)],
-                (false, Some(v)) => vec![target, word(&format!("{} {} %{seconds}", t("auf", "to"), (v * 100.0).round()), CYAN)],
+                (true, _) if crate::lang::english() => vec![word("fade out", GREEN), target, word(seconds.trim(), MUTED)],
+                (true, _) => vec![target, word(&format!("ausfaden{seconds}"), GREEN)],
+                (false, Some(v)) => vec![target, word(&format!("{} {} %{seconds}", t("auf", "to"), (v * 100.0).round()), GREEN)],
                 _ => vec![target],
             }));
         }
@@ -857,7 +860,8 @@ impl ScriptView {
     /// `autos`: how many position auto-cues hang on the cue's audio. Each gets a strip
     /// of its own under the waveform for its line to run out in.
     fn cue_height(rows: usize, has_audio: bool, autos: usize) -> f32 {
-        let wave = if has_audio { WAVE_HEIGHT + 10.0 + autos as f32 * AUTO_STRIP + CONTROLS + 4.0 } else { 0.0 };
+        let names = if autos > 0 { AUTO_NAMES } else { 0.0 };
+        let wave = if has_audio { names + WAVE_HEIGHT + 10.0 + autos as f32 * AUTO_STRIP + CONTROLS + 4.0 } else { 0.0 };
         8.0 + 10.0 + ROW + rows as f32 * ROW + wave + 10.0
     }
 
@@ -1634,7 +1638,9 @@ impl ScriptView {
         if let Some(audio) = cue.audio() {
             let width = panel.right() - 12.0 - left;
             let part = &audio.parts[0];
-            let wave = Rect::from_min_size(pos2(left, y + 4.0), vec2(width, WAVE_HEIGHT));
+            // Auto-cue markers are named in a line of their own above the waveform.
+            let autos = Self::position_autos(&Cues::new(cx.script), cue.note()).len();
+            let wave = Rect::from_min_size(pos2(left, y + 4.0 + if autos > 0 { AUTO_NAMES } else { 0.0 }), vec2(width, WAVE_HEIGHT));
             // The cursor only makes sense on the part whose waveform is shown.
             // A cue of several parts reports each part that sounds. On the waveform (which is
             // the first part's) the cursor runs while that part plays; once it has handed
@@ -1645,7 +1651,7 @@ impl ScriptView {
             let ghost = of_part(0, VoiceState::Tail);
             let position = playing.or(snapshot.paused.iter().find(|(c, _)| *c == cue_index).map(|(_, seconds)| *seconds));
             let duration = self.draw_waveform(ui, cx, block, cue_index, cue.note(), part, (position, ghost), playing.is_some(), wave, actions);
-            let strips = Self::position_autos(&Cues::new(cx.script), cue.note()).len() as f32 * AUTO_STRIP;
+            let strips = autos as f32 * AUTO_STRIP;
             let row = Rect::from_min_size(pos2(left, wave.bottom() + 4.0 + strips), vec2(width, CONTROLS));
             // While a later part plays, the row says so instead of a position in this one.
             let later = snapshot.audio.iter().find(|(c, s)| *c == cue_index && s.part > 0 && s.state == VoiceState::Playing).map(|(_, s)| (s.part, s.seconds));
@@ -1738,7 +1744,9 @@ impl ScriptView {
         // The connections: a click sets one up (then click the other cue), Shift+click
         // on one that exists removes it.
         let mut link_button = |row: &mut Ui, link: Link, text: &str, exists: bool, enabled: bool, hint: &str| {
-            let colour = if self.picking == Some((link, block)) { YELLOW } else if exists { GREEN } else { TEXT };
+            // In the colour of its kind once it exists, bright while its other end is being picked.
+            let kind = if link == Link::AutoCue { PURPLE } else { GREEN };
+            let colour = if self.picking == Some((link, block)) { BRIGHT } else if exists { kind } else { TEXT };
             let hint = if exists { format!("{hint}\n{}", t("Shift+Klick löscht.", "Shift+click removes it.")) } else { hint.to_string() };
             if row.add_enabled(enabled, small(text, colour)).on_hover_text(hint).clicked() {
                 match exists && shift {
@@ -1760,7 +1768,7 @@ impl ScriptView {
             None => "S/L/F",
         };
         let linked = cue.chain_end().is_some() || cue.loop_outro().is_some();
-        let label = RichText::new(slf).size(13.0).color(if matches!(self.picking, Some((Link::Chain | Link::LoopOutro, b)) if b == block) { YELLOW } else if slf != "S/L/F" { BLUE } else { TEXT });
+        let label = RichText::new(slf).size(13.0).color(if matches!(self.picking, Some((Link::Chain | Link::LoopOutro, b)) if b == block) { BRIGHT } else if slf != "S/L/F" { YELLOW } else { TEXT });
         row.add_enabled_ui(has_audio, |row| {
             row.menu_button(label, |ui| {
                 if ui.button(t("Start: am Ende nahtlos weiter mit … (Cue anklicken)", "Start: at the end carry straight on with … (click a cue)")).clicked() {
@@ -2074,8 +2082,12 @@ impl ScriptView {
                     self.auto_anchors.insert(target_block, foot);
                 }
                 painter.vline(x_of(at), rect.y_range(), Stroke::new(1.5_f32, colour));
-                // The name stands at the top; the foot of the marker is where its line leaves.
-                painter.text(pos2(x_of(at) + 3.0, rect.top() + 9.0), Align2::LEFT_TOP, format!("Auto {}", target + 1), FontId::proportional(11.0), colour);
+// Its name stands above the waveform, over the marker.
+                if rect.x_range().contains(x_of(at)) {
+                    let name = ui.painter().layout_no_wrap(format!("Auto {}", target + 1), FontId::proportional(11.0), colour);
+                    let x = (x_of(at) - name.size().x / 2.0).clamp(rect.left(), (rect.right() - name.size().x).max(rect.left()));
+                    ui.painter().galley(pos2(x, rect.top() - 1.0 - name.size().y), name, colour);
+                }
             }
         }
 
