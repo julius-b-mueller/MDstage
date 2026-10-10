@@ -670,6 +670,20 @@ impl Player {
         })
     }
 
+    /// Where a cue's audio is, part by part: the audible part first (as `status` gives
+    /// it), then every other part that is ringing out at the same time.
+    pub fn statuses(&self, cue: usize, clock: Option<&EngineClock>) -> Vec<Status> {
+        let Some(first) = self.status(cue, clock) else { return Vec::new() };
+        let mut all = vec![first];
+        let Some(active) = self.active.get(&cue) else { return all };
+        for (index, part) in active.parts.iter().enumerate() {
+            let Some(voice) = part.shared.first().filter(|voice| index != first.part && voice.state() == VoiceState::Tail) else { continue };
+            let frames = clock.map_or(voice.clip_frame() as f64, |c| voice.clip_frame_now(c));
+            all.push(Status { state: VoiceState::Tail, part: index, seconds: frames / self.sample_rate as f64, start: self.seconds(part.start), transition: self.seconds(part.transition), end: self.seconds(part.end) });
+        }
+        all
+    }
+
     /// The cues that have audio loaded (playing, ringing out or armed), in cue order.
     pub fn active_cues(&self) -> Vec<usize> {
         let mut cues: Vec<usize> = self.active.keys().copied().collect();

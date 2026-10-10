@@ -193,10 +193,11 @@ impl Show {
         std::mem::take(&mut self.problems)
     }
 
-    /// Cues with audio loaded, and where each one is.
+    /// Cues with audio loaded, and where each one is. A cue of several parts appears once
+    /// for the part that plays (first) and once for every part that is ringing out.
     pub fn audio_status(&self) -> Vec<(usize, crate::player::Status)> {
         let clock = self.clock.as_deref();
-        self.player.active_cues().into_iter().filter_map(|cue| Some((cue, self.player.status(cue, clock)?))).collect()
+        self.player.active_cues().into_iter().flat_map(|cue| self.player.statuses(cue, clock).into_iter().map(move |status| (cue, status))).collect()
     }
 
     /// Where paused audio stands: `(cue, seconds)`, for cues paused in their first part.
@@ -831,6 +832,51 @@ mod tests {
         rig.run(64);
         assert_eq!(rig.level(), 0.0);
         assert!(rig.show.paused().is_empty());
+    }
+
+    #[test]
+    fn a_loops_tail_rings_out_over_its_outro() {
+        // The loop cycles 0–32 ms; 32–48 ms is its tail, heard only when the outro comes.
+        let cues = [
+            "music:\n    file: loop.wav\n    volume: 1\n    fading_point: 0.032\nloop_outro: {ch: 1, note: 1}",
+            "music:\n    file: finish.wav\n    volume: 1",
+        ];
+        let mut rig = rig(&cues, &[("loop.wav", 2.0, 48), ("finish.wav", 4.0, 80)]);
+        rig.show.go().unwrap();
+        rig.run(40);
+        assert_eq!(rig.level(), 2.0, "the loop wraps at its loop point without the tail");
+        rig.show.go().unwrap();
+        rig.run(60);
+        // 40 ms in, the loop next reaches its loop point at 64. From there the outro plays,
+        // and for 16 ms the tail with it.
+        let changes: Vec<(usize, f32)> = rig.out.iter().enumerate().filter(|(i, v)| *i == 0 || rig.out[i - 1] != **v).map(|(i, v)| (i, *v)).collect();
+        assert_eq!(changes, [(0, 2.0), (64, 6.0), (80, 4.0)], "loop; tail and outro together; outro alone");
+    }
+
+    #[test]
+    fn audio_that_rings_out_is_reported_past_its_loop_point() {
+        let cues = [
+            "music:\n    file: loop.wav\n    volume: 1\n    fading_point: 0.032\nloop_outro: {ch: 1, note: 1}",
+            "music:\n    file: finish.wav\n    volume: 1",
+        ];
+        let mut rig = rig(&cues, &[("loop.wav", 2.0, 48), ("finish.wav", 4.0, 80)]);
+        rig.show.go().unwrap();
+        rig.run(40);
+        rig.show.go().unwrap();
+        rig.run(32);
+        // 72 ms: the loop handed over at 64 and is 8 ms into its tail.
+        let of = |cue: usize| rig.show.audio_status().into_iter().find(|(c, _)| *c == cue).map(|(_, s)| (s.state, s.seconds));
+        assert_eq!(of(0), Some((VoiceState::Tail, 0.040)));
+        assert_eq!(of(1), Some((VoiceState::Playing, 0.008)));
+
+        // In a loop of several parts, a part that rings out is reported beside the one playing.
+        let parts = ["music:\n    file: a.wav\n    volume: 1\n    fading_point: 0.024\nmusic_seq:\n    - file: b.wav\n      volume: 1"];
+        let mut two = super::tests::rig(&parts, &[("a.wav", 1.0, 40), ("b.wav", 2.0, 40)]);
+        two.show.go().unwrap();
+        two.run(32);
+        let all: Vec<(usize, VoiceState, f64)> = two.show.audio_status().into_iter().map(|(_, s)| (s.part, s.state, s.seconds)).collect();
+        assert_eq!(all, [(1, VoiceState::Playing, 0.008), (0, VoiceState::Tail, 0.032)]);
+        assert_eq!(two.level(), 3.0, "the first part's tail under the second part");
     }
 
     #[test]

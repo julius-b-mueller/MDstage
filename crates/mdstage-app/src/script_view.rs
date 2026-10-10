@@ -1209,11 +1209,19 @@ impl ScriptView {
             let part = &audio.parts[0];
             let wave = Rect::from_min_size(pos2(left, y + 4.0), vec2(width, WAVE_HEIGHT));
             // The cursor only makes sense on the part whose waveform is shown.
-            let playing = status.filter(|s| s.part == 0 && sounding).map(|s| s.seconds);
+            // A cue of several parts reports each part that sounds. On the waveform (which is
+            // the first part's) the cursor runs while that part plays; once it has handed
+            // over and only rings out, a ghost cursor goes on through its tail.
+            use mdstage_engine::clock::VoiceState;
+            let of_part = |part: usize, state: VoiceState| snapshot.audio.iter().find(|(c, s)| *c == cue_index && s.part == part && s.state == state).map(|(_, s)| s.seconds);
+            let playing = of_part(0, VoiceState::Playing);
+            let ghost = of_part(0, VoiceState::Tail);
             let position = playing.or(snapshot.paused.iter().find(|(c, _)| *c == cue_index).map(|(_, seconds)| *seconds));
-            let duration = self.draw_waveform(ui, cx, block, cue_index, cue.note(), part, position, playing.is_some(), wave, actions);
+            let duration = self.draw_waveform(ui, cx, block, cue_index, cue.note(), part, (position, ghost), playing.is_some(), wave, actions);
             let row = Rect::from_min_size(pos2(left, wave.bottom() + 4.0), vec2(width, CONTROLS));
-            self.draw_transport(ui, cx, (block, cue_index), part, audio.looped, sounding, position, duration, row, actions);
+            // While a later part plays, the row says so instead of a position in this one.
+            let later = snapshot.audio.iter().find(|(c, s)| *c == cue_index && s.part > 0 && s.state == VoiceState::Playing).map(|(_, s)| (s.part, s.seconds));
+            self.draw_transport(ui, cx, (block, cue_index), part, audio.looped, sounding, (position, later), duration, row, actions);
         }
         match self.picking {
             // A connection is being set up: the click names its other end.
@@ -1354,7 +1362,7 @@ impl ScriptView {
         part: &Part,
         looped: bool,
         sounding: bool,
-        position: Option<f64>,
+        (position, later): (Option<f64>, Option<(usize, f64)>),
         duration: Option<f64>,
         rect: Rect,
         actions: &mut Vec<Action>,
@@ -1410,9 +1418,10 @@ impl ScriptView {
 
         if let Some(duration) = duration {
             let clock = |seconds: f64| format!("{}:{:04.1}", (seconds / 60.0) as u32, seconds % 60.0);
-            let text = match position {
-                Some(position) => format!("{} / {}", clock(position), clock(duration)),
-                None => clock(duration),
+            let text = match (position, later) {
+                (_, Some((part, seconds))) => format!("{} {} · {}", t("Teil", "Part"), part + 1, clock(seconds)),
+                (Some(position), None) => format!("{} / {}", clock(position), clock(duration)),
+                (None, None) => clock(duration),
             };
             row.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.label(egui::RichText::new(text).monospace().size(12.0).color(MUTED)));
         }
@@ -1430,7 +1439,7 @@ impl ScriptView {
         cue_index: usize,
         note: Option<Note>,
         part: &Part,
-        cursor: Option<f64>,
+        (cursor, ghost): (Option<f64>, Option<f64>),
         playing: bool,
         rect: Rect,
         actions: &mut Vec<Action>,
@@ -1599,6 +1608,12 @@ impl ScriptView {
 
         if let Some(seconds) = cursor {
             painter.vline(x_of(seconds.clamp(0.0, duration)), rect.y_range(), Stroke::new(1.5_f32, BRIGHT));
+        }
+        // The ghost cursor: the audio has handed over at its loop point and rings out.
+        if let Some(seconds) = ghost {
+            let x = x_of(seconds.clamp(0.0, duration));
+            painter.add(egui::Shape::dashed_line(&[pos2(x, rect.top()), pos2(x, rect.bottom())], Stroke::new(1.5_f32, BRIGHT.gamma_multiply(0.6)), 4.0, 3.0));
+            ui.ctx().request_repaint();
         }
         Some(duration)
     }
