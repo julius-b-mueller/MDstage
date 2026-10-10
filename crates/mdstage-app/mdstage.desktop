@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=MDstage
+Comment=Das interaktive Inspizientenbuch
+Exec=mdstage %f
+Icon=mdstage
+Categories=AudioVideo;Audio;
+MimeType=text/markdown;
+Terminal=false

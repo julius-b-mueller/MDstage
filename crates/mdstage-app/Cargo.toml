@@ -20,3 +20,14 @@ typst-pdf = "0.13"
 typst-assets = { version = "0.13", features = ["fonts"] }
 mdstage-core = { path = "../mdstage-core" }
 mdstage-engine = { path = "../mdstage-engine" }
+
+[package.metadata.deb]
+name = "mdstage"
+maintainer = "Julius B. Müller <hello@mdstage.org>"
+extended-description = "Stage manager app for live shows and theatre: the script is a Markdown file with cues embedded as YAML; audio playback, MIDI, timecode, OSC and a live view from a single file."
+section = "sound"
+assets = [
+    ["target/release/mdstage", "usr/bin/mdstage", "755"],
+    ["../../dist/assets/icon.png", "usr/share/icons/hicolor/512x512/apps/mdstage.png", "644"],
+    ["mdstage.desktop", "usr/share/applications/mdstage.desktop", "644"],
+]

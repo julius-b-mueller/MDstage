@@ -33,6 +33,29 @@ Bei jedem Version-Bump müssen folgende Stellen angepasst werden:
 
 Also: `package.json` und das JSON-LD in `website/index.html` immer **beide** von Hand auf dieselbe Version setzen.
 
+## Nativer Rewrite (Zweig `native-rewrite`)
+
+Die Electron-App wird durch eine native Rust-App ersetzt. Bis zur Ablösung existieren
+beide nebeneinander; der Electron-Code (`electron/`, `src/`, `dist/`) bleibt lauffähig.
+
+| Crate | Inhalt |
+|---|---|
+| `crates/mdstage-core` | Show-Datei lesen/schreiben, Cue-Logik, Prüfungen – ohne I/O |
+| `crates/mdstage-engine` | Audio, MIDI, Timecode, OSC, HTTP, Display-Server, Sitzung |
+| `crates/mdstage-app` | Oberfläche (egui), Export |
+
+```
+cargo test --workspace                    # alle Tests
+cargo run --release -p mdstage-app -- SHOW.md
+scripts/bundle-macos.sh --dmg             # target/bundle/MDstage.app und .dmg
+```
+
+- Die Version der nativen App steht in `Cargo.toml` (`[workspace.package]`), unabhängig von
+  `package.json`, solange beide Apps existieren.
+- `crates/mdstage-engine/src/display.rs` bindet `dist/display/index.html` und
+  `dist/display/app.js` ein – der Display-Client bleibt eine Webseite.
+- CI für die native App: `.github/workflows/native.yml` (nur Artefakte, kein Release).
+
 ## Git Tags
 
 Tags immer **ohne** `v`-Präfix setzen: `1.11.6`, nicht `v1.11.6`.
