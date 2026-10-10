@@ -187,8 +187,8 @@ impl Tie {
     fn colour(self) -> Color32 {
         match self {
             Tie::Chain => BLUE,
-            Tie::Auto => GREEN,
-            Tie::Adjust => PURPLE,
+            Tie::Auto => PURPLE,
+            Tie::Adjust => CYAN,
         }
     }
 }
@@ -205,8 +205,13 @@ struct Relation {
     to_place: (usize, usize),
 }
 
-/// The colour of what changes another cue's audio.
+/// The colour of auto-cues: their marker on the waveform, their row and their line.
 const PURPLE: Color32 = Color32::from_rgb(0xc6, 0x78, 0xdd);
+/// The colour of what changes another cue's audio.
+const CYAN: Color32 = Color32::from_rgb(0x56, 0xb6, 0xc2);
+/// From a cue's left edge to the first lane: room for an arrowhead and a straight piece
+/// of line before the corner.
+const FIRST_LANE: f32 = 18.0;
 /// Distance between two lanes of connection lines in the margin.
 const LANE: f32 = 8.0;
 const MAX_LANES: usize = 4;
@@ -278,6 +283,9 @@ pub struct ScriptView {
     buttons_of: Option<usize>,
     /// A cue block that was gone to, and when: it is outlined for a moment.
     flash: Option<(usize, f64)>,
+    /// Where the markers of position auto-cues stand on the waveforms drawn in this
+    /// frame: block of the auto-cue → the foot of its marker.
+    auto_anchors: HashMap<usize, egui::Pos2>,
     waveforms: Option<Waveforms>,
     search: Option<Search>,
 }
@@ -487,7 +495,7 @@ impl ScriptView {
 
     /// Width of the part of the margin that holds the connection lines.
     fn rail(&self) -> f32 {
-        if self.lanes == 0 { 0.0 } else { self.lanes as f32 * LANE + 6.0 }
+        if self.lanes == 0 { 0.0 } else { (self.lanes - 1) as f32 * LANE + FIRST_LANE + 4.0 }
     }
 
     /// The connections between cues, in the margin left of them: a line from the cue
@@ -495,7 +503,6 @@ impl ScriptView {
     /// until the pointer is on one of their two cues.
     fn draw_relations(&self, ui: &Ui, origin: egui::Pos2, viewport: Rect) {
         let painter = ui.painter();
-        let edge = origin.x - 2.0;
         for relation in &self.relations {
             // The ends on one cue are spread down its edge, closer together if there are many.
             let at = |block: usize, (place, count): (usize, usize)| {
@@ -503,18 +510,28 @@ impl ScriptView {
                 let apart = if count > 1 { ((height - 34.0) / (count - 1) as f32).clamp(4.0, 11.0) } else { 0.0 };
                 origin.y + self.offsets.get(block).copied().unwrap_or(0.0) + 4.0 + 14.0 + place as f32 * apart
             };
-            let (from, to) = (at(relation.from, relation.from_place), at(relation.to, relation.to_place));
+            // An auto-cue at a place in its source's audio begins right there: at the foot
+            // of its marker on the waveform, if that is on screen. Its line runs out of
+            // the card just under the waveform.
+            let marker = self.auto_anchors.get(&relation.to).filter(|_| relation.tie == Tie::Auto).map(|foot| *foot + vec2(0.0, 2.0));
+            let start = marker.unwrap_or(pos2(origin.x - 4.0, at(relation.from, relation.from_place)));
+            let (from, to) = (start.y, at(relation.to, relation.to_place));
             if from.max(to) < origin.y + viewport.min.y || from.min(to) > origin.y + viewport.max.y {
                 continue;
             }
+            // Mixed with the background rather than made transparent: where line, dot and
+            // arrowhead lie on each other they must not add up to something darker.
             let strong = self.hovered_before.is_some_and(|h| h == relation.from || h == relation.to);
-            let colour = relation.tie.colour().gamma_multiply(if strong { 1.0 } else { 0.45 });
-            let x = origin.x - 10.0 - relation.lane as f32 * LANE;
-            // Out of the cue, round the corner, along the lane, round the corner, into the other.
+            let colour = if strong { relation.tie.colour() } else { BACKGROUND.lerp_to_gamma(relation.tie.colour(), 0.5) };
+            let x = origin.x - FIRST_LANE - relation.lane as f32 * LANE;
+            // Out of the cue, round the corner, along the lane, round the corner, into the
+            // other. The line is straight where it leaves the dot and where it enters the
+            // arrowhead; the corners lie between.
+            let (tip, base) = (origin.x - 1.0, origin.x - 8.0);
             let way = (to - from).signum();
             let radius = 6.0_f32.min((to - from).abs() / 2.0);
-            let mut points = vec![pos2(edge, from)];
-            const STEPS: usize = 6;
+            let mut points = vec![start];
+            const STEPS: usize = 8;
             for step in 0..=STEPS {
                 let angle = step as f32 / STEPS as f32 * std::f32::consts::FRAC_PI_2;
                 points.push(pos2(x + radius - radius * angle.sin(), from + way * (radius - radius * angle.cos())));
@@ -523,10 +540,10 @@ impl ScriptView {
                 let angle = step as f32 / STEPS as f32 * std::f32::consts::FRAC_PI_2;
                 points.push(pos2(x + radius - radius * angle.cos(), to - way * (radius - radius * angle.sin())));
             }
-            points.push(pos2(edge - 5.0, to));
+            points.push(pos2(base + 1.0, to));
             painter.add(egui::epaint::PathShape::line(points, Stroke::new(if strong { 2.0_f32 } else { 1.5_f32 }, colour)));
-            painter.circle_filled(pos2(edge, from), 2.5, colour);
-            painter.add(egui::Shape::convex_polygon(vec![pos2(edge + 1.0, to), pos2(edge - 5.5, to - 3.5), pos2(edge - 5.5, to + 3.5)], colour, Stroke::NONE));
+            painter.circle_filled(start, 2.5, colour);
+            painter.add(egui::Shape::convex_polygon(vec![pos2(tip, to), pos2(base, to - 3.5), pos2(base, to + 3.5)], colour, Stroke::NONE));
         }
     }
 
@@ -720,15 +737,15 @@ impl ScriptView {
                 (AutoWhen::Delay(delay), true) => format!("automatically {delay} s after"),
                 (AutoWhen::Delay(delay), false) => format!("automatisch {delay} s nach"),
             };
-            rows.push(Row::linked("Auto", vec![word(&text, GREEN), to(cues.find(auto.source))]));
+            rows.push(Row::linked("Auto", vec![word(&text, PURPLE), to(cues.find(auto.source))]));
         }
         if let Some(adjust) = cue.adjust() {
             let target = to(cues.find(adjust.target));
             let seconds = adjust.fadetime.map_or(String::new(), |s| format!(" ({s} s)"));
             rows.push(Row::linked("⇢", match (adjust.fadeout, adjust.volume) {
-                (true, _) if crate::lang::english() => vec![word("fade out", PURPLE), target, word(seconds.trim(), MUTED)],
-                (true, _) => vec![target, word(&format!("ausfaden{seconds}"), PURPLE)],
-                (false, Some(v)) => vec![target, word(&format!("{} {} %{seconds}", t("auf", "to"), (v * 100.0).round()), PURPLE)],
+                (true, _) if crate::lang::english() => vec![word("fade out", CYAN), target, word(seconds.trim(), MUTED)],
+                (true, _) => vec![target, word(&format!("ausfaden{seconds}"), CYAN)],
+                (false, Some(v)) => vec![target, word(&format!("{} {} %{seconds}", t("auf", "to"), (v * 100.0).round()), CYAN)],
                 _ => vec![target],
             }));
         }
@@ -900,6 +917,7 @@ impl ScriptView {
             waveforms.poll();
         }
         self.hovered_before = self.hovered.take();
+        self.auto_anchors.clear();
         if self.dirty || self.heights.len() != cx.script.blocks.len() {
             self.relate(cx.script);
         }
@@ -2023,7 +2041,10 @@ impl ScriptView {
                         actions.push(Action::AutoCueAt { block: target_block, at });
                     }
                 }
-                let colour = Color32::from_rgb(0xc6, 0x78, 0xdd);
+                let colour = PURPLE;
+                if rect.x_range().contains(x_of(at)) {
+                    self.auto_anchors.insert(target_block, pos2(x_of(at), rect.bottom()));
+                }
                 painter.vline(x_of(at), rect.y_range(), Stroke::new(1.5_f32, colour));
                 painter.text(pos2(x_of(at) + 3.0, rect.bottom() - 1.0), Align2::LEFT_BOTTOM, format!("Auto {}", target + 1), FontId::proportional(11.0), colour);
             }
