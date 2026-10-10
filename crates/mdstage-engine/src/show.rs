@@ -30,6 +30,9 @@ const HANDOVER_FADE: f64 = 0.05;
 /// Fade of `music.adjust` when the cue does not set one.
 const DEFAULT_ADJUST_FADE: f64 = 3.0;
 
+/// How far back a playing position has to jump to count as a new pass of a loop.
+const WRAP: f64 = 0.3;
+
 /// A delay auto-cue waiting to fire.
 struct Delay {
     target: usize,
@@ -38,11 +41,14 @@ struct Delay {
     due: f64,
 }
 
-/// An audio-position auto-cue: fires `target` when `source`'s audio passes `at`.
+/// An audio-position auto-cue: fires `target` when `source`'s audio is at or past `at`,
+/// once per pass of a loop.
 struct Watch {
     target: usize,
     source: usize,
     at: f64,
+    /// Done for this pass.
+    fired: bool,
     last: Option<f64>,
 }
 
@@ -449,14 +455,28 @@ impl Show {
                     self.delays.retain(|d| d.target != target);
                     self.delays.push(Delay { target, source: cue, started: self.now, due: self.now + seconds.max(0.0) });
                 }
-                AutoWhen::At(at) => {
-                    self.watches.retain(|w| w.target != target);
-                    self.watches.push(Watch { target, source: cue, at, last: None });
-                }
+                AutoWhen::At(_) => {}
             }
         }
+        self.watch(cue, None);
         self.report_displays();
         Ok(())
+    }
+
+    /// Watch the audio of `cue` for the position auto-cues that hang on it. Audio that
+    /// comes back in at `resumed` has the auto-cues before that place behind it.
+    fn watch(&mut self, cue: usize, resumed: Option<f64>) {
+        let cues = Cues::new(&self.script);
+        let root = cues.group_root(cue);
+        for target in 0..cues.len() {
+            let Some(auto_trigger) = cues.get(target).and_then(|t| t.auto_trigger()) else { continue };
+            let AutoWhen::At(at) = auto_trigger.when else { continue };
+            if cues.find(auto_trigger.source).map(|s| cues.group_root(s)) != Some(root) {
+                continue;
+            }
+            self.watches.retain(|w| w.target != target);
+            self.watches.push(Watch { target, source: cue, at, fired: resumed.is_some_and(|from| at <= from), last: None });
+        }
     }
 
     /// Drop timers, watches and timecode that depend on these cues' audio.
@@ -504,20 +524,27 @@ impl Show {
         for target in due {
             self.fire(target, true)?;
         }
-        // Audio-position auto-cues: fire when the source passes the position; once per
-        // pass of a loop.
+        // Audio-position auto-cues: fire when the source is at or past the position, once
+        // per pass of a loop. Not an edge but a level: an auto-cue at the very start, or
+        // one the audio was already past when first looked at, fires all the same.
         let mut reached = Vec::new();
         for watch in &mut self.watches {
             let Some(status) = self.player.status(watch.source, self.clock.as_deref()).filter(|s| s.state == VoiceState::Playing) else {
                 continue;
             };
-            if watch.last.is_some_and(|last| last < watch.at && status.seconds >= watch.at) {
+            // The audio jumped back: the loop came round (or the operator moved it).
+            if watch.last.is_some_and(|last| status.seconds < last - WRAP) {
+                watch.fired = false;
+            }
+            if !watch.fired && status.seconds >= watch.at {
+                watch.fired = true;
                 reached.push(watch.target);
             }
             watch.last = Some(status.seconds);
         }
-        let player = &self.player;
-        self.watches.retain(|w| player.is_sounding(w.source));
+        // A watch lasts as long as its audio is there, paused audio included.
+        let (player, paused) = (&self.player, &self.paused);
+        self.watches.retain(|w| player.status(w.source, None).is_some_and(|s| s.state != VoiceState::Done) || paused.contains_key(&w.source));
         for target in reached {
             self.fire(target, true)?;
         }
@@ -570,6 +597,9 @@ impl Show {
             part.volume = volume;
         }
         self.player.start(cue, &audio, Start { armed: false, then, resume: Some(resume) })?;
+        if resume.0 == 0 {
+            self.watch(cue, Some(resume.1));
+        }
         let tc = Cues::new(&self.script).get(cue).and_then(|c| c.text("start_tc")).and_then(Timecode::parse);
         if let Some(tc) = tc {
             let spans = self.player.spans(&audio)?;
@@ -1009,6 +1039,41 @@ mod tests {
         // Back undoes the Go together with what it set off.
         rig.show.back().unwrap();
         assert!(rig.fired().is_empty());
+    }
+
+    /// The show is looked at far more often than the audio device asks for sound. A cue
+    /// that has just been started must not be taken for silent in between.
+    #[test]
+    fn auto_cues_survive_a_look_before_the_first_sound() {
+        let mut rig = rig(
+            &["music: long.wav", "auto_trigger: {trigger_note: {ch: 1, note: 0}, at: 0.2}", "auto_trigger: {trigger_note: {ch: 1, note: 0}, at: 0}"],
+            &[("long.wav", 1.0, 1000)],
+        );
+        rig.show.go().unwrap();
+        // Several looks before the mixer has rendered anything.
+        for _ in 0..5 {
+            rig.show.tick(0.0).unwrap();
+        }
+        assert_eq!(rig.fired(), [0, 2], "the auto-cue at the very start fires at once");
+        rig.run(240);
+        assert_eq!(rig.fired(), [0, 2, 1]);
+    }
+
+    #[test]
+    fn position_auto_cues_fire_on_every_pass_and_after_a_pause() {
+        let mut rig = rig(&["music: {file: long.wav, loop: true, end: 0.5}", "auto_trigger: {trigger_note: {ch: 1, note: 0}, at: 0.4}"], &[("long.wav", 1.0, 1000)]);
+        rig.show.go().unwrap();
+        rig.run(200);
+        // Paused and played on from the waveform: the auto-cue is still to come.
+        rig.show.play_pause(0).unwrap();
+        rig.run(80);
+        rig.show.play_pause(0).unwrap();
+        rig.run(160);
+        assert_eq!(rig.fired(), [0]);
+        rig.run(160);
+        assert_eq!(rig.fired(), [0, 1]);
+        rig.run(504);
+        assert_eq!(rig.fired(), [0, 1, 1], "again on the loop's next pass");
     }
 
     #[test]

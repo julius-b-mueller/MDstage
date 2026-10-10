@@ -516,8 +516,12 @@ impl Player {
                     ..VoiceSpec::of(id, source)
                 };
                 // Until the mixer reports for itself: where the voice is going to begin,
-                // so that the pages there are not taken for unneeded.
-                spec.shared.publish(0, initial.unwrap_or(region_start).clamp(region_start, end) as u64, VoiceState::Armed);
+                // so that the pages there are not taken for unneeded. A voice that starts
+                // right away counts as playing from this moment, not only once the audio
+                // device has asked for its next block — whoever looks in between would
+                // otherwise take the cue for silent and give up on what hangs on it.
+                let state = if spec.armed { VoiceState::Armed } else { VoiceState::Playing };
+                spec.shared.publish(0, initial.unwrap_or(region_start).clamp(region_start, end) as u64, state);
                 shared.push(spec.shared.clone());
                 files.push(file.file.clone());
                 self.send(Command::Add(spec))?;
