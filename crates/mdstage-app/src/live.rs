@@ -383,7 +383,7 @@ impl LiveView {
                     }
                     Self::card_height(Self::card_lines(ui, cx, cues, this, 16.0, width), 16.0) + GAP
                 }
-                block => ScriptView::text_job(cx.cast, block, width, SCALE).map_or(0.0, |job| ui.fonts(|f| f.layout_job(job)).size().y + GAP),
+                block => ScriptView::text_job(cx.cast, block, width, SCALE, None).map_or(0.0, |job| ui.fonts(|f| f.layout_job(job)).size().y + GAP),
             })
             .collect();
         self.width = width;
@@ -417,6 +417,7 @@ impl LiveView {
         let top = ui.ctx().animate_value_with_time(Id::new("live-scroll"), target, 0.45);
 
         let painter = ui.painter().with_clip_rect(area);
+        let numbers = ScriptView::scene_numbers(cx.script);
         let mut y = top;
         let mut cue = 0;
         for (index, block) in cx.script.blocks.iter().enumerate() {
@@ -433,7 +434,7 @@ impl LiveView {
             match (block, this_cue) {
                 (Block::Cue(_), Some(root)) => self.cards(ui, cx, cues, root, rect, requests),
                 (block, _) => {
-                    if let Some(job) = ScriptView::text_job(cx.cast, block, width, SCALE) {
+                    if let Some(job) = ScriptView::text_job(cx.cast, block, width, SCALE, numbers.get(index).copied().flatten()) {
                         let galley = ui.fonts(|f| f.layout_job(job));
                         if let Block::Heading { .. } = block {
                             painter.rect_filled(rect.expand2(vec2(MARGIN, 5.0)), 0.0, BAR);

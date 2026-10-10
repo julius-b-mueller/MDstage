@@ -614,6 +614,17 @@ impl App {
             if ctx.input(|i| i.key_pressed(Key::Backspace)) {
                 self.request(Request::Back);
             }
+            // A number typed here is a scene to jump to.
+            let (digits, now) = ctx.input(|i| {
+                let typed: Vec<usize> = i.events.iter().filter_map(|e| match e {
+                    egui::Event::Text(text) => Some(text.chars().filter_map(|c| c.to_digit(10)).map(|d| d as usize).collect::<Vec<_>>()),
+                    _ => None,
+                }).flatten().collect();
+                (typed, i.time)
+            });
+            for digit in digits {
+                self.view.type_scene_digit(digit, now);
+            }
         }
     }
 

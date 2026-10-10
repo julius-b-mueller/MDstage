@@ -175,6 +175,11 @@ pub struct ScriptView {
     following: std::collections::HashSet<usize>,
     /// The line of the show file each block begins on.
     lines: Vec<usize>,
+    /// The scene number of each block that is a scene's heading.
+    numbers: Vec<Option<usize>>,
+    /// A scene number being typed to jump there: the digits so far, and when the last
+    /// one came (seconds).
+    typed_scene: Option<(usize, f64)>,
     /// Vim keys: the mode, what was yanked, and so on.
     vim: Vim,
     /// The block about to be edited was reached with `k` from the one below: the cursor
@@ -229,6 +234,37 @@ impl ScriptView {
     /// Open the search bar (or put the cursor back into it).
     pub fn open_search(&mut self) {
         self.search.get_or_insert_with(Search::default).focus = true;
+    }
+
+    /// A digit was typed outside any text field: part of a scene number to jump to.
+    /// "2" goes to scene 2, "1" then "7" to scene 17.
+    pub fn type_scene_digit(&mut self, digit: usize, now: f64) {
+        let so_far = self.typed_scene.map_or(0, |(number, _)| number);
+        self.typed_scene = Some(((so_far * 10 + digit).min(9999), now));
+    }
+
+    /// Jump to the scene typed, once it is clear that no further digit is coming: after
+    /// a short wait, or at once if no scene number could begin with what was typed.
+    fn jump_to_typed_scene(&mut self, ui: &Ui) {
+        const WAIT: f64 = 0.8;
+        let Some((number, at)) = self.typed_scene else { return };
+        let scenes = self.numbers.iter().flatten().count();
+        let now = ui.input(|i| i.time);
+        if number * 10 <= scenes && now - at < WAIT {
+            // Show what has been typed while waiting for a possible second digit.
+            let corner = ui.clip_rect().right_top() + vec2(-24.0, 18.0);
+            let text = ui.painter().layout_no_wrap(number.to_string(), FontId::proportional(34.0), BRIGHT);
+            let plate = Rect::from_min_size(corner - vec2(text.size().x + 28.0, 0.0), text.size() + vec2(28.0, 12.0));
+            ui.painter().rect_filled(plate, 8.0, PANEL.gamma_multiply(0.95));
+            ui.painter().galley(plate.min + vec2(14.0, 6.0), text, BRIGHT);
+            ui.ctx().request_repaint();
+            return;
+        }
+        self.typed_scene = None;
+        if let Some(block) = self.numbers.iter().position(|n| *n == Some(number)) {
+            self.scroll_to = self.offsets.get(block).copied();
+            ui.ctx().request_repaint();
+        }
     }
 
     /// What the operator is asked to do while a connection is being set up.
@@ -311,13 +347,36 @@ impl ScriptView {
     }
 
     /// Text layout of a block; `None` for blocks that are not plain text.
-    fn job(cast: &Cast, block: &Block, width: f32) -> Option<LayoutJob> {
-        Self::text_job(cast, block, width, 1.0)
+    fn job(cast: &Cast, block: &Block, width: f32, number: Option<usize>) -> Option<LayoutJob> {
+        Self::text_job(cast, block, width, 1.0, number)
+    }
+
+    /// The number of each scene, by block: the first-level headings are counted from 1,
+    /// headings below them have none. A first-level heading that opens the file and is
+    /// followed directly by another one is the show's title and is not counted.
+    pub(crate) fn scene_numbers(script: &Script) -> Vec<Option<usize>> {
+        let is_scene = |block: &Block| matches!(block, Block::Heading { level: 1, .. });
+        let first = script.blocks.iter().position(|b| !matches!(b, Block::Config(_)));
+        let second = first.and_then(|f| script.blocks[f + 1..].iter().find(|b| !matches!(b, Block::Config(_))));
+        let title = first.filter(|f| is_scene(&script.blocks[*f]) && second.is_some_and(is_scene));
+        let mut number = 0;
+        script
+            .blocks
+            .iter()
+            .enumerate()
+            .map(|(index, block)| {
+                (is_scene(block) && Some(index) != title).then(|| {
+                    number += 1;
+                    number
+                })
+            })
+            .collect()
     }
 
     /// A text block laid out for a given width; `scale` enlarges the type (the live view
     /// is read from further away).
-    pub(crate) fn text_job(cast: &Cast, block: &Block, width: f32, scale: f32) -> Option<LayoutJob> {
+    /// `number` is the scene's number, set before a heading that has one.
+    pub(crate) fn text_job(cast: &Cast, block: &Block, width: f32, scale: f32, number: Option<usize>) -> Option<LayoutJob> {
         let mut job = LayoutJob::default();
         job.wrap.max_width = width;
         let plain = |size: f32, color| TextFormat { font_id: FontId::proportional(size * scale), color, ..Default::default() };
@@ -328,6 +387,9 @@ impl ScriptView {
                     2 => 21.0,
                     _ => 17.0,
                 };
+                if let Some(number) = number {
+                    job.append(&format!("{number}  "), 0.0, plain(size, MUTED));
+                }
                 job.append(text, 0.0, plain(size, BRIGHT));
             }
             Block::Stage(text) => job.append(text, 0.0, TextFormat { italics: true, ..plain(16.0, MUTED) }),
@@ -553,6 +615,7 @@ impl ScriptView {
         let editing = self.editing.as_ref().map(|e| e.index);
         let blocks = &cx.script.blocks;
         self.heights.resize(blocks.len(), 0.0);
+        self.numbers = Self::scene_numbers(cx.script);
         self.lines = cx.script.block_lines();
         self.cue_of_block = vec![None; blocks.len()];
         self.block_of_cue.clear();
@@ -573,7 +636,7 @@ impl ScriptView {
                     Self::cue_height(Self::cue_lines(ui, &rows, width), cue.audio().is_some())
                 }
                 block => {
-                    let job = Self::job(cx.cast, block, width).unwrap_or_default();
+                    let job = Self::job(cx.cast, block, width, self.numbers.get(i).copied().flatten()).unwrap_or_default();
                     ui.fonts(|f| f.layout_job(job)).size().y + 2.0 * BLOCK_PAD
                 }
             };
@@ -584,7 +647,11 @@ impl ScriptView {
             .iter()
             .enumerate()
             .filter_map(|(i, block)| match block {
-                Block::Heading { level, text } if *level <= 3 => Some((i, *level, text.clone())),
+                // A scene's number goes with its title wherever the title is shown.
+                Block::Heading { level, text } if *level <= 3 => Some((i, *level, match self.numbers.get(i).copied().flatten() {
+                    Some(number) => format!("{number}  {text}"),
+                    None => text.clone(),
+                })),
                 _ => None,
             })
             .collect();
@@ -633,6 +700,7 @@ impl ScriptView {
                 self.draw_block(ui, cx, i, rect, actions);
             }
             self.drawn_at = Some((origin, ui.clip_rect()));
+            self.jump_to_typed_scene(ui);
             if !cx.locked && self.editing.is_none() && self.picking.is_none() {
                 self.insert_zones(ui, cx, origin, viewport, actions);
             }
@@ -650,7 +718,7 @@ impl ScriptView {
             self.draw_cue(ui, cx, index, cue, rect, actions);
             return;
         }
-        let Some(job) = Self::job(cx.cast, block, rect.width()) else { return };
+        let Some(job) = Self::job(cx.cast, block, rect.width(), self.numbers.get(index).copied().flatten()) else { return };
         let response = ui.interact(rect, Id::new(("block", index)), Sense::click());
         let shift = ui.input(|i| i.modifiers.shift);
         if let Some(search) = &self.search {
@@ -1691,6 +1759,24 @@ mod tests {
         assert_eq!(ScriptView::complete("**Ben**\nA", "Anna"), ("**Ben/Anna**\n".to_string(), 13));
         // What comes of it is the role block one expects.
         assert_eq!(ScriptView::typed_block("**Ben/Anna**\n\nHallo."), Some(Block::Role { names: vec!["Ben".into(), "Anna".into()], text: "Hallo.".into() }));
+    }
+
+    #[test]
+    fn scenes_are_numbered_and_the_title_is_not() {
+        let numbers = |text: &str| ScriptView::scene_numbers(&Script::parse(text));
+        // The title opens the file and is followed directly by the first scene.
+        assert_eq!(numbers("# Stück\n\n# Einlass\n\n```yaml\nconfig:\n    roles: {}\n```\n\n*Licht.*\n\n# Prolog\n\n## Song\n\n# Ende\n"), [None, Some(1), None, None, Some(2), None, Some(3)]);
+        // Without a title every first-level heading is a scene, also behind the config block.
+        assert_eq!(numbers("```yaml\nconfig:\n    roles: {}\n```\n\n# Eins\n\n*Licht.*\n\n# Zwei\n"), [None, Some(1), None, Some(2)]);
+        assert_eq!(numbers("# Titel\n\n```yaml\nconfig:\n    roles: {}\n```\n\n# Eins\n"), [None, None, Some(1)]);
+        assert_eq!(numbers("*Nur Text.*\n"), [None]);
+
+        let mut view = ScriptView::default();
+        view.numbers = vec![None; 40];
+        (0..20).for_each(|n| view.numbers[2 * n] = Some(n + 1));
+        view.type_scene_digit(1, 0.0);
+        view.type_scene_digit(7, 0.3);
+        assert_eq!(view.typed_scene, Some((17, 0.3)));
     }
 
     #[test]
