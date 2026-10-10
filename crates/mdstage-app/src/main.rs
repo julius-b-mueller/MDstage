@@ -71,6 +71,8 @@ struct App {
     version_notice: Option<Option<String>>,
     /// An edit is waiting to be saved into a file of another version: ask first.
     upgrade_prompt: bool,
+    /// An audio file to rename (`from`, `to`) once that question is answered with yes.
+    pending_rename: Option<(String, String)>,
     /// Audio files a cue has just swapped for others while further cues still use
     /// them: `(old, new, how many cues)`. The operator is asked whether those follow.
     swap_prompt: Option<Vec<(String, String, usize)>>,
@@ -120,6 +122,7 @@ impl App {
             live: Default::default(),
             version_notice: None,
             upgrade_prompt: false,
+            pending_rename: None,
             swap_prompt: None,
             drag_at: None,
             pending_drop: None,
@@ -1081,8 +1084,10 @@ impl App {
             None if open => {
                 if let Some((from, to)) = dialog.rename_request.take() {
                     match self.rename_audio(&from, &to) {
-                        Ok(()) => dialog.audio_renamed(&from, &to),
-                        Err(e) => self.message = Some(format!("{}: {e}", lang::t("Umbenennen fehlgeschlagen", "Rename failed"))),
+                        Ok(true) => dialog.audio_renamed(&from, &to),
+                        // Waiting for the answer to "save with this version?".
+                        Ok(false) => {}
+                        Err(e) => dialog.rename_error = Some(format!("{}: {e}", lang::t("Umbenennen fehlgeschlagen", "Rename failed"))),
                     }
                 }
                 self.cue_dialog = Some(dialog);
@@ -1092,16 +1097,20 @@ impl App {
     }
 
     /// Rename a file in the show's `audio/` folder and follow it through every cue.
-    fn rename_audio(&mut self, from: &str, to: &str) -> Result<(), String> {
-        let Some(show) = &mut self.show else { return Ok(()) };
+    /// Returns `Ok(false)` if it has to wait: the file was last saved by another version
+    /// of MDstage, and the operator is asked first whether this one may save it.
+    fn rename_audio(&mut self, from: &str, to: &str) -> Result<bool, String> {
+        let Some(show) = &mut self.show else { return Ok(false) };
         if show.saved_by_other.is_some() {
-            return Err(lang::t("Die Datei stammt aus einer anderen Version. Erst etwas bearbeiten und das Speichern mit der aktuellen Version bestätigen.", "The file comes from another version. Edit something first and confirm saving with the current version.").to_string());
+            self.pending_rename = Some((from.to_string(), to.to_string()));
+            self.upgrade_prompt = true;
+            return Ok(false);
         }
         let audio_dir = show.path.parent().unwrap_or(Path::new(".")).join("audio");
         store::rename_audio_file(&audio_dir, from, to).map_err(|e| e.message().to_string())?;
         let before = show.script.clone();
         if show.script.rename_audio(from, to) == 0 {
-            return Ok(());
+            return Ok(true);
         }
         // A show file that cannot be written must not be left naming a file that is gone:
         // put both back.
@@ -1111,7 +1120,7 @@ impl App {
             return Err(format!("{} ({e})", store::RenameError::Io.message()));
         }
         self.after_edit();
-        Ok(())
+        Ok(true)
     }
 
     /// Menu: look for audio files no cue uses and offer to move them away.
@@ -1258,6 +1267,16 @@ impl App {
                         show.script.set_app_version(VERSION);
                         self.after_edit();
                         self.message = Some(format!("{}: {backup}", lang::t("Mit der aktuellen Version gespeichert. Sicherung", "Saved with the current version. Backup")));
+                        // A renaming that was waiting for this answer happens now.
+                        if let Some((from, to)) = self.pending_rename.take() {
+                            let done = self.rename_audio(&from, &to);
+                            if let Some(dialog) = &mut self.cue_dialog {
+                                match done {
+                                    Ok(_) => dialog.audio_renamed(&from, &to),
+                                    Err(e) => dialog.rename_error = Some(format!("{}: {e}", lang::t("Umbenennen fehlgeschlagen", "Rename failed"))),
+                                }
+                            }
+                        }
                     }
                     // Without the copy nothing is written.
                     Err(e) => self.message = Some(format!("{}: {e}", lang::t("Sicherungskopie nicht geschrieben, nichts gespeichert", "Backup not written, nothing saved"))),
@@ -1266,6 +1285,7 @@ impl App {
             Some(false) => {
                 // Back to what is on disk.
                 self.upgrade_prompt = false;
+                self.pending_rename = None;
                 self.reload(ctx);
             }
             None => {}

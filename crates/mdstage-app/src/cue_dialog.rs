@@ -29,8 +29,12 @@ pub struct CueDialog {
     info: std::collections::HashMap<String, Option<(usize, f64)>>,
     /// Tempo and number of beats for working out the loop point.
     tempo: (f64, f64),
-    /// The new name being typed for the cue's audio file.
+    /// The new name being typed for the cue's audio file (without its ending).
     renaming: Option<String>,
+    /// The name field has just appeared and wants the keyboard.
+    rename_focus: bool,
+    /// Why the last renaming did not happen, shown under the audio file.
+    pub rename_error: Option<String>,
     /// Set when the operator asked for an audio file to be renamed: `(from, to)`. The
     /// app does it (on disk and in every cue) and answers with `audio_renamed`.
     pub rename_request: Option<(String, String)>,
@@ -84,7 +88,7 @@ impl CueDialog {
     pub fn new(block: usize, is_new: bool, cue: Option<&Value>, audio_dir: &Path, auto_mic_in_use: bool, cues: Vec<(Note, String)>) -> CueDialog {
         let yaml = cue.and_then(Value::as_mapping).cloned().unwrap_or_default();
         let audio_files = crate::store::audio_files(audio_dir);
-        CueDialog { block, is_new, yaml, audio_files, auto_mic_in_use, cues, channels: vec!["L".into(), "R".into()], devices: Default::default(), audio_dir: audio_dir.to_path_buf(), info: Default::default(), tempo: (120.0, 4.0), renaming: None, rename_request: None }
+        CueDialog { block, is_new, yaml, audio_files, auto_mic_in_use, cues, channels: vec!["L".into(), "R".into()], devices: Default::default(), audio_dir: audio_dir.to_path_buf(), info: Default::default(), tempo: (120.0, 4.0), renaming: None, rename_focus: false, rename_error: None, rename_request: None }
     }
 
     /// An audio file got a new name: follow it in the file list and in the cue as it
@@ -267,7 +271,10 @@ impl CueDialog {
                 } else if !file.is_empty() && self.renaming.is_none() {
                     let hint = t("Audiodatei umbenennen (wirkt in allen Cues)", "Rename audio file (applies to every cue)");
                     if ui.add(egui::Button::image(Icon::Pencil.image(14.0, TEXT))).on_hover_text(hint).clicked() {
-                        self.renaming = Some(file.clone());
+                        // The name is edited without its ending, which stays as it is.
+                        self.renaming = Some(file.rsplit_once('.').map_or(file.as_str(), |(stem, _)| stem).to_string());
+                        self.rename_error = None;
+                        self.rename_focus = true;
                     }
                 }
                 if !file.is_empty() && ui.button(t("+ Audio", "+ Audio")).on_hover_text(t("Weitere Audios, die zusammen spielen, mit Kanal-Patch", "Further audios that play together, with a channel patch")).clicked() {
@@ -278,12 +285,17 @@ impl CueDialog {
                 let mut keep = true;
                 ui.horizontal(|ui| {
                     ui.label(t("Neuer Name", "New name"));
+                    let ending = file.rsplit_once('.').map_or(String::new(), |(_, ending)| format!(".{ending}"));
                     let field = ui.add(egui::TextEdit::singleline(&mut name).desired_width(260.0));
+                    if std::mem::take(&mut self.rename_focus) {
+                        field.request_focus();
+                    }
+                    ui.label(RichText::new(&ending).color(MUTED));
                     let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     if ui.button(t("Umbenennen", "Rename")).clicked() || entered {
-                        let wanted = name.trim();
-                        if !wanted.is_empty() && wanted != file {
-                            self.rename_request = Some((file.clone(), wanted.to_string()));
+                        if let Some(wanted) = new_name(&file, &name) {
+                            self.rename_error = None;
+                            self.rename_request = Some((file.clone(), wanted));
                         }
                         keep = false;
                     }
@@ -295,6 +307,9 @@ impl CueDialog {
                 if keep {
                     self.renaming = Some(name);
                 }
+            }
+            if let Some(error) = &self.rename_error {
+                ui.label(RichText::new(error).color(RED));
             }
             if more_audios {
                 changed = true;
@@ -545,6 +560,15 @@ fn probe(audio_dir: &Path, file: &str) -> Option<(usize, f64)> {
     Some((info.channels, info.duration()))
 }
 
+/// The file name meant by what was typed into the rename field: the file keeps its
+/// ending unless one for audio was typed along. `None` if nothing would change.
+fn new_name(file: &str, typed: &str) -> Option<String> {
+    let typed = typed.trim();
+    let ending = file.rsplit_once('.').map_or(String::new(), |(_, ending)| format!(".{ending}"));
+    let wanted = if crate::store::is_audio_name(typed) { typed.to_string() } else { format!("{typed}{ending}") };
+    (!typed.is_empty() && wanted != file).then_some(wanted)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -568,5 +592,14 @@ mod tests {
             }
             assert!(dialog.value() == cue.yaml, "the dialog changed block {block}:\n{}", mdstage_core::yaml::dump(&dialog.value(), true));
         }
+    }
+
+    #[test]
+    fn a_renamed_file_keeps_its_ending() {
+        assert_eq!(new_name("intro.wav", " vorspiel ").as_deref(), Some("vorspiel.wav"));
+        assert_eq!(new_name("intro.wav", "vorspiel.wav").as_deref(), Some("vorspiel.wav"));
+        assert_eq!(new_name("intro.wav", "akt 1.2").as_deref(), Some("akt 1.2.wav"));
+        assert_eq!(new_name("intro.wav", "intro"), None);
+        assert_eq!(new_name("intro.wav", "  "), None);
     }
 }
