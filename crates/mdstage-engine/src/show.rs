@@ -480,7 +480,9 @@ impl Show {
             if then == Then::Loop {
                 self.loop_epochs.insert(cue, self.now - into);
             }
-            let base = start_tc.map(|tc| tc.to_frames() as f64 / crate::mtc::FPS as f64).or(continued);
+            // Fired on its own, a cue further down a chain still counts from where its
+            // timecode would stand had the chain run up to it.
+            let base = start_tc.map(|tc| tc.to_frames() as f64 / crate::mtc::FPS as f64).or(continued).or_else(|| self.derived_timecode(cue, 0));
             if let Some(base) = base {
                 self.timecode = Some(TimecodeSource { cue, base, spans });
             }
@@ -667,11 +669,32 @@ impl Show {
             self.watch(cue, Some(resume.1));
         }
         let tc = Cues::new(&self.script).get(cue).and_then(|c| c.text("start_tc")).and_then(Timecode::parse);
-        if let Some(tc) = tc {
+        let base = tc.map(|tc| tc.to_frames() as f64 / crate::mtc::FPS as f64).or_else(|| self.derived_timecode(cue, 0));
+        if let Some(base) = base {
             let spans = self.player.spans(&audio)?;
-            self.timecode = Some(TimecodeSource { cue, base: tc.to_frames() as f64 / crate::mtc::FPS as f64, spans });
+            self.timecode = Some(TimecodeSource { cue, base, spans });
         }
         Ok(())
+    }
+
+    /// The timecode (seconds) a cue without `start_tc` begins at because the cue that
+    /// leads into it (chains on with it, or loops until it) has one: that cue's
+    /// timecode plus the stretch it plays before it hands over.
+    fn derived_timecode(&mut self, cue: usize, depth: usize) -> Option<f64> {
+        if depth > 8 {
+            return None;
+        }
+        let script = self.script.clone();
+        let cues = Cues::new(&script);
+        let note = cues.get(cue)?.note()?;
+        let before = (0..cues.len()).find(|&p| p != cue && cues.get(p).is_some_and(|c| c.chain_end() == Some(note) || c.loop_outro() == Some(note)))?;
+        let base = match cues.get(before)?.text("start_tc").and_then(Timecode::parse) {
+            Some(tc) => tc.to_frames() as f64 / crate::mtc::FPS as f64,
+            None => self.derived_timecode(before, depth + 1)?,
+        };
+        let audio = self.audio(before)?;
+        let length: f64 = self.player.spans(&audio).ok()?.iter().map(|(start, transition)| transition - start).sum();
+        Some(base + length)
     }
 
     /// Back: take back a queued outro or an armed cue; otherwise undo the last Go with
@@ -1296,6 +1319,31 @@ mod tests {
         rig.show.stop_all().unwrap();
         rig.run(640);
         assert_eq!(rig.show.timecode_seconds(), None);
+    }
+
+    /// A loop fired on its own, without its start having run, counts from where the
+    /// start's timecode would have got to.
+    #[test]
+    fn timecode_is_derived_for_a_cue_fired_in_the_middle_of_a_chain() {
+        let mut rig = rig(
+            &[
+                "music: start.wav\nstart_tc: '01:00:00:00'\nchain_end: {ch: 1, note: 1}",
+                "music: loop.wav\nloop_outro: {ch: 1, note: 2}",
+                "music: out.wav",
+            ],
+            &[("start.wav", 1.0, 400), ("loop.wav", 2.0, 200), ("out.wav", 3.0, 400)],
+        );
+        rig.show.fire(1, false).unwrap();
+        rig.run(80);
+        let tc = rig.show.timecode_seconds().unwrap();
+        assert!((tc - 3600.48).abs() < 0.009, "the start is 400 ms long, the loop 80 ms in: {tc}");
+        // The outro on its own: start and one pass of the loop lie before it.
+        rig.show.stop_all().unwrap();
+        rig.run(640);
+        rig.show.fire(2, false).unwrap();
+        rig.run(80);
+        let tc = rig.show.timecode_seconds().unwrap();
+        assert!((tc - 3600.68).abs() < 0.009, "{tc}");
     }
 
     #[test]
