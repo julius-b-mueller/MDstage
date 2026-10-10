@@ -513,7 +513,18 @@ impl ScriptView {
             // An auto-cue at a place in its source's audio begins right there: at the foot
             // of its marker on the waveform, if that is on screen. Its line runs out of
             // the card just under the waveform.
-            let marker = self.auto_anchors.get(&relation.to).filter(|_| relation.tie == Tie::Auto).map(|foot| *foot + vec2(0.0, 2.0));
+            // Several auto-cues in one waveform run out one above the other, the one
+            // furthest left lowest, so that each can be followed to its marker.
+            let marker = self.auto_anchors.get(&relation.to).filter(|_| relation.tie == Tie::Auto).map(|foot| {
+                let further_left = self
+                    .relations
+                    .iter()
+                    .filter(|other| other.tie == Tie::Auto && other.from == relation.from && other.to != relation.to)
+                    .filter_map(|other| Some((self.auto_anchors.get(&other.to)?.x, other.to)))
+                    .filter(|&(x, to)| (x, to) < (foot.x, relation.to))
+                    .count();
+                *foot + vec2(0.0, 2.0 - further_left as f32 * 5.0)
+            });
             let start = marker.unwrap_or(pos2(origin.x - 4.0, at(relation.from, relation.from_place)));
             let (from, to) = (start.y, at(relation.to, relation.to_place));
             if from.max(to) < origin.y + viewport.min.y || from.min(to) > origin.y + viewport.max.y {
@@ -2046,7 +2057,8 @@ impl ScriptView {
                     self.auto_anchors.insert(target_block, pos2(x_of(at), rect.bottom()));
                 }
                 painter.vline(x_of(at), rect.y_range(), Stroke::new(1.5_f32, colour));
-                painter.text(pos2(x_of(at) + 3.0, rect.bottom() - 1.0), Align2::LEFT_BOTTOM, format!("Auto {}", target + 1), FontId::proportional(11.0), colour);
+                // The name stands at the top; the foot of the marker is where its line leaves.
+                painter.text(pos2(x_of(at) + 3.0, rect.top() + 9.0), Align2::LEFT_TOP, format!("Auto {}", target + 1), FontId::proportional(11.0), colour);
             }
         }
 
