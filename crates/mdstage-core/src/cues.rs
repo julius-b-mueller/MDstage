@@ -275,11 +275,25 @@ impl History {
         self.entries.iter().rev().find(|e| !e.1).map(|e| e.0)
     }
 
+    /// Where the operator's current pass through the script begins in the history: at
+    /// the last cue fired by hand that was not further down than the one fired by hand
+    /// before it — the last jump back — or at the very start.
+    fn pass_start(&self) -> usize {
+        let manual: Vec<(usize, usize)> = self.entries.iter().enumerate().filter(|(_, e)| !e.1).map(|(at, e)| (at, e.0)).collect();
+        manual.windows(2).rev().find(|pair| pair[1].1 <= pair[0].1).map_or(0, |pair| pair[1].0)
+    }
+
     /// The cue Go fires next and the live view focuses: the first cue after the
-    /// operator's position that is not a variant and has not fired yet.
+    /// operator's position that is not a variant and has not fired in this pass.
+    ///
+    /// Cues that fired by themselves since (a loop the start chained into, an auto-cue)
+    /// are stepped over, so Go does not fire them a second time. What fired before the
+    /// operator jumped back does not count: going through a stretch again, every cue
+    /// in it is due again.
     pub fn next(&self, cues: &Cues) -> Option<usize> {
         let from = self.last_manual().map_or(0, |c| c + 1);
-        (from..cues.len()).find(|&i| !cues.is_variant(i) && !self.fired(i))
+        let this_pass = &self.entries[self.pass_start()..];
+        (from..cues.len()).find(|&i| !cues.is_variant(i) && !this_pass.iter().any(|e| e.0 == i))
     }
 
     /// The cue a Go fires. An armed cue wins; otherwise the next cue, or the selected
@@ -613,5 +627,43 @@ mod tests {
         history.push(3, false);
         assert_eq!(history.audio_state(&cues, 0), (false, 0.6), "handed off to its outro");
         assert_eq!(history.audio_state(&cues, 3), (true, DEFAULT_VOLUME), "short form uses the default volume");
+    }
+
+    #[test]
+    fn after_a_jump_back_go_fires_every_cue_again() {
+        let script = Script::parse(&(0..8).map(|n| format!("```yaml\ntrigger_note: {{ch: 1, note: {n}}}\n```\n\n")).collect::<String>());
+        let cues = Cues::new(&script);
+        let mut history = History::default();
+        let go = |history: &mut History| {
+            let next = history.next(&cues);
+            if let Some(cue) = next {
+                history.push(cue, false);
+            }
+            next
+        };
+        // Clicked through 4, 5 and 6, then back to 2: Go goes 3, 4, 5, 6, 7 — nothing skipped.
+        for cue in [4, 5, 6, 2] {
+            history.push(cue, false);
+        }
+        assert_eq!((0..6).map(|_| go(&mut history)).collect::<Vec<_>>(), [Some(3), Some(4), Some(5), Some(6), Some(7), None]);
+
+        // Within one pass, what fired by itself is still stepped over: after 1 an
+        // auto-cue 3 fires, Go takes 2, and the next Go goes past 3 to 4.
+        let mut history = History::default();
+        history.push(1, false);
+        history.push(3, true);
+        assert_eq!(go(&mut history), Some(2));
+        assert_eq!(go(&mut history), Some(4));
+        // Jumping forward is no new pass; firing the same cue again is.
+        let mut history = History::default();
+        for (cue, auto) in [(0, false), (1, true), (5, false)] {
+            history.push(cue, auto);
+        }
+        assert_eq!(history.next(&cues), Some(6));
+        history.push(0, false);
+        assert_eq!(history.next(&cues), Some(1), "the loop that fired by itself in the first pass is due again");
+        // Back takes the jump away again.
+        history.back(&cues);
+        assert_eq!(history.next(&cues), Some(6));
     }
 }
