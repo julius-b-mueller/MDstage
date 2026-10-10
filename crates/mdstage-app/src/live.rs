@@ -142,7 +142,8 @@ impl LiveView {
     }
 
     /// Draw the live view into its window. Returns the requests the operator made.
-    pub fn show(&mut self, ctx: &egui::Context, cx: &Context) -> Vec<Request> {
+    /// `emergency_light` says whether that button is set up; the other two always show.
+    pub fn show(&mut self, ctx: &egui::Context, cx: &Context, emergency_light: bool) -> Vec<Request> {
         let mut requests = Vec::new();
         let snapshot = cx.snapshot;
         let panel = |fill, x, y| egui::Frame::new().fill(fill).inner_margin(egui::Margin::symmetric(x, y));
@@ -154,8 +155,23 @@ impl LiveView {
                 readout(ui, &chrono::Local::now().format("%H:%M:%S").to_string(), 34.0, TEXT);
                 let running = snapshot.timecode.is_some();
                 readout(ui, &snapshot.timecode.map_or("--:--:--:--".to_string(), timecode), 22.0, if running { YELLOW } else { MUTED });
-                // Who is watching the displays.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // The emergency buttons, in the corner as in the main window.
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    if emergency_button(ui, music_icon(), false, true).on_hover_text(t("Notfall: alle Musik ausblenden", "Emergency: fade out all music")).clicked() {
+                        requests.push(Request::StopAll);
+                    }
+                    if emergency_button(ui, mic_icon(), false, true).on_hover_text(t("Notfall: alle Mikrofone aus", "Emergency: all microphones off")).clicked() {
+                        requests.push(Request::MicsOff);
+                    }
+                    if emergency_light {
+                        let on = snapshot.emergency_light;
+                        if emergency_button(ui, light_icon(), on, true).on_hover_text(t("Notlicht an oder aus", "Emergency light on or off")).clicked() {
+                            requests.push(Request::EmergencyLight(!on));
+                        }
+                    }
+                    ui.add_space(8.0);
+                    // Who is watching the displays.
                     ui.spacing_mut().item_spacing.x = 6.0;
                     for client in snapshot.display_clients.iter().rev() {
                         let colour = if client.connected { GREEN } else { RED };
@@ -533,11 +549,12 @@ mod tests {
         let mut live = LiveView::default();
         let ctx = egui::Context::default();
         crate::theme::apply(&ctx);
+        egui_extras::install_image_loaders(&ctx);
         for snapshot in &states {
             let cx = Context { script: &script, cast: &cast, snapshot, locked: false, line_numbers: false, group_mics: true, has_editor: false, can_paste: false };
             for _ in 0..2 {
                 let mut asked = None;
-                let _ = ctx.run(egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 700.0))), ..Default::default() }, |ctx| asked = Some(live.show(ctx, &cx)));
+                let _ = ctx.run(egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(900.0, 700.0))), ..Default::default() }, |ctx| asked = Some(live.show(ctx, &cx, true)));
                 assert_eq!(asked.map(|requests| requests.len()), Some(0), "nothing is asked for without a click");
             }
         }

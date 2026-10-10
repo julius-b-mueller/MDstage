@@ -1435,7 +1435,7 @@ impl App {
         let mut close = false;
         let builder = egui::ViewportBuilder::default().with_title(self.t("MDstage — Live-Ansicht", "MDstage — Live View")).with_inner_size([980.0, 860.0]);
         ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("live"), builder, |ctx, _| {
-            requests = self.live.show(ctx, &cx);
+            requests = self.live.show(ctx, &cx, self.settings.emergency_light.is_some());
             if !ctx.wants_keyboard_input() {
                 if ctx.input(|i| i.key_pressed(Key::Space)) {
                     requests.push(Request::Go);

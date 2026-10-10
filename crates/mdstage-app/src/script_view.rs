@@ -962,7 +962,8 @@ impl ScriptView {
         }
         let shift = row.input(|i| i.modifiers.shift);
         let small = |text: &str, colour: Color32| egui::Button::new(RichText::new(text).size(13.0).color(colour));
-        if row.add(small("◉ Live", TEXT)).on_hover_text(t("Live-Ansicht öffnen und diesen Cue als nächsten scharf schalten", "Open the live view with this cue armed as the next")).clicked() {
+        let live = egui::Button::image_and_text(egui::Image::new(live_icon()).tint(TEXT).fit_to_exact_size(vec2(13.0, 13.0)), RichText::new("Live").size(13.0).color(TEXT));
+        if row.add(live).on_hover_text(t("Live-Ansicht öffnen und diesen Cue als nächsten scharf schalten", "Open the live view with this cue armed as the next")).clicked() {
             actions.push(Action::ArmLive(cue_index));
         }
         if cx.locked || cue.invalid {

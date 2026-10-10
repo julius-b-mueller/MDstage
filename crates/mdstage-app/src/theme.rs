@@ -111,6 +111,11 @@ pub fn tool_toggle<'a>(text: &str, on: bool) -> egui::Button<'a> {
     }
 }
 
+/// The sign for "arm in the live view": a ring around a dot. White, to be tinted.
+pub fn live_icon() -> egui::ImageSource<'static> {
+    egui::include_image!("../assets/live.svg")
+}
+
 /// The pictures on the emergency buttons.
 pub fn light_icon() -> egui::ImageSource<'static> {
     egui::include_image!("../assets/em-light.svg")
@@ -163,14 +168,14 @@ mod tests {
         let ctx = egui::Context::default();
         apply(&ctx);
         let _ = ctx.run(Default::default(), |ctx| {
-            let missing: Vec<&str> = ["☰", "🔒", "«", "›", "✏", "◀", "⏺", "⏸", "⏹", "⟳", "🔊", "⇢", "⊕", "📋", "◉", "▲", "▼", "⚠", "↺", "→", "↩", "←", "♬", "●", "▶", "♪", "⏱", "·", "—", "…", "×", "„", "“", "−"]
+            let missing: Vec<&str> = ["☰", "🔒", "«", "›", "✏", "◀", "⏺", "⏸", "⏹", "⟳", "🔊", "⇢", "⊕", "📋", "▲", "▼", "⚠", "↺", "→", "↩", "←", "♬", "●", "▶", "♪", "⏱", "·", "—", "…", "×", "„", "“", "−"]
                 .into_iter()
                 .filter(|symbol| !ctx.fonts(|f| f.has_glyphs(&egui::FontId::proportional(14.0), symbol)))
                 .collect();
             assert!(missing.is_empty(), "no glyphs for {missing:?}");
             // The emergency buttons' pictures can be drawn, and are not empty.
             egui_extras::install_image_loaders(ctx);
-            for icon in [light_icon(), mic_icon(), music_icon()] {
+            for icon in [light_icon(), mic_icon(), music_icon(), live_icon()] {
                 let egui::ImageSource::Bytes { uri, bytes } = icon else { panic!("the pictures are built in") };
                 ctx.include_bytes(uri.clone(), bytes);
                 match ctx.try_load_image(&uri, egui::SizeHint::Size(88, 88)) {
