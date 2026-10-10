@@ -199,6 +199,10 @@ struct Relation {
     to: usize,
     tie: Tie,
     lane: usize,
+    /// Where on each cue's left edge the line ends: its place among all the line ends
+    /// on that cue, and how many there are. Every end has a place of its own.
+    from_place: (usize, usize),
+    to_place: (usize, usize),
 }
 
 /// The colour of what changes another cue's audio.
@@ -431,7 +435,7 @@ impl ScriptView {
             let mut tie = |from: Option<usize>, to: Option<usize>, tie: Tie| {
                 if let (Some(from), Some(to)) = (from.and_then(|c| cues.block_index(c)), to.and_then(|c| cues.block_index(c))) {
                     if from != to {
-                        found.push(Relation { from, to, tie, lane: 0 });
+                        found.push(Relation { from, to, tie, lane: 0, from_place: (0, 1), to_place: (0, 1) });
                     }
                 }
             };
@@ -458,6 +462,25 @@ impl ScriptView {
             lanes[lane].push((low, high, down));
             relation.lane = lane;
         }
+        // Every line end gets a place of its own on its cue's edge, from the top: first
+        // the lines that come from or go to cues above, then those below, so that the
+        // lines cross as little as possible.
+        let mut ends: HashMap<usize, Vec<(usize, bool, usize)>> = HashMap::new();
+        for (index, relation) in found.iter().enumerate() {
+            ends.entry(relation.from).or_default().push((relation.to, true, index));
+            ends.entry(relation.to).or_default().push((relation.from, false, index));
+        }
+        for (block, mut list) in ends {
+            // Above: the nearest cue's line lowest. Below: the nearest cue's line highest.
+            list.sort_by_key(|&(other, _, index)| (other > block, if other > block { other } else { usize::MAX - other }, index));
+            let count = list.len();
+            for (place, (_, leaves, index)) in list.into_iter().enumerate() {
+                match leaves {
+                    true => found[index].from_place = (place, count),
+                    false => found[index].to_place = (place, count),
+                }
+            }
+        }
         self.lanes = lanes.len();
         self.relations = found;
     }
@@ -474,20 +497,36 @@ impl ScriptView {
         let painter = ui.painter();
         let edge = origin.x - 2.0;
         for relation in &self.relations {
-            let at = |block: usize, down: f32| origin.y + self.offsets.get(block).copied().unwrap_or(0.0) + 4.0 + down;
-            // Arriving near the top of a card, leaving a little below.
-            let (from, to) = (at(relation.from, 27.0), at(relation.to, 13.0));
+            // The ends on one cue are spread down its edge, closer together if there are many.
+            let at = |block: usize, (place, count): (usize, usize)| {
+                let height = self.heights.get(block).copied().unwrap_or(0.0);
+                let apart = if count > 1 { ((height - 34.0) / (count - 1) as f32).clamp(4.0, 11.0) } else { 0.0 };
+                origin.y + self.offsets.get(block).copied().unwrap_or(0.0) + 4.0 + 14.0 + place as f32 * apart
+            };
+            let (from, to) = (at(relation.from, relation.from_place), at(relation.to, relation.to_place));
             if from.max(to) < origin.y + viewport.min.y || from.min(to) > origin.y + viewport.max.y {
                 continue;
             }
             let strong = self.hovered_before.is_some_and(|h| h == relation.from || h == relation.to);
             let colour = relation.tie.colour().gamma_multiply(if strong { 1.0 } else { 0.45 });
             let x = origin.x - 10.0 - relation.lane as f32 * LANE;
-            let bend = (to - from).signum() * 4.0;
-            let points = vec![pos2(edge, from), pos2(x + 4.0, from), pos2(x, from + bend), pos2(x, to - bend), pos2(x + 4.0, to), pos2(edge - 5.0, to)];
+            // Out of the cue, round the corner, along the lane, round the corner, into the other.
+            let way = (to - from).signum();
+            let radius = 6.0_f32.min((to - from).abs() / 2.0);
+            let mut points = vec![pos2(edge, from)];
+            const STEPS: usize = 6;
+            for step in 0..=STEPS {
+                let angle = step as f32 / STEPS as f32 * std::f32::consts::FRAC_PI_2;
+                points.push(pos2(x + radius - radius * angle.sin(), from + way * (radius - radius * angle.cos())));
+            }
+            for step in 0..=STEPS {
+                let angle = step as f32 / STEPS as f32 * std::f32::consts::FRAC_PI_2;
+                points.push(pos2(x + radius - radius * angle.cos(), to - way * (radius - radius * angle.sin())));
+            }
+            points.push(pos2(edge - 5.0, to));
             painter.add(egui::epaint::PathShape::line(points, Stroke::new(if strong { 2.0_f32 } else { 1.5_f32 }, colour)));
             painter.circle_filled(pos2(edge, from), 2.5, colour);
-            painter.add(egui::Shape::convex_polygon(vec![pos2(edge + 1.0, to), pos2(edge - 5.5, to - 4.0), pos2(edge - 5.5, to + 4.0)], colour, Stroke::NONE));
+            painter.add(egui::Shape::convex_polygon(vec![pos2(edge + 1.0, to), pos2(edge - 5.5, to - 3.5), pos2(edge - 5.5, to + 3.5)], colour, Stroke::NONE));
         }
     }
 
@@ -2135,6 +2174,12 @@ mod tests {
         assert_eq!(lane_of(blocks[1], blocks[2]), Some(0), "the chain goes on in the same lane");
         assert_eq!(lane_of(blocks[0], blocks[3]), Some(1), "the long one goes around them");
         assert_eq!(view.lanes, 2);
+        // No two line ends share a place on a cue's edge: every line has its own arrow.
+        let mut places: Vec<(usize, usize)> = view.relations.iter().flat_map(|r| [(r.from, r.from_place.0), (r.to, r.to_place.0)]).collect();
+        let all = places.len();
+        places.sort_unstable();
+        places.dedup();
+        assert_eq!(places.len(), all);
     }
 
     #[test]
