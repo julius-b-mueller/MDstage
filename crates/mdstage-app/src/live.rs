@@ -30,6 +30,8 @@ const AUDIO: Color32 = Color32::from_rgb(0x2c, 0x31, 0x3a);
 const TRACK: Color32 = Color32::from_rgb(0x38, 0x3c, 0x44);
 const NEXT_FILL: Color32 = Color32::from_rgb(0x1e, 0x24, 0x30);
 const PURPLE: Color32 = Color32::from_rgb(0xc6, 0x78, 0xdd);
+/// How many characters of what a device was last told the info bar shows.
+const SUMMARY: usize = 42;
 /// The light around the next cue: how bright it is right at the card, over how many
 /// pixels it has fallen to about a third, and where it stops being drawn.
 const GLOW_STRENGTH: f32 = 0.30;
@@ -199,9 +201,16 @@ impl LiveView {
                     ui.spacing_mut().item_spacing.x = 8.0;
                     for ((kind, device), state) in &states {
                         let colour = colour_of(device);
-                        ui.label(RichText::new(device.to_uppercase()).size(11.0).color(colour.unwrap_or(WAVE_DIM)));
-                        ui.label(RichText::new(device_summary(state, *kind)).size(16.0).strong().color(colour.unwrap_or(BRIGHT)));
-                        ui.add(egui::Separator::default().vertical().spacing(12.0));
+                        // One cell per device, kept together; a long message is cut short
+                        // here and shown in full on hovering.
+                        let full = device_summary(state, *kind);
+                        let short: String = if full.chars().count() > SUMMARY { full.chars().take(SUMMARY - 1).chain(['…']).collect() } else { full.clone() };
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 8.0;
+                            ui.label(RichText::new(device.to_uppercase()).size(11.0).color(colour.unwrap_or(WAVE_DIM)));
+                            ui.add(egui::Label::new(RichText::new(short).size(16.0).strong().color(colour.unwrap_or(BRIGHT))).wrap_mode(egui::TextWrapMode::Extend)).on_hover_text(full);
+                            ui.add(egui::Separator::default().vertical().spacing(12.0));
+                        });
                     }
                     ui.label(RichText::new("MIC").size(11.0).color(WAVE_DIM));
                     match &snapshot.mic {
@@ -333,7 +342,24 @@ impl LiveView {
         });
     }
 
-    /// The rows of a cue card and its height at a type size.
+    /// How many lines the cards of a cue and its variants need, side by side in `width`,
+    /// at a type size: the most any of them needs.
+    fn card_lines(ui: &Ui, cx: &Context, cues: &Cues, root: usize, size: f32, width: f32) -> usize {
+        let group = cues.group(root);
+        let each = (width - 12.0 * (group.len().max(1) - 1) as f32) / group.len().max(1) as f32;
+        let font = FontId::proportional(size);
+        let none = HashMap::new();
+        group
+            .filter_map(|cue| {
+                let rows = ScriptView::cue_rows(cx, cues.block_index(cue)?, cue, cues.get(cue)?, &none);
+                // As `card` sets them: after the label column, up to the right margin.
+                Some(rows.iter().map(|(_, spans)| ScriptView::flow_spans(ui, None, spans, &font, 18.0 + size * 3.6, each - 16.0, 0.0, size + 7.0)).sum::<usize>())
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// The height of a cue card with that many lines at a type size.
     fn card_height(rows: usize, size: f32) -> f32 {
         2.0 * 14.0 + (size + 9.0) + rows as f32 * (size + 7.0)
     }
@@ -341,7 +367,6 @@ impl LiveView {
     /// Measure every block for the width. Text is laid out; cue cards are counted in rows.
     /// The variants of a cue stand side by side in the place of the first.
     fn measure(&mut self, ui: &Ui, cx: &Context, cues: &Cues, width: f32) {
-        let none = HashMap::new();
         let mut cue = 0;
         self.heights = cx
             .script
@@ -356,8 +381,7 @@ impl LiveView {
                     if group.start != this {
                         return 0.0;
                     }
-                    let rows = group.clone().filter_map(|c| Some(ScriptView::cue_rows(cx, cues.block_index(c)?, c, cues.get(c)?, &none).len())).max().unwrap_or(0);
-                    Self::card_height(rows, 16.0) + GAP
+                    Self::card_height(Self::card_lines(ui, cx, cues, this, 16.0, width), 16.0) + GAP
                 }
                 block => ScriptView::text_job(cx.cast, block, width, SCALE).map_or(0.0, |job| ui.fonts(|f| f.layout_job(job)).size().y + GAP),
             })
@@ -379,11 +403,7 @@ impl LiveView {
         // The next cue's card is drawn larger; everything below it moves down by that much.
         let next_root = next.map(|c| cues.group(c).start);
         let anchor = next_root.or(snapshot.current.map(|c| cues.group(c).start)).and_then(|c| cues.block_index(c));
-        let none = HashMap::new();
-        let big = next_root.and_then(|root| {
-            let rows = cues.group(root).filter_map(|c| Some(ScriptView::cue_rows(cx, cues.block_index(c)?, c, cues.get(c)?, &none).len())).max()?;
-            Some(Self::card_height(rows, 21.0) + GAP)
-        });
+        let big = next_root.map(|root| Self::card_height(Self::card_lines(ui, cx, cues, root, 21.0, width), 21.0) + GAP);
         let next_block = next_root.and_then(|c| cues.block_index(c));
         let height_of = |index: usize| match (big, next_block == Some(index)) {
             (Some(big), true) => big,
@@ -503,11 +523,9 @@ impl LiveView {
         y += size + 9.0;
         for (label, spans) in ScriptView::cue_rows(cx, block, cue, c, &HashMap::new()) {
             painter.text(pos2(left, y), Align2::LEFT_TOP, label, FontId::proportional(size - 2.0), tint(MUTED));
-            let mut x = left + size * 3.6;
-            for (text, colour) in spans {
-                x = painter.text(pos2(x, y), Align2::LEFT_TOP, text, FontId::proportional(size), tint(colour)).right() + 8.0;
-            }
-            y += size + 7.0;
+            let spans: Vec<(String, Color32)> = spans.into_iter().map(|(text, colour)| (text, tint(colour))).collect();
+            let lines = ScriptView::flow_spans(ui, Some(&painter), &spans, &FontId::proportional(size), left + size * 3.6, rect.right() - 16.0, y, size + 7.0);
+            y += lines as f32 * (size + 7.0);
         }
 
         // What the cue is waiting for: its loop's end, or its auto-cue's delay.

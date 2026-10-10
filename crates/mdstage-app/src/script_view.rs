@@ -510,6 +510,39 @@ impl ScriptView {
         rows
     }
 
+    /// Set a row's spans one after the other from `left`, going to a new line where the
+    /// next would cross `right` (and breaking inside a span that is longer than a line).
+    /// With a painter they are drawn; either way the number of lines used comes back.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn flow_spans(ui: &Ui, painter: Option<&egui::Painter>, spans: &[Span], font: &FontId, left: f32, right: f32, top: f32, line: f32) -> usize {
+        let width = (right - left).max(60.0);
+        let (mut x, mut lines) = (left, 1usize);
+        for (text, colour) in spans {
+            let galley = ui.fonts(|f| f.layout_job(LayoutJob::simple(text.clone(), font.clone(), *colour, width)));
+            let rows = galley.rows.len().max(1);
+            if (rows > 1 || x + galley.size().x > left + width) && x > left {
+                lines += 1;
+                x = left;
+            }
+            if let Some(painter) = painter {
+                painter.galley(pos2(x, top + (lines - 1) as f32 * line), galley.clone(), *colour);
+            }
+            x += galley.size().x + 8.0;
+            if rows > 1 {
+                // A span that took several lines: what follows starts below it.
+                lines += rows - 1;
+                x = left + width + 1.0;
+            }
+        }
+        lines
+    }
+
+    /// How many lines a cue's rows take when its panel is `width` wide.
+    fn cue_lines(ui: &Ui, rows: &[(&'static str, Vec<Span>)], width: f32) -> usize {
+        let font = FontId::proportional(15.0);
+        rows.iter().map(|(_, spans)| Self::flow_spans(ui, None, spans, &font, 0.0, width - 16.0 - 56.0 - 12.0, 0.0, ROW)).sum()
+    }
+
     fn cue_height(rows: usize, has_audio: bool) -> f32 {
         let wave = if has_audio { WAVE_HEIGHT + 10.0 + CONTROLS + 4.0 } else { 0.0 };
         8.0 + 10.0 + ROW + rows as f32 * ROW + wave + 10.0
@@ -537,7 +570,7 @@ impl ScriptView {
                 Block::Config(_) => 0.0,
                 Block::Cue(cue) => {
                     let rows = Self::cue_rows(cx, i, self.cue_of_block[i].unwrap_or(0), cue, &self.durations);
-                    Self::cue_height(rows.len(), cue.audio().is_some())
+                    Self::cue_height(Self::cue_lines(ui, &rows, width), cue.audio().is_some())
                 }
                 block => {
                     let job = Self::job(cx.cast, block, width).unwrap_or_default();
@@ -1167,11 +1200,9 @@ impl ScriptView {
         y += ROW;
         for (label, spans) in Self::cue_rows(cx, block, cue_index, cue, &self.durations) {
             painter.text(pos2(left, y), Align2::LEFT_TOP, label, font.clone(), MUTED);
-            let mut x = left + 56.0;
-            for (text, colour) in spans {
-                x = painter.text(pos2(x, y), Align2::LEFT_TOP, text, font.clone(), colour).right() + 8.0;
-            }
-            y += ROW;
+            // Long rows (many microphones, a long note) go on in further lines.
+            let lines = Self::flow_spans(ui, Some(&painter), &spans, &font, left + 56.0, panel.right() - 12.0, y, ROW);
+            y += lines as f32 * ROW;
         }
         if let Some(audio) = cue.audio() {
             let width = panel.right() - 12.0 - left;
@@ -1645,6 +1676,29 @@ mod tests {
         assert_eq!(ScriptView::complete("**Ben**\nA", "Anna"), ("**Ben/Anna**\n".to_string(), 13));
         // What comes of it is the role block one expects.
         assert_eq!(ScriptView::typed_block("**Ben/Anna**\n\nHallo."), Some(Block::Role { names: vec!["Ben".into(), "Anna".into()], text: "Hallo.".into() }));
+    }
+
+    #[test]
+    fn long_rows_on_a_cue_go_on_in_further_lines() {
+        let ctx = egui::Context::default();
+        crate::theme::apply(&ctx);
+        let _ = ctx.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let font = FontId::proportional(15.0);
+                let names: Vec<Span> = (1..=12).map(|n| (format!("Darstellerin {n}"), BRIGHT)).collect();
+                let lines = |spans: &[Span], width: f32| ScriptView::flow_spans(ui, None, spans, &font, 0.0, width, 0.0, ROW);
+                assert_eq!(lines(&names[..2], 2000.0), 1);
+                assert_eq!(lines(&names, 5000.0), 1, "room for all of them");
+                let narrow = lines(&names, 300.0);
+                assert!((4..=12).contains(&narrow), "{narrow} lines for twelve names in 300 px");
+                assert!(lines(&names, 150.0) > narrow, "narrower still, more lines");
+                // One span longer than a line is broken inside, and what follows goes below it.
+                let note = vec![("Ein sehr langer Hinweis, der ganz sicher nicht in eine einzige schmale Zeile passt.".to_string(), TEXT), ("Ende".to_string(), TEXT)];
+                assert!(lines(&note, 200.0) >= 4);
+                assert_eq!(lines(&note, 5000.0), 1);
+                assert_eq!(lines(&[], 300.0), 1, "an empty row still is one line");
+            });
+        });
     }
 
     #[test]
