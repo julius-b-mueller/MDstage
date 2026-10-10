@@ -67,22 +67,30 @@ fn summary(script: &Script, cue: usize) -> String {
     parts.join("  ·  ")
 }
 
-/// The microphones that are open, as rounded labels: each role on a tint of its colour,
-/// a group as its name in an outline followed by its members. They are set one after the
-/// other and go on in further rows where the width ends — a group, too, breaks between
-/// its members.
+/// The microphones that are open, as rounded labels: groups first, each as its name in
+/// an outline, then the roles that are open on their own, each on its colour. After
+/// them the microphones that are about to go off, running out. They are set one after
+/// the other and go on in further rows where the width ends.
 fn mic_chips(ui: &mut Ui, cx: &Context, mic: &Mic, size: f32) {
+    use crate::script_view::{Chip, chip_text, paint_chip};
     let colour = |color: &Option<String>| named(color.as_deref()).unwrap_or(BRIGHT);
-    // (text, colour, whether it is a group's name)
-    let mut chips: Vec<(String, Color32, bool)> = Vec::new();
+    let mut chips: Vec<(String, Color32, Chip)> = Vec::new();
     for entry in cx.cast.chips(mic, cx.group_mics) {
         match entry {
-            MicChip::Role { name, color } => chips.push((name, colour(&color), false)),
-            MicChip::Group { name, color, members } => {
-                chips.push((name, colour(&color), true));
-                chips.extend(members.into_iter().map(|(member, color)| (member, colour(&color), false)));
-            }
+            MicChip::Role { name, color } => chips.push((name, colour(&color), Chip::Role)),
+            MicChip::Group { name, color, .. } => chips.push((name, colour(&color), Chip::Group)),
         }
+    }
+    if let Some(hold) = &cx.snapshot.mic_hold {
+        for role in &hold.leaving {
+            let color = cx.cast.role(role).and_then(|r| r.color.clone());
+            chips.push((role.clone(), colour(&color), Chip::Leaving(hold.fraction as f32)));
+        }
+        ui.ctx().request_repaint();
+    }
+    if chips.is_empty() {
+        ui.label(RichText::new(t("alle aus", "all off")).size(16.0).italics().color(RED));
+        return;
     }
     let (pad, gap) = (vec2(7.0, 2.0), 5.0);
     // Too little room left in this row of the bar to be worth starting in.
@@ -91,7 +99,7 @@ fn mic_chips(ui: &mut Ui, cx: &Context, mic: &Mic, size: f32) {
     }
     let width = ui.available_width().max(120.0);
     let font = FontId::proportional(size);
-    let galleys: Vec<_> = chips.iter().map(|(text, colour, _)| ui.painter().layout_no_wrap(text.clone(), font.clone(), *colour)).collect();
+    let galleys: Vec<_> = chips.iter().map(|(text, colour, chip)| ui.painter().layout_no_wrap(text.clone(), font.clone(), chip_text(*colour, *chip))).collect();
     let row = galleys.iter().map(|g| g.size().y).fold(size, f32::max) + 2.0 * pad.y;
     let mut places = Vec::with_capacity(chips.len());
     let (mut x, mut y) = (0.0f32, 0.0f32);
@@ -105,13 +113,10 @@ fn mic_chips(ui: &mut Ui, cx: &Context, mic: &Mic, size: f32) {
         x += chip + gap;
     }
     let (area, _) = ui.allocate_exact_size(vec2(width, y + row), Sense::hover());
-    for (((_, colour, group), galley), place) in chips.iter().zip(galleys).zip(places) {
-        let chip = Rect::from_min_size(area.min + place, vec2(galley.size().x + 2.0 * pad.x, row));
-        match group {
-            true => drop(ui.painter().rect_stroke(chip, 4.0, Stroke::new(1.0_f32, colour.gamma_multiply(0.7)), egui::StrokeKind::Inside)),
-            false => drop(ui.painter().rect_filled(chip, 4.0, colour.gamma_multiply(0.16))),
-        }
-        ui.painter().galley(chip.min + pad, galley, *colour);
+    for (((_, colour, chip), galley), place) in chips.iter().zip(galleys).zip(places) {
+        let rect = Rect::from_min_size(area.min + place, vec2(galley.size().x + 2.0 * pad.x, row));
+        paint_chip(ui.painter(), rect, *colour, *chip);
+        ui.painter().galley(rect.min + pad, galley, *colour);
     }
 }
 
@@ -240,7 +245,8 @@ impl LiveView {
                     ui.label(RichText::new("MIC").size(11.0).color(WAVE_DIM));
                     match &snapshot.mic {
                         None => drop(ui.label(RichText::new("—").color(MUTED))),
-                        Some(Mic::MuteAll) => drop(ui.label(RichText::new(t("alle aus", "all off")).size(16.0).italics().color(RED))),
+                        // All off, but some are still running out: those are shown.
+                        Some(Mic::MuteAll) => mic_chips(ui, cx, &Mic::MuteAll, 15.0),
                         Some(mic) => mic_chips(ui, cx, mic, 15.0),
                     }
                 });

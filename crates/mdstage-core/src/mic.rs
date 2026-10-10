@@ -139,16 +139,26 @@ impl Cast {
         let members = |group: &str| self.group_roles(group).into_iter().filter(|r| self.role(r).is_some());
         let mut out = Vec::new();
         if grouped {
-            for name in names {
-                out.push(if self.is_group(name) {
-                    MicChip::Group {
-                        name: name.clone(),
-                        color: self.group_color(name),
-                        members: members(name).map(|r| (r.clone(), self.role_color(&r))).collect(),
-                    }
-                } else {
-                    role(name)
+            // Groups first, then the roles that are open on their own. A role that is
+            // open as part of a group is not named a second time.
+            let mut in_groups: Vec<String> = Vec::new();
+            for name in names.iter().filter(|name| self.is_group(name)) {
+                if out.iter().any(|chip| matches!(chip, MicChip::Group { name: shown, .. } if shown == name)) {
+                    continue;
+                }
+                in_groups.extend(self.group_roles(name));
+                out.push(MicChip::Group {
+                    name: name.clone(),
+                    color: self.group_color(name),
+                    members: members(name).map(|r| (r.clone(), self.role_color(&r))).collect(),
                 });
+            }
+            let mut alone: Vec<&String> = Vec::new();
+            for name in names.iter().filter(|name| !self.is_group(name) && !in_groups.contains(name)) {
+                if !alone.contains(&name) {
+                    alone.push(name);
+                    out.push(role(name));
+                }
             }
             return out;
         }
@@ -350,7 +360,8 @@ mic: muteall
     #[test]
     fn builds_display_chips() {
         let cast = Cast::from_script(&Script::parse(SHOW), false);
-        let mic = open(&["Duo", "Anna", "Clara"]);
+        // Groups come first; Anna is open as part of the duo and is not named again.
+        let mic = open(&["Clara", "Anna", "Duo"]);
         let role = |name: &str, color: &str| MicChip::Role { name: name.into(), color: Some(color.into()) };
 
         assert_eq!(
@@ -362,11 +373,11 @@ mic: muteall
                     // "Gone" is no longer a role and is left out.
                     members: vec![("Anna".into(), Some("blue".into())), ("Ben".into(), Some("green".into()))],
                 },
-                role("Anna", "blue"),
                 role("Clara", "red"),
             ]
         );
-        assert_eq!(cast.chips(&mic, false), [role("Anna", "blue"), role("Ben", "green"), role("Clara", "red")]);
+        // Flattened, the roles stand in the order they are named in.
+        assert_eq!(cast.chips(&mic, false), [role("Clara", "red"), role("Anna", "blue"), role("Ben", "green")]);
         assert!(cast.chips(&Mic::MuteAll, true).is_empty());
     }
 }

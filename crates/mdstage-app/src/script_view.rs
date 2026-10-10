@@ -156,11 +156,51 @@ pub(crate) struct Row {
     pub label: &'static str,
     pub spans: Vec<Span>,
     pub links: Vec<(usize, usize)>,
+    /// How each span is set, if not as plain text (a shorter list leaves the rest plain).
+    pub chips: Vec<Chip>,
+}
+
+/// How a span of a row is set.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Chip {
+    Plain,
+    /// A role's microphone: a label filled with its colour, dark type.
+    Role,
+    /// A group of microphones: an outline, type in its colour.
+    Group,
+    /// A microphone that is about to go off; the fraction of the wait that is over.
+    Leaving(f32),
+}
+
+/// Paint a microphone label's background. The type goes on top: dark on a role's filled
+/// label, in the colour itself inside a group's outline.
+pub(crate) fn paint_chip(painter: &egui::Painter, rect: Rect, colour: Color32, chip: Chip) {
+    match chip {
+        Chip::Plain => {}
+        Chip::Role => drop(painter.rect_filled(rect, 4.0, colour)),
+        Chip::Group => drop(painter.rect_stroke(rect, 4.0, Stroke::new(1.0_f32, colour), egui::StrokeKind::Inside)),
+        Chip::Leaving(over) => {
+            // Fades to a shadow of itself from the right as its time runs out.
+            painter.rect_filled(rect, 4.0, PANEL.lerp_to_gamma(colour, 0.35));
+            let left = Rect::from_min_max(rect.min, pos2(rect.left() + rect.width() * (1.0 - over.clamp(0.0, 1.0)), rect.bottom()));
+            if left.width() > 1.0 {
+                painter.rect_filled(left, 4.0, colour);
+            }
+        }
+    }
+}
+
+/// The colour of the type on a microphone label.
+pub(crate) fn chip_text(colour: Color32, chip: Chip) -> Color32 {
+    match chip {
+        Chip::Role | Chip::Leaving(_) => INSET,
+        Chip::Plain | Chip::Group => colour,
+    }
 }
 
 impl Row {
     fn plain(label: &'static str, spans: Vec<Span>) -> Row {
-        Row { label, spans, links: Vec::new() }
+        Row { label, spans, links: Vec::new(), chips: Vec::new() }
     }
 
     /// A row of words and references to other cues (`Some(cue)`; `None` inside is a
@@ -168,7 +208,7 @@ impl Row {
     fn linked(label: &'static str, parts: Vec<(String, Color32, Option<Option<usize>>)>) -> Row {
         let links = parts.iter().enumerate().filter_map(|(i, part)| Some((i, part.2??))).collect();
         let spans = parts.into_iter().map(|(text, colour, target)| (if target.is_some() && text.is_empty() { "?".to_string() } else { text }, colour)).collect();
-        Row { label, spans, links }
+        Row { label, spans, links, chips: Vec::new() }
     }
 }
 
@@ -288,6 +328,8 @@ pub struct ScriptView {
     hovered_before: Option<usize>,
     /// The cue block whose buttons were shown last (they stay while a menu of theirs is open).
     buttons_of: Option<usize>,
+    /// The cue whose microphones are running out, as last seen.
+    holding: Option<usize>,
     /// A cue block that was gone to, and when: it is outlined for a moment.
     flash: Option<(usize, f64)>,
     /// Where the markers of position auto-cues stand on the waveforms drawn in this
@@ -674,27 +716,38 @@ impl ScriptView {
             return rows;
         }
         let mic = cx.script.mic_for_cue(block, cx.cast);
+        // Microphones as labels: groups first (outlined), then single roles (filled). A
+        // role that is open as part of a group is not named again.
+        let mut spans: Vec<Span> = Vec::new();
+        let mut chips: Vec<Chip> = Vec::new();
         match &mic {
-            Mic::MuteAll => rows.push(Row::plain("Mic", vec![(t("alle aus", "all off").to_string(), MUTED)])),
+            Mic::MuteAll => spans.push((t("alle aus", "all off").to_string(), MUTED)),
             Mic::Open(_) => {
-                let mut spans = Vec::new();
                 for chip in cx.cast.chips(&mic, cx.group_mics) {
-                    match chip {
-                        MicChip::Role { name, color } => spans.push((name, named(color.as_deref()).unwrap_or(BRIGHT))),
-                        MicChip::Group { name, color, members } => {
-                            spans.push((format!("{name} ["), named(color.as_deref()).unwrap_or(BRIGHT)));
-                            spans.extend(members.into_iter().map(|(m, c)| (m, named(c.as_deref()).unwrap_or(BRIGHT))));
-                            spans.push(("]".to_string(), MUTED));
-                        }
-                    }
+                    let (name, color, kind) = match chip {
+                        MicChip::Role { name, color } => (name, color, Chip::Role),
+                        MicChip::Group { name, color, .. } => (name, color, Chip::Group),
+                    };
+                    spans.push((name, named(color.as_deref()).unwrap_or(BRIGHT)));
+                    chips.push(kind);
                 }
                 if cue.auto_mic() {
                     spans.push(("(auto)".to_string(), MUTED));
                 }
-                rows.push(Row::plain("Mic", spans));
             }
-            Mic::Unchanged if cue.auto_mic() => rows.push(Row::plain("Mic", vec![(t("(auto, niemand spricht)", "(auto, nobody speaks)").to_string(), MUTED)])),
+            Mic::Unchanged if cue.auto_mic() => spans.push((t("(auto, niemand spricht)", "(auto, nobody speaks)").to_string(), MUTED)),
             Mic::Unchanged => {}
+        }
+        // The microphones this cue is leaving on a little longer, running out.
+        if let Some(hold) = cx.snapshot.mic_hold.as_ref().filter(|hold| hold.cue == cue_index) {
+            chips.resize(spans.len(), Chip::Plain);
+            for role in &hold.leaving {
+                spans.push((role.clone(), Self::role_colour(cx.cast, role)));
+                chips.push(Chip::Leaving(hold.fraction as f32));
+            }
+        }
+        if !spans.is_empty() {
+            rows.push(Row { label: "Mic", spans, links: Vec::new(), chips });
         }
         for (label, key) in [(t("Notiz", "Note"), "note"), ("TC", "start_tc"), ("OSC", "osc"), ("Proj.", "projection"), ("QLC+", "qlcplus")] {
             if let Some(value) = cue.text(key) {
@@ -807,18 +860,21 @@ impl ScriptView {
     /// With a painter they are drawn; either way the number of lines used comes back.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn flow_spans(ui: &Ui, painter: Option<&egui::Painter>, spans: &[Span], font: &FontId, left: f32, right: f32, top: f32, line: f32) -> usize {
-        Self::flow(ui, painter, spans, font, left, right, top, line, None)
+        Self::flow(ui, painter, spans, &[], font, left, right, top, line, None)
     }
 
     /// As `flow_spans`; `places` is given where each span was set.
     #[allow(clippy::too_many_arguments)]
-    fn flow(ui: &Ui, painter: Option<&egui::Painter>, spans: &[Span], font: &FontId, left: f32, right: f32, top: f32, line: f32, mut places: Option<&mut Vec<Rect>>) -> usize {
+    fn flow(ui: &Ui, painter: Option<&egui::Painter>, spans: &[Span], chips: &[Chip], font: &FontId, left: f32, right: f32, top: f32, line: f32, mut places: Option<&mut Vec<Rect>>) -> usize {
         let width = (right - left).max(60.0);
         let (mut x, mut lines) = (left, 1usize);
-        for (text, colour) in spans {
-            let galley = ui.fonts(|f| f.layout_job(LayoutJob::simple(text.clone(), font.clone(), *colour, width)));
+        for (index, (text, colour)) in spans.iter().enumerate() {
+            let chip = chips.get(index).copied().unwrap_or(Chip::Plain);
+            // A label has a little room on either side of its name.
+            let pad = if chip == Chip::Plain { 0.0 } else { 6.0 };
+            let galley = ui.fonts(|f| f.layout_job(LayoutJob::simple(text.clone(), font.clone(), chip_text(*colour, chip), width - 2.0 * pad)));
             let rows = galley.rows.len().max(1);
-            if (rows > 1 || x + galley.size().x > left + width) && x > left {
+            if (rows > 1 || x + galley.size().x + 2.0 * pad > left + width) && x > left {
                 lines += 1;
                 x = left;
             }
@@ -827,9 +883,12 @@ impl ScriptView {
                 places.push(Rect::from_min_size(place, galley.size()));
             }
             if let Some(painter) = painter {
-                painter.galley(place, galley.clone(), *colour);
+                if chip != Chip::Plain {
+                    paint_chip(painter, Rect::from_min_size(place - vec2(0.0, 1.0), vec2(galley.size().x + 2.0 * pad, line - 2.0)), *colour, chip);
+                }
+                painter.galley(place + vec2(pad, 0.0), galley.clone(), *colour);
             }
-            x += galley.size().x + 8.0;
+            x += galley.size().x + 2.0 * pad + if chip == Chip::Plain { 8.0 } else { 6.0 };
             if rows > 1 {
                 // A span that took several lines: what follows starts below it.
                 lines += rows - 1;
@@ -842,7 +901,7 @@ impl ScriptView {
     /// How many lines a cue's rows take when its panel is `width` wide.
     fn cue_lines(ui: &Ui, rows: &[Row], width: f32) -> usize {
         let font = FontId::proportional(15.0);
-        rows.iter().map(|row| Self::flow_spans(ui, None, &row.spans, &font, 0.0, width - 16.0 - 56.0 - 12.0, 0.0, ROW)).sum()
+        rows.iter().map(|row| Self::flow(ui, None, &row.spans, &row.chips, &font, 0.0, width - 16.0 - 56.0 - 12.0, 0.0, ROW, None)).sum()
     }
 
     /// The position auto-cues that hang on a cue's audio, in the order of their places:
@@ -943,6 +1002,15 @@ impl ScriptView {
         }
         self.hovered_before = self.hovered.take();
         self.auto_anchors.clear();
+        // Microphones running out take room on their cue's card while they do.
+        let holding = cx.snapshot.mic_hold.as_ref().map(|hold| hold.cue);
+        if holding != self.holding {
+            self.holding = holding;
+            self.dirty = true;
+        }
+        if holding.is_some() {
+            ui.ctx().request_repaint();
+        }
         if self.dirty || self.heights.len() != cx.script.blocks.len() {
             self.relate(cx.script);
         }
@@ -1624,7 +1692,7 @@ impl ScriptView {
             painter.text(pos2(left, y), Align2::LEFT_TOP, row.label, font.clone(), MUTED);
             // Long rows (many microphones, a long note) go on in further lines.
             let mut places = Vec::new();
-            let lines = Self::flow(ui, Some(&painter), &row.spans, &font, left + 56.0, panel.right() - 12.0, y, ROW, Some(&mut places));
+            let lines = Self::flow(ui, Some(&painter), &row.spans, &row.chips, &font, left + 56.0, panel.right() - 12.0, y, ROW, Some(&mut places));
             // A reference to another cue is underlined; a click goes there.
             for (span, target) in row.links.into_iter().filter(|_| !cx.locked) {
                 let Some(place) = places.get(span) else { continue };

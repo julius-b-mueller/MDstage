@@ -52,6 +52,26 @@ struct Watch {
     last: Option<f64>,
 }
 
+/// Microphones that an auto-mic cue would have switched off and that stay on a little
+/// longer.
+struct Hold {
+    cue: usize,
+    /// What the microphones are set to when the time is up.
+    then: Mic,
+    leaving: Vec<String>,
+    started: f64,
+    due: f64,
+}
+
+/// Microphones on their way out, for the UI: the cue that sent them off, the roles, and
+/// how much of the wait is over (0 to 1).
+#[derive(Clone, Debug, PartialEq)]
+pub struct MicHold {
+    pub cue: usize,
+    pub leaving: Vec<String>,
+    pub fraction: f64,
+}
+
 /// The cue that drives the timecode.
 struct TimecodeSource {
     cue: usize,
@@ -83,6 +103,9 @@ pub struct Show {
     chains: Vec<(usize, usize)>,
     delays: Vec<Delay>,
     watches: Vec<Watch>,
+    /// Seconds an auto-mic cue leaves a microphone on that it switches off.
+    mic_off_delay: f64,
+    mic_hold: Option<Hold>,
     /// When each running loop was (or would have been) at the start of its cycle.
     loop_epochs: HashMap<usize, f64>,
     /// Where audio stood when a cue faded it out, to pick it up there on Back.
@@ -114,6 +137,8 @@ impl Show {
             chains: Vec::new(),
             delays: Vec::new(),
             watches: Vec::new(),
+            mic_off_delay: 0.0,
+            mic_hold: None,
             loop_epochs: HashMap::new(),
             stopped_at: HashMap::new(),
             paused: HashMap::new(),
@@ -161,6 +186,18 @@ impl Show {
     pub fn next(&self) -> Option<usize> {
         let cues = Cues::new(&self.script);
         self.history.go(&cues, self.armed, self.selected_variant)
+    }
+
+    /// How long an auto-mic cue leaves microphones on that it switches off (seconds).
+    pub fn set_mic_off_delay(&mut self, seconds: f64) {
+        self.mic_off_delay = seconds.max(0.0);
+    }
+
+    /// The microphones that are staying on a little longer, if any.
+    pub fn mic_hold(&self) -> Option<MicHold> {
+        let hold = self.mic_hold.as_ref()?;
+        let fraction = if hold.due > hold.started { ((self.now - hold.started) / (hold.due - hold.started)).clamp(0.0, 1.0) } else { 1.0 };
+        Some(MicHold { cue: hold.cue, leaving: hold.leaving.clone(), fraction })
     }
 
     /// The operator's current cue.
@@ -369,7 +406,30 @@ impl Show {
 
         let mic = script.mic_for_cue(block, &self.cast);
         if mic != Mic::Unchanged {
-            self.effects.push(Effect::Mic(mic));
+            // An auto-mic cue switches the new microphones on at once and the ones it
+            // no longer needs off a little later: who comes on can be heard, who goes
+            // off can finish speaking. A cue that comes in between settles it at once.
+            self.mic_hold = None;
+            let roles = |mic: &Mic| match self.cast.expand(mic) {
+                Mic::Open(names) => names,
+                _ => Vec::new(),
+            };
+            let staying = roles(&mic);
+            let leaving: Vec<String> = match c.auto_mic() && self.mic_off_delay > 0.0 {
+                true => roles(&self.history.mic(&cues, &self.cast)).into_iter().filter(|role| !staying.contains(role)).collect(),
+                false => Vec::new(),
+            };
+            if leaving.is_empty() {
+                self.effects.push(Effect::Mic(mic));
+            } else {
+                let mut open = match &mic {
+                    Mic::Open(names) => names.clone(),
+                    _ => Vec::new(),
+                };
+                open.extend(leaving.iter().cloned());
+                self.effects.push(Effect::Mic(Mic::Open(open)));
+                self.mic_hold = Some(Hold { cue, then: mic, leaving, started: self.now, due: self.now + self.mic_off_delay });
+            }
         }
 
         // Timecode: a cue with `start_tc` takes it over (and ends the audio that drove it);
@@ -523,6 +583,12 @@ impl Show {
         self.delays.retain(|d| d.due > now);
         for target in due {
             self.fire(target, true)?;
+        }
+        // Microphones that were left on a little longer go off now.
+        if self.mic_hold.as_ref().is_some_and(|hold| hold.due <= now) {
+            if let Some(hold) = self.mic_hold.take() {
+                self.effects.push(Effect::Mic(hold.then));
+            }
         }
         // Audio-position auto-cues: fire when the source is at or past the position, once
         // per pass of a loop. Not an edge but a level: an auto-cue at the very start, or
@@ -681,6 +747,7 @@ impl Show {
         }
 
         // Microphones as the remaining cues left them; nothing left means everything off.
+        self.mic_hold = None;
         let mic = self.history.mic(&cues, &self.cast);
         self.effects.push(Effect::Mic(if self.history.is_empty() { Mic::MuteAll } else { mic }).clone());
         self.effects.retain(|e| *e != Effect::Mic(Mic::Unchanged));
@@ -701,6 +768,7 @@ impl Show {
 
     /// Emergency "Mics Off".
     pub fn mics_off(&mut self) {
+        self.mic_hold = None;
         self.effects.push(Effect::Mic(Mic::MuteAll));
     }
 
@@ -1074,6 +1142,62 @@ mod tests {
         assert_eq!(rig.fired(), [0, 1]);
         rig.run(504);
         assert_eq!(rig.fired(), [0, 1, 1], "again on the loop's next pass");
+    }
+
+    /// An auto-mic cue opens the new microphones at once and closes the others later.
+    #[test]
+    fn auto_mic_switches_off_with_a_delay() {
+        let text = "```yaml\nconfig:\n    roles:\n        Anna: {}\n        Ben: {}\n        Clara: {}\n```\n\n\
+                    ```yaml\nauto_mic: true\n```\n\n**Anna**\nA.\n\n**Ben**\nB.\n\n\
+                    ```yaml\nauto_mic: true\n```\n\n**Ben**\nB.\n\n**Clara**\nC.\n\n\
+                    ```yaml\nmic: Anna\n```\n\n\
+                    ```yaml\nauto_mic: true\n```\n\n**Clara**\nC.\n\n\
+                    ```yaml\nauto_mic: true\n```\n";
+        let (_mixer, handle) = Mixer::new();
+        let player = Player::new(handle, ClipCache::new(PathBuf::from("/nonexistent"), SR), Routing::positional(&["L".to_string()]));
+        let mut show = Show::new(Script::parse(text), player, None, false);
+        show.set_mic_off_delay(2.0);
+        let open = |names: &[&str]| Effect::Mic(Mic::Open(names.iter().map(|n| n.to_string()).collect()));
+        let mics = |show: &mut Show| show.take_effects().into_iter().filter(|e| matches!(e, Effect::Mic(_))).collect::<Vec<_>>();
+
+        show.tick(0.0).unwrap();
+        show.go().unwrap();
+        assert_eq!(mics(&mut show), [open(&["Anna", "Ben"])], "nobody was on before: nothing to wait for");
+        assert_eq!(show.mic_hold(), None);
+
+        show.tick(10.0).unwrap();
+        show.go().unwrap();
+        assert_eq!(mics(&mut show), [open(&["Ben", "Clara", "Anna"])], "Clara is on, Anna still is");
+        show.tick(11.0).unwrap();
+        assert_eq!(show.mic_hold(), Some(MicHold { cue: 1, leaving: vec!["Anna".into()], fraction: 0.5 }));
+        assert!(mics(&mut show).is_empty());
+        show.tick(12.0).unwrap();
+        assert_eq!(mics(&mut show), [open(&["Ben", "Clara"])], "two seconds later Anna goes off");
+        assert_eq!(show.mic_hold(), None);
+
+        // Back while waiting settles it at once, and a cue that sets its microphones
+        // itself does not wait at all.
+        show.back().unwrap();
+        show.take_effects();
+        show.go().unwrap();
+        assert!(show.mic_hold().is_some());
+        show.back().unwrap();
+        assert_eq!(show.mic_hold(), None);
+        assert_eq!(mics(&mut show).last(), Some(&open(&["Anna", "Ben"])));
+        show.go().unwrap();
+        show.go().unwrap();
+        assert_eq!(mics(&mut show).last(), Some(&open(&["Anna"])));
+        assert_eq!(show.mic_hold(), None);
+
+        // The last auto-mic cue switches everything off: the microphones that were on
+        // stay on for the wait, then all go off.
+        show.go().unwrap();
+        show.tick(20.0).unwrap();
+        show.take_effects();
+        show.go().unwrap();
+        assert_eq!(mics(&mut show), [open(&["Clara"])]);
+        show.tick(22.0).unwrap();
+        assert_eq!(mics(&mut show), [Effect::Mic(Mic::MuteAll)]);
     }
 
     #[test]

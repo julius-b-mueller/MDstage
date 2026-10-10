@@ -88,6 +88,8 @@ pub struct Snapshot {
     pub done: Vec<usize>,
     /// The cue that fired last, by the operator or by itself.
     pub latest: Option<usize>,
+    /// Microphones an auto-mic cue is leaving on a little longer before they go off.
+    pub mic_hold: Option<crate::show::MicHold>,
     pub current: Option<usize>,
     pub next: Option<usize>,
     /// The variant chosen for the next Go, if the operator chose one.
@@ -256,6 +258,7 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
     let mut cast = Cast::from_script(&script, settings.language == "en");
     let player = Player::new(handle, ClipCache::new(show_dir.join("audio"), sample_rate), settings.routing(&script.virtual_channels()));
     let mut show = Show::new(script, player, Some(clock.clone()), settings.language == "en");
+    show.set_mic_off_delay(settings.mic_off_delay);
 
     let wires = match WireSender::new(SystemMidi::default()) {
         Ok(sender) => Some(sender),
@@ -365,6 +368,7 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
                     *timecode_ports.lock().unwrap() = settings.timecode_ports();
                     let channels = show.script().virtual_channels();
                     show.player().set_routing(settings.routing(&channels));
+                    show.set_mic_off_delay(settings.mic_off_delay);
                     if let Some(display) = &display {
                         display.set_app_language(&settings.language);
                         display.set_devices(&settings.displays());
@@ -478,6 +482,7 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
             fired: show.history().cues().collect(),
             done: show.history().this_pass().collect(),
             latest: show.history().cues().last(),
+            mic_hold: show.mic_hold(),
             current: show.current(),
             next: show.next(),
             selected_variant: show.selected_variant(),

@@ -178,6 +178,9 @@ pub struct Settings {
     pub open_locked: bool,
     /// Show microphones bundled into their groups rather than as a flat list of roles.
     pub group_mics: bool,
+    /// Auto-Mic: how many seconds a microphone stays on after the cue that would switch
+    /// it off, so that whoever leaves the stage can finish speaking. 0: no delay.
+    pub mic_off_delay: f64,
     pub recent_files: Vec<String>,
     /// SHA-256 of each show file as this machine last wrote it. A file that differs was
     /// changed elsewhere and must be confirmed before it may drive devices.
@@ -206,6 +209,7 @@ impl Default for Settings {
             editor_command: String::new(),
             open_locked: false,
             group_mics: true,
+            mic_off_delay: 2.0,
             recent_files: Vec::new(),
             trusted: HashMap::new(),
         }

@@ -184,6 +184,11 @@ impl SettingsUi {
             ui.checkbox(&mut draft.outputs_blocked, t("Ausgaben an Geräte blockieren (MIDI, OSC, HTTP, Displays)", "Block output to devices (MIDI, OSC, HTTP, displays)"));
             ui.checkbox(&mut draft.open_locked, t("Gesperrt öffnen", "Open locked"));
             ui.checkbox(&mut draft.group_mics, t("Mikrofone in Gruppen bündeln", "Bundle microphones into groups"));
+            ui.horizontal(|ui| {
+                ui.label(t("Auto-Mic: Mikrofone verzögert ausschalten", "Auto mic: switch microphones off after"));
+                ui.add(egui::DragValue::new(&mut draft.mic_off_delay).range(0.0..=30.0).speed(0.1).fixed_decimals(1).suffix(" s"))
+                    .on_hover_text(t("Ein Auto-Mic-Cue schaltet neue Mikrofone sofort ein und nicht mehr gebrauchte erst nach dieser Zeit aus. Wer abgeht, kann so zu Ende sprechen. 0 schaltet sofort aus.", "An auto-mic cue switches new microphones on at once and those no longer needed off only after this time, so that whoever leaves can finish speaking. 0 switches off at once."));
+            });
             ui.checkbox(&mut draft.line_numbers, t("Markdown-Zeilennummern anzeigen", "Show Markdown line numbers"));
             ui.horizontal(|ui| {
                 ui.checkbox(&mut draft.vim_keys, t("Vim-Tasten im Texteditor", "Vim keys in the text editor")).on_hover_text(t("Normal- und Einfügemodus beim Bearbeiten von Text", "Normal and insert mode when editing text"));
