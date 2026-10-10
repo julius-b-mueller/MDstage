@@ -52,8 +52,8 @@ pub enum Request {
     PlayPause(usize),
     /// Move a cue's audio to a place in its file (seconds).
     Seek(usize, f64),
-    /// Stop a cue's audio and put it back to its start.
-    StopCue(usize),
+    /// Stop a cue's audio, fading it out over so many seconds, and put it back to its start.
+    StopCue(usize, f64),
     /// Set the level of a cue's audio while it plays.
     Volume(usize, f64),
     /// Play a short tone on a physical output (0-based).
@@ -330,7 +330,7 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
                 Request::SelectVariant(cue) => Ok(show.select_variant(cue)),
                 Request::PlayPause(cue) => show.play_pause(cue),
                 Request::Seek(cue, seconds) => show.seek(cue, seconds),
-                Request::StopCue(cue) => show.stop_cue(cue),
+                Request::StopCue(cue, fade) => show.stop_cue(cue, fade),
                 Request::Volume(cue, volume) => show.set_volume(cue, volume),
                 Request::TestTone(output) => show.player().test_tone(output),
                 Request::StopAll => show.stop_all(),

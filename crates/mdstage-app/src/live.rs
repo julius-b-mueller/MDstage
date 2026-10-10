@@ -30,6 +30,8 @@ const AUDIO: Color32 = Color32::from_rgb(0x2c, 0x31, 0x3a);
 const TRACK: Color32 = Color32::from_rgb(0x38, 0x3c, 0x44);
 const NEXT_FILL: Color32 = Color32::from_rgb(0x1e, 0x24, 0x30);
 const PURPLE: Color32 = Color32::from_rgb(0xc6, 0x78, 0xdd);
+/// How long audio stopped from its row fades out, in seconds.
+const STOP_FADE: f64 = 0.5;
 /// How many characters of what a device was last told the info bar shows.
 const SUMMARY: usize = 42;
 /// The light around the next cue: how bright it is right at the card, over how many
@@ -336,8 +338,8 @@ impl LiveView {
                     bar(ui, ui.available_width() - 150.0, 10.0, fraction as f32, if tail { colour.gamma_multiply(0.45) } else { colour });
                     ui.label(RichText::new(time).size(14.0).monospace().color(MUTED));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.add(egui::Button::new(RichText::new("×").size(18.0).color(MUTED)).frame(false)).on_hover_text(t("Stoppen", "Stop")).clicked() {
-                            requests.push(Request::StopCue(*cue));
+                        if ui.add(egui::Button::new(RichText::new("×").size(18.0).color(MUTED)).frame(false)).on_hover_text(t("Stoppen (blendet in einer halben Sekunde aus)", "Stop (fades out over half a second)")).clicked() {
+                            requests.push(Request::StopCue(*cue, STOP_FADE));
                         }
                     });
                 });

@@ -576,7 +576,8 @@ impl App {
                     }
                 }
                 Action::PlayPause(cue) => self.request(Request::PlayPause(*cue)),
-                Action::StopCue(cue) => self.request(Request::StopCue(*cue)),
+                // The stop button under a waveform is for trying audio out: at once.
+                Action::StopCue(cue) => self.request(Request::StopCue(*cue, 0.02)),
                 Action::Seek { cue, seconds } => self.request(Request::Seek(*cue, *seconds)),
                 Action::LiveVolume { cue, volume } => self.request(Request::Volume(*cue, *volume)),
             }

@@ -247,10 +247,10 @@ impl Show {
         Ok(())
     }
 
-    /// Stop a cue's audio and put it back to its start.
-    pub fn stop_cue(&mut self, cue: usize) -> Result<()> {
+    /// Stop a cue's audio, fading it out over `fade` seconds, and put it back to its start.
+    pub fn stop_cue(&mut self, cue: usize, fade: f64) -> Result<()> {
         self.paused.remove(&cue);
-        self.player.stop(cue, 0.02)?;
+        self.player.stop(cue, fade.max(0.0))?;
         self.forget_audio_of(&[cue]);
         Ok(())
     }
@@ -828,10 +828,23 @@ mod tests {
         rig.run(48);
         assert!((330.0..360.0).contains(&rig.level()), "{}", rig.level());
 
-        rig.show.stop_cue(0).unwrap();
+        rig.show.stop_cue(0, 0.02).unwrap();
         rig.run(64);
         assert_eq!(rig.level(), 0.0);
         assert!(rig.show.paused().is_empty());
+
+        // Stopped with a fade (the live view's ×): quieter and quieter, then gone.
+        rig.show.seek(0, 0.0).unwrap();
+        rig.show.play_pause(0).unwrap();
+        rig.run(48);
+        let before = rig.out.len();
+        rig.show.stop_cue(0, 0.1).unwrap();
+        rig.run(160);
+        // The ramp in the file rises by 1 a frame; divided by it, what is left is the fade.
+        let fade: Vec<f32> = (8..96).step_by(8).map(|n| rig.out[before + n] / (48 + n) as f32).collect();
+        assert!(fade[0] < 1.0 && fade.windows(2).all(|w| w[1] < w[0]), "{fade:?}");
+        assert!(rig.out[before + 104..].iter().all(|s| *s == 0.0));
+        assert!(rig.show.audio_status().is_empty());
     }
 
     #[test]
