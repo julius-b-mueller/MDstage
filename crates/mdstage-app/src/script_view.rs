@@ -420,7 +420,7 @@ impl ScriptView {
         let in_chain = cue.chain_end().is_some() || cue.loop_outro().is_some() || Self::predecessor(&cues, cue_index).is_some();
         let compressed = |file: &str| [".mp3", ".aac", ".m4a", ".ogg"].iter().any(|ext| file.to_lowercase().ends_with(ext));
         if in_chain && cue.audio().is_some_and(|a| a.parts.iter().flat_map(|p| &p.audios).any(|a| compressed(&a.file))) {
-            rows.push(("⚠", vec![(t("Kein nahtloser Übergang – MP3/AAC haben Encoder-Padding. WAV verwenden.", "No seamless transition – MP3/AAC carry encoder padding. Use WAV.").to_string(), YELLOW)]));
+            rows.push(("!", vec![(t("Kein nahtloser Übergang – MP3/AAC haben Encoder-Padding. WAV verwenden.", "No seamless transition – MP3/AAC carry encoder padding. Use WAV.").to_string(), YELLOW)]));
         }
         let cue_label = |target: Option<usize>| target.map_or("?".to_string(), |c| format!("Cue {}", c + 1));
         match cues.slf(cue_index) {
@@ -438,7 +438,7 @@ impl ScriptView {
                 AutoWhen::At(at) => if crate::lang::english() { format!("automatically at {at} s into {source}") } else { format!("automatisch bei {at} s in {source}") },
                 AutoWhen::Delay(delay) => if crate::lang::english() { format!("automatically {delay} s after {source}") } else { format!("automatisch {delay} s nach {source}") },
             };
-            rows.push(("⏱", vec![(text, GREEN)]));
+            rows.push(("Auto", vec![(text, GREEN)]));
         }
         if let Some(adjust) = cue.adjust() {
             let target = cue_label(cues.find(adjust.target));
@@ -650,7 +650,7 @@ impl ScriptView {
                 let paste = Rect::from_center_size(pos2(origin.x + 22.0, origin.y + y), vec2(26.0, 20.0));
                 let response = ui.interact(paste, Id::new(("insert-paste", at)), Sense::click());
                 ui.painter().rect_filled(paste, 10.0, Color32::from_rgb(0x56, 0xb6, 0xc2).gamma_multiply(if response.hovered() { 1.0 } else { 0.8 }));
-                ui.painter().text(paste.center(), Align2::CENTER_CENTER, "📋", FontId::proportional(12.0), Color32::BLACK);
+                Icon::Paste.image(14.0, Color32::BLACK).paint_at(ui, Rect::from_center_size(paste.center(), vec2(14.0, 14.0)));
                 if response.on_hover_text(t("Kopierten Cue hier einfügen", "Paste the copied cue here")).clicked() {
                     actions.push(Action::Paste(at));
                 }
@@ -867,12 +867,12 @@ impl ScriptView {
             badge(t("Variante", "Variant"), MUTED);
         }
         if is_current {
-            badge(t("● aktuell", "● current"), GREEN);
+            badge(t("aktuell", "current"), GREEN);
         }
         if waits {
             badge(t("wartet auf Loop-Ende", "waiting for loop end"), YELLOW);
         } else if is_next {
-            badge(t("▶ nächster", "▶ next"), YELLOW);
+            badge(t("nächster", "next"), YELLOW);
         }
         if sounding {
             badge(t("♪ läuft", "♪ playing"), BLUE);
@@ -969,7 +969,7 @@ impl ScriptView {
         if cx.locked || cue.invalid {
             return;
         }
-        if row.add(small("✏", TEXT)).on_hover_text(t("Cue bearbeiten", "Edit cue")).clicked() {
+        if row.add(egui::Button::image(Icon::Pencil.image(13.0, TEXT))).on_hover_text(t("Cue bearbeiten", "Edit cue")).clicked() {
             actions.push(Action::EditCue(block));
         }
         if row.add(small("⊕", TEXT)).on_hover_text(t("Als Variante duplizieren", "Duplicate as a variant")).clicked() {
@@ -990,7 +990,7 @@ impl ScriptView {
             }
         };
         let has_audio = cue.audio().is_some();
-        link_button(&mut row, Link::AutoCue, "⏱ Auto-Cue", cue.auto_trigger().is_some(), true, t("Diesen Cue von selbst auslösen lassen: danach die Quelle anklicken.", "Let this cue fire by itself: then click its source."));
+        link_button(&mut row, Link::AutoCue, "Auto-Cue", cue.auto_trigger().is_some(), true, t("Diesen Cue von selbst auslösen lassen: danach die Quelle anklicken.", "Let this cue fire by itself: then click its source."));
         link_button(&mut row, Link::Adjust, t("⇢ Bezug", "⇢ Adjust"), cue.adjust().is_some(), has_audio, t("Beim Auslösen das Audio eines anderen Cues ausfaden oder leiser stellen: danach den anderen Cue anklicken.", "On firing, fade out or turn down another cue's audio: then click that cue."));
 
         let slf = match Cues::new(cx.script).slf(cue_index) {
@@ -1048,10 +1048,10 @@ impl ScriptView {
         row.spacing_mut().button_padding = vec2(7.0, 2.0);
         row.spacing_mut().slider_width = 110.0;
         let play_hint = if sounding { t("Pause", "Pause") } else { t("Nur das Audio dieses Cues abspielen", "Play this cue's audio by itself") };
-        if row.button(if sounding { "⏸" } else { "▶" }).on_hover_text(play_hint).clicked() {
+        if row.add(egui::Button::image(if sounding { Icon::Pause } else { Icon::Play }.image(13.0, TEXT))).on_hover_text(play_hint).clicked() {
             actions.push(Action::PlayPause(cue));
         }
-        if row.button("⏹").on_hover_text(t("Stopp und zurück zum Anfang", "Stop and return to the start")).clicked() {
+        if row.add(egui::Button::image(Icon::Stop.image(13.0, TEXT))).on_hover_text(t("Stopp und zurück zum Anfang", "Stop and return to the start")).clicked() {
             actions.push(Action::StopCue(cue));
         }
 
@@ -1078,7 +1078,7 @@ impl ScriptView {
             actions.push(Action::Loop { block, on: !looped });
         }
         row.add_space(6.0);
-        row.label(egui::RichText::new("🔊").color(MUTED));
+        row.add(Icon::Speaker.image(15.0, MUTED));
         let mut volume = self.volumes.get(&block).copied().unwrap_or(part.volume);
         let slider = row.add_enabled(!cx.locked, egui::Slider::new(&mut volume, 0.0..=1.0).show_value(false));
         if slider.changed() {
@@ -1268,7 +1268,7 @@ impl ScriptView {
                 }
                 let colour = Color32::from_rgb(0xc6, 0x78, 0xdd);
                 painter.vline(x_of(at), rect.y_range(), Stroke::new(1.5_f32, colour));
-                painter.text(pos2(x_of(at) + 3.0, rect.bottom() - 1.0), Align2::LEFT_BOTTOM, format!("⏱ {}", target + 1), FontId::proportional(11.0), colour);
+                painter.text(pos2(x_of(at) + 3.0, rect.bottom() - 1.0), Align2::LEFT_BOTTOM, format!("Auto {}", target + 1), FontId::proportional(11.0), colour);
             }
         }
 

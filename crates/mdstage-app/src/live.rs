@@ -218,13 +218,14 @@ impl LiveView {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 14.0;
                 let height = 58.0;
-                let back = egui::Button::new(RichText::new("◀ Back").size(21.0).strong().color(TEXT)).fill(TRACK).stroke(Stroke::NONE).corner_radius(CornerRadius::same(8)).min_size(vec2(180.0, height));
+                let back = egui::Button::image_and_text(Icon::Back.image(16.0, TEXT), RichText::new("Back").size(21.0).strong().color(TEXT)).fill(TRACK).stroke(Stroke::NONE).corner_radius(CornerRadius::same(8)).min_size(vec2(180.0, height));
                 if ui.add(back).on_hover_text(t("Rücktaste", "Backspace")).clicked() {
                     requests.push(Request::Back);
                 }
                 // While an outro waits for its loop's end there is nothing for Go to do.
                 let ready = snapshot.next.is_some() && pending.is_none();
-                let go = egui::Button::new(RichText::new("Go ▶").size(21.0).strong().color(if ready { Color32::from_rgb(0x1e, 0x21, 0x27) } else { MUTED }))
+                let ink = if ready { Color32::from_rgb(0x1e, 0x21, 0x27) } else { MUTED };
+                let go = egui::Button::image_and_text(Icon::Play.image(16.0, ink), RichText::new("Go").size(21.0).strong().color(ink))
                     .fill(if ready { GREEN } else { TRACK })
                     .stroke(Stroke::NONE)
                     .corner_radius(CornerRadius::same(8))
@@ -491,7 +492,7 @@ impl LiveView {
         let sounding = snapshot.audio.iter().any(|(a, s)| *a == cue && matches!(s.state, VoiceState::Playing | VoiceState::Tail));
         let mut x = title.right() + 12.0;
         if is_current {
-            x = painter.text(pos2(x, y + 2.0), Align2::LEFT_TOP, t("● aktuell", "● current"), FontId::proportional(size - 3.0), tint(YELLOW)).right() + 10.0;
+            x = painter.text(pos2(x, y + 2.0), Align2::LEFT_TOP, t("aktuell", "current"), FontId::proportional(size - 3.0), tint(YELLOW)).right() + 10.0;
         }
         if sounding {
             painter.text(pos2(x, y + 2.0), Align2::LEFT_TOP, "♪", FontId::proportional(size - 2.0), tint(GREEN));

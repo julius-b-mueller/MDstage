@@ -739,7 +739,7 @@ impl App {
                     }
                 }
                 ui.add_space(6.0);
-                let current = theme::tool_button(RichText::new("Cue").size(15.0).strong());
+                let current = theme::tool_icon(theme::Icon::Target, false);
                 if ui.add_enabled(has_show, current).on_hover_text(self.t("Zum aktuellen Cue springen", "Jump to the current cue")).clicked() {
                     if let Some(cue) = self.snapshot.current.or(self.snapshot.next) {
                         self.view.scroll_to_cue(cue);
@@ -750,7 +750,7 @@ impl App {
                     self.reload(&ctx);
                 }
                 let lock_hint = self.t("Bearbeitungssperre: kein Bearbeiten, Klicks schalten nur scharf", "Edit lock: no editing, clicks only arm");
-                if ui.add(theme::tool_toggle("🔒", self.locked)).on_hover_text(lock_hint).clicked() {
+                if ui.add(theme::tool_icon(theme::Icon::Lock, self.locked)).on_hover_text(lock_hint).clicked() {
                     self.locked = !self.locked;
                 }
                 if ui.add(theme::tool_toggle("LIVE", self.live_open)).on_hover_text(self.t("Live-Ansicht öffnen", "Open the live view")).clicked() {

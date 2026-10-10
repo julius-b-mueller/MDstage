@@ -53,7 +53,7 @@ fn colour_choice(ui: &mut Ui, id: impl std::hash::Hash, colours: &mut std::colle
     }
     let current = colours.get(name).cloned().unwrap_or_default();
     let mut picked = current.clone();
-    let swatch = |colour: &str| RichText::new("⏺").color(named(Some(colour)).unwrap_or(MUTED));
+    let swatch = |colour: &str| RichText::new("●").color(named(Some(colour)).unwrap_or(MUTED));
     egui::ComboBox::from_id_salt(id).selected_text(swatch(&picked)).width(36.0).show_ui(ui, |ui| {
         ui.selectable_value(&mut picked, String::new(), t("keine Farbe", "no colour"));
         for colour in ["red", "green", "yellow", "blue", "purple", "cyan", "darkred", "darkgreen", "darkyellow", "darkblue", "darkpurple", "darkcyan"] {
@@ -222,7 +222,7 @@ impl SettingsUi {
                         if ui.add(egui::DragValue::new(&mut output).range(1..=64).prefix(t("Ausgang ", "Output "))).changed() {
                             draft.routing.insert(key, output - 1);
                         }
-                        if ui.small_button("▶").on_hover_text(t("Testton auf diesem Ausgang", "Test tone on this output")).clicked() {
+                        if ui.add(egui::Button::image(Icon::Play.image(11.0, TEXT)).small()).on_hover_text(t("Testton auf diesem Ausgang", "Test tone on this output")).clicked() {
                             test_output = Some(output - 1);
                         }
                         if ui.small_button("×").on_hover_text(t("Kanal entfernen", "Remove channel")).clicked() {

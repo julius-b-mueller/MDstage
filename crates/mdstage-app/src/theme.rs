@@ -111,6 +111,55 @@ pub fn tool_toggle<'a>(text: &str, on: bool) -> egui::Button<'a> {
     }
 }
 
+/// The signs drawn on buttons. They are the app's own drawings (`assets/*.svg`), white,
+/// and take the colour they are tinted with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Icon {
+    Lock,
+    Paste,
+    Speaker,
+    Pencil,
+    Play,
+    Back,
+    Pause,
+    Stop,
+    /// Cross hairs: bring the current cue into view.
+    Target,
+}
+
+impl Icon {
+    #[cfg(test)]
+    pub const ALL: [Icon; 9] = [Icon::Lock, Icon::Paste, Icon::Speaker, Icon::Pencil, Icon::Play, Icon::Back, Icon::Pause, Icon::Stop, Icon::Target];
+
+    pub fn source(self) -> egui::ImageSource<'static> {
+        match self {
+            Icon::Lock => egui::include_image!("../assets/lock.svg"),
+            Icon::Paste => egui::include_image!("../assets/paste.svg"),
+            Icon::Speaker => egui::include_image!("../assets/speaker.svg"),
+            Icon::Pencil => egui::include_image!("../assets/pencil.svg"),
+            Icon::Play => egui::include_image!("../assets/play.svg"),
+            Icon::Back => egui::include_image!("../assets/back.svg"),
+            Icon::Pause => egui::include_image!("../assets/pause.svg"),
+            Icon::Stop => egui::include_image!("../assets/stop.svg"),
+            Icon::Target => egui::include_image!("../assets/target.svg"),
+        }
+    }
+
+    /// The sign at a size and in a colour.
+    pub fn image(self, size: f32, colour: Color32) -> egui::Image<'static> {
+        egui::Image::new(self.source()).tint(colour).fit_to_exact_size(egui::vec2(size, size))
+    }
+}
+
+/// A toolbar button that carries a sign instead of words; `on` lights it like a switch.
+pub fn tool_icon<'a>(icon: Icon, on: bool) -> egui::Button<'a> {
+    let button = egui::Button::image(icon.image(22.0, if on { YELLOW } else { TEXT })).corner_radius(CornerRadius::same(5)).min_size(egui::vec2(TOOL, TOOL));
+    match on {
+        true => button.fill(Color32::from_rgb(0x45, 0x40, 0x33)).stroke(Stroke::new(1.0_f32, YELLOW)),
+        false => button.fill(BACKGROUND).stroke(Stroke::new(1.0_f32, Color32::BLACK)),
+    }
+}
+
 /// The sign for "arm in the live view": a ring around a dot. White, to be tinted.
 pub fn live_icon() -> egui::ImageSource<'static> {
     egui::include_image!("../assets/live.svg")
@@ -168,14 +217,14 @@ mod tests {
         let ctx = egui::Context::default();
         apply(&ctx);
         let _ = ctx.run(Default::default(), |ctx| {
-            let missing: Vec<&str> = ["☰", "🔒", "«", "›", "✏", "◀", "⏺", "⏸", "⏹", "⟳", "🔊", "⇢", "⊕", "📋", "▲", "▼", "⚠", "↺", "→", "↩", "←", "♬", "●", "▶", "♪", "⏱", "·", "—", "…", "×", "„", "“", "−"]
+            let missing: Vec<&str> = ["☰", "«", "›", "⟳", "⇢", "⊕", "▲", "▼", "↺", "→", "↩", "←", "♬", "●", "♪", "·", "—", "…", "×", "„", "“", "−"]
                 .into_iter()
                 .filter(|symbol| !ctx.fonts(|f| f.has_glyphs(&egui::FontId::proportional(14.0), symbol)))
                 .collect();
             assert!(missing.is_empty(), "no glyphs for {missing:?}");
             // The emergency buttons' pictures can be drawn, and are not empty.
             egui_extras::install_image_loaders(ctx);
-            for icon in [light_icon(), mic_icon(), music_icon(), live_icon()] {
+            for icon in [light_icon(), mic_icon(), music_icon(), live_icon()].into_iter().chain(Icon::ALL.map(Icon::source)) {
                 let egui::ImageSource::Bytes { uri, bytes } = icon else { panic!("the pictures are built in") };
                 ctx.include_bytes(uri.clone(), bytes);
                 match ctx.try_load_image(&uri, egui::SizeHint::Size(88, 88)) {

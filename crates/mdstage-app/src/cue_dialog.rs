@@ -266,7 +266,7 @@ impl CueDialog {
                     ui.label(RichText::new(t("nicht im Ordner audio/", "not in the audio/ folder")).color(RED));
                 } else if !file.is_empty() && self.renaming.is_none() {
                     let hint = t("Audiodatei umbenennen (wirkt in allen Cues)", "Rename audio file (applies to every cue)");
-                    if ui.button("✏").on_hover_text(hint).clicked() {
+                    if ui.add(egui::Button::image(Icon::Pencil.image(14.0, TEXT))).on_hover_text(hint).clicked() {
                         self.renaming = Some(file.clone());
                     }
                 }
