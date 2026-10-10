@@ -305,7 +305,10 @@ impl LiveView {
 
     /// One row per audio that is playing: what it is, where it stands, a stop button.
     fn audio(&mut self, ctx: &egui::Context, cx: &Context, cues: &Cues, requests: &mut Vec<Request>) {
-        let sounding: Vec<_> = cx.snapshot.audio.iter().filter(|(_, s)| matches!(s.state, VoiceState::Playing | VoiceState::Tail)).collect();
+        // (A loop's tail ringing out over its own next pass gets no row of its own.)
+        let audio = &cx.snapshot.audio;
+        let own_tail = |cue: usize, s: &mdstage_engine::player::Status| s.state == VoiceState::Tail && audio.iter().any(|(c, o)| *c == cue && o.part == s.part && o.state == VoiceState::Playing);
+        let sounding: Vec<_> = audio.iter().filter(|(cue, s)| matches!(s.state, VoiceState::Playing | VoiceState::Tail) && !own_tail(*cue, s)).collect();
         if sounding.is_empty() {
             return;
         }

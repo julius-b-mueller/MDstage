@@ -144,12 +144,25 @@ pub struct VoiceShared {
     /// While the voice plays straight through, clip position = C + (engine now − E).
     position: SeqPair,
     state: AtomicU8,
+    /// Where the tail of a loop's previous pass is ringing out, in clip frames; 0 = it
+    /// is not.
+    echo: AtomicU64,
 }
 
 impl VoiceShared {
     pub fn publish(&self, engine_frame: u64, clip_frame: u64, state: VoiceState) {
         self.position.write(engine_frame, clip_frame);
         self.state.store(state as u8, SeqCst);
+    }
+
+    /// Publish where the tail of the previous pass of a loop stands, if one is ringing out.
+    pub fn publish_echo(&self, clip_frame: Option<u64>) {
+        self.echo.store(clip_frame.unwrap_or(0), SeqCst);
+    }
+
+    /// Where the tail of a loop's previous pass is ringing out, as of the last block.
+    pub fn echo(&self) -> Option<u64> {
+        Some(self.echo.load(SeqCst)).filter(|frame| *frame > 0)
     }
 
     pub fn state(&self) -> VoiceState {

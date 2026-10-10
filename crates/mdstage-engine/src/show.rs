@@ -844,13 +844,12 @@ mod tests {
         let mut rig = rig(&cues, &[("loop.wav", 2.0, 48), ("finish.wav", 4.0, 80)]);
         rig.show.go().unwrap();
         rig.run(40);
-        assert_eq!(rig.level(), 2.0, "the loop wraps at its loop point without the tail");
         rig.show.go().unwrap();
         rig.run(60);
-        // 40 ms in, the loop next reaches its loop point at 64. From there the outro plays,
-        // and for 16 ms the tail with it.
+        // At every loop point the pass that ends rings out for 16 ms over the next: over the
+        // loop's second pass from 32, and from 64 — where the loop hands over — over the outro.
         let changes: Vec<(usize, f32)> = rig.out.iter().enumerate().filter(|(i, v)| *i == 0 || rig.out[i - 1] != **v).map(|(i, v)| (i, *v)).collect();
-        assert_eq!(changes, [(0, 2.0), (64, 6.0), (80, 4.0)], "loop; tail and outro together; outro alone");
+        assert_eq!(changes, [(0, 2.0), (32, 4.0), (48, 2.0), (64, 6.0), (80, 4.0)], "loop; loop and its tail; loop; tail and outro; outro");
     }
 
     #[test]

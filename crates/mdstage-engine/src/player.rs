@@ -677,9 +677,16 @@ impl Player {
         let mut all = vec![first];
         let Some(active) = self.active.get(&cue) else { return all };
         for (index, part) in active.parts.iter().enumerate() {
-            let Some(voice) = part.shared.first().filter(|voice| index != first.part && voice.state() == VoiceState::Tail) else { continue };
-            let frames = clock.map_or(voice.clip_frame() as f64, |c| voice.clip_frame_now(c));
-            all.push(Status { state: VoiceState::Tail, part: index, seconds: frames / self.sample_rate as f64, start: self.seconds(part.start), transition: self.seconds(part.transition), end: self.seconds(part.end) });
+            let Some(voice) = part.shared.first() else { continue };
+            let mut ringing = |frames: f64| all.push(Status { state: VoiceState::Tail, part: index, seconds: frames / self.sample_rate as f64, start: self.seconds(part.start), transition: self.seconds(part.transition), end: self.seconds(part.end) });
+            // A part that has handed over and rings out beside the one playing …
+            if index != first.part && voice.state() == VoiceState::Tail {
+                ringing(clock.map_or(voice.clip_frame() as f64, |c| voice.clip_frame_now(c)));
+            }
+            // … and the tail of a loop's previous pass, ringing out over the new one.
+            if let Some(frame) = voice.echo() {
+                ringing(frame as f64);
+            }
         }
         all
     }
@@ -711,6 +718,11 @@ impl Player {
             for (file, shared) in part.files.iter().zip(&part.shared) {
                 if shared.state() != VoiceState::Done {
                     voices.push((file, part.start, shared.clip_frame() as usize));
+                    // The tail has to be at hand as well: it rings out from the loop
+                    // point while the playback position is back at the start.
+                    for at in (part.transition..part.end).step_by(PAGE * AHEAD as usize) {
+                        voices.push((file, at, at));
+                    }
                 }
             }
         }
@@ -858,16 +870,23 @@ mod tests {
         };
         player.start(0, &looped, Start::now(Then::Loop)).unwrap();
         player.start(1, &one("finish.wav"), Start::armed(Then::End)).unwrap();
-        render(&mut mixer, 48, 1);
+        let out = render(&mut mixer, 48, 1);
         let status = player.status(0, None).unwrap();
         assert_eq!((status.start, status.transition, status.end), (0.010, 0.050, 0.080));
         // 48 frames from 10: wrapped once at 50 → 10 + 8.
         assert_eq!(status.seconds, 0.018);
+        // Since the wrap (after 40 frames) the tail of the first pass rings out as well,
+        // and is reported as such beside the pass that plays.
+        assert!(out[..40].iter().all(|&s| s == 2.0) && out[40..].iter().all(|&s| s == 4.0), "{out:?}");
+        let ringing: Vec<(VoiceState, f64)> = player.statuses(0, None).into_iter().map(|s| (s.state, s.seconds)).collect();
+        assert_eq!(ringing, [(VoiceState::Playing, 0.018), (VoiceState::Tail, 0.058)]);
 
         player.queue_outro(0, 1).unwrap();
         let out = render(&mut mixer, 80, 1);
-        // Hands off at the fading point (32 frames later); the tail 50..80 overlaps the outro.
-        assert!(out[..32].iter().all(|&s| s == 2.0));
+        // The first pass's tail lasts 22 frames more. The loop hands off at its fading
+        // point (32 frames on); its own tail 50..80 then overlaps the outro.
+        assert!(out[..22].iter().all(|&s| s == 4.0));
+        assert!(out[22..32].iter().all(|&s| s == 2.0));
         assert!(out[32..62].iter().all(|&s| s == 3.0));
         assert!(out[62..].iter().all(|&s| s == 1.0));
     }

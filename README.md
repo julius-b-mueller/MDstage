@@ -354,7 +354,7 @@ The loop cue (Vamp) loops indefinitely. Clicking the outro cue (Devamp) **queues
 `fading_point` (seconds) defines where a loop (Vamp) stops cycling. Without it, the transition happens at `end` (or the file boundary). With it:
 
 - The loop iterates from `start` to `fading_point`.
-- Audio from `fading_point` to `end` plays as a tail — an outgoing overlap while the next cue (Devamp) starts.
+- Audio from `fading_point` to `end` plays as a tail. It rings out over whatever comes next: over the loop's own next pass every time it wraps, and over the next cue (Devamp) once that starts. On the waveform a ghost cursor runs through the tail while the main cursor is back at the start.
 - When a Finish or Bridge is queued (Go pressed), the app waits for the current iteration to reach `fading_point` before starting the transition.
 
 This allows the Vamp or Devamp to ring out naturally — for example, if a cymbal is struck just before the loop boundary, the tail carries it through into the Devamp without cutting it off.

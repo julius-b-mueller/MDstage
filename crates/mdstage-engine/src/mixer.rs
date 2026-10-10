@@ -1,8 +1,10 @@
 //! Device-independent mixer with sample-accurate transitions between voices.
 //!
 //! A voice plays a region of a clip. At its *transition point* it either wraps (loop /
-//! vamp), hands off to other voices on exactly that sample (start→loop, loop→outro) while
-//! its own remainder rings out as a tail, or simply plays on to the end.
+//! vamp), hands off to other voices on exactly that sample (start→loop, loop→outro), or
+//! simply plays on to the end. Whatever lies between the transition point and the region
+//! end is the *tail*: it rings out over what comes next — over the next voice after a
+//! handoff, and over the loop's own next pass after a wrap.
 //!
 //! Several voices may share one id: a cue with several audio files is one voice per file,
 //! all under the cue's id, and every command and handoff addresses them together.
@@ -93,7 +95,7 @@ pub struct Route {
 /// What happens when a playing voice reaches its transition point.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AtTransition {
-    /// Jump back to the region start (loop / vamp). The tail is not played.
+    /// Jump back to the region start (loop / vamp). The tail rings out over the new pass.
     Wrap,
     /// Start the given armed voice on this sample; this voice plays its tail to the end.
     Handoff(VoiceId),
@@ -193,6 +195,11 @@ pub struct Voice {
     /// Frame within the current block at which this voice starts (set by a handoff).
     block_offset: usize,
     rendered: bool,
+    /// The tail of the pass before the last wrap, still ringing out: where it stands in
+    /// the clip. A second playhead beside `pos`.
+    echo: Option<usize>,
+    /// Frame within the current block at which that tail begins (the block of the wrap).
+    echo_offset: usize,
 }
 
 impl Voice {
@@ -216,6 +223,8 @@ impl Voice {
             stop_after_ramp: false,
             block_offset: 0,
             rendered: false,
+            echo: None,
+            echo_offset: 0,
             spec,
         }
     }
@@ -254,6 +263,11 @@ impl Voice {
             if self.pos >= boundary {
                 match (in_transition, self.spec.at_transition) {
                     (true, AtTransition::Wrap) => {
+                        // The pass that ends here rings out over the one that begins.
+                        if self.spec.end > self.spec.transition {
+                            self.echo = Some(self.spec.transition);
+                            self.echo_offset = written;
+                        }
                         self.pos = self.spec.start;
                         self.first_pass = false;
                     }
@@ -281,7 +295,41 @@ impl Voice {
                 break;
             }
         }
+        // The tail of the previous pass, beside whatever the voice itself just played.
+        if let Some(at) = self.echo {
+            let from = std::mem::take(&mut self.echo_offset).min(nframes);
+            let n = (nframes - from).min(self.spec.end - at);
+            self.mix_echo(out, out_channels, from, at, n);
+            self.echo = Some(at + n).filter(|next| *next < self.spec.end && self.state != VoiceState::Done);
+        }
         handoff
+    }
+
+    /// Mix `n` frames of the ringing tail from clip frame `at`, at the voice's level as
+    /// it stands and under its fade-out.
+    fn mix_echo(&self, out: &mut [f32], out_channels: usize, offset: usize, at: usize, n: usize) {
+        let (end, fade_out) = (self.spec.end, self.spec.fade_out as usize);
+        let mut done = 0;
+        while done < n {
+            let (chunk, reach) = self.spec.source.chunk(at + done);
+            let len = reach.min(n - done);
+            if let Some((clip, from)) = chunk.filter(|_| self.gain != 0.0) {
+                let audible = clip.frames().saturating_sub(from).min(len);
+                for r in &self.spec.routes {
+                    let out_ch = r.out as usize;
+                    if out_ch >= out_channels {
+                        continue;
+                    }
+                    let gain = self.gain * r.gain;
+                    for (f, sample) in clip.channel(r.src as usize)[from..from + audible].iter().enumerate() {
+                        let left = end - (at + done + f);
+                        let fade = if fade_out > 0 && left < fade_out { left as f32 / fade_out as f32 } else { 1.0 };
+                        out[(offset + done + f) * out_channels + out_ch] += sample * gain * fade;
+                    }
+                }
+            }
+            done += len;
+        }
     }
 
     /// Back to the region start, ready to be handed off to again.
@@ -461,6 +509,7 @@ impl Mixer {
         self.frames += (out.len() / out_channels) as u64;
         for v in &self.voices {
             v.spec.shared.publish(self.frames, v.pos as u64, v.state);
+            v.spec.shared.publish_echo(v.echo.map(|at| at as u64));
         }
         self.retire_done();
     }
@@ -691,12 +740,19 @@ mod tests {
         handle.send(Command::Add(spec(2, outro_clip, AtTransition::Continue, true))).ok().unwrap();
 
         let mut out = render(&mut mixer, 256, 64, 1);
-        assert!(out.iter().all(|&s| s == 1.0), "tail must not be heard while looping");
+        // The first pass has no tail before it; after each wrap the tail of the pass
+        // before rings out for 50 frames over the new one.
+        let looping = |n: usize| if n >= 100 && n % 100 < 50 { 1.5 } else { 1.0 };
+        for (n, &s) in out.iter().enumerate() {
+            assert_eq!(s, looping(n), "frame {n}");
+        }
         handle.send(Command::SetTransition { id: 1, at: AtTransition::Handoff(2) }).ok().unwrap();
         out.extend(render(&mut mixer, 384, 64, 1));
 
         // 256 frames rendered → next loop boundary at 300.
-        assert!(out[..300].iter().all(|&s| s == 1.0));
+        for (n, &s) in out[..300].iter().enumerate() {
+            assert_eq!(s, looping(n), "frame {n}");
+        }
         assert!(out[300..350].iter().all(|&s| s == 0.75), "tail and outro overlap");
         assert!(out[350..500].iter().all(|&s| s == 0.25));
         assert!(out[500..].iter().all(|&s| s == 0.0));
