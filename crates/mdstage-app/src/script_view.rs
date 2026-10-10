@@ -13,6 +13,7 @@ use mdstage_core::mic::{Cast, Mic, MicChip};
 use mdstage_core::{Block, Cue, Script};
 use mdstage_engine::session::Snapshot;
 
+use crate::lang::t;
 use crate::theme::*;
 use crate::waveform::{WaveState, Waveforms};
 
@@ -133,7 +134,7 @@ impl ScriptView {
         let mut close = false;
         let mut step: i64 = 0;
         ui.horizontal(|ui| {
-            ui.label("Suche");
+            ui.label(t("Suche", "Search"));
             let response = ui.add(egui::TextEdit::singleline(&mut search.query).desired_width(260.0));
             if std::mem::take(&mut search.focus) {
                 response.request_focus();
@@ -235,12 +236,12 @@ impl ScriptView {
     fn cue_rows(cx: &Context, block: usize, cue_index: usize, cue: &Cue) -> Vec<(&'static str, Vec<Span>)> {
         let mut rows = Vec::new();
         if cue.invalid {
-            rows.push(("YAML", vec![("nicht lesbar".to_string(), RED)]));
+            rows.push(("YAML", vec![(t("nicht lesbar", "unreadable").to_string(), RED)]));
             return rows;
         }
         let mic = cx.script.mic_for_cue(block, cx.cast);
         match &mic {
-            Mic::MuteAll => rows.push(("Mic", vec![("alle aus".to_string(), MUTED)])),
+            Mic::MuteAll => rows.push(("Mic", vec![(t("alle aus", "all off").to_string(), MUTED)])),
             Mic::Open(_) => {
                 let mut spans = Vec::new();
                 for chip in cx.cast.chips(&mic, true) {
@@ -258,10 +259,10 @@ impl ScriptView {
                 }
                 rows.push(("Mic", spans));
             }
-            Mic::Unchanged if cue.auto_mic() => rows.push(("Mic", vec![("(auto, niemand spricht)".to_string(), MUTED)])),
+            Mic::Unchanged if cue.auto_mic() => rows.push(("Mic", vec![(t("(auto, niemand spricht)", "(auto, nobody speaks)").to_string(), MUTED)])),
             Mic::Unchanged => {}
         }
-        for (label, key) in [("Notiz", "note"), ("TC", "start_tc"), ("OSC", "osc"), ("Proj.", "projection"), ("QLC+", "qlcplus")] {
+        for (label, key) in [(t("Notiz", "Note"), "note"), ("TC", "start_tc"), ("OSC", "osc"), ("Proj.", "projection"), ("QLC+", "qlcplus")] {
             if let Some(value) = cue.text(key) {
                 rows.push((label, vec![(value.to_string(), TEXT)]));
             }
@@ -293,16 +294,16 @@ impl ScriptView {
         if let Some(auto) = cue.auto_trigger() {
             let source = cue_label(cues.find(auto.source));
             let text = match auto.when {
-                AutoWhen::At(at) => format!("automatisch bei {at} s in {source}"),
-                AutoWhen::Delay(delay) => format!("automatisch {delay} s nach {source}"),
+                AutoWhen::At(at) => if crate::lang::english() { format!("automatically at {at} s into {source}") } else { format!("automatisch bei {at} s in {source}") },
+                AutoWhen::Delay(delay) => if crate::lang::english() { format!("automatically {delay} s after {source}") } else { format!("automatisch {delay} s nach {source}") },
             };
             rows.push(("⏱", vec![(text, GREEN)]));
         }
         if let Some(adjust) = cue.adjust() {
             let target = cue_label(cues.find(adjust.target));
             let text = match (adjust.fadeout, adjust.volume) {
-                (true, _) => format!("{target} ausfaden"),
-                (false, Some(v)) => format!("{target} auf {} %", (v * 100.0).round()),
+                (true, _) => if crate::lang::english() { format!("fade out {target}") } else { format!("{target} ausfaden") },
+                (false, Some(v)) => format!("{target} {} {} %", t("auf", "to"), (v * 100.0).round()),
                 _ => target,
             };
             rows.push(("⇢", vec![(text, TEXT)]));
@@ -318,7 +319,7 @@ impl ScriptView {
                 Effect::Midi { device, .. } => count(format!("MIDI {device}")),
                 Effect::Osc { device, .. } => count(format!("OSC {device}")),
                 Effect::Http { device, .. } => count(format!("HTTP {device}")),
-                Effect::Announce { device, .. } => count(format!("Durchsage {device}")),
+                Effect::Announce { device, .. } => count(format!("{} {device}", t("Durchsage", "Announce"))),
                 _ => {}
             }
         }
@@ -329,7 +330,7 @@ impl ScriptView {
         }
         if !sends.is_empty() {
             let spans = sends.into_iter().map(|(label, n)| (if n > 1 { format!("{label} ×{n}") } else { label }, YELLOW)).collect();
-            rows.push(("Sendet", spans));
+            rows.push((t("Sendet", "Sends"), spans));
         }
         rows
     }
@@ -450,7 +451,7 @@ impl ScriptView {
         }
         if !cx.locked {
             response.context_menu(|ui| {
-                if ui.button("Bearbeiten").clicked() {
+                if ui.button(t("Bearbeiten", "Edit")).clicked() {
                     self.edit(cx.script, index, false);
                     ui.close_menu();
                 }
@@ -468,18 +469,18 @@ impl ScriptView {
             }
         };
         ui.separator();
-        pick(ui, "Text davor einfügen", Action::NewText(index));
-        pick(ui, "Text danach einfügen", Action::NewText(index + 1));
-        pick(ui, "Cue davor einfügen…", Action::NewCue(index));
-        pick(ui, "Cue danach einfügen…", Action::NewCue(index + 1));
+        pick(ui, t("Text davor einfügen", "Insert text before"), Action::NewText(index));
+        pick(ui, t("Text danach einfügen", "Insert text after"), Action::NewText(index + 1));
+        pick(ui, t("Cue davor einfügen…", "Insert cue before…"), Action::NewCue(index));
+        pick(ui, t("Cue danach einfügen…", "Insert cue after…"), Action::NewCue(index + 1));
         if cx.can_paste {
-            pick(ui, "Kopierten Cue davor einfügen", Action::Paste(index));
-            pick(ui, "Kopierten Cue danach einfügen", Action::Paste(index + 1));
+            pick(ui, t("Kopierten Cue davor einfügen", "Paste copied cue before"), Action::Paste(index));
+            pick(ui, t("Kopierten Cue danach einfügen", "Paste copied cue after"), Action::Paste(index + 1));
         }
         ui.separator();
-        pick(ui, "Nach oben", Action::Move { block: index, up: true });
-        pick(ui, "Nach unten", Action::Move { block: index, up: false });
-        pick(ui, "Löschen", Action::Delete(index));
+        pick(ui, t("Nach oben", "Move up"), Action::Move { block: index, up: true });
+        pick(ui, t("Nach unten", "Move down"), Action::Move { block: index, up: false });
+        pick(ui, t("Löschen", "Delete"), Action::Delete(index));
     }
 
     /// Role name completing what has been typed so far: `(full name, missing rest)`.
@@ -594,18 +595,18 @@ impl ScriptView {
             x = painter.text(pos2(x, y + 1.0), Align2::LEFT_TOP, text, FontId::proportional(13.0), colour).right() + 10.0;
         };
         if cue.is_variant() {
-            badge("Variante", MUTED);
+            badge(t("Variante", "Variant"), MUTED);
         }
         if is_current {
-            badge("● aktuell", GREEN);
+            badge(t("● aktuell", "● current"), GREEN);
         }
         if waits {
-            badge("wartet auf Loop-Ende", YELLOW);
+            badge(t("wartet auf Loop-Ende", "waiting for loop end"), YELLOW);
         } else if is_next {
-            badge("▶ nächster", YELLOW);
+            badge(t("▶ nächster", "▶ next"), YELLOW);
         }
         if sounding {
-            badge("♪ läuft", BLUE);
+            badge(t("♪ läuft", "♪ playing"), BLUE);
         }
         if let Some(note) = cue.note() {
             painter.text(pos2(panel.right() - 12.0, y), Align2::RIGHT_TOP, note.to_string(), font.clone(), MUTED);
@@ -636,11 +637,11 @@ impl ScriptView {
                     ui.close_menu();
                 }
             };
-            pick(ui, "Als nächsten Go scharf schalten", Action::Arm(cue_index));
+            pick(ui, t("Als nächsten Go scharf schalten", "Arm as the next Go"), Action::Arm(cue_index));
             if !cx.locked {
-                pick(ui, "Bearbeiten…", Action::EditCue(block));
-                pick(ui, "Kopieren", Action::Copy(block));
-                pick(ui, "Variante anlegen", Action::Variant(block));
+                pick(ui, t("Bearbeiten…", "Edit…"), Action::EditCue(block));
+                pick(ui, t("Kopieren", "Copy"), Action::Copy(block));
+                pick(ui, t("Variante anlegen", "Create variant"), Action::Variant(block));
                 Self::block_menu(ui, cx, block, actions);
             }
         });
@@ -664,11 +665,11 @@ impl ScriptView {
         let (peaks, duration) = match state {
             WaveState::Ready { peaks, duration } if duration > 0.0 => (peaks, duration),
             WaveState::Loading => {
-                painter.text(rect.center(), Align2::CENTER_CENTER, "lädt …", FontId::proportional(13.0), MUTED);
+                painter.text(rect.center(), Align2::CENTER_CENTER, t("lädt …", "loading …"), FontId::proportional(13.0), MUTED);
                 return;
             }
             _ => {
-                painter.text(rect.center(), Align2::CENTER_CENTER, format!("{file}: nicht lesbar"), FontId::proportional(13.0), RED);
+                painter.text(rect.center(), Align2::CENTER_CENTER, format!("{file}: {}", t("nicht lesbar", "unreadable")), FontId::proportional(13.0), RED);
                 return;
             }
         };

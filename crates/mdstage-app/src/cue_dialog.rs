@@ -8,6 +8,7 @@ use mdstage_core::cues::Note;
 use mdstage_core::mic::Cast;
 use mdstage_core::yaml::{self, Mapping, Value};
 
+use crate::lang::t;
 use crate::theme::*;
 
 pub struct CueDialog {
@@ -38,7 +39,7 @@ fn note_value(note: Note) -> Value {
 
 /// Choose one of the show's cues (or none). Returns the new choice if it changed.
 fn cue_picker(ui: &mut Ui, id: &str, cues: &[(Note, String)], current: Option<Note>) -> Option<Option<Note>> {
-    let label = |note: Note| cues.iter().find(|(n, _)| *n == note).map_or(format!("{note} (kein Cue mit dieser Note)"), |(_, l)| l.clone());
+    let label = |note: Note| cues.iter().find(|(n, _)| *n == note).map_or(format!("{note} ({})", t("kein Cue mit dieser Note", "no cue has this note")), |(_, l)| l.clone());
     let mut choice = current;
     egui::ComboBox::from_id_salt(id).selected_text(current.map_or("—".to_string(), label)).width(300.0).show_ui(ui, |ui| {
         ui.selectable_value(&mut choice, None, "—");
@@ -109,7 +110,7 @@ impl CueDialog {
         let mut changed = false;
 
         ui.horizontal(|ui| {
-            ui.label("Notiz");
+            ui.label(t("Notiz", "Note"));
             let mut note = self.yaml.get("note").and_then(Value::as_str).unwrap_or_default().to_string();
             if ui.add(egui::TextEdit::singleline(&mut note).desired_width(f32::INFINITY)).changed() {
                 changed = true;
@@ -123,7 +124,7 @@ impl CueDialog {
 
         ui.add_space(6.0);
         let mut auto = self.yaml.get("auto_mic").and_then(Value::as_bool) == Some(true);
-        if ui.checkbox(&mut auto, "Auto-Mic: Mikrofone aus dem folgenden Text bestimmen").changed() {
+        if ui.checkbox(&mut auto, t("Auto-Mic: Mikrofone aus dem folgenden Text bestimmen", "Auto mic: work out the microphones from the text that follows")).changed() {
             changed = true;
             if auto {
                 self.yaml.insert("auto_mic".into(), true.into());
@@ -132,7 +133,7 @@ impl CueDialog {
             }
         }
         if auto || self.auto_mic_in_use {
-            ui.label(RichText::new("Sobald ein Cue Auto-Mic nutzt, werden Mikrofone nirgends mehr von Hand gewählt.").color(MUTED));
+            ui.label(RichText::new(t("Sobald ein Cue Auto-Mic nutzt, werden Mikrofone nirgends mehr von Hand gewählt.", "Once any cue uses auto mic, microphones are no longer chosen by hand anywhere.")).color(MUTED));
         } else {
             let mut open: Vec<String> = match self.yaml.get("mic") {
                 Some(Value::String(name)) => vec![name.clone()],
@@ -142,10 +143,10 @@ impl CueDialog {
             let mute_all = open == ["muteall"];
             let mut mode = if mute_all { 1 } else if open.is_empty() { 0 } else { 2 };
             ui.horizontal(|ui| {
-                ui.label("Mikrofone");
-                changed |= ui.radio_value(&mut mode, 0, "unverändert").changed();
-                changed |= ui.radio_value(&mut mode, 1, "alle aus").changed();
-                changed |= ui.radio_value(&mut mode, 2, "Auswahl").changed();
+                ui.label(t("Mikrofone", "Microphones"));
+                changed |= ui.radio_value(&mut mode, 0, t("unverändert", "unchanged")).changed();
+                changed |= ui.radio_value(&mut mode, 1, t("alle aus", "all off")).changed();
+                changed |= ui.radio_value(&mut mode, 2, t("Auswahl", "selection")).changed();
             });
             if mode == 2 {
                 open.retain(|n| n != "muteall");
@@ -169,7 +170,7 @@ impl CueDialog {
                 match mode {
                     1 => drop(self.yaml.insert("mic".into(), "muteall".into())),
                     2 if !open.is_empty() => drop(self.yaml.insert("mic".into(), Value::Sequence(open.into_iter().map(Value::String).collect()))),
-                    // "Auswahl" with nothing ticked yet keeps the entry out of the file.
+                    // t("Auswahl", "selection") with nothing ticked yet keeps the entry out of the file.
                     _ => drop(self.yaml.shift_remove("mic")),
                 }
             }
@@ -178,7 +179,7 @@ impl CueDialog {
         ui.add_space(6.0);
         let several = self.yaml.get("music").is_some_and(|m| m.get("audios").is_some());
         if several {
-            ui.label(RichText::new("♬ Mehrere Audios mit Patch — bitte unten im YAML bearbeiten.").color(MUTED));
+            ui.label(RichText::new(t("♬ Mehrere Audios mit Patch — bitte unten im YAML bearbeiten.", "♬ Several audio files with a patch — please edit them in the YAML below.")).color(MUTED));
         } else {
             let current = match self.yaml.get("music") {
                 Some(Value::String(file)) => file.clone(),
@@ -188,14 +189,14 @@ impl CueDialog {
             let mut file = current.clone();
             ui.horizontal(|ui| {
                 ui.label("♬ Audio");
-                egui::ComboBox::from_id_salt("cue-audio").selected_text(if file.is_empty() { "— keines —" } else { file.as_str() }).width(320.0).show_ui(ui, |ui| {
-                    ui.selectable_value(&mut file, String::new(), "— keines —");
+                egui::ComboBox::from_id_salt("cue-audio").selected_text(if file.is_empty() { t("— keines —", "— none —") } else { file.as_str() }).width(320.0).show_ui(ui, |ui| {
+                    ui.selectable_value(&mut file, String::new(), t("— keines —", "— none —"));
                     for name in &self.audio_files {
                         ui.selectable_value(&mut file, name.clone(), name);
                     }
                 });
                 if !file.is_empty() && !self.audio_files.contains(&file) {
-                    ui.label(RichText::new("nicht im Ordner audio/").color(RED));
+                    ui.label(RichText::new(t("nicht im Ordner audio/", "not in the audio/ folder")).color(RED));
                 }
             });
             if file != current {
@@ -212,7 +213,7 @@ impl CueDialog {
                 if let Some(music) = self.music() {
                     ui.horizontal(|ui| {
                         let mut volume = number(music, "volume").unwrap_or(mdstage_core::cues::DEFAULT_VOLUME);
-                        ui.label("Lautstärke");
+                        ui.label(t("Lautstärke", "Volume"));
                         if ui.add(egui::Slider::new(&mut volume, 0.0..=1.0).show_value(true)).changed() {
                             changed = true;
                             music.insert("volume".into(), ((volume * 100.0).round() / 100.0).into());
@@ -228,18 +229,18 @@ impl CueDialog {
                         }
                     });
                     ui.horizontal(|ui| {
-                        changed |= seconds(ui, music, "fadein", "Einblenden");
-                        changed |= seconds(ui, music, "fadeout", "Ausblenden");
-                        changed |= seconds(ui, music, "fading_point", "Loop-Punkt");
+                        changed |= seconds(ui, music, "fadein", t("Einblenden", "Fade in"));
+                        changed |= seconds(ui, music, "fadeout", t("Ausblenden", "Fade out"));
+                        changed |= seconds(ui, music, "fading_point", t("Loop-Punkt", "Loop point"));
                     });
-                    ui.label(RichText::new("Start und Ende: Marker an der Wellenform mit Shift ziehen.").color(MUTED));
+                    ui.label(RichText::new(t("Start und Ende: Marker an der Wellenform mit Shift ziehen.", "Start and end: drag the markers on the waveform with Shift.")).color(MUTED));
                 }
             }
         }
 
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            ui.label("Start-Timecode");
+            ui.label(t("Start-Timecode", "Start timecode"));
             let mut tc = self.yaml.get("start_tc").and_then(Value::as_str).unwrap_or_default().to_string();
             if ui.add(egui::TextEdit::singleline(&mut tc).hint_text("HH:MM:SS:FF").desired_width(110.0)).changed() {
                 changed = true;
@@ -252,11 +253,11 @@ impl CueDialog {
         });
 
         ui.add_space(10.0);
-        ui.label(RichText::new("VERKNÜPFUNGEN").size(12.0).color(MUTED));
+        ui.label(RichText::new(t("VERKNÜPFUNGEN", "LINKS")).size(12.0).color(MUTED));
         let cues = self.cues.clone();
         // S/L/F: either the audio chains into another cue at its end, or it loops until
         // its outro is fired.
-        for (key, label) in [("chain_end", "Am Ende nahtlos weiter mit"), ("loop_outro", "Loop, bis dieses Outro kommt")] {
+        for (key, label) in [("chain_end", t("Am Ende nahtlos weiter mit", "At the end, carry straight on with")), ("loop_outro", t("Loop, bis dieses Outro kommt", "Loop until this outro comes"))] {
             ui.horizontal(|ui| {
                 ui.label(label);
                 if let Some(choice) = cue_picker(ui, key, &cues, note_of(self.yaml.get(key))) {
@@ -278,7 +279,7 @@ impl CueDialog {
         let mut new_source = source;
         let mut auto_changed = false;
         ui.horizontal(|ui| {
-            ui.label("Von selbst auslösen durch");
+            ui.label(t("Von selbst auslösen durch", "Fire by itself, triggered by"));
             if let Some(choice) = cue_picker(ui, "auto-source", &cues, source) {
                 new_source = choice;
                 auto_changed = true;
@@ -287,10 +288,10 @@ impl CueDialog {
         if new_source.is_some() {
             ui.horizontal(|ui| {
                 ui.add_space(16.0);
-                auto_changed |= ui.radio_value(&mut by_delay, false, "wenn dessen Audio bei").changed();
-                auto_changed |= ui.radio_value(&mut by_delay, true, "nach").changed();
+                auto_changed |= ui.radio_value(&mut by_delay, false, t("wenn dessen Audio bei", "when its audio is at")).changed();
+                auto_changed |= ui.radio_value(&mut by_delay, true, t("nach", "after a delay of")).changed();
                 auto_changed |= ui.add(egui::DragValue::new(&mut amount).speed(0.05).range(0.0..=36000.0).suffix(" s")).changed();
-                ui.label(if by_delay { "Verzögerung" } else { "ist" });
+                ui.label(if by_delay { t("Verzögerung", "") } else { t("ist", "") });
             });
         }
         if auto_changed {
@@ -316,7 +317,7 @@ impl CueDialog {
             let mut new_target = target;
             let mut adjust_changed = false;
             ui.horizontal(|ui| {
-                ui.label("Beim Auslösen anderes Audio anpassen");
+                ui.label(t("Beim Auslösen anderes Audio anpassen", "On firing, adjust other audio"));
                 if let Some(choice) = cue_picker(ui, "adjust-target", &cues, target) {
                     new_target = choice;
                     adjust_changed = true;
@@ -325,10 +326,10 @@ impl CueDialog {
             if new_target.is_some() {
                 ui.horizontal(|ui| {
                     ui.add_space(16.0);
-                    adjust_changed |= ui.radio_value(&mut fade_out, true, "ausfaden").changed();
-                    adjust_changed |= ui.radio_value(&mut fade_out, false, "auf").changed();
+                    adjust_changed |= ui.radio_value(&mut fade_out, true, t("ausfaden", "fade out")).changed();
+                    adjust_changed |= ui.radio_value(&mut fade_out, false, t("auf", "to")).changed();
                     adjust_changed |= ui.add_enabled(!fade_out, egui::Slider::new(&mut volume, 0.0..=1.0)).changed();
-                    ui.label("in");
+                    ui.label(t("in", "over"));
                     adjust_changed |= ui.add(egui::DragValue::new(&mut fade_time).speed(0.05).range(0.0..=600.0).suffix(" s")).changed();
                 });
             }
@@ -367,7 +368,7 @@ impl CueDialog {
             }
             ui.add_space(10.0);
             ui.separator();
-            ui.label(RichText::new("YAML — alle Felder des Cues, auch die ohne Formularfeld (cue_midi, cue_osc, cue_http, cue_display, music_seq, mehrere Audios …)").color(MUTED));
+            ui.label(RichText::new(t("YAML — alle Felder des Cues, auch die ohne Formularfeld (cue_midi, cue_osc, cue_http, cue_display, music_seq, mehrere Audios …)", "YAML — all fields of the cue, including those without a form field (cue_midi, cue_osc, cue_http, cue_display, music_seq, several audio files …)")).color(MUTED));
             let editor = egui::TextEdit::multiline(&mut self.text).code_editor().desired_width(f32::INFINITY).desired_rows(10);
             if ui.add(editor).changed() {
                 match serde_yaml_from(&self.text) {
@@ -384,10 +385,10 @@ impl CueDialog {
         });
         ui.separator();
         ui.horizontal(|ui| {
-            if ui.add_enabled(self.text_error.is_none(), egui::Button::new("Speichern")).clicked() {
+            if ui.add_enabled(self.text_error.is_none(), egui::Button::new(t("Speichern", "Save"))).clicked() {
                 result = Some(true);
             }
-            if ui.button("Abbrechen").clicked() {
+            if ui.button(t("Abbrechen", "Cancel")).clicked() {
                 result = Some(false);
             }
         });
@@ -401,8 +402,8 @@ fn serde_yaml_from(text: &str) -> Result<Mapping, String> {
         return Ok(Mapping::new());
     }
     match mdstage_core::Script::parse(&format!("```yaml\n{text}\n```\n")).blocks.into_iter().next() {
-        Some(mdstage_core::Block::Cue(cue)) if !cue.invalid => cue.yaml.as_mapping().cloned().ok_or_else(|| "Ein Cue besteht aus Feldern (name: wert).".to_string()),
-        Some(mdstage_core::Block::Config(_)) => Err("Das ist ein Config-Block, kein Cue.".into()),
-        _ => Err("YAML nicht lesbar.".into()),
+        Some(mdstage_core::Block::Cue(cue)) if !cue.invalid => cue.yaml.as_mapping().cloned().ok_or_else(|| t("Ein Cue besteht aus Feldern (name: wert).", "A cue consists of fields (name: value).").to_string()),
+        Some(mdstage_core::Block::Config(_)) => Err(t("Das ist ein Config-Block, kein Cue.", "This is a config block, not a cue.").into()),
+        _ => Err(t("YAML nicht lesbar.", "Cannot read the YAML.").into()),
     }
 }

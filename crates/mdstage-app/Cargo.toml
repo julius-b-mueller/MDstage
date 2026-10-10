@@ -22,6 +22,9 @@ typst-assets = { version = "0.13", features = ["fonts"] }
 mdstage-core = { path = "../mdstage-core" }
 mdstage-engine = { path = "../mdstage-engine" }
 
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
 [package.metadata.deb]
 name = "mdstage"
 maintainer = "Julius B. Müller <hello@mdstage.org>"
@@ -29,6 +32,15 @@ extended-description = "Stage manager app for live shows and theatre: the script
 section = "sound"
 assets = [
     ["target/release/mdstage", "usr/bin/mdstage", "755"],
-    ["../../dist/assets/icon.png", "usr/share/icons/hicolor/512x512/apps/mdstage.png", "644"],
+    ["assets/mdstage-512.png", "usr/share/icons/hicolor/512x512/apps/mdstage.png", "644"],
     ["mdstage.desktop", "usr/share/applications/mdstage.desktop", "644"],
+]
+
+[package.metadata.generate-rpm]
+name = "mdstage"
+summary = "The interactive prompt book"
+assets = [
+    { source = "target/release/mdstage", dest = "/usr/bin/mdstage", mode = "755" },
+    { source = "assets/mdstage-512.png", dest = "/usr/share/icons/hicolor/512x512/apps/mdstage.png", mode = "644" },
+    { source = "mdstage.desktop", dest = "/usr/share/applications/mdstage.desktop", mode = "644" },
 ]

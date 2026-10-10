@@ -10,6 +10,7 @@ use mdstage_engine::mtc::Timecode;
 use mdstage_engine::session::Request;
 
 use crate::script_view::Context;
+use crate::lang::t;
 use crate::theme::*;
 
 fn timecode(seconds: f64) -> String {
@@ -82,9 +83,9 @@ pub fn show(ui: &mut Ui, cx: &Context) -> Vec<Request> {
     ui.add_space(8.0);
 
     let pending = snapshot.pending_outros.first().map(|&(_, outro)| outro);
-    cue_card(ui, cx, "AKTUELL", snapshot.current, GREEN, 40.0);
+    cue_card(ui, cx, t("AKTUELL", "CURRENT"), snapshot.current, GREEN, 40.0);
     ui.add_space(6.0);
-    let next_title = if pending.is_some() { "NÄCHSTER — wartet auf Loop-Ende" } else { "NÄCHSTER" };
+    let next_title = if pending.is_some() { t("NÄCHSTER — wartet auf Loop-Ende", "NEXT — waiting for loop end") } else { t("NÄCHSTER", "NEXT") };
     cue_card(ui, cx, next_title, pending.or(snapshot.next), YELLOW, 30.0);
 
     // Variants of the next cue: choose which one Go fires.
@@ -93,7 +94,7 @@ pub fn show(ui: &mut Ui, cx: &Context) -> Vec<Request> {
         if group.len() > 1 {
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("Variante:").color(MUTED));
+                ui.label(RichText::new(t("Variante:", "Variant:")).color(MUTED));
                 for cue in group.clone() {
                     let text = summary(cx.script, cue);
                     let label = if text.is_empty() { format!("Cue {}", cue + 1) } else { format!("Cue {} · {text}", cue + 1) };
@@ -109,7 +110,7 @@ pub fn show(ui: &mut Ui, cx: &Context) -> Vec<Request> {
     ui.label(RichText::new("AUDIO").size(12.0).color(MUTED));
     let sounding: Vec<_> = snapshot.audio.iter().filter(|(_, s)| matches!(s.state, VoiceState::Playing | VoiceState::Tail)).collect();
     if sounding.is_empty() {
-        ui.label(RichText::new("nichts läuft").color(MUTED));
+        ui.label(RichText::new(t("nichts läuft", "nothing playing")).color(MUTED));
     }
     for (cue, status) in sounding {
         // A loop's bar cycles between its start and its loop point.
@@ -117,7 +118,7 @@ pub fn show(ui: &mut Ui, cx: &Context) -> Vec<Request> {
         let fraction = if to > from { ((status.seconds - from) / (to - from)).clamp(0.0, 1.0) } else { 0.0 };
         ui.horizontal(|ui| {
             ui.label(format!("Cue {}", cue + 1));
-            let label = if status.state == VoiceState::Tail { "klingt aus".to_string() } else { format!("{:.1} / {:.1} s", status.seconds - from, to - from) };
+            let label = if status.state == VoiceState::Tail { t("klingt aus", "ringing out").to_string() } else { format!("{:.1} / {:.1} s", status.seconds - from, to - from) };
             ui.add(egui::ProgressBar::new(fraction as f32).text(label).desired_width(ui.available_width() - 70.0));
             if ui.small_button("Stop").clicked() {
                 requests.push(Request::Fire(*cue));
@@ -132,13 +133,13 @@ pub fn show(ui: &mut Ui, cx: &Context) -> Vec<Request> {
     }
 
     ui.add_space(10.0);
-    ui.label(RichText::new("MIKROFONE").size(12.0).color(MUTED));
+    ui.label(RichText::new(t("MIKROFONE", "MICROPHONES")).size(12.0).color(MUTED));
     ui.horizontal_wrapped(|ui| match &snapshot.mic {
         None => {
-            ui.label(RichText::new("noch nicht gesetzt").color(MUTED));
+            ui.label(RichText::new(t("noch nicht gesetzt", "not set yet")).color(MUTED));
         }
         Some(Mic::MuteAll) => {
-            ui.label(RichText::new("alle aus").color(RED));
+            ui.label(RichText::new(t("alle aus", "all off")).color(RED));
         }
         Some(mic) => {
             for chip in cx.cast.chips(mic, false) {

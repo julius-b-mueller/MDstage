@@ -4,8 +4,12 @@
 //!
 //! Without an argument the last show is opened again.
 
+// No console window next to the app on Windows.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod cue_dialog;
 mod export;
+mod lang;
 mod live;
 mod roles_ui;
 mod script_view;
@@ -67,6 +71,7 @@ impl App {
     fn new(cc: &eframe::CreationContext<'_>, path: Option<PathBuf>) -> App {
         theme::apply(&cc.egui_ctx);
         let settings = Settings::load(&store::settings_path());
+        lang::set_english(settings.language == "en");
         let last = settings.recent_files.first().map(PathBuf::from).filter(|p| p.exists());
         let mut app = App {
             settings,
@@ -100,7 +105,7 @@ impl App {
 
     fn save_settings(&mut self) {
         if let Err(e) = self.settings.save(&store::settings_path()) {
-            self.message = Some(format!("Einstellungen nicht gespeichert: {e}"));
+            self.message = Some(format!("{}: {e}", lang::t("Einstellungen nicht gespeichert", "Settings not saved")));
         }
     }
 
@@ -120,7 +125,7 @@ impl App {
         let session = match Session::start(loaded.script.clone(), dir.clone(), self.settings.clone(), loaded.trusted) {
             Ok(session) => session,
             Err(e) => {
-                self.message = Some(format!("Show nicht gestartet: {e}"));
+                self.message = Some(format!("{}: {e}", lang::t("Show nicht gestartet", "Show not started")));
                 return;
             }
         };
@@ -166,7 +171,7 @@ impl App {
         show.cast = Cast::from_script(&show.script, english);
         show.report = show.script.validate();
         if let Err(e) = store::save(&show.path, &show.script, &mut self.settings, show.trusted) {
-            self.message = Some(format!("Nicht gespeichert: {e}"));
+            self.message = Some(format!("{}: {e}", lang::t("Nicht gespeichert", "Not saved")));
         }
         show.session.send(Request::SetScript(Box::new(show.script.clone())));
         self.view.invalidate();
@@ -334,7 +339,7 @@ impl App {
                     match removed {
                         Some(removed) if !removed.is_empty() => {
                             self.after_edit();
-                            self.message = Some(format!("{} Schlüssel entfernt: {}", removed.len(), removed.iter().map(|r| r.key.as_str()).collect::<Vec<_>>().join(", ")));
+                            self.message = Some(format!("{} {}: {}", removed.len(), lang::t("Schlüssel entfernt", "keys removed"), removed.iter().map(|r| r.key.as_str()).collect::<Vec<_>>().join(", ")));
                         }
                         Some(_) => self.message = Some(self.t("Nichts aufzuräumen.", "Nothing to clean up.").into()),
                         None => {}
@@ -416,7 +421,7 @@ impl App {
                     ui.label(RichText::new(format!("{} ({files})", self.t("Audio lädt", "Loading audio"))).color(YELLOW));
                 }
                 let output = match &self.snapshot.output {
-                    Some(o) => format!("{} · {} Kanäle · {} Hz", o.name, o.channels, o.sample_rate),
+                    Some(o) => format!("{} · {} {} · {} Hz", o.name, o.channels, lang::t("Kanäle", "channels"), o.sample_rate),
                     None if has_show => self.t("kein Audiogerät", "no audio device").to_string(),
                     None => String::new(),
                 };
@@ -447,8 +452,8 @@ impl App {
             });
         }
         let mut lines: Vec<(String, Color32)> = show.notes.iter().map(|n| (n.clone(), MUTED)).collect();
-        lines.extend(show.report.problems.iter().map(|p| (format!("YAML-Block {}: {}", p.block, p.message), RED)));
-        lines.extend(show.report.note_conflicts.iter().map(|c| (format!("Trigger-Note {} doppelt: YAML-Blöcke {} und {}", c.note, c.first, c.second), RED)));
+        lines.extend(show.report.problems.iter().map(|p| (format!("{} {}: {}", lang::t("YAML-Block", "YAML block"), p.block, p.message), RED)));
+        lines.extend(show.report.note_conflicts.iter().map(|c| (if lang::english() { format!("Trigger note {} used twice: YAML blocks {} and {}", c.note, c.first, c.second) } else { format!("Trigger-Note {} doppelt: YAML-Blöcke {} und {}", c.note, c.first, c.second) }, RED)));
         lines.extend(self.snapshot.problems.iter().map(|p| (p.clone(), RED)));
         let mut clear = false;
         if !lines.is_empty() {
@@ -533,15 +538,15 @@ impl App {
         let date = store::today();
         let bytes = if format == "pdf" { export::pdf(&book, &date) } else { export::docx(&book, &date) };
         self.message = Some(match bytes.and_then(|b| std::fs::write(&path, b).map_err(|e| e.to_string())) {
-            Ok(()) => format!("Exportiert: {}", path.display()),
-            Err(e) => format!("Export fehlgeschlagen: {e}"),
+            Ok(()) => format!("{}: {}", lang::t("Exportiert", "Exported"), path.display()),
+            Err(e) => format!("{}: {e}", lang::t("Export fehlgeschlagen", "Export failed")),
         });
         self.export = None;
     }
 
     fn cue_window(&mut self, ctx: &egui::Context) {
         let (Some(mut dialog), Some(show)) = (self.cue_dialog.take(), &mut self.show) else { return };
-        let title = if dialog.is_new { "Neuer Cue" } else { "Cue bearbeiten" };
+        let title = if dialog.is_new { lang::t("Neuer Cue", "New cue") } else { lang::t("Cue bearbeiten", "Edit cue") };
         let mut open = true;
         let mut result = None;
         egui::Window::new(title).open(&mut open).default_size([640.0, 600.0]).show(ctx, |ui| result = dialog.show(ui, &show.cast));
@@ -638,6 +643,7 @@ fn serde_yaml_mapping() -> mdstage_core::yaml::Mapping {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        lang::set_english(self.english());
         if let Some(show) = &self.show {
             self.snapshot = show.session.snapshot();
             // Keep clocks, cursors and progress bars moving.
@@ -708,8 +714,9 @@ fn main() -> eframe::Result {
         }
     }
     let path = args.first().map(PathBuf::from);
+    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/mdstage-512.png")).unwrap_or_default();
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1200.0, 900.0]).with_title("MDstage"),
+        viewport: egui::ViewportBuilder::default().with_inner_size([1200.0, 900.0]).with_title("MDstage").with_icon(icon),
         ..Default::default()
     };
     eframe::run_native("MDstage", options, Box::new(move |cc| Ok(Box::new(App::new(cc, path)))))

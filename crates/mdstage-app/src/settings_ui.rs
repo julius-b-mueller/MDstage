@@ -7,6 +7,7 @@ use mdstage_engine::inputs::Inputs;
 use mdstage_engine::outputs::SystemMidi;
 use mdstage_engine::settings::{ArgSetting, CueTriggerSetting, DeviceSetting, EmergencyLightSetting, MixerSetting, NoteSetting, Settings};
 
+use crate::lang::t;
 use crate::theme::*;
 
 /// Which note field "MIDI learn" is waiting to fill.
@@ -37,7 +38,7 @@ fn port_picker(ui: &mut Ui, id: impl std::hash::Hash, value: &mut String, option
             ui.selectable_value(value, option.clone(), option);
         }
         if !value.is_empty() && !options.contains(value) {
-            ui.label(RichText::new(format!("{value} (nicht angeschlossen)")).color(RED));
+            ui.label(RichText::new(format!("{value} ({})", t("nicht angeschlossen", "not connected"))).color(RED));
         }
     });
 }
@@ -61,7 +62,7 @@ fn note_fields(ui: &mut Ui, note: &mut Option<NoteSetting>) {
         *note = on.then_some(NoteSetting { ch: 1, note: 36 });
     }
     if let Some(n) = note {
-        ui.label("Kanal");
+        ui.label(t("Kanal", "Channel"));
         ui.add(egui::DragValue::new(&mut n.ch).range(1..=16));
         ui.label("Note");
         ui.add(egui::DragValue::new(&mut n.note).range(0..=127));
@@ -85,29 +86,29 @@ impl SettingsUi {
         let mut result = None;
         egui::ScrollArea::vertical().auto_shrink([false, false]).max_height(ui.available_height() - 44.0).show(ui, |ui| {
             let draft = &mut self.draft;
-            ui.heading("Allgemein");
+            ui.heading(t("Allgemein", "General"));
             ui.horizontal(|ui| {
-                ui.label("Sprache");
+                ui.label(t("Sprache", "Language"));
                 ui.selectable_value(&mut draft.language, "de".to_string(), "Deutsch");
                 ui.selectable_value(&mut draft.language, "en".to_string(), "English");
             });
-            ui.checkbox(&mut draft.outputs_blocked, "Ausgaben an Geräte blockieren (MIDI, OSC, HTTP, Displays)");
+            ui.checkbox(&mut draft.outputs_blocked, t("Ausgaben an Geräte blockieren (MIDI, OSC, HTTP, Displays)", "Block output to devices (MIDI, OSC, HTTP, displays)"));
 
             ui.add_space(12.0);
             ui.heading("Audio");
             ui.horizontal(|ui| {
-                ui.label("Ausgabegerät");
-                let current = draft.audio_device.clone().unwrap_or_else(|| "Systemstandard".into());
+                ui.label(t("Ausgabegerät", "Output device"));
+                let current = draft.audio_device.clone().unwrap_or_else(|| t("Systemstandard", "System default").into());
                 egui::ComboBox::from_id_salt("audio-device").selected_text(current).width(260.0).show_ui(ui, |ui| {
-                    ui.selectable_value(&mut draft.audio_device, None, "Systemstandard");
+                    ui.selectable_value(&mut draft.audio_device, None, t("Systemstandard", "System default"));
                     for name in &self.audio_devices {
                         ui.selectable_value(&mut draft.audio_device, Some(name.clone()), name);
                     }
                 });
             });
-            ui.label(RichText::new("Ein anderes Gerät gilt ab dem nächsten Öffnen der Show.").color(MUTED));
+            ui.label(RichText::new(t("Ein anderes Gerät wird sofort übernommen, wenn es die Abtastrate der geöffneten Show kann.", "Another device is switched to at once if it can run at the sample rate of the open show.")).color(MUTED));
             if !channels.is_empty() {
-                ui.label("Virtuelle Kanäle → Ausgang des Geräts");
+                ui.label(t("Virtuelle Kanäle → Ausgang des Geräts", "Virtual channels → output of the device"));
                 egui::Grid::new("routing").show(ui, |ui| {
                     for (i, name) in channels.iter().enumerate() {
                         // Shown 1-based, stored 0-based.
@@ -122,8 +123,8 @@ impl SettingsUi {
             }
 
             ui.add_space(12.0);
-            ui.heading("Ausgabegeräte");
-            ui.label(RichText::new("Der Name muss dem Gerätenamen in der Show-Datei entsprechen. Adressen bleiben auf diesem Rechner.").color(MUTED));
+            ui.heading(t("Ausgabegeräte", "Output devices"));
+            ui.label(RichText::new(t("Der Name muss dem Gerätenamen in der Show-Datei entsprechen. Adressen bleiben auf diesem Rechner.", "The name must match the device name in the show file. Addresses stay on this machine.")).color(MUTED));
             let mut remove = None;
             for (i, device) in draft.devices.iter_mut().enumerate() {
                 ui.horizontal(|ui| match device {
@@ -132,7 +133,7 @@ impl SettingsUi {
                         ui.label(RichText::new("MIDI").color(BLUE));
                         field(ui, name, "Name", 120.0);
                         port_picker(ui, ("midi-port", i), port, &self.midi_outputs);
-                        ui.checkbox(trigger_notes, "Trigger-Noten");
+                        ui.checkbox(trigger_notes, t("Trigger-Noten", "Trigger notes"));
                         ui.checkbox(timecode, "Timecode");
                         if ui.small_button("✕").clicked() {
                             remove = Some(i);
@@ -144,7 +145,7 @@ impl SettingsUi {
                         field(ui, name, "Name", 120.0);
                         field(ui, host, "Host", 130.0);
                         ui.add(egui::DragValue::new(port).range(1..=65535));
-                        ui.checkbox(trigger_notes, "Trigger-Noten");
+                        ui.checkbox(trigger_notes, t("Trigger-Noten", "Trigger notes"));
                         if ui.small_button("✕").clicked() {
                             remove = Some(i);
                         }
@@ -161,11 +162,11 @@ impl SettingsUi {
                     DeviceSetting::Display { name, style, scroll_seconds, language, repeat } => {
                         ui.label(RichText::new("Display").color(RED));
                         field(ui, name, "Name", 120.0);
-                        field(ui, style, "dark / light / subtitle / datei.css", 150.0);
-                        ui.label("Blättern (s)");
+                        field(ui, style, t("dark / light / subtitle / datei.css", "dark / light / subtitle / file.css"), 150.0);
+                        ui.label(t("Blättern (s)", "Scroll (s)"));
                         ui.add(egui::DragValue::new(scroll_seconds).range(0..=600));
-                        field(ui, language, "Sprache (de, en …)", 60.0);
-                        ui.checkbox(repeat, "Durchsage wiederholen");
+                        field(ui, language, t("Sprache (de, en …)", "Language (de, en …)"), 60.0);
+                        ui.checkbox(repeat, t("Durchsage wiederholen", "Repeat announcement"));
                         if ui.small_button("✕").clicked() {
                             remove = Some(i);
                         }
@@ -193,19 +194,19 @@ impl SettingsUi {
             ui.add_space(12.0);
             ui.heading("Display-Server");
             ui.horizontal(|ui| {
-                ui.label("Schnittstelle");
+                ui.label(t("Schnittstelle", "Interface"));
                 field(ui, &mut draft.display_host, "127.0.0.1", 130.0);
                 ui.label("Port");
                 ui.add(egui::DragValue::new(&mut draft.display_port).range(1..=65535));
             });
-            ui.label(RichText::new("127.0.0.1 = nur dieser Rechner; 0.0.0.0 = im ganzen Netzwerk erreichbar. Gilt ab dem nächsten Öffnen der Show.").color(MUTED));
+            ui.label(RichText::new(t("127.0.0.1 = nur dieser Rechner; 0.0.0.0 = im ganzen Netzwerk erreichbar. Gilt ab dem nächsten Öffnen der Show.", "127.0.0.1 = this machine only; 0.0.0.0 = reachable from the whole network. Takes effect the next time the show is opened.")).color(MUTED));
 
             ui.add_space(12.0);
-            ui.heading("Mischpult-Fernsteuerung (Mikrofone)");
+            ui.heading(t("Mischpult-Fernsteuerung (Mikrofone)", "Mixer remote control (microphones)"));
             let mut remove = None;
             for (i, mixer) in draft.mixers.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
-                    ui.label(format!("Pult {}", i + 1));
+                    ui.label(format!("{} {}", t("Pult", "Mixer"), i + 1));
                     // Changing the method keeps the port, where both have one.
                     let kind = match mixer {
                         MixerSetting::X32 { .. } => 0,
@@ -215,7 +216,7 @@ impl SettingsUi {
                         MixerSetting::MidiSysex { .. } => 4,
                         MixerSetting::Osc { .. } => 5,
                     };
-                    let names = ["X32 MIDI", "MIDI-Note", "MIDI-CC", "MIDI-Programm", "MIDI-SysEx", "OSC"];
+                    let names = ["X32 MIDI", t("MIDI-Note", "MIDI note"), t("MIDI-CC", "MIDI CC"), t("MIDI-Programm", "MIDI program"), t("MIDI-SysEx", "MIDI SysEx"), "OSC"];
                     let mut chosen = kind;
                     egui::ComboBox::from_id_salt(("mixer-method", i)).selected_text(names[kind]).show_ui(ui, |ui| {
                         for (n, name) in names.iter().enumerate() {
@@ -258,44 +259,44 @@ impl SettingsUi {
                     match mixer {
                         MixerSetting::X32 { port } => {
                             port_picker(ui, ("mixer-port", i), port, &self.midi_outputs);
-                            ui.label(RichText::new("CC auf Kanal 2, Controller = Mic-Kanal − 1").color(MUTED));
+                            ui.label(RichText::new(t("CC auf Kanal 2, Controller = Mic-Kanal − 1", "CC on channel 2, controller = mic channel − 1")).color(MUTED));
                         }
                         MixerSetting::MidiNote { port, channel, note, on_velocity, off_velocity } => {
                             port_picker(ui, ("mixer-port", i), port, &self.midi_outputs);
-                            ui.label("Kanal");
+                            ui.label(t("Kanal", "Channel"));
                             field(ui, channel, "1", 44.0);
                             ui.label("Note");
                             field(ui, note, "{ch}", 54.0);
-                            byte(ui, "an", on_velocity);
-                            byte(ui, "aus", off_velocity);
+                            byte(ui, t("an", "on"), on_velocity);
+                            byte(ui, t("aus", "off"), off_velocity);
                         }
                         MixerSetting::MidiCc { port, channel, controller, on_value, off_value } => {
                             port_picker(ui, ("mixer-port", i), port, &self.midi_outputs);
-                            ui.label("Kanal");
+                            ui.label(t("Kanal", "Channel"));
                             field(ui, channel, "1", 44.0);
                             ui.label("Controller");
                             field(ui, controller, "{ch}", 54.0);
-                            byte(ui, "an", on_value);
-                            byte(ui, "aus", off_value);
+                            byte(ui, t("an", "on"), on_value);
+                            byte(ui, t("aus", "off"), off_value);
                         }
                         MixerSetting::MidiProgram { port, channel, on_program, off_program } => {
                             port_picker(ui, ("mixer-port", i), port, &self.midi_outputs);
-                            ui.label("Kanal");
+                            ui.label(t("Kanal", "Channel"));
                             field(ui, channel, "{ch}", 54.0);
-                            byte(ui, "Programm an", on_program);
-                            byte(ui, "aus", off_program);
+                            byte(ui, t("Programm an", "Program on"), on_program);
+                            byte(ui, t("aus", "off"), off_program);
                         }
                         MixerSetting::MidiSysex { port, unmute, mute } => {
                             port_picker(ui, ("mixer-port", i), port, &self.midi_outputs);
-                            ui.label("an");
+                            ui.label(t("an", "on"));
                             field(ui, unmute, "F0 … {ch} {val} F7", 190.0);
-                            ui.label("aus");
+                            ui.label(t("aus", "off"));
                             field(ui, mute, "F0 … {ch} {val} F7", 190.0);
                         }
                         MixerSetting::Osc { host, port, on_path, on_arg, off_path, off_arg } => {
                             field(ui, host, "Host", 120.0);
                             ui.add(egui::DragValue::new(port).range(1..=65535));
-                            for (label, path, arg, id) in [("an", on_path, on_arg, "on"), ("aus", off_path, off_arg, "off")] {
+                            for (label, path, arg, id) in [(t("an", "on"), on_path, on_arg, "on"), (t("aus", "off"), off_path, off_arg, "off")] {
                                 ui.label(label);
                                 field(ui, path, "/ch/{ch}/mix/on", 150.0);
                                 arg_fields(ui, ("mixer-arg", i, id), arg);
@@ -304,20 +305,20 @@ impl SettingsUi {
                     }
                 });
                 if !matches!(mixer, MixerSetting::X32 { .. }) {
-                    ui.label(RichText::new("    {ch} = Mic-Kanal der Rolle (MIDI: ab 0, OSC: ab 1, zweistellig)").color(MUTED));
+                    ui.label(RichText::new(t("    {ch} = Mic-Kanal der Rolle (MIDI: ab 0, OSC: ab 1, zweistellig)", "    {ch} = the role's mic channel (MIDI: from 0, OSC: from 1, two digits)")).color(MUTED));
                 }
             }
             if let Some(i) = remove {
                 draft.mixers.remove(i);
             }
-            if ui.button("+ Pult").clicked() {
+            if ui.button(t("+ Pult", "+ Mixer")).clicked() {
                 draft.mixers.push(MixerSetting::X32 { port: String::new() });
             }
 
             ui.add_space(12.0);
-            ui.heading("Notlicht");
+            ui.heading(t("Notlicht", "Emergency light"));
             let mut enabled = draft.emergency_light.is_some();
-            if ui.checkbox(&mut enabled, "Notlicht-Taste in der Werkzeugleiste").changed() {
+            if ui.checkbox(&mut enabled, t("Notlicht-Taste in der Werkzeugleiste", "Emergency light button in the toolbar")).changed() {
                 draft.emergency_light = enabled.then(EmergencyLightSetting::default);
             }
             let targets: Vec<(String, bool)> = draft
@@ -331,7 +332,7 @@ impl SettingsUi {
                 .collect();
             if let Some(light) = &mut draft.emergency_light {
                 ui.horizontal(|ui| {
-                    ui.label("Gerät");
+                    ui.label(t("Gerät", "Device"));
                     egui::ComboBox::from_id_salt("light-device").selected_text(if light.device.is_empty() { "—" } else { light.device.as_str() }).width(200.0).show_ui(ui, |ui| {
                         for (name, _) in &targets {
                             ui.selectable_value(&mut light.device, name.clone(), name);
@@ -339,28 +340,28 @@ impl SettingsUi {
                     });
                 });
                 let is_osc = targets.iter().any(|(name, osc)| *name == light.device && *osc);
-                let hint = if is_osc { "/pfad" } else { "90 3C 7F" };
+                let hint = if is_osc { t("/pfad", "/path") } else { "90 3C 7F" };
                 ui.horizontal(|ui| {
-                    ui.label("an");
+                    ui.label(t("an", "on"));
                     field(ui, &mut light.on, hint, 200.0);
                     if is_osc {
                         arg_fields(ui, "light-on-arg", &mut light.on_arg);
                     }
                 });
                 ui.horizontal(|ui| {
-                    ui.label("aus");
+                    ui.label(t("aus", "off"));
                     field(ui, &mut light.off, hint, 200.0);
                     if is_osc {
                         arg_fields(ui, "light-off-arg", &mut light.off_arg);
                     }
                 });
                 if !is_osc {
-                    ui.label(RichText::new("MIDI als Hex-Bytes, z. B. Note an Kanal 1: 90 3C 7F, Note aus: 80 3C 00").color(MUTED));
+                    ui.label(RichText::new(t("MIDI als Hex-Bytes, z. B. Note an Kanal 1: 90 3C 7F, Note aus: 80 3C 00", "MIDI as hex bytes, e.g. note on, channel 1: 90 3C 7F, note off: 80 3C 00")).color(MUTED));
                 }
             }
 
             ui.add_space(12.0);
-            ui.heading("Fernsteuerung");
+            ui.heading(t("Fernsteuerung", "Remote control"));
             if let Some((target, baseline)) = self.learning {
                 // The first note that differs from what was last heard is the one to learn.
                 if let Some(note) = heard.filter(|n| Some(*n) != baseline) {
@@ -372,35 +373,35 @@ impl SettingsUi {
                     self.learning = None;
                 }
             }
-            for (label, target) in [("Go-Note", Learning::Go), ("Back-Note", Learning::Back)] {
+            for (label, target) in [(t("Go-Note", "Go note"), Learning::Go), (t("Back-Note", "Back note"), Learning::Back)] {
                 ui.horizontal(|ui| {
                     ui.label(label);
                     note_fields(ui, if target == Learning::Go { &mut draft.go_note } else { &mut draft.back_note });
                     let waiting = self.learning.is_some_and(|(t, _)| t == target);
-                    if ui.selectable_label(waiting, if waiting { "Note spielen …" } else { "Lernen" }).clicked() {
+                    if ui.selectable_label(waiting, if waiting { t("Note spielen …", "Play a note …") } else { t("Lernen", "Learn") }).clicked() {
                         self.learning = if waiting { None } else { Some((target, heard)) };
                     }
                 });
             }
-            ui.label(RichText::new("„Lernen“ braucht eine geöffnete Show.").color(MUTED));
+            ui.label(RichText::new(t("„Lernen“ braucht eine geöffnete Show.", "“Learn” needs an open show.")).color(MUTED));
             ui.horizontal(|ui| {
-                ui.label("MIDI-Eingang für Go/Back");
-                let current = draft.control_port.clone().unwrap_or_else(|| "alle".into());
+                ui.label(t("MIDI-Eingang für Go/Back", "MIDI input for Go/Back"));
+                let current = draft.control_port.clone().unwrap_or_else(|| t("alle", "all").into());
                 egui::ComboBox::from_id_salt("control-port").selected_text(current).width(220.0).show_ui(ui, |ui| {
-                    ui.selectable_value(&mut draft.control_port, None, "alle");
+                    ui.selectable_value(&mut draft.control_port, None, t("alle", "all"));
                     for name in &self.midi_inputs {
                         ui.selectable_value(&mut draft.control_port, Some(name.clone()), name);
                     }
                 });
             });
             ui.horizontal(|ui| {
-                ui.label("Cues per Trigger-Note auslösen");
+                ui.label(t("Cues per Trigger-Note auslösen", "Fire cues by trigger note"));
                 let kind = match draft.cue_trigger {
                     CueTriggerSetting::Off => 0,
                     CueTriggerSetting::Midi { .. } => 1,
                     CueTriggerSetting::Osc { .. } => 2,
                 };
-                if ui.selectable_label(kind == 0, "aus").clicked() {
+                if ui.selectable_label(kind == 0, t("aus", "off")).clicked() {
                     draft.cue_trigger = CueTriggerSetting::Off;
                 }
                 if ui.selectable_label(kind == 1, "MIDI").clicked() && kind != 1 {
@@ -414,16 +415,16 @@ impl SettingsUi {
                 CueTriggerSetting::Off => {}
                 CueTriggerSetting::Midi { port } => {
                     ui.horizontal(|ui| {
-                        ui.label("Eingang");
+                        ui.label(t("Eingang", "Input"));
                         port_picker(ui, "cue-trigger-port", port, &self.midi_inputs);
                     });
                 }
                 CueTriggerSetting::Osc { port, network } => {
                     ui.horizontal(|ui| {
-                        ui.label("UDP-Port");
+                        ui.label(t("UDP-Port", "UDP port"));
                         ui.add(egui::DragValue::new(port).range(1..=65535));
-                        ui.checkbox(network, "aus dem Netzwerk annehmen");
-                        ui.label(RichText::new("Pfad: /cue/<Kanal>/<Note>").color(MUTED));
+                        ui.checkbox(network, t("aus dem Netzwerk annehmen", "accept from the network"));
+                        ui.label(RichText::new(t("Pfad: /cue/<Kanal>/<Note>", "Path: /cue/<channel>/<note>")).color(MUTED));
                     });
                 }
             }
@@ -431,10 +432,10 @@ impl SettingsUi {
 
         ui.separator();
         ui.horizontal(|ui| {
-            if ui.button("Speichern").clicked() {
+            if ui.button(t("Speichern", "Save")).clicked() {
                 result = Some(true);
             }
-            if ui.button("Abbrechen").clicked() {
+            if ui.button(t("Abbrechen", "Cancel")).clicked() {
                 result = Some(false);
             }
         });

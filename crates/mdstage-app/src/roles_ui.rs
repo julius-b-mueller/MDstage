@@ -3,6 +3,7 @@
 use eframe::egui::{self, RichText, Ui};
 use mdstage_core::mic::{Cast, Group, Role};
 
+use crate::lang::t;
 use crate::theme::*;
 
 const COLOURS: [&str; 12] =
@@ -40,13 +41,13 @@ impl RolesUi {
         let mut seen: Vec<&str> = Vec::new();
         for name in self.roles.iter().map(|(_, r)| r.name.as_str()).chain(self.groups.iter().map(|g| g.name.as_str())) {
             if name.trim().is_empty() {
-                return Some("Jede Rolle und Gruppe braucht einen Namen.".into());
+                return Some(t("Jede Rolle und Gruppe braucht einen Namen.", "Every role and group needs a name.").into());
             }
             if name.contains('/') || name.contains('*') {
-                return Some(format!("„{name}“: Namen dürfen weder / noch * enthalten."));
+                return Some(if crate::lang::english() { format!("“{name}”: names must not contain / or *.") } else { format!("„{name}“: Namen dürfen weder / noch * enthalten.") });
             }
-            if seen.contains(&name) || name == "Alle" || name == "muteall" {
-                return Some(format!("Der Name „{name}“ ist doppelt oder reserviert."));
+            if seen.contains(&name) || name == "Alle" || (crate::lang::english() && name == "All") || name == "muteall" {
+                return Some(if crate::lang::english() { format!("The name “{name}” is used twice or reserved.") } else { format!("Der Name „{name}“ ist doppelt oder reserviert.") });
             }
             seen.push(name);
         }
@@ -57,14 +58,14 @@ impl RolesUi {
     pub fn show(&mut self, ui: &mut Ui, mixers: usize) -> Option<bool> {
         let mut result = None;
         egui::ScrollArea::vertical().auto_shrink([false, false]).max_height(ui.available_height() - 64.0).show(ui, |ui| {
-            ui.heading("Rollen");
+            ui.heading(t("Rollen", "Roles"));
             let mut remove = None;
             let RolesUi { roles, groups } = self;
             egui::Grid::new("roles").num_columns(5).show(ui, |ui| {
                 ui.label(RichText::new("Name").color(MUTED));
-                ui.label(RichText::new("Farbe").color(MUTED));
-                ui.label(RichText::new("Mic-Kanal").color(MUTED));
-                ui.label(RichText::new("Pult").color(MUTED));
+                ui.label(RichText::new(t("Farbe", "Colour")).color(MUTED));
+                ui.label(RichText::new(t("Mic-Kanal", "Mic channel")).color(MUTED));
+                ui.label(RichText::new(t("Pult", "Mixer")).color(MUTED));
                 ui.end_row();
                 for (i, (_, role)) in roles.iter_mut().enumerate() {
                     let before = role.name.clone();
@@ -96,13 +97,13 @@ impl RolesUi {
                     group.roles.retain(|r| *r != role.name);
                 }
             }
-            if ui.button("+ Rolle").clicked() {
+            if ui.button(t("+ Rolle", "+ Role")).clicked() {
                 self.roles.push((None, Role { name: String::new(), color: Some("blue".into()), channel: None, mixer: 0 }));
             }
 
             ui.add_space(14.0);
-            ui.heading("Gruppen");
-            ui.label(RichText::new("Eine Gruppe kann wie eine Rolle sprechen und als Mikrofon gewählt werden. „Alle“ gibt es immer.").color(MUTED));
+            ui.heading(t("Gruppen", "Groups"));
+            ui.label(RichText::new(t("Eine Gruppe kann wie eine Rolle sprechen und als Mikrofon gewählt werden. „Alle“ gibt es immer.", "A group can speak like a role and be chosen as a microphone. “All” always exists.")).color(MUTED));
             let mut remove = None;
             let names: Vec<String> = self.roles.iter().map(|(_, r)| r.name.clone()).filter(|n| !n.is_empty()).collect();
             for (i, group) in self.groups.iter_mut().enumerate() {
@@ -130,7 +131,7 @@ impl RolesUi {
             if let Some(i) = remove {
                 self.groups.remove(i);
             }
-            if ui.button("+ Gruppe").clicked() {
+            if ui.button(t("+ Gruppe", "+ Group")).clicked() {
                 self.groups.push(Group { name: String::new(), color: Some("purple".into()), roles: Vec::new() });
             }
         });
@@ -141,10 +142,10 @@ impl RolesUi {
             ui.label(RichText::new(problem).color(RED));
         }
         ui.horizontal(|ui| {
-            if ui.add_enabled(problem.is_none(), egui::Button::new("Speichern")).clicked() {
+            if ui.add_enabled(problem.is_none(), egui::Button::new(t("Speichern", "Save"))).clicked() {
                 result = Some(true);
             }
-            if ui.button("Abbrechen").clicked() {
+            if ui.button(t("Abbrechen", "Cancel")).clicked() {
                 result = Some(false);
             }
         });

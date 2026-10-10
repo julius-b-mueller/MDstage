@@ -1,5 +1,6 @@
 //! Export of the script as PDF (typeset with Typst) and DOCX.
 
+use crate::lang::t;
 use docx_rs::{AlignmentType, BreakType, Docx, PageMargin, Paragraph, Run, RunFonts};
 use mdstage_core::export::{Book, CueBox, Item};
 use typst::diag::{FileError, FileResult};
@@ -51,7 +52,7 @@ fn stage_spans(line: &str) -> Vec<(bool, &str)> {
 pub fn typst_source(book: &Book, date: &str) -> String {
     let mut out = String::new();
     out.push_str("#set page(paper: \"a4\", margin: 2.5cm)\n");
-    out.push_str("#set text(font: \"Libertinus Serif\", size: 11pt, lang: \"de\")\n");
+    out.push_str(&format!("#set text(font: \"Libertinus Serif\", size: 11pt, lang: \"{}\")\n", t("de", "en")));
     out.push_str("#set par(leading: 0.6em)\n");
     out.push_str("#show heading.where(level: 1): it => { pagebreak(weak: true); v(4mm); text(18pt, it.body); v(2mm) }\n");
     out.push_str("#show heading.where(level: 2): it => { v(3mm); text(14pt, it.body); v(1mm) }\n");
@@ -59,9 +60,9 @@ pub fn typst_source(book: &Book, date: &str) -> String {
     out.push_str(&format!(
         "#align(center)[#v(6cm) #text(26pt, weight: \"bold\", {}) #v(8mm) #text(12pt, fill: luma(68), {})]\n",
         lit(&book.title),
-        lit(&format!("Regiebuch — {date}"))
+        lit(&format!("{} — {date}", t("Regiebuch", "Prompt book")))
     ));
-    out.push_str("#pagebreak()\n#outline(title: \"Inhaltsverzeichnis\", depth: 3)\n");
+    out.push_str(&format!("#pagebreak()\n#outline(title: {}, depth: 3)\n", lit(t("Inhaltsverzeichnis", "Contents"))));
     out.push_str("#set page(numbering: \"1\", number-align: right)\n#counter(page).update(1)\n");
     for item in &book.items {
         match item {
@@ -173,9 +174,9 @@ pub fn docx(book: &Book, date: &str) -> Result<Vec<u8>, String> {
     doc = doc
         .add_paragraph(Paragraph::new().align(AlignmentType::Center).add_run(run("").add_break(BreakType::TextWrapping)))
         .add_paragraph(Paragraph::new().align(AlignmentType::Center).add_run(run(&book.title).bold().size(52)))
-        .add_paragraph(Paragraph::new().align(AlignmentType::Center).add_run(run(&format!("Regiebuch — {date}")).size(24).color("444444")))
+        .add_paragraph(Paragraph::new().align(AlignmentType::Center).add_run(run(&format!("{} — {date}", t("Regiebuch", "Prompt book"))).size(24).color("444444")))
         .add_paragraph(Paragraph::new().add_run(Run::new().add_break(BreakType::Page)))
-        .add_paragraph(Paragraph::new().add_run(run("Inhaltsverzeichnis").bold().size(28)));
+        .add_paragraph(Paragraph::new().add_run(run(t("Inhaltsverzeichnis", "Contents")).bold().size(28)));
     // A plain list of the headings: a generated table-of-contents field would need Word
     // to update it before it shows anything.
     for item in &book.items {

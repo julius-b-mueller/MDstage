@@ -1,5 +1,6 @@
 //! Files: where the settings live, and opening and saving show files.
 
+use crate::lang::t;
 use std::path::{Path, PathBuf};
 
 use mdstage_core::{Script, format};
@@ -65,11 +66,11 @@ pub fn load(path: &Path, settings: &mut Settings) -> std::io::Result<Loaded> {
         let backup = path.with_file_name(format!("{}~unformatted.md", path.file_stem().unwrap_or_default().to_string_lossy()));
         std::fs::write(&backup, &original)?;
         text = format::format_script(&text);
-        notes.push(format!("Skript formatiert (Sicherung: {})", backup.file_name().unwrap_or_default().to_string_lossy()));
+        notes.push(format!("{} {})", t("Skript formatiert (Sicherung:", "Script formatted (backup:"), backup.file_name().unwrap_or_default().to_string_lossy()));
     }
     let mut script = Script::parse(&text);
     if script.assign_trigger_notes() {
-        notes.push("Trigger-Noten vergeben".into());
+        notes.push(t("Trigger-Noten vergeben", "Trigger notes assigned").into());
     }
     let written = script.to_markdown();
     if written != original {

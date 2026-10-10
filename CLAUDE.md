@@ -48,13 +48,20 @@ beide nebeneinander; der Electron-Code (`electron/`, `src/`, `dist/`) bleibt lau
 cargo test --workspace                    # alle Tests
 cargo run --release -p mdstage-app -- SHOW.md
 scripts/bundle-macos.sh --dmg             # target/bundle/MDstage.app und .dmg
+scripts/bundle-appimage.sh                # AppImage (nur unter Linux)
 ```
 
 - Die Version der nativen App steht in `Cargo.toml` (`[workspace.package]`), unabhängig von
   `package.json`, solange beide Apps existieren.
 - `crates/mdstage-engine/src/display.rs` bindet `dist/display/index.html` und
   `dist/display/app.js` ein – der Display-Client bleibt eine Webseite.
-- CI für die native App: `.github/workflows/native.yml` (nur Artefakte, kein Release).
+- CI für die native App: `.github/workflows/native.yml` (nur Artefakte, kein Release):
+  dmg, AppImage, deb, rpm, Windows-Installer (`scripts/windows-installer.nsi`) und zip.
+- Texte der Oberfläche: `crates/mdstage-app/src/lang.rs`, an Ort und Stelle als
+  `t("Deutsch", "English")`. Neue Texte immer in beiden Sprachen.
+- Audio wird gestreamt (`crates/mdstage-engine/src/stream.rs`), nie ganz geladen. Ob
+  Streaming und vollständiges Dekodieren dasselbe liefern, prüft
+  `cargo run --release -p mdstage-engine --example stream_probe -- AUDIO_ORDNER`.
 
 ## Git Tags
 
