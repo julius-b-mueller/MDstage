@@ -482,14 +482,12 @@ impl App {
         });
         match result {
             Some(true) => {
-                let restart = form.draft.audio_device != self.settings.audio_device
-                    || form.draft.display_host != self.settings.display_host
-                    || form.draft.display_port != self.settings.display_port;
+                let restart = form.draft.display_host != self.settings.display_host || form.draft.display_port != self.settings.display_port;
                 self.settings = form.draft;
                 self.save_settings();
                 let reopen = self.show.as_ref().map(|s| (s.path.clone(), s.trusted));
                 match reopen {
-                    // The audio device and the display server are opened with the show.
+                    // The display server is opened with the show.
                     Some((path, _)) if restart => self.open(&path, ctx),
                     Some((_, trusted)) => {
                         self.request(Request::Configure(Box::new(self.settings.clone()), trusted));

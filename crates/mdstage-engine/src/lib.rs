@@ -16,6 +16,7 @@ pub mod player;
 pub mod session;
 pub mod settings;
 pub mod show;
+pub mod stream;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

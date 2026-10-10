@@ -95,6 +95,12 @@ impl ClockDriver {
         ClockDriver { clock, last_frames: 0, last_time: 0.0, seconds_per_frame, locked: false }
     }
 
+    /// Forget the timing learnt so far: the next `publish` starts afresh (after someone
+    /// else has been driving the clock).
+    pub fn reset(&mut self) {
+        self.locked = false;
+    }
+
     /// Call from the audio callback after rendering, with the total frames rendered so far.
     pub fn publish(&mut self, frames_rendered: u64) {
         let now = self.clock.epoch.elapsed().as_secs_f64();

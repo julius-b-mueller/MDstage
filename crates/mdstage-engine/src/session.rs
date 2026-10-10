@@ -15,6 +15,7 @@ use mdstage_core::cues::Note;
 use mdstage_core::effects::Effect;
 use mdstage_core::mic::{Cast, Mic};
 
+use crate::clock::{ClockDriver, EngineClock};
 use crate::device;
 use crate::display::{Client, DisplayServer};
 use crate::inputs::{Input, Inputs};
@@ -29,8 +30,15 @@ use crate::show::{DelayProgress, Show};
 const TICK: Duration = Duration::from_millis(2);
 /// How many cues with audio are kept decoded ahead of the operator's position.
 const AHEAD: usize = 6;
-/// Sample rate and block size of the stand-in used when no audio device can be opened.
-const NULL_RATE: u32 = 48_000;
+/// Sample rate of a session that has neither a device nor audio files to take one from.
+const FALLBACK_RATE: u32 = 48_000;
+const MAX_CHANNELS: usize = 64;
+/// How often a missing audio device is looked for.
+const DEVICE_RETRY: Duration = Duration::from_secs(3);
+/// A device whose clock has not moved for this long counts as gone.
+const DEVICE_STALL: Duration = Duration::from_secs(2);
+/// What problems with the audio device start with (they are withdrawn when it is back).
+const NO_DEVICE: &str = "Audiogerät: ";
 const MAX_PROBLEMS: usize = 20;
 
 pub enum Request {
@@ -45,7 +53,7 @@ pub enum Request {
     /// Emergency: mute all microphones.
     MicsOff,
     /// New machine settings, and whether the show file is trusted. A changed audio
-    /// device takes effect when the session is restarted.
+    /// device is switched to on the spot if it can run at the session's sample rate.
     Configure(Box<Settings>, bool),
     ClearProblems,
     /// The show file was edited.
@@ -82,9 +90,9 @@ pub struct Snapshot {
     pub problems: Vec<String>,
     /// The last MIDI note that came in, for "MIDI learn".
     pub heard: Option<Note>,
-    /// How many audio files are being decoded in the background right now.
+    /// How many audio files are being opened and stretches read in the background right now.
     pub loading: Option<usize>,
-    /// Decoded audio held in memory, in megabytes.
+    /// Audio held in memory, in megabytes.
     pub audio_memory_mb: f32,
     pub emergency_light: bool,
     /// When each cue last fired (this session only).
@@ -130,15 +138,19 @@ impl Drop for Session {
     }
 }
 
-/// The audio files of the cues numbered `cues` (0-based, in script order), without repeats.
-/// Cues that chain or hand off to others bring those along, so a transition never waits.
-fn audio_files(script: &Script, cues: std::ops::Range<usize>) -> Vec<String> {
+/// Where the audio of the cues numbered `cues` (0-based, in script order) begins:
+/// `(file, seconds)`, without repeats. Cues that chain or hand off to others bring those
+/// along, so a transition never waits.
+fn audio_starts(script: &Script, cues: std::ops::Range<usize>) -> Vec<(String, f64)> {
     let all = mdstage_core::cues::Cues::new(script);
-    let mut files: Vec<String> = Vec::new();
+    let mut starts: Vec<(String, f64)> = Vec::new();
     let mut add = |cue: usize| {
-        for audio in all.get(cue).and_then(|c| c.audio()).into_iter().flat_map(|a| a.parts).flat_map(|p| p.audios) {
-            if !files.contains(&audio.file) {
-                files.push(audio.file);
+        for part in all.get(cue).and_then(|c| c.audio()).into_iter().flat_map(|a| a.parts) {
+            let start = part.start.unwrap_or(0.0);
+            for audio in part.audios {
+                if !starts.iter().any(|(file, at)| *file == audio.file && *at == start) {
+                    starts.push((audio.file, start));
+                }
             }
         }
     };
@@ -149,26 +161,37 @@ fn audio_files(script: &Script, cues: std::ops::Range<usize>) -> Vec<String> {
             add(target);
         }
     }
-    files
+    starts
 }
 
-/// Where the mixer's audio goes.
-enum Sink {
-    Device(device::Output),
-    /// No device: the mixer is rendered into nothing, in real time, so that
-    /// transitions and timed cues still happen.
-    Null { mixer: Mixer, rendered: Instant, scratch: Vec<f32> },
+/// Renders the mixer into nothing, in real time, while no device does — so that
+/// transitions, timed cues and the clock carry on, and audio is in the right place when
+/// a device (re)appears.
+struct Pump {
+    driver: ClockDriver,
+    rendered: Instant,
+    scratch: Vec<f32>,
 }
 
-impl Sink {
-    fn pump(&mut self) {
-        if let Sink::Null { mixer, rendered, scratch } = self {
-            let frames = (rendered.elapsed().as_secs_f64() * NULL_RATE as f64) as usize;
-            for _ in 0..frames / (scratch.len() / 2) {
-                mixer.render(scratch, 2);
-                *rendered += Duration::from_secs_f64((scratch.len() / 2) as f64 / NULL_RATE as f64);
-            }
+impl Pump {
+    fn run(&mut self, mixer: &Mutex<Mixer>, sample_rate: u32) {
+        let block = self.scratch.len() / 2;
+        let due = (self.rendered.elapsed().as_secs_f64() * sample_rate as f64) as usize / block;
+        if due == 0 {
+            return;
         }
+        let Ok(mut mixer) = mixer.lock() else { return };
+        for _ in 0..due {
+            mixer.render(&mut self.scratch, 2);
+            self.rendered += Duration::from_secs_f64(block as f64 / sample_rate as f64);
+        }
+        self.driver.publish(mixer.frames());
+    }
+
+    /// Take over from a device that has just gone.
+    fn take_over(&mut self) {
+        self.rendered = Instant::now();
+        self.driver.reset();
     }
 }
 
@@ -182,7 +205,7 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
 
     // Run the device at the rate most of the show's audio has, if it can.
     let mut rates: Vec<(u32, usize)> = Vec::new();
-    for file in audio_files(&script, 0..usize::MAX) {
+    for (file, _) in audio_starts(&script, 0..usize::MAX) {
         if let Some(rate) = crate::clip::Clip::probe_rate(&show_dir.join("audio").join(&file)) {
             match rates.iter_mut().find(|(r, _)| *r == rate) {
                 Some(entry) => entry.1 += 1,
@@ -192,27 +215,29 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
     }
     let preferred_rate = rates.iter().max_by_key(|(_, count)| *count).map(|(rate, _)| *rate);
 
+    // The mixer is shared with the device's callback; while there is no device, this
+    // thread renders it instead (see `Pump`).
     let (mixer, handle) = Mixer::new();
-    let (mut sink, handle, output) = match device::open(mixer.limited(), settings.audio_device.as_deref(), 64, preferred_rate) {
-        Ok(out) => {
-            let info = OutputInfo { name: out.device_name.clone(), sample_rate: out.sample_rate, channels: out.channels };
-            (Sink::Device(out), handle, Some(info))
-        }
+    let mixer = Arc::new(Mutex::new(mixer.limited()));
+    let mut device = match device::open(mixer.clone(), settings.audio_device.as_deref(), MAX_CHANNELS, preferred_rate, None) {
+        Ok(out) => Some(out),
         Err(e) => {
-            report(&mut problems, format!("Audio: {e}"));
-            // The first mixer went down with the failed stream; nothing was loaded yet.
-            let (mixer, handle) = Mixer::new();
-            (Sink::Null { mixer, rendered: Instant::now(), scratch: vec![0.0; 2 * 480] }, handle, None)
+            report(&mut problems, format!("{NO_DEVICE}{e}"));
+            None
         }
     };
-    let (sample_rate, clock) = match &sink {
-        Sink::Device(out) => (out.sample_rate, Some(out.clock.clone())),
-        Sink::Null { .. } => (NULL_RATE, None),
-    };
+    let sample_rate = device.as_ref().map_or(preferred_rate.unwrap_or(FALLBACK_RATE), |out| out.sample_rate);
+    let clock = device.as_ref().map_or_else(|| Arc::new(EngineClock::new(sample_rate)), |out| out.clock.clone());
+    let info = |out: &device::Output| OutputInfo { name: out.device_name.clone(), sample_rate: out.sample_rate, channels: out.channels };
+    let mut output = device.as_ref().map(info);
+    let mut pump = Pump { driver: ClockDriver::new(clock.clone()), rendered: Instant::now(), scratch: vec![0.0; 2 * (sample_rate as usize / 100)] };
+    let mut retry_device = Instant::now() + DEVICE_RETRY;
+    // When the device's clock last moved, and where it stood.
+    let mut alive = (Instant::now(), 0u64);
 
     let mut cast = Cast::from_script(&script, settings.language == "en");
     let player = Player::new(handle, ClipCache::new(show_dir.join("audio"), sample_rate), settings.routing(&script.virtual_channels()));
-    let mut show = Show::new(script, player, clock, settings.language == "en");
+    let mut show = Show::new(script, player, Some(clock.clone()), settings.language == "en");
 
     let wires = match WireSender::new(SystemMidi::default()) {
         Ok(sender) => Some(sender),
@@ -268,25 +293,6 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
         report(&mut problems, format!("Timecode: {e}"));
     }
 
-    // Audio is decoded in the background, a few cues ahead of the show, and dropped again
-    // once the show has moved on — so memory holds a handful of files, not the whole show,
-    // and no cue has to wait for a file when it fires.
-    let (wanted_files, loader_requests) = channel::<String>();
-    let (decoded, decoded_incoming) = channel();
-    let audio_dir = show_dir.join("audio");
-    let loader = thread::Builder::new().name("mdstage-audio-loader".into()).spawn(move || {
-        for file in loader_requests {
-            let clip = crate::clip::Clip::decode_file(&audio_dir.join(&file)).and_then(|c| c.resampled(sample_rate));
-            if decoded.send((file, clip)).is_err() {
-                break;
-            }
-        }
-    });
-    if let Err(e) = &loader {
-        report(&mut problems, format!("Audio wird erst beim Auslösen geladen: {e}"));
-    }
-    // Files asked of the loader and not back yet.
-    let mut pending: Vec<String> = Vec::new();
     let mut window_for: Option<(Option<usize>, Option<usize>, usize)> = None;
 
     let started = Instant::now();
@@ -294,7 +300,6 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
     let mut emergency_light = false;
     let mut fired_at: Vec<(usize, std::time::SystemTime)> = Vec::new();
     let mut fired_count = 0;
-    let mut device_failed = false;
     'show: loop {
         let tick_started = Instant::now();
         loop {
@@ -324,6 +329,13 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
                     show.replace_script(*script)
                 }
                 Request::Configure(new, now_trusted) => {
+                    if new.audio_device != settings.audio_device {
+                        // Let go of the old device; the new one is opened further down.
+                        device = None;
+                        output = None;
+                        pump.take_over();
+                        retry_device = Instant::now();
+                    }
                     settings = *new;
                     trusted = now_trusted;
                     outputs = settings.outputs(trusted);
@@ -355,49 +367,53 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
             }
         }
 
-        // Keep the audio of the cues around the operator's position decoded: the current
-        // cue, the next few, whatever is armed or playing — and forget the rest.
+        // Keep the audio around the operator's position ready: the current cue and the
+        // next few. (What is armed or playing, the player looks after itself.)
         let position = (show.current(), show.next(), show.script().blocks.len());
         if window_for != Some(position) {
             window_for = Some(position);
             // Two stretches: from the operator's cue onwards, and from the next Go onwards
             // (the same place, unless a cue further away has been armed).
             let from = show.current().unwrap_or(0).saturating_sub(1);
-            let mut wanted = audio_files(show.script(), from..from + 1 + AHEAD);
+            let mut starts = audio_starts(show.script(), from..from + 1 + AHEAD);
             if let Some(next) = show.next() {
-                for file in audio_files(show.script(), next..next + AHEAD) {
-                    if !wanted.contains(&file) {
-                        wanted.push(file);
+                for start in audio_starts(show.script(), next..next + AHEAD) {
+                    if !starts.contains(&start) {
+                        starts.push(start);
                     }
                 }
             }
-            for cue in show.player().active_cues() {
-                wanted.extend(audio_files(show.script(), cue..cue + 1));
-            }
-            for file in &wanted {
-                if !pending.contains(file) && !show.player().cache().contains(file) && wanted_files.send(file.clone()).is_ok() {
-                    pending.push(file.clone());
-                }
-            }
-            show.player().cache().retain(|file| wanted.iter().any(|w| w == file));
-        }
-        while let Ok((file, clip)) = decoded_incoming.try_recv() {
-            pending.retain(|p| *p != file);
-            match clip {
-                // A cue fired in the meantime may already have loaded the file itself.
-                Ok(clip) if !show.player().cache().contains(&file) => show.player().cache().insert(&file, clip),
-                Ok(_) => {}
-                Err(e) => report(&mut problems, e.to_string()),
-            }
-        }
-        if let Sink::Device(out) = &sink {
-            if !device_failed && out.failed.load(std::sync::atomic::Ordering::SeqCst) {
-                device_failed = true;
-                report(&mut problems, "Audio: Das Ausgabegerät meldet einen Fehler (getrennt?). Show neu öffnen, um es wieder zu verbinden.".into());
-            }
+            show.player().cache().set_window(starts);
         }
 
-        sink.pump();
+        // A device that reports an error, or whose clock stands still, is gone: carry on
+        // without it and take it back as soon as it can be opened again.
+        if let Some(out) = &device {
+            let frames = out.clock.frames();
+            if frames != alive.1 {
+                alive = (Instant::now(), frames);
+            }
+            if out.failed.load(std::sync::atomic::Ordering::SeqCst) || alive.0.elapsed() > DEVICE_STALL {
+                device = None;
+                output = None;
+                pump.take_over();
+                retry_device = Instant::now() + DEVICE_RETRY;
+                report(&mut problems, format!("{NO_DEVICE}Das Ausgabegerät ist weg. Die Show läuft stumm weiter; es wird neu verbunden, sobald es wieder da ist."));
+            }
+        }
+        if device.is_none() && Instant::now() >= retry_device {
+            retry_device = Instant::now() + DEVICE_RETRY;
+            if let Ok(out) = device::open(mixer.clone(), settings.audio_device.as_deref(), MAX_CHANNELS, None, Some(clock.clone())) {
+                problems.retain(|p| !p.starts_with(NO_DEVICE));
+                output = Some(info(&out));
+                alive = (Instant::now(), out.clock.frames());
+                device = Some(out);
+            }
+        }
+        if device.is_none() {
+            pump.run(&mixer, sample_rate);
+        }
+
         if let Err(e) = show.tick(started.elapsed().as_secs_f64()) {
             report(&mut problems, e.to_string());
         }
@@ -449,7 +465,7 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
             output: output.clone(),
             problems: problems.clone(),
             heard,
-            loading: (!pending.is_empty()).then_some(pending.len()),
+            loading: Some(show.player().cache().loading()).filter(|n| *n > 0),
             audio_memory_mb: (show.player().cache().held_seconds() * sample_rate as f64 * 4.0 / 1e6) as f32,
             emergency_light,
             fired_at: fired_at.clone(),
@@ -462,7 +478,9 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
     *feed.lock().unwrap() = None;
     let fade_until = Instant::now() + Duration::from_millis(600);
     while Instant::now() < fade_until {
-        sink.pump();
+        if device.is_none() {
+            pump.run(&mixer, sample_rate);
+        }
         thread::sleep(TICK);
     }
     drop(inputs);
@@ -502,7 +520,7 @@ mod tests {
         let idle = wait(&session, "start-up", |s| s.display_address.is_some());
         assert_eq!((idle.current, idle.next), (None, Some(0)));
         assert_eq!(idle.output, None);
-        assert!(idle.problems.iter().any(|p| p.starts_with("Audio: ")), "the missing device is reported: {:?}", idle.problems);
+        assert!(idle.problems.iter().any(|p| p.starts_with("Audiogerät: ")), "the missing device is reported: {:?}", idle.problems);
 
         session.send(Request::Go);
         let first = wait(&session, "cue 1", |s| s.fired == [0]);

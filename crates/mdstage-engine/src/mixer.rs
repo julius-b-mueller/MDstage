@@ -12,6 +12,7 @@
 //! their memory is released on the control thread.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::clip::Clip;
 use crate::clock::{VoiceShared, VoiceState};
@@ -19,6 +20,67 @@ use crate::clock::{VoiceShared, VoiceState};
 pub type VoiceId = u32;
 
 const MAX_VOICES: usize = 64;
+
+/// Frames per page of a streamed file (about 1.4 s at 48 kHz).
+pub const PAGE: usize = 1 << 16;
+
+/// A file that is read from disk while it plays: only the pages around the playback
+/// position are in memory. The control thread hands pages in and takes them away again
+/// with `Command::Page`; a page that is not there when it is due plays as silence.
+pub struct Paged {
+    /// Identifies the file; `Command::Page` addresses every voice with this key.
+    pub key: u64,
+    /// Length of the whole file, in frames.
+    pub frames: usize,
+    pub channels: usize,
+    /// One slot per `PAGE` frames of the file.
+    pub pages: Vec<Option<Arc<Clip>>>,
+    /// Set by the audio thread when it needed a page that was missing.
+    pub starved: Arc<AtomicBool>,
+}
+
+/// Where a voice gets its samples from.
+pub enum Source {
+    /// A clip held in memory as a whole.
+    Whole(Arc<Clip>),
+    Paged(Paged),
+}
+
+impl Source {
+    pub fn frames(&self) -> usize {
+        match self {
+            Source::Whole(clip) => clip.frames(),
+            Source::Paged(paged) => paged.frames,
+        }
+    }
+
+    pub fn channel_count(&self) -> usize {
+        match self {
+            Source::Whole(clip) => clip.channel_count(),
+            Source::Paged(paged) => paged.channels,
+        }
+    }
+
+    /// The decoded stretch that holds frame `at`: the clip and the frame's index in it
+    /// (`None` = silence), and how many frames from `at` on this answer is good for.
+    fn chunk(&self, at: usize) -> (Option<(&Clip, usize)>, usize) {
+        match self {
+            Source::Whole(clip) if at < clip.frames() => (Some((clip, at)), clip.frames() - at),
+            Source::Paged(paged) if at < paged.frames => {
+                let reach = (PAGE - at % PAGE).min(paged.frames - at);
+                match paged.pages.get(at / PAGE).and_then(|slot| slot.as_deref()) {
+                    Some(page) => (Some((page, at % PAGE)), reach),
+                    None => {
+                        paged.starved.store(true, Ordering::Relaxed);
+                        (None, reach)
+                    }
+                }
+            }
+            // Past the end of the file there is only silence left in the region.
+            _ => (None, usize::MAX),
+        }
+    }
+}
 
 /// One source channel of the clip feeding one physical output channel.
 #[derive(Clone, Copy, Debug)]
@@ -42,7 +104,7 @@ pub enum AtTransition {
 /// Everything the audio thread needs to play one voice. Built on the control thread.
 pub struct VoiceSpec {
     pub id: VoiceId,
-    pub clip: Arc<Clip>,
+    pub source: Source,
     /// Region start, in clip frames.
     pub start: usize,
     /// Transition point (`fading_point`, or the region end), in clip frames.
@@ -71,11 +133,16 @@ impl VoiceSpec {
     /// A voice that plays the whole clip once, each channel to the output of the same
     /// number, at full level. Adjust the fields as needed.
     pub fn whole(id: VoiceId, clip: Arc<Clip>) -> VoiceSpec {
-        let frames = clip.frames();
+        VoiceSpec::of(id, Source::Whole(clip))
+    }
+
+    /// The same for any source.
+    pub fn of(id: VoiceId, source: Source) -> VoiceSpec {
+        let frames = source.frames();
         VoiceSpec {
             id,
-            routes: (0..clip.channel_count() as u16).map(|c| Route { src: c, out: c, gain: 1.0 }).collect(),
-            clip,
+            routes: (0..source.channel_count() as u16).map(|c| Route { src: c, out: c, gain: 1.0 }).collect(),
+            source,
             start: 0,
             transition: frames,
             end: frames,
@@ -101,6 +168,14 @@ pub enum Command {
     Fade { id: VoiceId, target: f32, frames: u32, then_stop: bool },
     /// Fade every voice out over `frames` and end it.
     StopAll { frames: u32 },
+    /// Put a page into (or take it out of) every voice that plays the file `key`.
+    Page { key: u64, index: u32, page: Option<Arc<Clip>> },
+}
+
+/// What the audio thread is done with and the control thread frees.
+pub enum Retired {
+    Voice(Voice),
+    Page(Arc<Clip>),
 }
 
 /// A voice as the audio thread sees it. Opaque to the control side, which only drops it.
@@ -128,7 +203,7 @@ impl Voice {
         if spec.transition == spec.start && spec.at_transition == AtTransition::Wrap {
             spec.at_transition = AtTransition::Continue;
         }
-        let channels = spec.clip.channel_count();
+        let channels = spec.source.channel_count();
         spec.routes.retain(|r| (r.src as usize) < channels);
         Voice {
             pos: spec.initial.unwrap_or(spec.start).clamp(spec.start, spec.end),
@@ -146,6 +221,11 @@ impl Voice {
     }
 
     fn fade(&mut self, target: f32, frames: u32, then_stop: bool) {
+        // A voice on its way out stays on its way out: a level change meant for the voice
+        // that replaces it (same id) must not bring it back.
+        if self.stop_after_ramp && !then_stop {
+            return;
+        }
         self.stop_after_ramp = then_stop;
         // An armed voice is silent and not being rendered, so there is nothing to ramp.
         if frames == 0 || self.state == VoiceState::Armed {
@@ -210,63 +290,69 @@ impl Voice {
         self.first_pass = false;
     }
 
-    /// Fade-in/out factor at clip frame `pos`; `to_end` = playing out to the region end.
-    fn envelope(&self, pos: usize, to_end: bool) -> f32 {
-        let mut env = 1.0f32;
-        if self.first_pass && self.spec.fade_in > 0 {
-            env = env.min((pos - self.spec.start) as f32 / self.spec.fade_in as f32);
-        }
-        if to_end && self.spec.fade_out > 0 {
-            env = env.min((self.spec.end - pos) as f32 / self.spec.fade_out as f32);
-        }
-        env
-    }
-
-    /// `n` frames from the current position, `to_end` as in `envelope`.
+    /// `n` frames from the current position; `to_end` = playing out to the region end
+    /// (the fade-out applies).
     fn mix(&mut self, out: &mut [f32], out_channels: usize, offset: usize, n: usize, to_end: bool) {
-        let clip = &*self.spec.clip;
-        // Past the end of the file there is only silence left in the region.
-        let audible = clip.frames().saturating_sub(self.pos).min(n);
-        let in_fade_in = self.first_pass && self.pos < self.spec.start + self.spec.fade_in as usize;
-        let in_fade_out = to_end && self.spec.fade_out > 0 && self.pos + n + self.spec.fade_out as usize > self.spec.end;
-        if self.ramp_left == 0 && !in_fade_in && !in_fade_out {
-            let gain = self.gain;
-            if gain == 0.0 || audible == 0 {
-                return;
+        let Voice { spec, gain, gain_step, ramp_target, ramp_left, stop_after_ramp, state, first_pass, pos, .. } = self;
+        let (start, end, fade_in, fade_out, first_pass) = (spec.start, spec.end, spec.fade_in as usize, spec.fade_out as usize, *first_pass);
+        // Fade-in/out factor at clip frame `at`.
+        let envelope = |at: usize| {
+            let mut env = 1.0f32;
+            if first_pass && fade_in > 0 {
+                env = env.min((at - start) as f32 / fade_in as f32);
             }
-            for r in &self.spec.routes {
-                let out_ch = r.out as usize;
-                if out_ch >= out_channels {
-                    continue;
-                }
-                let g = gain * r.gain;
-                let src = &clip.channel(r.src as usize)[self.pos..self.pos + audible];
-                for (f, s) in src.iter().enumerate() {
-                    out[(offset + f) * out_channels + out_ch] += s * g;
-                }
+            if to_end && fade_out > 0 {
+                env = env.min((end - at) as f32 / fade_out as f32);
             }
-            return;
-        }
-        for f in 0..n {
-            if self.ramp_left > 0 {
-                self.ramp_left -= 1;
-                // Land exactly on the target instead of accumulating rounding error.
-                self.gain = if self.ramp_left == 0 { self.ramp_target } else { self.gain + self.gain_step };
-            }
-            if f < audible {
-                let level = self.gain * self.envelope(self.pos + f, to_end);
-                for r in &self.spec.routes {
-                    let out_ch = r.out as usize;
-                    if out_ch < out_channels {
-                        out[(offset + f) * out_channels + out_ch] +=
-                            clip.channel(r.src as usize)[self.pos + f] * level * r.gain;
+            env
+        };
+        // A streamed file comes in pages, so the stretch may span several chunks.
+        let mut done = 0;
+        while done < n {
+            let at = *pos + done;
+            let (chunk, reach) = spec.source.chunk(at);
+            let len = reach.min(n - done);
+            let audible = chunk.map_or(0, |(clip, from)| clip.frames().saturating_sub(from).min(len));
+            let in_fade_in = first_pass && at < start + fade_in;
+            let in_fade_out = to_end && fade_out > 0 && at + len + fade_out > end;
+            if *ramp_left == 0 && !in_fade_in && !in_fade_out {
+                if let Some((clip, from)) = chunk.filter(|_| *gain != 0.0 && audible > 0) {
+                    for r in &spec.routes {
+                        let out_ch = r.out as usize;
+                        if out_ch >= out_channels {
+                            continue;
+                        }
+                        let g = *gain * r.gain;
+                        let src = &clip.channel(r.src as usize)[from..from + audible];
+                        for (f, s) in src.iter().enumerate() {
+                            out[(offset + done + f) * out_channels + out_ch] += s * g;
+                        }
                     }
                 }
+                done += len;
+                continue;
             }
-            if self.ramp_left == 0 && self.stop_after_ramp {
-                self.state = VoiceState::Done;
-                return;
+            for f in 0..len {
+                if *ramp_left > 0 {
+                    *ramp_left -= 1;
+                    // Land exactly on the target instead of accumulating rounding error.
+                    *gain = if *ramp_left == 0 { *ramp_target } else { *gain + *gain_step };
+                }
+                if let Some((clip, from)) = chunk.filter(|_| f < audible) {
+                    let level = *gain * envelope(at + f);
+                    for r in &spec.routes {
+                        let out_ch = r.out as usize;
+                        if out_ch < out_channels {
+                            out[(offset + done + f) * out_channels + out_ch] += clip.channel(r.src as usize)[from + f] * level * r.gain;
+                        }
+                    }
+                }
+                if *ramp_left == 0 && *stop_after_ramp {
+                    *state = VoiceState::Done;
+                    return;
+                }
             }
+            done += len;
         }
     }
 }
@@ -275,7 +361,7 @@ impl Voice {
 pub struct Mixer {
     voices: Vec<Voice>,
     commands: rtrb::Consumer<Command>,
-    retired: rtrb::Producer<Voice>,
+    retired: rtrb::Producer<Retired>,
     frames: u64,
     /// Gain of the output limiter; 1.0 while the mix stays below full scale.
     limiter: f32,
@@ -290,7 +376,7 @@ const LIMITER_RELEASE: f32 = 0.00015;
 /// Control-thread end of a mixer.
 pub struct MixerHandle {
     commands: rtrb::Producer<Command>,
-    retired: rtrb::Consumer<Voice>,
+    retired: rtrb::Consumer<Retired>,
 }
 
 impl MixerHandle {
@@ -309,7 +395,7 @@ impl MixerHandle {
 impl Mixer {
     pub fn new() -> (Mixer, MixerHandle) {
         let (cmd_tx, cmd_rx) = rtrb::RingBuffer::new(256);
-        let (ret_tx, ret_rx) = rtrb::RingBuffer::new(MAX_VOICES * 2);
+        let (ret_tx, ret_rx) = rtrb::RingBuffer::new(MAX_VOICES * 8);
         (
             Mixer { voices: Vec::with_capacity(MAX_VOICES), commands: cmd_rx, retired: ret_tx, frames: 0, limiter: 1.0, limiting: false },
             MixerHandle { commands: cmd_tx, retired: ret_rx },
@@ -411,9 +497,7 @@ impl Mixer {
                         spec.shared.publish(self.frames, spec.start as u64, VoiceState::Done);
                         let mut v = Voice::new(spec);
                         v.state = VoiceState::Done;
-                        if let Err(rtrb::PushError::Full(v)) = self.retired.push(v) {
-                            std::mem::forget(v);
-                        }
+                        self.retire(Retired::Voice(v));
                     }
                 }
                 Command::SetTransition { id, at } => {
@@ -444,7 +528,32 @@ impl Mixer {
                         v.fade(0.0, frames, true);
                     }
                 }
+                Command::Page { key, index, page } => {
+                    for i in 0..self.voices.len() {
+                        let old = match &mut self.voices[i].spec.source {
+                            // Cloning an `Arc` only counts; it does not allocate.
+                            Source::Paged(paged) if paged.key == key => {
+                                paged.pages.get_mut(index as usize).and_then(|slot| std::mem::replace(slot, page.clone()))
+                            }
+                            _ => None,
+                        };
+                        if let Some(old) = old {
+                            self.retire(Retired::Page(old));
+                        }
+                    }
+                    if let Some(page) = page {
+                        self.retire(Retired::Page(page));
+                    }
+                }
             }
+        }
+    }
+
+    /// Hand something back to the control thread to be freed there. Should the queue be
+    /// full it is leaked: freeing memory here could make the audio stutter.
+    fn retire(&mut self, retired: Retired) {
+        if let Err(rtrb::PushError::Full(retired)) = self.retired.push(retired) {
+            std::mem::forget(retired);
         }
     }
 
@@ -457,7 +566,7 @@ impl Mixer {
             }
             let v = self.voices.swap_remove(i);
             // Cannot fail: checked for space above and this is the only producer.
-            let _ = self.retired.push(v);
+            let _ = self.retired.push(Retired::Voice(v));
         }
     }
 }
@@ -483,6 +592,59 @@ mod tests {
         }
         out.truncate(total * channels);
         out
+    }
+
+    #[test]
+    fn a_stopping_voice_is_not_revived_by_its_replacement() {
+        let clip = Arc::new(Clip::from_planar(SR, vec![vec![1.0; 1000]]));
+        let (mut mixer, mut handle) = Mixer::new();
+        handle.send(Command::Add(spec(1, clip.clone(), AtTransition::Wrap, false))).ok().unwrap();
+        render(&mut mixer, 64, 64, 1);
+        // The cue is started again: the old voice fades out, a new one comes in at half level.
+        handle.send(Command::Fade { id: 1, target: 0.0, frames: 32, then_stop: true }).ok().unwrap();
+        handle.send(Command::Add(VoiceSpec { gain: 0.0, ..spec(1, clip, AtTransition::Wrap, false) })).ok().unwrap();
+        handle.send(Command::Fade { id: 1, target: 0.5, frames: 32, then_stop: false }).ok().unwrap();
+        let out = render(&mut mixer, 128, 64, 1);
+        assert!(out[64..].iter().all(|&s| s == 0.5), "only the new voice is left: {:?}", &out[60..70]);
+    }
+
+    #[test]
+    fn paged_voices_play_the_pages_they_have() {
+        let value = |n: usize| (n % 1000) as f32 / 1000.0 + 0.001;
+        let frames = 2 * PAGE + 300;
+        let page = |index: usize| Arc::new(Clip::from_planar(SR, vec![(index * PAGE..((index + 1) * PAGE).min(frames)).map(value).collect()]));
+        let starved = Arc::new(AtomicBool::new(false));
+        let source = |pages| Source::Paged(Paged { key: 7, frames, channels: 1, pages, starved: starved.clone() });
+
+        // The middle page never arrives: silence there, and the voice says so.
+        let (mut mixer, mut handle) = Mixer::new();
+        handle.send(Command::Add(VoiceSpec::of(1, source(vec![Some(page(0)), None, Some(page(2))])))).ok().unwrap();
+        let out = render(&mut mixer, frames + 100, 5000, 1);
+        for (n, &s) in out.iter().enumerate() {
+            let expected = if n < PAGE || (2 * PAGE..frames).contains(&n) { value(n) } else { 0.0 };
+            assert_eq!(s, expected, "frame {n}");
+        }
+        assert!(starved.swap(false, Ordering::Relaxed));
+
+        // Pages handed in while the voice plays, and taken away behind it.
+        let (mut mixer, mut handle) = Mixer::new();
+        handle.send(Command::Add(VoiceSpec::of(1, source(vec![Some(page(0)), None, None])))).ok().unwrap();
+        let mut out = render(&mut mixer, 10_000, 5000, 1);
+        handle.send(Command::Page { key: 7, index: 1, page: Some(page(1)) }).ok().unwrap();
+        handle.send(Command::Page { key: 8, index: 2, page: Some(page(0)) }).ok().unwrap(); // another file's
+        handle.send(Command::Page { key: 7, index: 2, page: Some(page(2)) }).ok().unwrap();
+        out.extend(render(&mut mixer, 65_000, 5000, 1));
+        handle.send(Command::Page { key: 7, index: 0, page: None }).ok().unwrap();
+        out.extend(render(&mut mixer, frames, 5000, 1));
+        for (n, &s) in out.iter().enumerate() {
+            assert_eq!(s, if n < frames { value(n) } else { 0.0 }, "frame {n}");
+        }
+        assert!(!starved.load(Ordering::Relaxed));
+        let mut freed = 0;
+        while let Ok(retired) = handle.retired.pop() {
+            freed += matches!(retired, Retired::Page(_)) as usize;
+        }
+        assert!(freed >= 1, "pages the audio thread is done with come back to be freed");
     }
 
     #[test]

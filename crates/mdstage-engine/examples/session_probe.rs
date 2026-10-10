@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let started = Instant::now();
     let session = Session::start(script, path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf(), settings, false)?;
     let first = settle(&session);
-    println!("ready after {:.1?}: {:.0} MB of decoded audio held", started.elapsed(), first.audio_memory_mb);
+    println!("ready after {:.1?}: {:.0} MB of audio held", started.elapsed(), first.audio_memory_mb);
     let mut peak = first.audio_memory_mb;
     let mut presses = 0;
     while let Some(next) = session.snapshot().next {
@@ -46,12 +46,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if presses % 8 == 0 || snapshot.next.is_none() {
             println!("after cue {:>2}: {:>4.0} MB held", next + 1, snapshot.audio_memory_mb);
         }
+        // Stop the music and let it fade out, as it long would have by the next cue of a
+        // real show.
         session.send(Request::StopAll);
+        std::thread::sleep(Duration::from_millis(700));
         if presses > 500 {
             break;
         }
     }
     let last = session.snapshot();
-    println!("{presses} Go presses; peak {peak:.0} MB; problems: {:?}", last.problems.iter().filter(|p| !p.starts_with("Audio: ")).collect::<Vec<_>>());
+    println!("{presses} Go presses; peak {peak:.0} MB; problems: {:?}", last.problems.iter().filter(|p| !p.starts_with("Audiogerät: ")).collect::<Vec<_>>());
     Ok(())
 }

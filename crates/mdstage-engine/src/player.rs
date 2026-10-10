@@ -3,19 +3,26 @@
 //!
 //! Runs on the control thread. Decoding happens here, never in the audio callback.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use mdstage_core::audio::{AudioFile, CueAudio};
 
 use crate::clip::Clip;
 use crate::clock::{EngineClock, VoiceShared, VoiceState};
-use crate::mixer::{AtTransition, Command, MixerHandle, Route, VoiceId, VoiceSpec};
+use crate::mixer::{AtTransition, Command, MixerHandle, PAGE, Paged, Route, Source, VoiceId, VoiceSpec};
+use crate::stream::{Info, Job, Loaded, Loader};
 use crate::{Error, Result};
 
 /// Ramp with which resumed audio comes in, in seconds.
 const RESUME_RAMP: f64 = 0.012;
+/// Pages kept in memory from the start of every region in reach, so that a cue, a loop's
+/// next round or a handoff finds its first samples without waiting for the disk.
+const PINNED: u32 = 2;
+/// Pages kept from the playback position on, the current one included.
+const AHEAD: u32 = 4;
 
 /// Where each virtual channel comes out: name → physical output (0-based).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -48,52 +55,269 @@ impl Routing {
     }
 }
 
-/// Decoded audio files of the open show, at the output device's sample rate.
+/// A file that is read from disk as it plays.
+struct Stream {
+    key: u64,
+    info: Info,
+    pages: HashMap<u32, Arc<Clip>>,
+    /// Pages asked of the loader and not back yet.
+    requested: Vec<u32>,
+    /// Pages the loader could not read; not asked for again.
+    broken: Vec<u32>,
+    starved: Arc<AtomicBool>,
+}
+
+enum Entry {
+    /// Held in memory as a whole (put there with `ClipCache::insert`).
+    Whole(Arc<Clip>),
+    Stream(Stream),
+    /// The loader is opening the file.
+    Opening,
+    Failed,
+}
+
+/// The audio files of the open show, at the output device's sample rate. Files are read
+/// from disk a page at a time by a loader thread; only the pages around the places the
+/// show is at, or could be at next, are in memory.
 pub struct ClipCache {
     dir: PathBuf,
     sample_rate: u32,
-    clips: HashMap<String, Arc<Clip>>,
+    entries: HashMap<String, Entry>,
+    loader: Option<Loader>,
+    next_key: u64,
+    /// `(file, frame)`: where cues in reach of the operator begin.
+    window: Vec<(String, usize)>,
+    /// Page commands on their way to the mixer.
+    outbox: VecDeque<Command>,
+    problems: Vec<String>,
 }
 
 impl ClipCache {
     /// `dir` is the show's `audio/` folder.
     pub fn new(dir: PathBuf, sample_rate: u32) -> ClipCache {
-        ClipCache { dir, sample_rate, clips: HashMap::new() }
+        ClipCache { dir, sample_rate, entries: HashMap::new(), loader: None, next_key: 1, window: Vec::new(), outbox: VecDeque::new(), problems: Vec::new() }
     }
 
     /// Put an already decoded clip into the cache under a file name.
     pub fn insert(&mut self, file: &str, clip: Clip) {
-        self.clips.insert(file.to_string(), Arc::new(clip));
+        self.entries.insert(file.to_string(), Entry::Whole(Arc::new(clip)));
     }
 
+    /// Whether a file is ready to play.
     pub fn contains(&self, file: &str) -> bool {
-        self.clips.contains_key(file)
+        matches!(self.entries.get(file), Some(Entry::Whole(_) | Entry::Stream(_)))
     }
 
-    /// The clip for a file, decoding and resampling it on first use.
-    pub fn get(&mut self, file: &str) -> Result<Arc<Clip>> {
-        if let Some(clip) = self.clips.get(file) {
-            return Ok(clip.clone());
+    fn loader(&mut self) -> Result<&Loader> {
+        if self.loader.is_none() {
+            let loader = Loader::spawn(self.dir.clone(), self.sample_rate).map_err(|e| Error::Io("audio loader".into(), e))?;
+            self.loader = Some(loader);
         }
-        let clip = Arc::new(Clip::decode_file(&self.dir.join(file))?.resampled(self.sample_rate)?);
-        self.clips.insert(file.to_string(), clip.clone());
-        Ok(clip)
+        Ok(self.loader.as_ref().unwrap())
     }
 
-    /// Forget all clips (after the show or the output device changed).
-    pub fn clear(&mut self) {
-        self.clips.clear();
+    fn stream(&mut self, file: &str, info: Info) {
+        let stream = Stream { key: self.next_key, info, pages: HashMap::new(), requested: Vec::new(), broken: Vec::new(), starved: Arc::default() };
+        self.next_key += 1;
+        self.entries.insert(file.to_string(), Entry::Stream(stream));
     }
 
-    /// Drop every clip `keep` does not ask for. Audio that is playing is unaffected: a
-    /// voice holds on to its clip until it ends.
-    pub fn retain(&mut self, keep: impl Fn(&str) -> bool) {
-        self.clips.retain(|file, _| keep(file));
+    /// Take in something the loader has finished.
+    fn accept(&mut self, message: Loaded) {
+        match message {
+            Loaded::Opened { file, info } => match (self.entries.get(&file), info) {
+                (Some(Entry::Opening), Ok(info)) => self.stream(&file, info),
+                (Some(Entry::Opening), Err(e)) => {
+                    self.problems.push(e.to_string());
+                    self.entries.insert(file, Entry::Failed);
+                }
+                // Not wanted any more by the time it was open.
+                (None, Ok(_)) => {
+                    if let Some(loader) = &self.loader {
+                        loader.send(Job::Close { file });
+                    }
+                }
+                _ => {}
+            },
+            Loaded::Page { file, index, clip } => {
+                let Some(Entry::Stream(stream)) = self.entries.get_mut(&file) else { return };
+                stream.requested.retain(|i| *i != index);
+                match clip {
+                    Ok(clip) => {
+                        let page = Arc::new(clip);
+                        stream.pages.insert(index, page.clone());
+                        self.outbox.push_back(Command::Page { key: stream.key, index, page: Some(page) });
+                    }
+                    Err(e) => {
+                        stream.broken.push(index);
+                        self.problems.push(e.to_string());
+                    }
+                }
+            }
+        }
     }
 
-    /// Seconds of audio held, summed over all clips and their channels.
+    /// Block until the loader has finished the job `wanted` describes, taking in whatever
+    /// else it delivers on the way.
+    fn wait_for(&mut self, wanted: impl Fn(&Loaded) -> bool) -> Result<Loaded> {
+        loop {
+            let message = self.loader()?.done.recv().map_err(|_| Error::Decode("audio".into(), "the loader thread stopped".into()))?;
+            if wanted(&message) {
+                return Ok(message);
+            }
+            self.accept(message);
+        }
+    }
+
+    /// Length and channel count of a file, opening it now if that has not happened yet.
+    fn info(&mut self, file: &str) -> Result<Info> {
+        match self.entries.get(file) {
+            Some(Entry::Whole(clip)) => return Ok(Info { sample_rate: self.sample_rate, channels: clip.channel_count(), frames: clip.frames() }),
+            Some(Entry::Stream(stream)) => return Ok(stream.info),
+            _ => {}
+        }
+        self.loader()?.send(Job::Open { file: file.to_string(), urgent: true });
+        self.entries.insert(file.to_string(), Entry::Opening);
+        match self.wait_for(|m| matches!(m, Loaded::Opened { file: opened, .. } if opened == file))? {
+            Loaded::Opened { info: Ok(info), .. } => {
+                self.stream(file, info);
+                Ok(info)
+            }
+            Loaded::Opened { info: Err(e), .. } => {
+                self.entries.remove(file);
+                Err(e)
+            }
+            Loaded::Page { .. } => unreachable!(),
+        }
+    }
+
+    /// Make sure the pages a voice starting at `frame` needs first are in memory, reading
+    /// them now if they are not.
+    fn ensure(&mut self, file: &str, frame: usize) -> Result<()> {
+        let Some(Entry::Stream(stream)) = self.entries.get(file) else { return Ok(()) };
+        let first = (frame / PAGE) as u32;
+        let missing: Vec<u32> = (first..first + PINNED).filter(|i| (*i as usize) < stream.info.pages() && !stream.pages.contains_key(i)).collect();
+        for index in missing {
+            self.loader()?.send(Job::Page { file: file.to_string(), index, urgent: true });
+            match self.wait_for(|m| matches!(m, Loaded::Page { file: read, index: i, .. } if read == file && *i == index))? {
+                Loaded::Page { clip: Err(e), .. } => return Err(e),
+                page => self.accept(page),
+            }
+        }
+        Ok(())
+    }
+
+    /// What a voice playing `file` reads from.
+    fn source(&self, file: &str) -> Option<Source> {
+        match self.entries.get(file)? {
+            Entry::Whole(clip) => Some(Source::Whole(clip.clone())),
+            Entry::Stream(stream) => {
+                let mut pages = vec![None; stream.info.pages()];
+                for (index, page) in &stream.pages {
+                    pages[*index as usize] = Some(page.clone());
+                }
+                Some(Source::Paged(Paged { key: stream.key, frames: stream.info.frames, channels: stream.info.channels, pages, starved: stream.starved.clone() }))
+            }
+            Entry::Opening | Entry::Failed => None,
+        }
+    }
+
+    /// Tell the cache which audio the operator could reach next: `(file, seconds)` for
+    /// every place a cue in reach begins. Those files are opened in the background and
+    /// their first pages kept ready; files out of reach and not playing are let go.
+    pub fn set_window(&mut self, starts: Vec<(String, f64)>) {
+        let rate = self.sample_rate as f64;
+        self.window = starts.into_iter().map(|(file, seconds)| (file, (seconds.max(0.0) * rate).round() as usize)).collect();
+        let unknown: Vec<String> = self.window.iter().map(|(file, _)| file).filter(|file| !self.entries.contains_key(*file)).cloned().collect();
+        for file in unknown {
+            match self.loader() {
+                Ok(loader) => loader.send(Job::Open { file: file.clone(), urgent: false }),
+                Err(e) => {
+                    self.problems.push(e.to_string());
+                    return;
+                }
+            }
+            self.entries.insert(file, Entry::Opening);
+        }
+    }
+
+    /// Keep the right pages in memory. `voices` are the voices alive in the mixer:
+    /// `(file, region start, position)`, in frames.
+    fn service(&mut self, voices: &[(&str, usize, usize)]) {
+        while let Some(message) = self.loader.as_ref().and_then(|loader| loader.done.try_recv().ok()) {
+            self.accept(message);
+        }
+
+        let mut wanted: Vec<(&str, u32)> = Vec::new();
+        let mut want = |file, frame: usize, pages: u32| {
+            let first = (frame / PAGE) as u32;
+            wanted.extend((first..first + pages).map(|index| (file, index)));
+        };
+        for (file, start) in &self.window {
+            want(file.as_str(), *start, PINNED);
+        }
+        for &(file, start, position) in voices {
+            want(file, start, PINNED);
+            want(file, position, AHEAD);
+        }
+
+        for (file, entry) in &mut self.entries {
+            let Entry::Stream(stream) = entry else { continue };
+            let mine = || wanted.iter().filter(|(f, _)| *f == file.as_str()).map(|(_, index)| *index);
+            for index in mine() {
+                let known = stream.pages.contains_key(&index) || stream.requested.contains(&index) || stream.broken.contains(&index);
+                if !known && (index as usize) < stream.info.pages() {
+                    if let Some(loader) = &self.loader {
+                        loader.send(Job::Page { file: file.clone(), index, urgent: false });
+                        stream.requested.push(index);
+                    }
+                }
+            }
+            let stale: Vec<u32> = stream.pages.keys().copied().filter(|index| !mine().any(|w| w == *index)).collect();
+            for index in stale {
+                stream.pages.remove(&index);
+                self.outbox.push_back(Command::Page { key: stream.key, index, page: None });
+            }
+            if stream.starved.swap(false, Ordering::Relaxed) {
+                self.problems.push(format!("Audio: {file} wurde nicht schnell genug von der Platte gelesen (Aussetzer)"));
+            }
+        }
+
+        // Let go of files nobody can reach any more.
+        let (window, loader) = (&self.window, &self.loader);
+        self.entries.retain(|file, entry| {
+            let needed = matches!(entry, Entry::Whole(_)) || window.iter().any(|(f, _)| f == file) || voices.iter().any(|(f, _, _)| f == file);
+            if let Some(loader) = loader.as_ref().filter(|_| !needed) {
+                loader.send(Job::Close { file: file.clone() });
+            }
+            needed
+        });
+    }
+
+    /// Seconds of audio held in memory, summed over all files and their channels.
     pub fn held_seconds(&self) -> f64 {
-        self.clips.values().map(|c| c.duration() * c.channel_count() as f64).sum()
+        let frames: usize = self
+            .entries
+            .values()
+            .map(|entry| match entry {
+                Entry::Whole(clip) => clip.frames() * clip.channel_count(),
+                Entry::Stream(stream) => stream.pages.values().map(|page| page.frames() * page.channel_count()).sum(),
+                Entry::Opening | Entry::Failed => 0,
+            })
+            .sum();
+        frames as f64 / self.sample_rate as f64
+    }
+
+    /// How many files are being opened and pages being read right now.
+    pub fn loading(&self) -> usize {
+        self.entries
+            .values()
+            .map(|entry| match entry {
+                Entry::Opening => 1,
+                Entry::Stream(stream) => stream.requested.len(),
+                Entry::Whole(_) | Entry::Failed => 0,
+            })
+            .sum()
     }
 }
 
@@ -144,6 +368,8 @@ pub struct Status {
 
 struct ActivePart {
     id: VoiceId,
+    /// The files of the part and, for each, where its voice is.
+    files: Vec<String>,
     shared: Vec<Arc<VoiceShared>>,
     start: usize,
     transition: usize,
@@ -173,12 +399,14 @@ pub struct Player {
     routing: Routing,
     sample_rate: u32,
     active: HashMap<usize, ActiveCue>,
+    /// Voices of cues that were stopped and are still fading out: `(file, region start, voice)`.
+    fading: Vec<(String, usize, Arc<VoiceShared>)>,
 }
 
 impl Player {
     pub fn new(handle: MixerHandle, cache: ClipCache, routing: Routing) -> Player {
         let sample_rate = cache.sample_rate;
-        Player { handle, cache, routing, sample_rate, active: HashMap::new() }
+        Player { handle, cache, routing, sample_rate, active: HashMap::new(), fading: Vec::new() }
     }
 
     pub fn cache(&mut self) -> &mut ClipCache {
@@ -202,8 +430,7 @@ impl Player {
     }
 
     /// Routes of one file: every source channel to the outputs of its patched channels.
-    fn routes(&self, audio: &AudioFile, clip: &Clip) -> Vec<Route> {
-        let channels = clip.channel_count();
+    fn routes(&self, audio: &AudioFile, channels: usize) -> Vec<Route> {
         let patch = audio.patch.clone().unwrap_or_else(|| self.routing.default_patch(if audio.mono { 1 } else { channels }));
         let mut routes = Vec::new();
         for (source, names) in patch.iter().enumerate() {
@@ -223,27 +450,46 @@ impl Player {
         routes
     }
 
+    /// Send the page commands that are waiting, as far as the mixer takes them.
+    fn flush(&mut self) {
+        while let Some(command) = self.cache.outbox.pop_front() {
+            if let Err(command) = self.handle.send(command) {
+                self.cache.outbox.push_front(command);
+                break;
+            }
+        }
+    }
+
     /// Load a cue's audio into the mixer, playing or armed. Audio of the same cue that is
     /// still running is cut off with a short fade.
     pub fn start(&mut self, cue: usize, audio: &CueAudio, start: Start) -> Result<()> {
-        // Decode everything first, so a missing file leaves the mixer untouched.
-        let mut clips = Vec::with_capacity(audio.parts.len());
-        for part in &audio.parts {
-            let files: Result<Vec<Arc<Clip>>> = part.audios.iter().map(|a| self.cache.get(&a.file)).collect();
-            clips.push(files?);
+        // Open everything first, so a missing file leaves the mixer untouched.
+        let count = audio.parts.len();
+        let (resume_part, resume_at) = start.resume.map_or((0, None), |(p, s)| (p.min(count - 1), Some(s)));
+        let mut regions = Vec::with_capacity(count);
+        for (index, part) in audio.parts.iter().enumerate() {
+            let infos: Result<Vec<Info>> = part.audios.iter().map(|a| self.cache.info(&a.file)).collect();
+            let infos = infos?;
+            let longest = infos.iter().map(|i| i.frames).max().unwrap_or(0);
+            let end = part.end.map_or(longest, |s| self.frames(s));
+            let region_start = part.start.map_or(0, |s| self.frames(s)).min(end);
+            let transition = part.fading_point.map_or(end, |s| self.frames(s)).clamp(region_start, end);
+            let initial = resume_at.filter(|_| index == resume_part).map(|s| self.frames(s));
+            for file in &part.audios {
+                self.cache.ensure(&file.file, region_start)?;
+                if let Some(initial) = initial {
+                    self.cache.ensure(&file.file, initial.clamp(region_start, end))?;
+                }
+            }
+            regions.push((region_start, transition, end, initial, infos));
         }
         if self.active.contains_key(&cue) {
             self.stop(cue, 0.005)?;
         }
+        self.flush();
 
-        let count = audio.parts.len();
-        let (resume_part, resume_at) = start.resume.map_or((0, None), |(p, s)| (p.min(count - 1), Some(s)));
         let mut active = ActiveCue { parts: Vec::with_capacity(count), then: start.then, outro_queued: false };
-        for (index, (part, files)) in audio.parts.iter().zip(&clips).enumerate() {
-            let longest = files.iter().map(|c| c.frames()).max().unwrap_or(0);
-            let end = part.end.map_or(longest, |s| self.frames(s));
-            let region_start = part.start.map_or(0, |s| self.frames(s)).min(end);
-            let transition = part.fading_point.map_or(end, |s| self.frames(s)).clamp(region_start, end);
+        for (index, (part, (region_start, transition, end, initial, infos))) in audio.parts.iter().zip(regions).enumerate() {
             let id = voice_id(cue, index);
             let (at_transition, rearm) = match start.then {
                 _ if count > 1 => (AtTransition::Handoff(voice_id(cue, (index + 1) % count)), true),
@@ -251,23 +497,29 @@ impl Player {
                 Then::Chain(next) => (AtTransition::Handoff(voice_id(next, 0)), false),
                 Then::End => (AtTransition::Continue, false),
             };
-            let mut shared = Vec::with_capacity(files.len());
-            for (file, clip) in part.audios.iter().zip(files) {
+            let mut shared = Vec::with_capacity(infos.len());
+            let mut files = Vec::with_capacity(infos.len());
+            for (file, info) in part.audios.iter().zip(&infos) {
+                let Some(source) = self.cache.source(&file.file) else { continue };
                 let spec = VoiceSpec {
                     start: region_start,
                     transition,
                     end,
-                    initial: resume_at.filter(|_| index == resume_part).map(|s| self.frames(s)),
+                    initial,
                     at_transition,
                     gain: if resume_at.is_some() { 0.0 } else { part.volume as f32 },
                     fade_in: part.fadein.map_or(0, |s| self.frames(s) as u32),
                     fade_out: part.fadeout.map_or(0, |s| self.frames(s) as u32),
-                    routes: self.routes(file, clip),
+                    routes: self.routes(file, info.channels),
                     armed: start.armed || index != resume_part,
                     rearm,
-                    ..VoiceSpec::whole(id, clip.clone())
+                    ..VoiceSpec::of(id, source)
                 };
+                // Until the mixer reports for itself: where the voice is going to begin,
+                // so that the pages there are not taken for unneeded.
+                spec.shared.publish(0, initial.unwrap_or(region_start).clamp(region_start, end) as u64, VoiceState::Armed);
                 shared.push(spec.shared.clone());
+                files.push(file.file.clone());
                 self.send(Command::Add(spec))?;
             }
             if resume_at.is_some() {
@@ -275,20 +527,20 @@ impl Player {
                 let frames = self.frames(RESUME_RAMP) as u32;
                 self.send(Command::Fade { id, target: part.volume as f32, frames, then_stop: false })?;
             }
-            active.parts.push(ActivePart { id, shared, start: region_start, transition, end });
+            active.parts.push(ActivePart { id, files, shared, start: region_start, transition, end });
         }
         self.active.insert(cue, active);
         Ok(())
     }
 
     /// The stretch each part of `audio` cycles through, in seconds: `(start, transition)`.
-    /// Decodes the files if necessary (their length is the default end).
+    /// Opens the files if necessary (their length is the default end).
     pub fn spans(&mut self, audio: &CueAudio) -> Result<Vec<(f64, f64)>> {
         let mut spans = Vec::with_capacity(audio.parts.len());
         for part in &audio.parts {
             let mut longest = 0.0f64;
             for file in &part.audios {
-                longest = longest.max(self.cache.get(&file.file)?.duration());
+                longest = longest.max(self.cache.info(&file.file)?.frames as f64 / self.sample_rate as f64);
             }
             let end = part.end.unwrap_or(longest);
             let start = part.start.unwrap_or(0.0).min(end);
@@ -350,14 +602,28 @@ impl Player {
         for id in self.part_ids(cue) {
             self.send(Command::Fade { id, target: 0.0, frames, then_stop: true })?;
         }
-        self.active.remove(&cue);
+        if let Some(active) = self.active.remove(&cue) {
+            self.let_fade(active);
+        }
         Ok(())
+    }
+
+    /// Keep an eye on the voices of a cue that is over until they have faded out (their
+    /// audio has to stay in memory that long).
+    fn let_fade(&mut self, cue: ActiveCue) {
+        for part in cue.parts {
+            let start = part.start;
+            self.fading.extend(part.files.into_iter().zip(part.shared).map(|(file, shared)| (file, start, shared)));
+        }
     }
 
     /// Fade everything out over `seconds` (the emergency "Music Stop").
     pub fn stop_all(&mut self, seconds: f64) -> Result<()> {
         let frames = self.frames(seconds) as u32;
-        self.active.clear();
+        let cues: Vec<ActiveCue> = self.active.drain().map(|(_, cue)| cue).collect();
+        for cue in cues {
+            self.let_fade(cue);
+        }
         self.send(Command::StopAll { frames })
     }
 
@@ -402,9 +668,26 @@ impl Player {
         self.active.get(&cue).is_some_and(|a| a.states().any(|s| matches!(s, VoiceState::Playing | VoiceState::Tail)))
     }
 
-    /// Housekeeping; call regularly. Frees finished voices and forgets cues that are over.
+    /// Take what went wrong while reading audio since the last call.
+    pub fn take_problems(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.cache.problems)
+    }
+
+    /// Housekeeping; call regularly. Frees finished voices, forgets cues that are over
+    /// and keeps the audio around every playing position in memory.
     pub fn tick(&mut self) -> Result<()> {
         self.handle.collect_garbage();
+        self.fading.retain(|(_, _, shared)| shared.state() != VoiceState::Done);
+        let mut voices: Vec<(&str, usize, usize)> = self.fading.iter().map(|(file, start, shared)| (file.as_str(), *start, shared.clip_frame() as usize)).collect();
+        for part in self.active.values().flat_map(|a| &a.parts) {
+            for (file, shared) in part.files.iter().zip(&part.shared) {
+                if shared.state() != VoiceState::Done {
+                    voices.push((file, part.start, shared.clip_frame() as usize));
+                }
+            }
+        }
+        self.cache.service(&voices);
+        self.flush();
         // Once a loop has handed off to its outro, parts that were waiting for their turn
         // will never get one.
         let leftovers: Vec<VoiceId> = self
@@ -604,6 +887,59 @@ mod tests {
         player.start(0, &one("loop.wav"), Start { resume: Some((0, 0.5)), ..Start::now(Then::Loop) }).unwrap();
         render(&mut mixer, 16, 1);
         assert_eq!(player.status(0, None).unwrap().seconds, 0.516);
+    }
+
+    #[test]
+    fn streamed_files_play_exactly_like_files_held_in_memory() {
+        let rate = 48_000;
+        let dir = std::env::temp_dir().join(format!("mdstage-player-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        crate::stream::write_wav(&dir.join("loop.wav"), rate, 2, 4 * PAGE + 500);
+        crate::stream::write_wav(&dir.join("out.wav"), rate, 1, PAGE + 77);
+
+        let run = |streamed: bool| -> Vec<f32> {
+            let (mut mixer, handle) = Mixer::new();
+            let mut cache = ClipCache::new(dir.clone(), rate);
+            if !streamed {
+                for name in ["loop.wav", "out.wav"] {
+                    cache.insert(name, Clip::decode_file(&dir.join(name)).unwrap());
+                }
+            }
+            let mut player = Player::new(handle, cache, Routing::positional(&["L".to_string(), "R".to_string()]));
+            let looped = CueAudio { parts: vec![Part { start: Some(0.2), fading_point: Some(4.9), ..part(vec![file("loop.wav")]) }], looped: true };
+            player.start(0, &looped, Start::now(Then::Loop)).unwrap();
+            let mut out = Vec::new();
+            let mut buf = vec![0.0f32; 2 * 1024];
+            for block in 0..640 {
+                match block {
+                    // Two rounds of the loop, then its outro; later the loop is resumed mid-way.
+                    450 => {
+                        player.start(1, &one("out.wav"), Start::armed(Then::End)).unwrap();
+                        player.queue_outro(0, 1).unwrap();
+                    }
+                    560 => player.start(0, &looped, Start { resume: Some((0, 3.0)), ..Start::now(Then::Loop) }).unwrap(),
+                    _ => {}
+                }
+                // Rendering by hand outruns the disk; let the loader catch up first.
+                loop {
+                    player.tick().unwrap();
+                    if player.cache().loading() == 0 {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_micros(200));
+                }
+                player.tick().unwrap();
+                mixer.render(&mut buf, 2);
+                out.extend_from_slice(&buf);
+            }
+            assert_eq!(player.take_problems(), Vec::<String>::new());
+            out
+        };
+        let (streamed, whole) = (run(true), run(false));
+        assert!(whole.iter().any(|s| *s != 0.0));
+        if let Some(n) = (0..whole.len()).find(|&n| streamed[n] != whole[n]) {
+            panic!("sample {n} (frame {}): streamed {}, in memory {}", n / 2, streamed[n], whole[n]);
+        }
     }
 
     #[test]

@@ -404,6 +404,8 @@ impl Show {
     pub fn tick(&mut self, now: f64) -> Result<()> {
         self.now = now;
         self.player.tick()?;
+        let problems = self.player.take_problems();
+        self.problems.extend(problems);
 
         // Chained successors that have come in.
         for (from, to) in self.chains.clone() {

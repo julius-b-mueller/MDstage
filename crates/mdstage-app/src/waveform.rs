@@ -1,4 +1,4 @@
-//! Waveform peaks, decoded on a background thread and cached per file.
+//! Waveform peaks, read on a background thread and cached per file.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -6,7 +6,6 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use eframe::egui;
-use mdstage_engine::clip::Clip;
 
 /// Peak pairs kept per file; enough for a waveform a few thousand pixels wide.
 const BUCKETS: usize = 4000;
@@ -32,8 +31,8 @@ impl Waveforms {
             .name("mdstage-peaks".into())
             .spawn(move || {
                 for file in todo {
-                    let state = match Clip::decode_file(&audio_dir.join(&file)) {
-                        Ok(clip) => WaveState::Ready { peaks: Arc::new(clip.peaks(BUCKETS)), duration: clip.duration() },
+                    let state = match mdstage_engine::stream::peaks(&audio_dir.join(&file), BUCKETS) {
+                        Ok((peaks, duration)) => WaveState::Ready { peaks: Arc::new(peaks), duration },
                         Err(e) => {
                             eprintln!("{e}");
                             WaveState::Failed
