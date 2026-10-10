@@ -9,6 +9,7 @@ pub mod clock;
 pub mod device;
 pub mod mixer;
 pub mod mtc;
+pub mod player;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -22,6 +23,8 @@ pub enum Error {
     Device(String),
     #[error("midi: {0}")]
     Midi(String),
+    #[error("the audio engine is not taking commands (queue full)")]
+    Busy,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

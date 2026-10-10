@@ -7,6 +7,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+mdstage-core = { path = "../mdstage-core" }
 cpal = "0.15"
 midir = "0.10"
 rtrb = "0.3"

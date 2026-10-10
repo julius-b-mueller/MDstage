@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use mdstage_engine::clip::Clip;
-use mdstage_engine::clock::{VoiceShared, VoiceState};
+use mdstage_engine::clock::VoiceState;
 use mdstage_engine::device;
 use mdstage_engine::mixer::{AtTransition, Command, Mixer, Route, VoiceSpec};
 use mdstage_engine::mtc::{MtcSender, Timecode};
@@ -69,19 +69,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         r
     };
     let voice = |id, clip: &Arc<Clip>, from: usize, at, armed| {
-        let shared = Arc::new(VoiceShared::default());
         let spec = VoiceSpec {
-            id,
-            clip: clip.clone(),
             start: from,
-            transition: clip.frames(),
-            end: clip.frames(),
             at_transition: at,
             gain,
             routes: routes(clip),
             armed,
-            shared: shared.clone(),
+            ..VoiceSpec::whole(id, clip.clone())
         };
+        let shared = spec.shared.clone();
         (spec, shared)
     };
     // Only the last 3 s of the start clip, to keep the run short.

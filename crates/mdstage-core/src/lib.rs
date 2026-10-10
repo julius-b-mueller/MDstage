@@ -3,10 +3,12 @@
 //! Spike scope: split a script into blocks and read the cue fields the UI displays.
 //! Serialising back to Markdown and the cue logic follow in the next phase.
 
+pub mod audio;
 pub mod cues;
 pub mod edit;
 pub mod format;
 pub mod mic;
+pub mod validate;
 pub mod yaml;
 
 use serde_yaml_ng::Value;
