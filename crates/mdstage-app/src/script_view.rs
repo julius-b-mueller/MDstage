@@ -212,6 +212,8 @@ const CYAN: Color32 = Color32::from_rgb(0x56, 0xb6, 0xc2);
 /// From a cue's left edge to the first lane: room for an arrowhead and a straight piece
 /// of line before the corner.
 const FIRST_LANE: f32 = 18.0;
+/// Height of the strip under a waveform that one position auto-cue's line runs out in.
+const AUTO_STRIP: f32 = 5.0;
 /// Distance between two lanes of connection lines in the margin.
 const LANE: f32 = 8.0;
 const MAX_LANES: usize = 4;
@@ -511,20 +513,9 @@ impl ScriptView {
                 origin.y + self.offsets.get(block).copied().unwrap_or(0.0) + 4.0 + 14.0 + place as f32 * apart
             };
             // An auto-cue at a place in its source's audio begins right there: at the foot
-            // of its marker on the waveform, if that is on screen. Its line runs out of
-            // the card just under the waveform.
-            // Several auto-cues in one waveform run out one above the other, the one
-            // furthest left lowest, so that each can be followed to its marker.
-            let marker = self.auto_anchors.get(&relation.to).filter(|_| relation.tie == Tie::Auto).map(|foot| {
-                let further_left = self
-                    .relations
-                    .iter()
-                    .filter(|other| other.tie == Tie::Auto && other.from == relation.from && other.to != relation.to)
-                    .filter_map(|other| Some((self.auto_anchors.get(&other.to)?.x, other.to)))
-                    .filter(|&(x, to)| (x, to) < (foot.x, relation.to))
-                    .count();
-                *foot + vec2(0.0, 2.0 - further_left as f32 * 5.0)
-            });
+            // of its marker, if that is on screen. Its line runs out of the card in a strip
+            // of its own under the waveform.
+            let marker = self.auto_anchors.get(&relation.to).filter(|_| relation.tie == Tie::Auto).copied();
             let start = marker.unwrap_or(pos2(origin.x - 4.0, at(relation.from, relation.from_place)));
             let (from, to) = (start.y, at(relation.to, relation.to_place));
             if from.max(to) < origin.y + viewport.min.y || from.min(to) > origin.y + viewport.max.y {
@@ -849,8 +840,24 @@ impl ScriptView {
         rows.iter().map(|row| Self::flow_spans(ui, None, &row.spans, &font, 0.0, width - 16.0 - 56.0 - 12.0, 0.0, ROW)).sum()
     }
 
-    fn cue_height(rows: usize, has_audio: bool) -> f32 {
-        let wave = if has_audio { WAVE_HEIGHT + 10.0 + CONTROLS + 4.0 } else { 0.0 };
+    /// The position auto-cues that hang on a cue's audio, in the order of their places:
+    /// `(cue, seconds)`.
+    fn position_autos(cues: &Cues, note: Option<Note>) -> Vec<(usize, f64)> {
+        let Some(note) = note else { return Vec::new() };
+        let mut autos: Vec<(usize, f64)> = (0..cues.len())
+            .filter_map(|target| match cues.get(target)?.auto_trigger().filter(|a| a.source == note)?.when {
+                AutoWhen::At(at) => Some((target, at)),
+                AutoWhen::Delay(_) => None,
+            })
+            .collect();
+        autos.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+        autos
+    }
+
+    /// `autos`: how many position auto-cues hang on the cue's audio. Each gets a strip
+    /// of its own under the waveform for its line to run out in.
+    fn cue_height(rows: usize, has_audio: bool, autos: usize) -> f32 {
+        let wave = if has_audio { WAVE_HEIGHT + 10.0 + autos as f32 * AUTO_STRIP + CONTROLS + 4.0 } else { 0.0 };
         8.0 + 10.0 + ROW + rows as f32 * ROW + wave + 10.0
     }
 
@@ -887,7 +894,8 @@ impl ScriptView {
                 Block::Config(_) => 0.0,
                 Block::Cue(cue) => {
                     let rows = Self::cue_rows(cx, i, self.cue_of_block[i].unwrap_or(0), cue, &self.durations);
-                    Self::cue_height(Self::cue_lines(ui, &rows, width), cue.audio().is_some())
+                    let autos = Self::position_autos(&Cues::new(cx.script), cue.note()).len();
+                    Self::cue_height(Self::cue_lines(ui, &rows, width), cue.audio().is_some(), autos)
                 }
                 block => {
                     let job = Self::job(cx.cast, block, width, self.numbers.get(i).copied().flatten()).unwrap_or_default();
@@ -1637,7 +1645,8 @@ impl ScriptView {
             let ghost = of_part(0, VoiceState::Tail);
             let position = playing.or(snapshot.paused.iter().find(|(c, _)| *c == cue_index).map(|(_, seconds)| *seconds));
             let duration = self.draw_waveform(ui, cx, block, cue_index, cue.note(), part, (position, ghost), playing.is_some(), wave, actions);
-            let row = Rect::from_min_size(pos2(left, wave.bottom() + 4.0), vec2(width, CONTROLS));
+            let strips = Self::position_autos(&Cues::new(cx.script), cue.note()).len() as f32 * AUTO_STRIP;
+            let row = Rect::from_min_size(pos2(left, wave.bottom() + 4.0 + strips), vec2(width, CONTROLS));
             // While a later part plays, the row says so instead of a position in this one.
             let later = snapshot.audio.iter().find(|(c, s)| *c == cue_index && s.part > 0 && s.state == VoiceState::Playing).map(|(_, s)| (s.part, s.seconds));
             self.draw_transport(ui, cx, (block, cue_index), part, audio.looped, sounding, (position, later), duration, row, actions);
@@ -2054,7 +2063,15 @@ impl ScriptView {
                 }
                 let colour = PURPLE;
                 if rect.x_range().contains(x_of(at)) {
-                    self.auto_anchors.insert(target_block, pos2(x_of(at), rect.bottom()));
+                    // The marker goes on below the waveform to the strip its line runs out
+                    // in. The further left a marker stands, the higher its strip: a line
+                    // running out to the left then never meets another marker's foot.
+                    let mut places: Vec<(f64, usize)> = Self::position_autos(&cues, Some(note)).into_iter().map(|(cue, saved)| (if cue == target { at } else { cues.block_index(cue).and_then(|b| self.auto_dragging.get(&b).copied()).unwrap_or(saved) }, cue)).collect();
+                    places.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+                    let level = places.iter().position(|&(_, cue)| cue == target).unwrap_or(0);
+                    let foot = pos2(x_of(at), rect.bottom() + 3.0 + level as f32 * AUTO_STRIP);
+                    ui.painter().vline(foot.x, rect.bottom()..=foot.y, Stroke::new(1.5_f32, colour));
+                    self.auto_anchors.insert(target_block, foot);
                 }
                 painter.vline(x_of(at), rect.y_range(), Stroke::new(1.5_f32, colour));
                 // The name stands at the top; the foot of the marker is where its line leaves.
