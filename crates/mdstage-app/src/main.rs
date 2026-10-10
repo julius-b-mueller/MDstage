@@ -57,6 +57,8 @@ struct App {
     /// Audio files no cue uses, waiting for the operator to confirm moving them away.
     unused_audio: Option<Vec<String>>,
     about_open: bool,
+    /// Problem lines the operator chose not to see any more (this session).
+    ignored: Vec<String>,
     /// What "Clean up YAML" would remove (`(YAML block, key)`), waiting to be confirmed.
     cleanup: Option<Vec<(usize, String)>>,
     /// A connection between two cues whose details are being asked for.
@@ -94,6 +96,7 @@ impl App {
             live_open: false,
             unused_audio: None,
             about_open: false,
+            ignored: Vec::new(),
             cleanup: None,
             link_dialog: None,
             auto_mic_prompt: None,
@@ -472,6 +475,7 @@ impl App {
                     cue.set_yaml(yaml);
                     self.after_edit();
                 }
+                Action::OpenInEditor(block) => self.open_in_editor(*block),
                 Action::EditText(block) => {
                     if let Some(show) = &self.show {
                         self.view.edit(&show.script, *block, false);
@@ -535,7 +539,7 @@ impl App {
             self.export.get_or_insert((EXPORT_DEFAULTS, false));
         }
         if pressed(ctx, Key::Comma) && self.settings_ui.is_none() {
-            self.settings_ui = Some(SettingsUi::new(&self.settings).with_channels(self.show.as_ref().map(|s| s.script.virtual_channels()).unwrap_or_default()));
+            self.settings_ui = Some(SettingsUi::new(&self.settings).with_channels(self.show.as_ref().map(|s| s.script.virtual_channels()).unwrap_or_default()).with_show_dir(self.show.as_ref().and_then(|s| s.path.parent())));
         }
         // Go and Back only when nothing is being typed.
         if self.show.is_some() && !self.view.is_editing() && !ctx.wants_keyboard_input() {
@@ -610,7 +614,7 @@ impl App {
                 }
                 if ui.button(self.t("Einstellungen…", "Settings…")).clicked() {
                     ui.close_menu();
-                    self.settings_ui = Some(SettingsUi::new(&self.settings).with_channels(self.show.as_ref().map(|s| s.script.virtual_channels()).unwrap_or_default()));
+                    self.settings_ui = Some(SettingsUi::new(&self.settings).with_channels(self.show.as_ref().map(|s| s.script.virtual_channels()).unwrap_or_default()).with_show_dir(self.show.as_ref().and_then(|s| s.path.parent())));
                 }
                 if ui.button(self.t("Beenden", "Quit")).clicked() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -770,18 +774,58 @@ impl App {
                 allow = ui.button(self.t("Ausgaben erlauben", "Allow outputs")).clicked();
             });
         }
-        let mut lines: Vec<(String, Color32)> = show.notes.iter().map(|n| (n.clone(), MUTED)).collect();
-        lines.extend(show.report.problems.iter().map(|p| (format!("{} {}: {}", lang::t("YAML-Block", "YAML block"), p.block, p.message), RED)));
-        lines.extend(show.report.note_conflicts.iter().map(|c| (if lang::english() { format!("Trigger note {} used twice: YAML blocks {} and {}", c.note, c.first, c.second) } else { format!("Trigger-Note {} doppelt: YAML-Blöcke {} und {}", c.note, c.first, c.second) }, RED)));
-        lines.extend(self.snapshot.problems.iter().map(|p| (p.clone(), RED)));
+        // Each line: its text, its colour, and for an unknown key where it is, so it
+        // can be deleted on the spot.
+        let mut lines: Vec<(String, Color32, Option<(usize, String)>)> = show.notes.iter().map(|n| (n.clone(), MUTED, None)).collect();
+        lines.extend(show.report.problems.iter().map(|p| {
+            let unknown = p.message.strip_prefix("Unbekannter Schlüssel: ").map(|key| (p.block, key.to_string()));
+            (format!("{} {}: {}", lang::t("YAML-Block", "YAML block"), p.block, p.message), RED, unknown)
+        }));
+        lines.extend(show.report.note_conflicts.iter().map(|c| (if lang::english() { format!("Trigger note {} used twice: YAML blocks {} and {}", c.note, c.first, c.second) } else { format!("Trigger-Note {} doppelt: YAML-Blöcke {} und {}", c.note, c.first, c.second) }, RED, None)));
+        // Devices the cues send to that this machine has no address for.
+        let mut missing: Vec<&str> = Vec::new();
+        for cue in show.script.blocks.iter().filter_map(|b| match b {
+            Block::Cue(cue) if !cue.invalid => Some(cue),
+            _ => None,
+        }) {
+            for key in ["cue_midi", "cue_osc", "cue_http", "cue_display"] {
+                for device in cue.yaml.get(key).and_then(|v| v.as_sequence()).into_iter().flatten().filter_map(|m| m.get("device")?.as_str()) {
+                    if !missing.contains(&device) && !self.settings.devices.iter().any(|d| d.name() == device) {
+                        missing.push(device);
+                    }
+                }
+            }
+        }
+        lines.extend(missing.into_iter().map(|device| {
+            let text = if lang::english() { format!("The device “{device}” is not set up on this machine: what cues send to it goes nowhere.") } else { format!("Das Gerät „{device}“ ist auf diesem Rechner nicht eingerichtet: Was Cues dorthin senden, kommt nirgends an.") };
+            (text, YELLOW, None)
+        }));
+        lines.extend(self.snapshot.problems.iter().map(|p| (p.clone(), RED, None)));
+        lines.retain(|(text, _, _)| !self.ignored.contains(text));
         let mut clear = false;
+        let mut ignore = None;
+        let mut delete = None;
         if !lines.is_empty() {
-            egui::ScrollArea::vertical().id_salt("banner").max_height(88.0).show(ui, |ui| {
-                for (line, colour) in &lines {
-                    ui.label(RichText::new(line).color(*colour).size(13.0));
+            egui::ScrollArea::vertical().id_salt("banner").max_height(96.0).show(ui, |ui| {
+                for (line, colour, unknown) in &lines {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(line).color(*colour).size(13.0));
+                        if *colour != MUTED && ui.small_button(lang::t("Ignorieren", "Ignore")).clicked() {
+                            ignore = Some(line.clone());
+                        }
+                        if unknown.is_some() && !self.locked && ui.small_button(lang::t("Eigenschaft löschen", "Delete property")).clicked() {
+                            delete = unknown.clone();
+                        }
+                    });
                 }
             });
             clear = !self.snapshot.problems.is_empty() && ui.small_button(self.t("Meldungen der Engine ausblenden", "Dismiss engine messages")).clicked();
+        }
+        self.ignored.extend(ignore);
+        if let Some((block, key)) = delete {
+            if self.show.as_mut().is_some_and(|show| show.script.cleanup_one(block, &key)) {
+                self.after_edit();
+            }
         }
         if clear {
             self.request(Request::ClearProblems);
@@ -948,6 +992,19 @@ impl App {
             self.message = Some(self.t("Alle Audiodateien im audio-Ordner werden im Skript verwendet.", "Every audio file in the audio folder is used by the script.").into());
         } else {
             self.unused_audio = Some(unused);
+        }
+    }
+
+    /// Open the show file at a block in the text editor set up in the settings.
+    fn open_in_editor(&mut self, block: usize) {
+        let Some(show) = &self.show else { return };
+        let line = show.script.block_lines().get(block).copied().unwrap_or(1).to_string();
+        let file = show.path.to_string_lossy();
+        // Split into words first, so a path with spaces stays one argument.
+        let words: Vec<String> = self.settings.editor_command.split_whitespace().map(|word| word.replace("{file}", &file).replace("{line}", &line)).collect();
+        let Some((program, arguments)) = words.split_first() else { return };
+        if let Err(e) = std::process::Command::new(program).args(arguments).spawn() {
+            self.message = Some(format!("{} „{program}“: {e}", lang::t("Texteditor nicht gestartet", "Could not start the text editor")));
         }
     }
 
@@ -1131,7 +1188,7 @@ impl App {
             return;
         }
         let Some(show) = &self.show else { return };
-        let cx = Context { script: &show.script, cast: &show.cast, snapshot: &self.snapshot, locked: self.locked, line_numbers: self.settings.line_numbers, group_mics: self.settings.group_mics, can_paste: self.copied.is_some() };
+        let cx = Context { script: &show.script, cast: &show.cast, snapshot: &self.snapshot, locked: self.locked, line_numbers: self.settings.line_numbers, group_mics: self.settings.group_mics, has_editor: !self.settings.editor_command.trim().is_empty(), can_paste: self.copied.is_some() };
         let mut requests = Vec::new();
         let mut close = false;
         let builder = egui::ViewportBuilder::default().with_title(self.t("MDstage — Live-Ansicht", "MDstage — Live View")).with_inner_size([620.0, 720.0]);
@@ -1255,7 +1312,7 @@ impl eframe::App for App {
         }
         egui::CentralPanel::default().show(ctx, |ui| match &self.show {
             Some(show) => {
-                let cx = Context { script: &show.script, cast: &show.cast, snapshot: &self.snapshot, locked: self.locked, line_numbers: self.settings.line_numbers, group_mics: self.settings.group_mics, can_paste: self.copied.is_some() };
+                let cx = Context { script: &show.script, cast: &show.cast, snapshot: &self.snapshot, locked: self.locked, line_numbers: self.settings.line_numbers, group_mics: self.settings.group_mics, has_editor: !self.settings.editor_command.trim().is_empty(), can_paste: self.copied.is_some() };
                 self.view.show(ui, &cx, &mut actions);
             }
             None => {

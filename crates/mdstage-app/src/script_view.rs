@@ -62,6 +62,8 @@ pub enum Action {
     ArmLive(usize),
     /// Open an existing text block for editing.
     EditText(usize),
+    /// Open the show file at this block in the text editor set up in the settings.
+    OpenInEditor(usize),
     /// A click on a cue.
     Fire(usize),
     /// A block was edited.
@@ -114,6 +116,8 @@ pub struct Context<'a> {
     pub group_mics: bool,
     /// A cue has been copied and can be pasted.
     pub can_paste: bool,
+    /// An editor command is set up: blocks can be opened in the text editor.
+    pub has_editor: bool,
 }
 
 struct Editing {
@@ -457,7 +461,14 @@ impl ScriptView {
             }
         }
         if !sends.is_empty() {
-            let spans = sends.into_iter().map(|(label, n)| (if n > 1 { format!("{label} ×{n}") } else { label }, YELLOW)).collect();
+            // A device can be given a colour where the show file declares it.
+            let declared = cx.script.config().and_then(|c| c.get("outputDevices")).and_then(|d| d.as_sequence()).cloned().unwrap_or_default();
+            let colour = |label: &str| {
+                let device = label.split_once(' ').map_or(label, |(_, device)| device);
+                let entry = declared.iter().find(|d| d.get("name").and_then(|n| n.as_str()) == Some(device));
+                named(entry.and_then(|d| d.get("color")).and_then(|c| c.as_str())).unwrap_or(YELLOW)
+            };
+            let spans = sends.into_iter().map(|(label, n)| (if n > 1 { format!("{label} ×{n}") } else { label.clone() }, colour(&label))).collect();
             rows.push((t("Sendet", "Sends"), spans));
         }
         rows
@@ -616,16 +627,35 @@ impl ScriptView {
         pick(ui, t("Nach oben", "Move up"), Action::Move { block: index, up: true });
         pick(ui, t("Nach unten", "Move down"), Action::Move { block: index, up: false });
         pick(ui, t("Löschen", "Delete"), Action::Delete(index));
+        if cx.has_editor {
+            ui.separator();
+            pick(ui, t("Im Texteditor öffnen", "Open in the text editor"), Action::OpenInEditor(index));
+        }
     }
 
     /// Role name completing what has been typed so far: `(full name, missing rest)`.
+    /// The role names of a block being typed whose text is still empty or one word:
+    /// `(names, what is typed after them)`.
+    fn role_header(buffer: &str) -> Option<(Vec<&str>, &str)> {
+        let (names, typed) = buffer.strip_prefix("**")?.split_once("**\n")?;
+        (!names.is_empty() && !typed.contains(['\n', ' '])).then(|| (names.split('/').collect(), typed))
+    }
+
+    /// The role or group name the typed text begins: `(name, the letters still missing)`.
+    /// At the very start of a block, and again right after the names of a role block, so
+    /// several roles can be given one after the other.
     fn ghost(cast: &Cast, buffer: &str) -> Option<(String, String)> {
-        if buffer.is_empty() || buffer.contains('\n') || buffer.starts_with(['#', '*']) {
+        let (taken, typed) = match Self::role_header(buffer) {
+            Some((names, typed)) => (names, typed),
+            None if buffer.contains('\n') || buffer.starts_with(['#', '*']) => return None,
+            None => (Vec::new(), buffer),
+        };
+        if typed.is_empty() {
             return None;
         }
-        let typed = buffer.to_lowercase();
-        let name = cast.roles.iter().map(|r| &r.name).chain(cast.groups.iter().map(|g| &g.name)).find(|n| n.to_lowercase().starts_with(&typed))?;
-        let rest: String = name.chars().skip(buffer.chars().count()).collect();
+        let lower = typed.to_lowercase();
+        let name = cast.roles.iter().map(|r| &r.name).chain(cast.groups.iter().map(|g| &g.name)).find(|n| n.to_lowercase().starts_with(&lower) && !taken.contains(&n.as_str()))?;
+        let rest: String = name.chars().skip(typed.chars().count()).collect();
         Some((name.clone(), rest))
     }
 
@@ -651,9 +681,21 @@ impl ScriptView {
         } else {
             None
         };
+        // Backspace with nothing typed after the names takes the last name away again.
+        if let Some((names, "")) = Self::role_header(&editing.buffer) {
+            if cursor == Some(editing.buffer.chars().count()) && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Backspace)) {
+                editing.buffer = match names.len() {
+                    1 => String::new(),
+                    n => format!("**{}**\n", names[..n - 1].join("/")),
+                };
+            }
+        }
         if tab {
             if let Some((name, _)) = &ghost {
-                editing.buffer = format!("**{name}**\n");
+                editing.buffer = match Self::role_header(&editing.buffer) {
+                    Some((names, _)) => format!("**{}/{name}**\n", names.join("/")),
+                    None => format!("**{name}**\n"),
+                };
                 let end = CCursor::new(editing.buffer.chars().count());
                 if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), id) {
                     state.cursor.set_char_range(Some(CCursorRange::one(end)));

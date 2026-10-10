@@ -29,6 +29,10 @@ pub struct SettingsUi {
     pub channels: Vec<(Option<String>, String)>,
     /// Set when a channel's test button was pressed: the physical output (0-based).
     pub test_output: Option<usize>,
+    /// Stylesheets in the open show's `css/` folder.
+    css_files: Vec<String>,
+    /// This machine's address in the local network, if it has one.
+    lan_address: Option<String>,
 }
 
 /// A text field that takes the remaining room up to `width`.
@@ -84,7 +88,18 @@ impl SettingsUi {
             learning: None,
             channels: Vec::new(),
             test_output: None,
+            css_files: Vec::new(),
+            // Asking which local address a route to the outside would use sends nothing.
+            lan_address: std::net::UdpSocket::bind("0.0.0.0:0").and_then(|s| s.connect("192.0.2.1:9").and_then(|()| s.local_addr())).ok().map(|a| a.ip().to_string()),
         }
+    }
+
+    /// List the stylesheets of the open show (`css/*.css` next to the show file).
+    pub fn with_show_dir(mut self, show_dir: Option<&std::path::Path>) -> SettingsUi {
+        let entries = show_dir.and_then(|dir| std::fs::read_dir(dir.join("css")).ok());
+        self.css_files = entries.into_iter().flatten().filter_map(|e| e.ok()?.file_name().into_string().ok()).filter(|n| n.to_lowercase().ends_with(".css")).collect();
+        self.css_files.sort();
+        self
     }
 
     /// Edit the virtual channels of the open show along with the settings.
@@ -117,6 +132,7 @@ impl SettingsUi {
         let problem = self.channel_problem();
         let channels = &mut self.channels;
         let mut test_output = None;
+        let (css_files, lan_address) = (&self.css_files, &self.lan_address);
         egui::ScrollArea::vertical().auto_shrink([false, false]).max_height(ui.available_height() - 44.0).show(ui, |ui| {
             let draft = &mut self.draft;
             ui.heading(t("Allgemein", "General"));
@@ -129,6 +145,18 @@ impl SettingsUi {
             ui.checkbox(&mut draft.open_locked, t("Gesperrt öffnen", "Open locked"));
             ui.checkbox(&mut draft.group_mics, t("Mikrofone in Gruppen bündeln", "Bundle microphones into groups"));
             ui.checkbox(&mut draft.line_numbers, t("Markdown-Zeilennummern anzeigen", "Show Markdown line numbers"));
+            ui.horizontal(|ui| {
+                ui.label(t("Texteditor (Rechtsklick auf einen Block)", "Text editor (right-click on a block)"));
+                let presets = [("", t("— deaktiviert —", "— disabled —")), ("code -g {file}:{line}", "VS Code"), ("zed {file}:{line}", "Zed")];
+                let shown = presets.iter().find(|(command, _)| *command == draft.editor_command).map_or(t("eigener Befehl", "custom command"), |(_, label)| label);
+                egui::ComboBox::from_id_salt("editor").selected_text(shown).show_ui(ui, |ui| {
+                    for (command, label) in presets {
+                        ui.selectable_value(&mut draft.editor_command, command.to_string(), label);
+                    }
+                });
+                field(ui, &mut draft.editor_command, t("z. B. myeditor {file}:{line}", "e.g. myeditor {file}:{line}"), 220.0);
+            });
+            ui.label(RichText::new(t("{file} = Dateipfad · {line} = Zeilennummer", "{file} = file path · {line} = line number")).color(MUTED));
 
             ui.add_space(12.0);
             ui.heading("Audio");
@@ -218,7 +246,11 @@ impl SettingsUi {
                     DeviceSetting::Display { name, style, scroll_seconds, language, repeat } => {
                         ui.label(RichText::new("Display").color(RED));
                         field(ui, name, "Name", 120.0);
-                        field(ui, style, t("dark / light / subtitle / datei.css", "dark / light / subtitle / file.css"), 150.0);
+                        egui::ComboBox::from_id_salt(("display-style", i)).selected_text(if style.is_empty() { "dark" } else { style.as_str() }).width(130.0).show_ui(ui, |ui| {
+                            for choice in ["dark", "light", "subtitle"].into_iter().chain(css_files.iter().map(String::as_str)) {
+                                ui.selectable_value(style, choice.to_string(), choice);
+                            }
+                        });
                         ui.label(t("Blättern (s)", "Scroll (s)"));
                         ui.add(egui::DragValue::new(scroll_seconds).range(0..=600));
                         field(ui, language, t("Sprache (de, en …)", "Language (de, en …)"), 60.0);
@@ -256,6 +288,20 @@ impl SettingsUi {
                 ui.add(egui::DragValue::new(&mut draft.display_port).range(1..=65535));
             });
             ui.label(RichText::new(t("127.0.0.1 = nur dieser Rechner; 0.0.0.0 = im ganzen Netzwerk erreichbar. Gilt ab dem nächsten Öffnen der Show.", "127.0.0.1 = this machine only; 0.0.0.0 = reachable from the whole network. Takes effect the next time the show is opened.")).color(MUTED));
+            // Where each display is to be opened in a browser.
+            let host = match draft.display_host.as_str() {
+                "0.0.0.0" | "" => lan_address.clone().unwrap_or_else(|| "127.0.0.1".into()),
+                host => host.to_string(),
+            };
+            for device in &draft.devices {
+                if let DeviceSetting::Display { name, .. } = device {
+                    let url = format!("http://{host}:{}/{}", draft.display_port, mdstage_engine::display::slugify(name));
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(name).color(MUTED));
+                        ui.add(egui::Label::new(RichText::new(&url).monospace().color(BRIGHT)).selectable(true));
+                    });
+                }
+            }
 
             ui.add_space(12.0);
             ui.heading(t("Mischpult-Fernsteuerung (Mikrofone)", "Mixer remote control (microphones)"));

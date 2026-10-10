@@ -589,6 +589,19 @@ impl Script {
     /// something are rewritten.
     pub fn cleanup(&mut self) -> Vec<Removal> {
         let removals = self.cleanup_preview();
+        self.remove(&removals);
+        removals
+    }
+
+    /// Remove one of the things `cleanup_preview` lists: the key `key` of YAML block
+    /// number `block`. Returns whether it was there.
+    pub fn cleanup_one(&mut self, block: usize, key: &str) -> bool {
+        let removals: Vec<Removal> = self.cleanup_preview().into_iter().filter(|r| r.block == block && r.key == key).collect();
+        self.remove(&removals);
+        !removals.is_empty()
+    }
+
+    fn remove(&mut self, removals: &[Removal]) {
         let mut number = 0;
         for block in &mut self.blocks {
             if !matches!(block, Block::Config(_) | Block::Cue(_)) {
@@ -618,7 +631,6 @@ impl Script {
                 _ => {}
             }
         }
-        removals
     }
 }
 
@@ -902,5 +914,14 @@ config:
         });
         assert_eq!(patch, Some(vec![vec!["Saal L".to_string()], vec!["R".to_string(), "Sub".to_string()]]));
         assert!(script.blocks[2] == untouched);
+    }
+
+    #[test]
+    fn a_single_unknown_key_can_be_removed() {
+        let mut script = Script::parse("```yaml\nconfig:\n    roles: {}\n```\n\n```yaml\nfoo: 1\nbar: 2\nnote: x\n```\n");
+        assert!(script.cleanup_one(2, "foo"));
+        assert!(!script.cleanup_one(2, "foo"));
+        assert_eq!(script.cleanup_preview().iter().map(|r| r.key.as_str()).collect::<Vec<_>>(), ["bar"]);
+        assert!(script.to_markdown().contains("note: x"));
     }
 }

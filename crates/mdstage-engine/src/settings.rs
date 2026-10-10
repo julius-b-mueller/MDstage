@@ -28,6 +28,14 @@ impl From<NoteSetting> for Note {
     }
 }
 
+impl DeviceSetting {
+    pub fn name(&self) -> &str {
+        match self {
+            DeviceSetting::Midi { name, .. } | DeviceSetting::Osc { name, .. } | DeviceSetting::Http { name, .. } | DeviceSetting::Display { name, .. } => name,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum DeviceSetting {
@@ -161,6 +169,9 @@ pub struct Settings {
     pub sidebar_hidden: bool,
     /// Show the line of the show file each block begins on.
     pub line_numbers: bool,
+    /// Command that opens a line of the show file in a text editor: `{file}` and
+    /// `{line}` are filled in. Empty: no such command.
+    pub editor_command: String,
     /// Start with editing locked.
     pub open_locked: bool,
     /// Show microphones bundled into their groups rather than as a flat list of roles.
@@ -189,6 +200,7 @@ impl Default for Settings {
             language: "de".into(),
             sidebar_hidden: false,
             line_numbers: false,
+            editor_command: String::new(),
             open_locked: false,
             group_mics: true,
             recent_files: Vec::new(),
