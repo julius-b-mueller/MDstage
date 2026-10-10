@@ -159,6 +159,12 @@ pub struct Settings {
     pub language: String,
     /// The scene list at the left of the window is folded away.
     pub sidebar_hidden: bool,
+    /// Show the line of the show file each block begins on.
+    pub line_numbers: bool,
+    /// Start with editing locked.
+    pub open_locked: bool,
+    /// Show microphones bundled into their groups rather than as a flat list of roles.
+    pub group_mics: bool,
     pub recent_files: Vec<String>,
     /// SHA-256 of each show file as this machine last wrote it. A file that differs was
     /// changed elsewhere and must be confirmed before it may drive devices.
@@ -182,6 +188,9 @@ impl Default for Settings {
             display_port: 7590,
             language: "de".into(),
             sidebar_hidden: false,
+            line_numbers: false,
+            open_locked: false,
+            group_mics: true,
             recent_files: Vec::new(),
             trusted: HashMap::new(),
         }

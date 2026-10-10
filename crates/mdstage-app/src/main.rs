@@ -56,6 +56,8 @@ struct App {
     live_open: bool,
     /// Audio files no cue uses, waiting for the operator to confirm moving them away.
     unused_audio: Option<Vec<String>>,
+    /// What "Clean up YAML" would remove (`(YAML block, key)`), waiting to be confirmed.
+    cleanup: Option<Vec<(usize, String)>>,
     /// A connection between two cues whose details are being asked for.
     link_dialog: Option<LinkDialog>,
     /// Auto-Mic is about to be switched on for this block while cues still name
@@ -81,6 +83,7 @@ impl App {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         let settings = Settings::load(&store::settings_path());
         lang::set_english(settings.language == "en");
+        let settings_open_locked = settings.open_locked;
         let last = settings.recent_files.first().map(PathBuf::from).filter(|p| p.exists());
         let mut app = App {
             settings,
@@ -89,6 +92,7 @@ impl App {
             view: ScriptView::default(),
             live_open: false,
             unused_audio: None,
+            cleanup: None,
             link_dialog: None,
             auto_mic_prompt: None,
             settings_ui: None,
@@ -96,7 +100,7 @@ impl App {
             roles_ui: None,
             export: None,
             copied: None,
-            locked: false,
+            locked: settings_open_locked,
             message: None,
             followed: None,
         };
@@ -564,13 +568,9 @@ impl App {
                 ui.separator();
                 if ui.button(self.t("YAML aufräumen…", "Clean up YAML…")).clicked() {
                     ui.close_menu();
-                    let removed = self.show.as_mut().map(|s| s.script.cleanup());
-                    match removed {
-                        Some(removed) if !removed.is_empty() => {
-                            self.after_edit();
-                            self.message = Some(format!("{} {}: {}", removed.len(), lang::t("Schlüssel entfernt", "keys removed"), removed.iter().map(|r| r.key.as_str()).collect::<Vec<_>>().join(", ")));
-                        }
-                        Some(_) => self.message = Some(self.t("Nichts aufzuräumen.", "Nothing to clean up.").into()),
+                    match self.show.as_ref().map(|s| s.script.cleanup_preview()) {
+                        Some(found) if !found.is_empty() => self.cleanup = Some(found.into_iter().map(|r| (r.block, r.key)).collect()),
+                        Some(_) => self.message = Some(self.t("Es wurden keine überflüssigen YAML-Eigenschaften gefunden.", "No superfluous YAML properties were found.").into()),
                         None => {}
                     }
                 }
@@ -894,6 +894,58 @@ impl App {
         }
     }
 
+    /// "Clean up YAML": show what would go, and on confirmation keep a copy of the file
+    /// as it was (`name~uncleaned.md`) before removing it.
+    fn cleanup_window(&mut self, ctx: &egui::Context) {
+        let Some(found) = self.cleanup.take() else { return };
+        const SHOWN: usize = 30;
+        let mut open = true;
+        let mut result = None;
+        egui::Window::new(lang::t("YAML aufräumen", "Clean up YAML")).open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
+            ui.label(if lang::english() { format!("{} superfluous properties will be removed:", found.len()) } else { format!("{} überflüssige Eigenschaft(en) werden entfernt:", found.len()) });
+            ui.add_space(6.0);
+            egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                for (block, key) in found.iter().take(SHOWN) {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("{} {block}", lang::t("YAML-Block", "YAML block"))).color(MUTED));
+                        ui.label(RichText::new(key).color(BRIGHT).monospace());
+                    });
+                }
+                if found.len() > SHOWN {
+                    ui.label(RichText::new(format!("… {} {}", found.len() - SHOWN, lang::t("weitere", "more"))).color(MUTED));
+                }
+            });
+            ui.add_space(6.0);
+            ui.label(RichText::new(lang::t("Vorher wird eine Sicherungskopie als „…~uncleaned.md“ gespeichert.", "A backup is saved as “…~uncleaned.md” first.")).color(MUTED));
+            ui.separator();
+            ui.horizontal(|ui| {
+                if ui.button(lang::t("Aufräumen", "Clean up")).clicked() {
+                    result = Some(true);
+                }
+                if ui.button(lang::t("Abbrechen", "Cancel")).clicked() {
+                    result = Some(false);
+                }
+            });
+        });
+        match result {
+            Some(true) => {
+                let Some(show) = &mut self.show else { return };
+                let backup = show.path.with_file_name(format!("{}~uncleaned.md", show.path.file_stem().unwrap_or_default().to_string_lossy()));
+                // Without the copy nothing is removed.
+                if let Err(e) = std::fs::copy(&show.path, &backup) {
+                    self.message = Some(format!("{}: {e}", lang::t("Sicherungskopie nicht geschrieben, nichts aufgeräumt", "Backup not written, nothing cleaned up")));
+                    return;
+                }
+                let removed = show.script.cleanup();
+                self.after_edit();
+                self.message = Some(format!("{} {} ({}: {})", removed.len(), lang::t("Eigenschaften entfernt", "properties removed"), lang::t("Sicherung", "backup"), backup.file_name().unwrap_or_default().to_string_lossy()));
+            }
+            Some(false) => {}
+            None if open => self.cleanup = Some(found),
+            None => {}
+        }
+    }
+
     fn unused_audio_window(&mut self, ctx: &egui::Context) {
         let (Some(files), Some(show)) = (self.unused_audio.take(), &self.show) else { return };
         const SHOWN: usize = 30;
@@ -965,7 +1017,7 @@ impl App {
             return;
         }
         let Some(show) = &self.show else { return };
-        let cx = Context { script: &show.script, cast: &show.cast, snapshot: &self.snapshot, locked: self.locked, can_paste: self.copied.is_some() };
+        let cx = Context { script: &show.script, cast: &show.cast, snapshot: &self.snapshot, locked: self.locked, line_numbers: self.settings.line_numbers, group_mics: self.settings.group_mics, can_paste: self.copied.is_some() };
         let mut requests = Vec::new();
         let mut close = false;
         let builder = egui::ViewportBuilder::default().with_title(self.t("MDstage — Live-Ansicht", "MDstage — Live View")).with_inner_size([620.0, 720.0]);
@@ -1085,7 +1137,7 @@ impl eframe::App for App {
         }
         egui::CentralPanel::default().show(ctx, |ui| match &self.show {
             Some(show) => {
-                let cx = Context { script: &show.script, cast: &show.cast, snapshot: &self.snapshot, locked: self.locked, can_paste: self.copied.is_some() };
+                let cx = Context { script: &show.script, cast: &show.cast, snapshot: &self.snapshot, locked: self.locked, line_numbers: self.settings.line_numbers, group_mics: self.settings.group_mics, can_paste: self.copied.is_some() };
                 self.view.show(ui, &cx, &mut actions);
             }
             None => {
@@ -1120,6 +1172,7 @@ impl eframe::App for App {
         self.unused_audio_window(ctx);
         self.link_window(ctx);
         self.auto_mic_window(ctx);
+        self.cleanup_window(ctx);
     }
 }
 

@@ -142,9 +142,17 @@ pub fn show(ui: &mut Ui, cx: &Context) -> Vec<Request> {
             ui.label(RichText::new(t("alle aus", "all off")).color(RED));
         }
         Some(mic) => {
-            for chip in cx.cast.chips(mic, false) {
-                if let MicChip::Role { name, color } = chip {
-                    ui.label(RichText::new(name).color(named(color.as_deref()).unwrap_or(BRIGHT)).strong());
+            for chip in cx.cast.chips(mic, cx.group_mics) {
+                let colour = |color: &Option<String>| named(color.as_deref()).unwrap_or(BRIGHT);
+                match chip {
+                    MicChip::Role { name, color } => drop(ui.label(RichText::new(name).color(colour(&color)).strong())),
+                    MicChip::Group { name, color, members } => {
+                        ui.label(RichText::new(format!("{name} [")).color(colour(&color)).strong());
+                        for (member, color) in members {
+                            ui.label(RichText::new(member).color(colour(&color)));
+                        }
+                        ui.label(RichText::new("]").color(MUTED));
+                    }
                 }
             }
         }

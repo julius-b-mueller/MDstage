@@ -106,6 +106,10 @@ pub struct Context<'a> {
     pub snapshot: &'a Snapshot,
     /// Editing is off (show lock).
     pub locked: bool,
+    /// Show the line of the show file each block begins on.
+    pub line_numbers: bool,
+    /// Show microphones bundled into their groups.
+    pub group_mics: bool,
     /// A cue has been copied and can be pasted.
     pub can_paste: bool,
 }
@@ -151,6 +155,8 @@ pub struct ScriptView {
     volumes: HashMap<usize, f64>,
     /// Waveforms that are zoomed in: block → (factor, where the view begins in seconds).
     zoom: HashMap<usize, (f32, f64)>,
+    /// The line of the show file each block begins on.
+    lines: Vec<usize>,
     /// A connection being set up: the next cue clicked completes it.
     picking: Option<(Link, usize)>,
     /// Lengths of the audio files seen so far, in seconds.
@@ -352,7 +358,7 @@ impl ScriptView {
             Mic::MuteAll => rows.push(("Mic", vec![(t("alle aus", "all off").to_string(), MUTED)])),
             Mic::Open(_) => {
                 let mut spans = Vec::new();
-                for chip in cx.cast.chips(&mic, true) {
+                for chip in cx.cast.chips(&mic, cx.group_mics) {
                     match chip {
                         MicChip::Role { name, color } => spans.push((name, named(color.as_deref()).unwrap_or(BRIGHT))),
                         MicChip::Group { name, color, members } => {
@@ -465,6 +471,7 @@ impl ScriptView {
         let editing = self.editing.as_ref().map(|e| e.index);
         let blocks = &cx.script.blocks;
         self.heights.resize(blocks.len(), 0.0);
+        self.lines = cx.script.block_lines();
         self.cue_of_block = vec![None; blocks.len()];
         self.block_of_cue.clear();
         for (i, block) in blocks.iter().enumerate() {
@@ -516,7 +523,9 @@ impl ScriptView {
         if let Some(waveforms) = &mut self.waveforms {
             waveforms.poll();
         }
-        let width = (ui.available_width() - 2.0 * MARGIN).max(200.0);
+        // With line numbers the left margin is wide enough to hold them.
+        let margin = if cx.line_numbers { MARGIN + 30.0 } else { MARGIN };
+        let width = (ui.available_width() - margin - MARGIN).max(200.0);
         if self.dirty || self.heights.len() != cx.script.blocks.len() || (width - self.layout_width).abs() > 0.5 {
             self.measure(ui, cx, width);
         }
@@ -528,13 +537,17 @@ impl ScriptView {
         let output = area.show_viewport(ui, |ui, viewport| {
             ui.set_height(total + 200.0);
             ui.set_width(ui.available_width());
-            let origin = ui.min_rect().min + vec2(MARGIN, 0.0);
+            let origin = ui.min_rect().min + vec2(margin, 0.0);
             let first = self.offsets.partition_point(|&o| o <= viewport.min.y).saturating_sub(1);
             for i in first..cx.script.blocks.len() {
                 if self.offsets[i] > viewport.max.y {
                     break;
                 }
                 let rect = Rect::from_min_size(origin + vec2(0.0, self.offsets[i]), vec2(width, self.heights[i]));
+                if let Some(line) = self.lines.get(i).filter(|_| cx.line_numbers && self.heights[i] > 0.0) {
+                    let top = if matches!(cx.script.blocks[i], Block::Cue(_)) { 14.0 } else { BLOCK_PAD + 4.0 };
+                    ui.painter().text(pos2(rect.left() - 10.0, rect.top() + top), Align2::RIGHT_TOP, line.to_string(), FontId::monospace(11.0), WAVE_DIM);
+                }
                 self.draw_block(ui, cx, i, rect, actions);
             }
         });

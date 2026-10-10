@@ -93,6 +93,9 @@ impl SettingsUi {
                 ui.selectable_value(&mut draft.language, "en".to_string(), "English");
             });
             ui.checkbox(&mut draft.outputs_blocked, t("Ausgaben an Geräte blockieren (MIDI, OSC, HTTP, Displays)", "Block output to devices (MIDI, OSC, HTTP, displays)"));
+            ui.checkbox(&mut draft.open_locked, t("Gesperrt öffnen", "Open locked"));
+            ui.checkbox(&mut draft.group_mics, t("Mikrofone in Gruppen bündeln", "Bundle microphones into groups"));
+            ui.checkbox(&mut draft.line_numbers, t("Markdown-Zeilennummern anzeigen", "Show Markdown line numbers"));
 
             ui.add_space(12.0);
             ui.heading("Audio");

@@ -126,8 +126,12 @@ impl Script {
     /// keep their original text, so an unedited file survives a round trip byte for byte
     /// (provided it already follows that spacing).
     pub fn to_markdown(&self) -> String {
-        let blocks: Vec<String> = self
-            .blocks
+        self.block_texts().join("\n\n") + "\n"
+    }
+
+    /// Each block as it stands in the show file.
+    fn block_texts(&self) -> Vec<String> {
+        self.blocks
             .iter()
             .map(|block| match block {
                 Block::Config(Config { source, .. }) | Block::Cue(Cue { source, .. }) => {
@@ -139,8 +143,21 @@ impl Script {
                 Block::Role { names, text } => format!("**{}**\n{text}", names.join("/")),
                 Block::Text(text) => text.clone(),
             })
-            .collect();
-        blocks.join("\n\n") + "\n"
+            .collect()
+    }
+
+    /// The line of the show file each block begins on, counted from 1.
+    pub fn block_lines(&self) -> Vec<usize> {
+        let mut line = 1;
+        self.block_texts()
+            .iter()
+            .map(|text| {
+                let first = line;
+                // The block's own lines and the blank one after it.
+                line += text.matches('\n').count() + 2;
+                first
+            })
+            .collect()
     }
 
     pub fn config(&self) -> Option<&Value> {
@@ -340,5 +357,18 @@ music: drumroll.mp3
         assert!(cues >= 5, "{cues} cues");
         assert_eq!(invalid, 0);
         assert!(script.blocks.iter().any(|b| matches!(b, Block::Stage(_))));
+    }
+
+    #[test]
+    fn knows_the_line_each_block_begins_on() {
+        let text = "```yaml\nconfig:\n    roles: {}\n```\n\n# Akt 1\n\n**Anna**\nHallo.\nNoch eine Zeile.\n\n*Licht aus.*\n\n```yaml\nnote: x\n```\n";
+        let script = Script::parse(text);
+        assert_eq!(script.to_markdown(), text);
+        let lines = script.block_lines();
+        assert_eq!(lines, [1, 6, 8, 12, 14]);
+        for (block, line) in lines.iter().enumerate() {
+            let first = text.lines().nth(line - 1).unwrap();
+            assert!(script.block_texts()[block].starts_with(first), "block {block} does not begin on line {line}");
+        }
     }
 }
