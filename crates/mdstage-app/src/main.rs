@@ -8,6 +8,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod cue_dialog;
+mod cue_forms;
 mod export;
 mod lang;
 mod live;
@@ -391,7 +392,16 @@ impl App {
                         let what = cue.text("note").map(str::to_string).or_else(|| cue.audio().map(|a| a.parts[0].audios[0].file.clone())).unwrap_or_default();
                         links.push((note, format!("Cue {number}  ({note})  {what}").trim_end().to_string()));
                     }
-                    self.cue_dialog = Some(CueDialog::new(block, existing.is_none(), existing, &audio_dir, others_auto, links));
+                    let mut devices = cue_forms::Devices::default();
+                    for device in &self.settings.devices {
+                        match device {
+                            mdstage_engine::settings::DeviceSetting::Midi { name, .. } => devices.midi.push(name.clone()),
+                            mdstage_engine::settings::DeviceSetting::Osc { name, .. } => devices.osc.push(name.clone()),
+                            mdstage_engine::settings::DeviceSetting::Http { name, .. } => devices.http.push(name.clone()),
+                            mdstage_engine::settings::DeviceSetting::Display { name, .. } => devices.display.push(name.clone()),
+                        }
+                    }
+                    self.cue_dialog = Some(CueDialog::new(block, existing.is_none(), existing, &audio_dir, others_auto, links).with_setup(show.script.virtual_channels(), devices));
                 }
                 Action::NewText(at) => {
                     let at = *at;

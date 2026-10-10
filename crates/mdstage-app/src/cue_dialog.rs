@@ -23,6 +23,14 @@ pub struct CueDialog {
     auto_mic_in_use: bool,
     /// The other cues of the show that can be linked to: trigger note and a label.
     cues: Vec<(Note, String)>,
+    /// The names of the show's virtual channels and of the devices set up on this machine.
+    channels: Vec<String>,
+    devices: crate::cue_forms::Devices,
+    audio_dir: std::path::PathBuf,
+    /// Channel count and length (seconds) of the audio files looked at so far.
+    info: std::collections::HashMap<String, Option<(usize, f64)>>,
+    /// Tempo and number of beats for working out the loop point.
+    tempo: (f64, f64),
     /// The new name being typed for the cue's audio file.
     renaming: Option<String>,
     /// Set when the operator asked for an audio file to be renamed: `(from, to)`. The
@@ -60,7 +68,7 @@ fn number(map: &Mapping, key: &str) -> Option<f64> {
 }
 
 /// A seconds field that is absent from the YAML while it is zero.
-fn seconds(ui: &mut Ui, map: &mut Mapping, key: &str, label: &str) -> bool {
+pub(crate) fn seconds(ui: &mut Ui, map: &mut Mapping, key: &str, label: &str) -> bool {
     let mut value = number(map, key).unwrap_or(0.0);
     ui.label(label);
     let changed = ui.add(egui::DragValue::new(&mut value).speed(0.05).range(0.0..=36000.0).suffix(" s")).changed();
@@ -79,7 +87,7 @@ impl CueDialog {
         let yaml = cue.and_then(Value::as_mapping).cloned().unwrap_or_default();
         let audio_files = crate::store::audio_files(audio_dir);
         let text = yaml::dump(&Value::Mapping(yaml.clone()), true);
-        CueDialog { block, is_new, text: if yaml.is_empty() { String::new() } else { text }, yaml, text_error: None, audio_files, auto_mic_in_use, cues, renaming: None, rename_request: None }
+        CueDialog { block, is_new, text: if yaml.is_empty() { String::new() } else { text }, yaml, text_error: None, audio_files, auto_mic_in_use, cues, channels: vec!["L".into(), "R".into()], devices: Default::default(), audio_dir: audio_dir.to_path_buf(), info: Default::default(), tempo: (120.0, 4.0), renaming: None, rename_request: None }
     }
 
     /// An audio file got a new name: follow it in the file list and in the cue as it
@@ -93,6 +101,13 @@ impl CueDialog {
         mdstage_core::edit::rename_audio_in(&mut cue, from, to);
         self.yaml = cue.as_mapping().cloned().unwrap_or_default();
         self.sync_text();
+    }
+
+    /// Tell the dialog the show's virtual channels and this machine's devices.
+    pub fn with_setup(mut self, channels: Vec<String>, devices: crate::cue_forms::Devices) -> CueDialog {
+        self.channels = channels;
+        self.devices = devices;
+        self
     }
 
     /// Files were added to the audio folder: list them.
@@ -193,7 +208,28 @@ impl CueDialog {
         ui.add_space(6.0);
         let several = self.yaml.get("music").is_some_and(|m| m.get("audios").is_some());
         if several {
-            ui.label(RichText::new(t("♬ Mehrere Audios mit Patch — bitte unten im YAML bearbeiten.", "♬ Several audio files with a patch — please edit them in the YAML below.")).color(MUTED));
+            ui.label(t("♬ Audios", "♬ Audios"));
+            let (dir, cache) = (self.audio_dir.clone(), &mut self.info);
+            let mut channels_of = |file: &str| cache.entry(file.to_string()).or_insert_with(|| probe(&dir, file)).map(|(channels, _)| channels);
+            let mut music = self.yaml.get("music").and_then(Value::as_mapping).cloned().unwrap_or_default();
+            if crate::cue_forms::audios(ui, 0, &mut music, &self.audio_files, &self.channels, &mut channels_of) {
+                changed = true;
+                // One plain audio left: back to the short form.
+                let entries = music.get("audios").and_then(Value::as_sequence).cloned().unwrap_or_default();
+                let plain = entries.len() == 1 && entries[0].as_mapping().is_some_and(|a| a.len() == 1 && a.contains_key("file"));
+                match (entries.is_empty(), plain) {
+                    (true, _) => drop(music.shift_remove("audios")),
+                    (_, true) => {
+                        music.shift_remove("audios");
+                        music.insert("file".into(), entries[0].get("file").cloned().unwrap_or_default());
+                    }
+                    _ => {}
+                }
+                match music.contains_key("audios") || music.contains_key("file") {
+                    true => drop(self.yaml.insert("music".into(), Value::Mapping(music))),
+                    false => drop(self.yaml.shift_remove("music")),
+                }
+            }
         } else {
             let current = match self.yaml.get("music") {
                 Some(Value::String(file)) => file.clone(),
@@ -201,6 +237,7 @@ impl CueDialog {
                 None => String::new(),
             };
             let mut file = current.clone();
+            let mut more_audios = false;
             ui.horizontal(|ui| {
                 ui.label("♬ Audio");
                 egui::ComboBox::from_id_salt("cue-audio").selected_text(if file.is_empty() { t("— keines —", "— none —") } else { file.as_str() }).width(320.0).show_ui(ui, |ui| {
@@ -216,6 +253,9 @@ impl CueDialog {
                     if ui.button("✏").on_hover_text(hint).clicked() {
                         self.renaming = Some(file.clone());
                     }
+                }
+                if !file.is_empty() && ui.button(t("+ Audio", "+ Audio")).on_hover_text(t("Weitere Audios, die zusammen spielen, mit Kanal-Patch", "Further audios that play together, with a channel patch")).clicked() {
+                    more_audios = true;
                 }
             });
             if let Some(mut name) = self.renaming.take().filter(|_| file == current && !file.is_empty()) {
@@ -240,6 +280,18 @@ impl CueDialog {
                     self.renaming = Some(name);
                 }
             }
+            if more_audios {
+                changed = true;
+                if let Some(music) = self.music() {
+                    let first = music.shift_remove("file").unwrap_or_default();
+                    let entry = |file: Value| {
+                        let mut audio = Mapping::new();
+                        audio.insert("file".into(), file);
+                        Value::Mapping(audio)
+                    };
+                    music.insert("audios".into(), Value::Sequence(vec![entry(first), entry("".into())]));
+                }
+            }
             if file != current {
                 changed = true;
                 if file.is_empty() {
@@ -250,34 +302,80 @@ impl CueDialog {
                     self.yaml.insert("music".into(), file.into());
                 }
             }
-            if self.yaml.contains_key("music") {
+        }
+        if self.yaml.contains_key("music") {
+            // Worked on as a copy, so that the short form `music: file.wav` only becomes
+            // the long one when something is actually set.
+            let mut copy = match self.yaml.get("music") {
+                Some(Value::Mapping(music)) => music.clone(),
+                Some(Value::String(file)) => {
+                    let mut music = Mapping::new();
+                    music.insert("file".into(), file.as_str().into());
+                    music
+                }
+                _ => Mapping::new(),
+            };
+            let before = changed;
+            {
+                let music = &mut copy;
+                ui.horizontal(|ui| {
+                    let mut volume = number(music, "volume").unwrap_or(mdstage_core::cues::DEFAULT_VOLUME);
+                    ui.label(t("Lautstärke", "Volume"));
+                    if ui.add(egui::Slider::new(&mut volume, 0.0..=1.0).show_value(true)).changed() {
+                        changed = true;
+                        music.insert("volume".into(), ((volume * 100.0).round() / 100.0).into());
+                    }
+                    let mut looped = music.get("loop").and_then(Value::as_bool) == Some(true);
+                    if ui.checkbox(&mut looped, "Loop").changed() {
+                        changed = true;
+                        if looped {
+                            music.insert("loop".into(), true.into());
+                        } else {
+                            music.shift_remove("loop");
+                        }
+                    }
+                });
+                ui.horizontal(|ui| {
+                    changed |= seconds(ui, music, "fadein", t("Einblenden", "Fade in"));
+                    changed |= seconds(ui, music, "fadeout", t("Ausblenden", "Fade out"));
+                    changed |= seconds(ui, music, "fading_point", t("Loop-Punkt", "Loop point"));
+                });
+                ui.label(RichText::new(t("Start und Ende: Marker an der Wellenform mit Shift ziehen.", "Start and end: drag the markers on the waveform with Shift.")).color(MUTED));
+            }
+            if changed && !before {
+                self.yaml.insert("music".into(), Value::Mapping(copy));
+            }
+            // The loop point from the music's tempo: so many beats before the end.
+            let first_file = self.yaml.get("music").and_then(|m| m.get("file").or_else(|| m.get("audios")?.get(0)?.get("file"))).and_then(Value::as_str).map(str::to_string);
+            let mut loop_point = None;
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(t("Loop-Punkt aus dem Tempo:", "Loop point from the tempo:")).color(MUTED));
+                ui.add(egui::DragValue::new(&mut self.tempo.0).speed(0.5).range(20.0..=400.0).suffix(" BPM"));
+                ui.add(egui::DragValue::new(&mut self.tempo.1).speed(0.1).range(0.0..=1024.0).suffix(t(" Schläge vor dem Ende", " beats before the end")));
+                if ui.button(t("Setzen", "Set")).clicked() {
+                    let (dir, cache) = (self.audio_dir.clone(), &mut self.info);
+                    let length = first_file.as_deref().and_then(|file| *cache.entry(file.to_string()).or_insert_with(|| probe(&dir, file))).map(|(_, seconds)| seconds);
+                    let end = self.yaml.get("music").and_then(|m| m.get("end")).and_then(Value::as_f64).or(length);
+                    loop_point = end.map(|end| end - self.tempo.1 / self.tempo.0 * 60.0).filter(|point| *point > 0.0);
+                }
+            });
+            if let Some(point) = loop_point {
                 if let Some(music) = self.music() {
-                    ui.horizontal(|ui| {
-                        let mut volume = number(music, "volume").unwrap_or(mdstage_core::cues::DEFAULT_VOLUME);
-                        ui.label(t("Lautstärke", "Volume"));
-                        if ui.add(egui::Slider::new(&mut volume, 0.0..=1.0).show_value(true)).changed() {
-                            changed = true;
-                            music.insert("volume".into(), ((volume * 100.0).round() / 100.0).into());
-                        }
-                        let mut looped = music.get("loop").and_then(Value::as_bool) == Some(true);
-                        if ui.checkbox(&mut looped, "Loop").changed() {
-                            changed = true;
-                            if looped {
-                                music.insert("loop".into(), true.into());
-                            } else {
-                                music.shift_remove("loop");
-                            }
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        changed |= seconds(ui, music, "fadein", t("Einblenden", "Fade in"));
-                        changed |= seconds(ui, music, "fadeout", t("Ausblenden", "Fade out"));
-                        changed |= seconds(ui, music, "fading_point", t("Loop-Punkt", "Loop point"));
-                    });
-                    ui.label(RichText::new(t("Start und Ende: Marker an der Wellenform mit Shift ziehen.", "Start and end: drag the markers on the waveform with Shift.")).color(MUTED));
+                    changed = true;
+                    music.insert("fading_point".into(), ((point * 10000.0).round() / 10000.0).into());
                 }
             }
         }
+
+        let has_sequence = self.yaml.contains_key("music_seq");
+        egui::CollapsingHeader::new(t("Weitere Dateien (Sequenz)", "Further files (sequence)")).id_salt("cue-sequence").default_open(has_sequence).show(ui, |ui| {
+            ui.label(RichText::new(t("Die Dateien spielen nacheinander und beginnen dann wieder von vorn; jede übergibt an ihrem Loop-Punkt.", "The files play one after the other and then start over; each hands on at its loop point.")).color(MUTED));
+            changed |= crate::cue_forms::sequence(ui, &mut self.yaml, &self.audio_files);
+        });
+        let sends = ["cue_midi", "cue_osc", "cue_http", "cue_display", "osc"].iter().any(|key| self.yaml.contains_key(*key));
+        egui::CollapsingHeader::new(t("Nachrichten an Geräte", "Messages to devices")).id_salt("cue-messages").default_open(sends).show(ui, |ui| {
+            changed |= crate::cue_forms::messages(ui, &mut self.yaml, &self.devices);
+        });
 
         ui.add_space(6.0);
         ui.horizontal(|ui| {
@@ -446,5 +544,39 @@ fn serde_yaml_from(text: &str) -> Result<Mapping, String> {
         Some(mdstage_core::Block::Cue(cue)) if !cue.invalid => cue.yaml.as_mapping().cloned().ok_or_else(|| t("Ein Cue besteht aus Feldern (name: wert).", "A cue consists of fields (name: value).").to_string()),
         Some(mdstage_core::Block::Config(_)) => Err(t("Das ist ein Config-Block, kein Cue.", "This is a config block, not a cue.").into()),
         _ => Err(t("YAML nicht lesbar.", "Cannot read the YAML.").into()),
+    }
+}
+
+/// Channel count and length in seconds of an audio file.
+fn probe(audio_dir: &Path, file: &str) -> Option<(usize, f64)> {
+    let path = audio_dir.join(file);
+    let rate = mdstage_engine::clip::Clip::probe_rate(&path)?;
+    let info = mdstage_engine::stream::Reader::open(&path, rate).ok()?.info();
+    Some((info.channels, info.duration()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Drawing the dialog must not change a cue nobody touched — whatever it holds.
+    #[test]
+    fn drawing_the_dialog_leaves_the_cue_as_it_is() {
+        let text = "```yaml\nconfig:\n    roles:\n        Anna: {ch: 1}\n```\n\n```yaml\ntrigger_note: {ch: 1, note: 1}\nmic: Anna\nnote: Auftritt\nstart_tc: \"01:00:00:00\"\nmusic:\n    loop: true\n    volume: 0.7\n    fadein: 1.5\n    fading_point: 12\n    audios:\n        - file: band.wav\n          patch: [L, [R, Sub]]\n        - file: click.wav\n          mono: true\n          volume: 0.5\n          patch: [Click]\n    adjust:\n        trigger_note: {ch: 1, note: 2}\n        fadeout: true\n        fadetime: 2\nmusic_seq:\n    - file: b.wav\n      fading_point: 28\n    - audios:\n          - file: c.wav\nloop_outro: {ch: 1, note: 2}\nauto_trigger:\n    trigger_note: {ch: 1, note: 2}\n    delay: 3\ncue_midi:\n    - {device: Licht, type: cc, ch: 2, cc: 7, value: 64}\n    - {type: sysex, bytes: F0 41 F7}\ncue_osc:\n    - {device: QLab, path: /go, arg: 0.8, arg_type: float}\ncue_http:\n    - {device: Pult, method: POST, path: /api, body: \"{}\"}\ncue_display:\n    - {device: Foyer, markdown: \"# Eins\", announce: Achtung}\nosc: /alt/{ch}\nosc_arg: 3\nosc_arg_type: int\n```\n\n```yaml\ntrigger_note: {ch: 1, note: 2}\nmusic: out.wav\n```\n";
+        let script = mdstage_core::Script::parse(text);
+        let cast = Cast::from_script(&script, false);
+        for block in [1, 2] {
+            let mdstage_core::Block::Cue(cue) = &script.blocks[block] else { panic!("block {block} is a cue") };
+            assert!(!cue.invalid);
+            let devices = crate::cue_forms::Devices { midi: vec!["Licht".into()], osc: vec!["QLab".into()], ..Default::default() };
+            let mut dialog = CueDialog::new(block, false, Some(&cue.yaml), Path::new("/nonexistent"), false, vec![(Note { ch: 1, note: 2 }, "Cue 2".into())]).with_setup(vec!["L".into(), "R".into(), "Sub".into(), "Click".into()], devices);
+            let ctx = egui::Context::default();
+            for _ in 0..3 {
+                let _ = ctx.run(Default::default(), |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| assert_eq!(dialog.show(ui, &cast), None));
+                });
+            }
+            assert!(dialog.value() == cue.yaml, "the dialog changed block {block}:\n{}", yaml::dump(&dialog.value(), true));
+        }
     }
 }
