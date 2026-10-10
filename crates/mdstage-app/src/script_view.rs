@@ -710,7 +710,9 @@ impl ScriptView {
     /// (no `#` for a heading, no `**Name**` for a role) is a stage direction: the show
     /// file has no other use for a bare paragraph.
     fn typed_block(buffer: &str) -> Option<Block> {
-        match Script::parse(&buffer.replace("\n\n", "\n")).blocks.into_iter().next()? {
+        // Lines with nothing on them (or only spaces) are dropped, as is space at the edges.
+        let lines: Vec<&str> = buffer.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        match Script::parse(&lines.join("\n")).blocks.into_iter().next()? {
             // An asterisk inside would end the direction early when the file is read again.
             Block::Text(text) if !text.contains('*') && !text.trim().is_empty() => Some(Block::Stage(text.trim().to_string())),
             block => Some(block),
@@ -819,8 +821,8 @@ impl ScriptView {
             }
             self.dirty = true;
         } else if commit || leave.is_some() {
-            // Whatever was typed becomes one block. An emptied editor leaves an existing
-            // block as it was and removes one that was only just inserted.
+            // Whatever was typed becomes one block. With nothing left in the editor the
+            // block goes: a new one that was left empty, or one whose text was all taken out.
             let mut removed = false;
             match Self::typed_block(&editing.buffer) {
                 Some(with) => {
@@ -830,11 +832,10 @@ impl ScriptView {
                         actions.push(Action::NewText(index + 1));
                     }
                 }
-                None if editing.fresh => {
+                None => {
                     actions.push(Action::Delete(index));
                     removed = true;
                 }
-                None => {}
             }
             if let Some(to) = leave.filter(|_| !commit) {
                 // With this block gone, the ones after it have moved up by one.
@@ -1360,6 +1361,9 @@ mod tests {
         assert_eq!(ScriptView::typed_block("# Akt 2"), Some(Block::Heading { level: 1, text: "Akt 2".into() }));
         assert_eq!(ScriptView::typed_block("**Anna**\nHallo."), Some(Block::Role { names: vec!["Anna".into()], text: "Hallo.".into() }));
         assert_eq!(ScriptView::typed_block(""), None);
+        assert_eq!(ScriptView::typed_block("  \n\t\n "), None, "nothing but space is nothing");
+        assert_eq!(ScriptView::typed_block("  Licht aus.  \n\n   \n"), Some(Block::Stage("Licht aus.".into())));
+        assert_eq!(ScriptView::typed_block("**Anna**\n\n  Hallo.  \n \nNoch was.\n"), Some(Block::Role { names: vec!["Anna".into()], text: "Hallo.\nNoch was.".into() }));
         // What is typed comes back the same from the file.
         for typed in ["Licht aus.", "Zwei\nZeilen", "x"] {
             let block = ScriptView::typed_block(typed).unwrap();
