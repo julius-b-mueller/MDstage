@@ -265,6 +265,9 @@ Every cue with an audio file shows an interactive waveform:
 - **⟳** – Toggle loop mode
 - **Volume slider** – Volume 0–100 %
 
+**Drag** along the waveform (press and move) to move the playhead; the audio follows when the
+button is released. A plain click does nothing, so the audio is not moved by accident.
+
 **Shift+Drag** on the waveform markers:
 
 | Marker | Function |

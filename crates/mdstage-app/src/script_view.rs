@@ -84,7 +84,7 @@ pub enum Action {
     PlayPause(usize),
     /// Stop a cue's audio and put it back to its start.
     StopCue(usize),
-    /// A click into a waveform: move the cue's audio there.
+    /// The playhead was dragged along a waveform: move the cue's audio there.
     Seek { cue: usize, seconds: f64 },
     /// The volume slider is being moved: the level for audio that is playing.
     LiveVolume { cue: usize, volume: f64 },
@@ -166,6 +166,8 @@ pub struct ScriptView {
     dragging: HashMap<usize, Marks>,
     /// Auto-cue markers being dragged: block of the auto-cue → seconds.
     auto_dragging: HashMap<usize, f64>,
+    /// Playheads being dragged along their waveform: block → seconds.
+    scrubbing: HashMap<usize, f64>,
     /// Volume sliders being dragged, by block.
     volumes: HashMap<usize, f64>,
     /// Waveforms that are zoomed in: block → (factor, where the view begins in seconds).
@@ -1544,7 +1546,7 @@ impl ScriptView {
         let mut marks = self.dragging.get(&block).copied().unwrap_or(saved);
 
         // The stretch of the file in view: all of it, unless zoomed in.
-        let area = ui.interact(rect, Id::new(("wave", block)), Sense::click());
+        let area = ui.interact(rect, Id::new(("wave", block)), Sense::click_and_drag());
         let (zoom, mut view_start) = self.zoom.get(&block).copied().unwrap_or((1.0, 0.0));
         let view_len = duration / zoom as f64;
         if zoom > 1.0 {
@@ -1573,15 +1575,31 @@ impl ScriptView {
 
         let shift_held = ui.input(|i| i.modifiers.shift);
         let shift = shift_held && !cx.locked;
-        if area.clicked() && !shift_held {
+        // The playhead is moved by dragging: press on the waveform and move. A mere click
+        // does nothing, so that the audio is not sent elsewhere by accident. The audio
+        // follows when the button is let go.
+        if area.dragged() && !shift_held {
             if let Some(pointer) = area.interact_pointer_pos() {
-                actions.push(Action::Seek { cue: cue_index, seconds: t_of(pointer.x) });
+                self.scrubbing.insert(block, t_of(pointer.x));
+            }
+        }
+        if area.drag_stopped() || (!area.dragged() && !area.is_pointer_button_down_on()) {
+            if let Some(seconds) = self.scrubbing.remove(&block) {
+                actions.push(Action::Seek { cue: cue_index, seconds });
             }
         }
 
+        // The markers are only there to be taken hold of while Shift is held; otherwise
+        // the whole waveform is free for moving the playhead. Letting go of Shift in the
+        // middle of a drag ends it.
+        if !shift {
+            if let Some(marks) = self.dragging.remove(&block) {
+                actions.push(Action::Markers { block, marks });
+            }
+        }
         // Markers first, so a drag in this frame already moves the shading.
         let quarter = rect.height() / 4.0;
-        for which in 0..4 {
+        for which in (0..4).filter(|_| shift) {
             let (time, y) = match which {
                 0 => (marks.start, rect.bottom() - quarter),
                 1 => (marks.end, rect.bottom() - quarter),
@@ -1660,18 +1678,22 @@ impl ScriptView {
                 let Some(auto) = cues.get(target).and_then(|c| c.auto_trigger()).filter(|a| a.source == note) else { continue };
                 let (AutoWhen::At(saved), Some(target_block)) = (auto.when, cues.block_index(target)) else { continue };
                 let mut at = self.auto_dragging.get(&target_block).copied().unwrap_or(saved);
-                let handle = Rect::from_center_size(pos2(x_of(at), rect.center().y), vec2(8.0, rect.height()));
-                let response = ui.interact(handle, Id::new(("auto-cue", block, target)), Sense::drag());
-                if shift && (response.hovered() || response.dragged()) {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-                }
-                if shift && response.dragged() {
-                    if let Some(pointer) = response.interact_pointer_pos() {
-                        at = t_of(pointer.x);
-                        self.auto_dragging.insert(target_block, at);
+                let mut let_go = !shift;
+                if shift {
+                    let handle = Rect::from_center_size(pos2(x_of(at), rect.center().y), vec2(8.0, rect.height()));
+                    let response = ui.interact(handle, Id::new(("auto-cue", block, target)), Sense::drag());
+                    if response.hovered() || response.dragged() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
                     }
+                    if response.dragged() {
+                        if let Some(pointer) = response.interact_pointer_pos() {
+                            at = t_of(pointer.x);
+                            self.auto_dragging.insert(target_block, at);
+                        }
+                    }
+                    let_go = response.drag_stopped();
                 }
-                if response.drag_stopped() {
+                if let_go {
                     if let Some(at) = self.auto_dragging.remove(&target_block) {
                         actions.push(Action::AutoCueAt { block: target_block, at });
                     }
@@ -1682,7 +1704,8 @@ impl ScriptView {
             }
         }
 
-        if let Some(seconds) = cursor {
+        // While the playhead is being dragged it is shown where it is held.
+        if let Some(seconds) = self.scrubbing.get(&block).copied().or(cursor) {
             painter.vline(x_of(seconds.clamp(0.0, duration)), rect.y_range(), Stroke::new(1.5_f32, BRIGHT));
         }
         // The ghost cursor: the audio has handed over at its loop point and rings out.
