@@ -71,7 +71,8 @@ pub fn reference() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 ("j  k", t("eine Zeile nach unten / oben; am Rand in den Textblock darunter / darüber", "one line down / up; at the edge into the text block below / above")),
                 ("w  b  e", t("nächstes Wort / Wortanfang zurück / Wortende", "next word / back to the start of a word / end of a word")),
                 ("0  ^  $", t("Zeilenanfang / erstes Zeichen / Zeilenende", "start of the line / first character / end of the line")),
-                (t("f x  F x", "f x  F x"), t("zum nächsten / vorherigen x in der Zeile (x = beliebiges Zeichen)", "to the next / previous x in the line (x = any character)")),
+                ("f x  F x", t("zum nächsten / vorherigen x in der Zeile (x = beliebiges Zeichen)", "to the next / previous x in the line (x = any character)")),
+                ("t x  T x", t("bis vor das nächste / hinter das vorherige x", "up to just before the next / just after the previous x")),
                 ("gg  G", t("erste / letzte Zeile des Blocks", "first / last line of the block")),
                 (t("Zahl davor", "a number first"), t("wiederholt die Bewegung (3j, 2w, 2fa); 3G springt zu Zeile 3", "repeats the movement (3j, 2w, 2fa); 3G goes to line 3")),
                 (t("Pfeiltasten", "arrow keys"), t("wie h j k l", "like h j k l")),
@@ -91,6 +92,8 @@ pub fn reference() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
             vec![
                 ("x", t("Zeichen löschen", "delete the character")),
                 ("dw  D", t("bis zum nächsten Wort / bis zum Zeilenende löschen", "delete up to the next word / to the end of the line")),
+                (t("d + Bewegung", "d + movement"), t("löschen bis dorthin: dfx, dtx, dFx, dTx, de, db, d$, d0, d^, dh, dl", "delete up to there: dfx, dtx, dFx, dTx, de, db, d$, d0, d^, dh, dl")),
+                (t("c + Bewegung", "c + movement"), t("dasselbe und weiter im Einfügemodus: cfx, ctx, ce, cb, c$ …", "the same, then on in insert mode: cfx, ctx, ce, cb, c$ …")),
                 ("dd", t("Zeile löschen; die einzige Zeile: den ganzen Block", "delete the line; the only line: the whole block")),
                 ("cw  C  cc", t("Wort / Rest der Zeile / ganze Zeile ersetzen", "change the word / the rest of the line / the whole line")),
                 ("J", t("Zeile mit der nächsten verbinden", "join the line with the next")),
@@ -101,6 +104,7 @@ pub fn reference() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
             t("Kopieren und Einfügen", "Copying and pasting"),
             vec![
                 ("yy  yw", t("Zeile / Wort kopieren", "copy the line / the word")),
+                (t("y + Bewegung", "y + movement"), t("kopieren bis dorthin: yfx, ytx, ye, y$ …", "copy up to there: yfx, ytx, ye, y$ …")),
                 ("p  P", t("dahinter / davor einfügen (bleibt von Block zu Block erhalten)", "paste after / before (kept from block to block)")),
             ],
         ),
@@ -321,7 +325,7 @@ impl Vim {
             }
             (Mode::Normal, Key::Backspace) => self.command('h', &mut text, &mut at),
             // A number before a movement (a lone 0 is the movement to the line's start).
-            (Mode::Normal, Key::Char(c)) if c.is_ascii_digit() && (c != '0' || self.count > 0) && !matches!(self.pending.as_str(), "d" | "c" | "y" | "da" | "ya" | "Z" | "f" | "F") => {
+            (Mode::Normal, Key::Char(c)) if c.is_ascii_digit() && (c != '0' || self.count > 0) && matches!(self.pending.as_str(), "" | "d" | "c" | "y") => {
                 self.count = (self.count * 10 + c as usize - '0' as usize).min(9999);
                 Outcome::Stay
             }
@@ -353,24 +357,6 @@ impl Vim {
         let save = |vim: &mut Vim, text: &Vec<char>, at: usize| vim.undo.push((text.iter().collect(), at));
         let first_letter = |text: &Vec<char>| start + text[start..end].iter().take_while(|c| c.is_whitespace()).count();
         let times = self.count.max(1);
-        // f and F: on to the next (back to the previous) place the character typed after
-        // them stands in the line; with a number, to that many places on.
-        if pending == "f" || pending == "F" {
-            let mut found = *at;
-            for _ in 0..times {
-                let next = match pending.as_str() {
-                    "f" => (found + 1..end).find(|&i| text[i] == c),
-                    _ => (start..found).rev().find(|&i| text[i] == c),
-                };
-                match next {
-                    Some(next) => found = next,
-                    // Not that often in the line: the cursor stays where it is.
-                    None => return Outcome::Stay,
-                }
-            }
-            *at = found;
-            return Outcome::Stay;
-        }
         // In the line of a role block's names only whole roles go (or the whole line,
         // with `dd`): the asterisks around them are not to be picked apart.
         if start == 0 {
@@ -405,6 +391,89 @@ impl Vim {
                     ("", 'p') if !self.register.as_ref().is_some_and(|(_, linewise)| *linewise) => return Outcome::Stay,
                     _ => {}
                 }
+            }
+        }
+        // Movements within the line that can stand alone or follow d, c or y: f, F, t, T
+        // with the character to look for, and after an operator also h l 0 ^ $ e b.
+        // (dw, cw, yw and the doubled dd, cc, yy have their own places below.)
+        let (operator, rest) = match pending.as_str() {
+            "da" | "ya" => (None, pending.as_str()),
+            p if p.starts_with(['d', 'c', 'y']) => (p.chars().next(), &p[1..]),
+            p => (None, p),
+        };
+        let find = |forward: bool| -> Option<usize> {
+            let mut found = *at;
+            for _ in 0..times {
+                found = match forward {
+                    true => (found + 1..end).find(|&i| text[i] == c)?,
+                    false => (start..found).rev().find(|&i| text[i] == c)?,
+                };
+            }
+            Some(found)
+        };
+        // Where the movement leads, and whether the character there is part of what an
+        // operator takes. The outer `None`: this key is no such movement.
+        let target: Option<Option<(usize, bool)>> = match (rest, c) {
+            ("f", _) => Some(find(true).map(|found| (found, true))),
+            ("F", _) => Some(find(false).map(|found| (found, false))),
+            // t and T stop one short of the character.
+            ("t", _) => Some(find(true).map(|found| (found - 1, true))),
+            ("T", _) => Some(find(false).map(|found| (found + 1, false))),
+            ("", 'f' | 'F' | 't' | 'T') => {
+                self.pending = operator.into_iter().chain([c]).collect();
+                return Outcome::Stay;
+            }
+            ("", 'h') if operator.is_some() => Some(Some((at.saturating_sub(times).max(start), false))),
+            ("", 'l') if operator.is_some() => Some(Some(((*at + times).min(end), false))),
+            ("", '0') if operator.is_some() => Some(Some((start, false))),
+            ("", '^') if operator.is_some() => Some(Some((first_letter(text), false))),
+            ("", '$') if operator.is_some() => Some(Some((end, false))),
+            ("", 'e') if operator.is_some() => Some(Some(((0..times).fold(*at, |at, _| word_end(text, at)).min(end.saturating_sub(1)), true))),
+            ("", 'b') if operator.is_some() => Some(Some(((0..times).fold(*at, |at, _| previous_word(text, at)).max(start), false))),
+            _ => None,
+        };
+        match (target, operator) {
+            (None, _) => {}
+            // The character is not in the line (often enough): nothing happens.
+            (Some(None), _) => return Outcome::Stay,
+            (Some(Some((place, _))), None) => {
+                *at = place;
+                return Outcome::Stay;
+            }
+            (Some(Some((place, inclusive))), Some(operator)) => {
+                let (from, to) = if place >= *at { (*at, (place + inclusive as usize).min(end)) } else { (place, *at) };
+                if from >= to {
+                    return Outcome::Stay;
+                }
+                // Among a role block's names d and c still take whole roles.
+                if let Some(names) = role_names(text).filter(|_| start == 0 && operator != 'y') {
+                    let before: String = text.iter().collect();
+                    if operator == 'd' {
+                        if let Some(cursor) = remove_role(text, *at) {
+                            self.undo.push((before, *at));
+                            *at = cursor;
+                        }
+                    } else {
+                        let name = names.iter().find(|name| *at <= name.end).or(names.last()).cloned().unwrap_or(2..2);
+                        self.undo.push((before, *at));
+                        text.drain(name.clone());
+                        *at = name.start;
+                        self.mode = Mode::Insert;
+                    }
+                    return Outcome::Stay;
+                }
+                if operator != 'y' {
+                    save(self, text, *at);
+                }
+                self.yank(&text[from..to].to_vec(), false);
+                if operator != 'y' {
+                    text.drain(from..to);
+                }
+                *at = from;
+                if operator == 'c' {
+                    self.mode = Mode::Insert;
+                }
+                return Outcome::Stay;
             }
         }
         match (pending.as_str(), c) {
@@ -584,7 +653,7 @@ impl Vim {
             ("Z", 'Q') => return Outcome::Discard,
 
             // The first key of a two-key command.
-            ("", 'd' | 'c' | 'y' | 'g' | 'Z' | ':' | 'f' | 'F') => self.pending.push(c),
+            ("", 'd' | 'c' | 'y' | 'g' | 'Z' | ':') => self.pending.push(c),
             _ => {}
         }
         Outcome::Stay
@@ -687,6 +756,50 @@ mod tests {
         assert_eq!(normal("a1b2c1d", 0, "f1").1, 1);
         assert_eq!(normal("a1b2c1d", 0, "2f1").1, 5);
         assert_eq!(normal(TEXT, 9, "f<x").0, "**Anna**\nallo, du da.\nUnd weiter", "Escape drops the f");
+    }
+
+    #[test]
+    fn operators_take_a_movement() {
+        // "Hallo, du da." begins at 9: H9 a10 l11 l12 o13 ,14 _15 d16 u17 _18 d19 a20 .21
+        let line = |text: String| text.lines().nth(1).unwrap().to_string();
+        let after = |cursor: usize, keys: &str| line(normal(TEXT, cursor, keys).0);
+        // f takes the character with it, t stops before it.
+        assert_eq!(after(9, "df,"), " du da.");
+        assert_eq!(after(9, "dt,"), ", du da.");
+        assert_eq!(after(9, "d2fd"), "a.");
+        assert_eq!(after(21, "dFd"), "Hallo, du .", "backwards: up to the cursor, which stays");
+        assert_eq!(after(21, "dTd"), "Hallo, du d.");
+        assert_eq!(after(9, "dfX"), "Hallo, du da.", "not in the line: nothing happens");
+        assert_eq!(after(9, "df<x"), "allo, du da.", "Escape drops it");
+        // The other movements within the line.
+        assert_eq!(after(9, "de"), ", du da.");
+        assert_eq!(after(16, "db"), "Hallodu da.");
+        assert_eq!(after(16, "d$"), "Hallo, ");
+        assert_eq!(after(16, "d0"), "du da.");
+        assert_eq!(after(11, "dl"), "Halo, du da.");
+        assert_eq!(after(11, "dh"), "Hllo, du da.");
+        assert_eq!(normal(TEXT, 9, "df,").1, 9);
+        assert_eq!(normal(TEXT, 21, "dFd").1, 19);
+        assert_eq!(after(9, "df,u"), "Hallo, du da.");
+        // c is d and then typing; y only copies.
+        let mut vim = Vim::default();
+        let (text, cursor, _) = run(&mut vim, TEXT, 9, "cf,");
+        assert_eq!((line(text).as_str(), cursor, vim.mode), (" du da.", 9, Mode::Insert));
+        let mut vim = Vim::default();
+        let (text, cursor, _) = run(&mut vim, TEXT, 16, "ct.");
+        assert_eq!((line(text).as_str(), cursor, vim.mode), ("Hallo, .", 16, Mode::Insert));
+        assert_eq!(after(9, "yf,$p"), "Hallo, du da.Hallo,");
+        assert_eq!(after(16, "ye0P"), "duHallo, du da.");
+        // t and T alone are movements.
+        assert_eq!(normal(TEXT, 9, "td").1, 15);
+        assert_eq!(normal(TEXT, 21, "Td").1, 20);
+        // Among a role's names d and c with a movement still take the whole role.
+        assert_eq!(normal("**Anna/Ben**\nHallo.", 2, "dfa").0, "**Ben**\nHallo.");
+        assert_eq!(normal("**Anna/Ben**\nHallo.", 2, "d$").0, "**Ben**\nHallo.");
+        assert_eq!(normal("**Anna/Ben**\nHallo.", 8, "cfn").0, "**Anna/**\nHallo.");
+        // What was there before still works.
+        assert_eq!(after(16, "dw"), "Hallo, da.");
+        assert_eq!(after(12, "dd"), "Und weiter");
     }
 
     #[test]
