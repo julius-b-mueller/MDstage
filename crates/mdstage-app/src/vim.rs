@@ -19,6 +19,7 @@ pub enum Key {
     Char(char),
     Escape,
     Enter,
+    Backspace,
 }
 
 /// What a key asks of the editor beyond changing the block's text.
@@ -29,6 +30,8 @@ pub enum Outcome {
     Close,
     /// Close the editor without the changes.
     Discard,
+    /// Close the editor if nothing was changed (`:q`); otherwise stay.
+    Quit,
     /// Go on in the text block above / below.
     LeaveUp,
     LeaveDown,
@@ -42,7 +45,8 @@ pub enum Outcome {
 #[derive(Default)]
 pub struct Vim {
     pub mode: Mode,
-    /// The first key of a two-key command (`d`, `c`, `y`, `g`, `Z`).
+    /// The first key of a two-key command (`d`, `c`, `y`, `g`, `Z`), or a command line
+    /// being typed (`:w`).
     pending: String,
     /// What was last deleted or yanked, and whether it was whole lines. Kept from block
     /// to block.
@@ -150,11 +154,30 @@ impl Vim {
                 Outcome::Stay
             }
             (Mode::Insert, _) => Outcome::Stay,
-            (Mode::Normal, Key::Escape) if !self.pending.is_empty() => {
+            // Escape only ever leads back to plain normal mode; it never closes the editor.
+            (Mode::Normal, Key::Escape) => {
                 self.pending.clear();
                 Outcome::Stay
             }
-            (Mode::Normal, Key::Escape | Key::Enter) => Outcome::Close,
+            // A command line: `:w` and its relatives are how the editor is left.
+            (Mode::Normal, key) if self.pending.starts_with(':') => match key {
+                Key::Char(c) => {
+                    self.pending.push(c);
+                    Outcome::Stay
+                }
+                Key::Backspace => {
+                    self.pending.pop();
+                    Outcome::Stay
+                }
+                _ => match std::mem::take(&mut self.pending).as_str() {
+                    ":w" | ":wq" | ":x" => Outcome::Close,
+                    ":q!" => Outcome::Discard,
+                    ":q" => Outcome::Quit,
+                    _ => Outcome::Stay,
+                },
+            },
+            (Mode::Normal, Key::Enter) => Outcome::Stay,
+            (Mode::Normal, Key::Backspace) => self.command('h', &mut text, &mut at),
             (Mode::Normal, Key::Char(c)) => self.command(c, &mut text, &mut at),
         };
         if self.mode == Mode::Normal {
@@ -214,6 +237,18 @@ impl Vim {
             ("", 'A') => {
                 self.insert(text, *at);
                 *at = end;
+            }
+            // A new line in a block that has several; a new block next to one that is a
+            // single line (a line above a role's name would not belong to the role).
+            ("", 'o') if text.contains(&'\n') => {
+                self.insert(text, *at);
+                text.insert(end, '\n');
+                *at = end + 1;
+            }
+            ("", 'O') if text.contains(&'\n') && start > 0 => {
+                self.insert(text, *at);
+                text.insert(start, '\n');
+                *at = start;
             }
             ("", 'o') => return Outcome::OpenBelow,
             ("", 'O') => return Outcome::OpenAbove,
@@ -312,7 +347,7 @@ impl Vim {
             ("Z", 'Q') => return Outcome::Discard,
 
             // The first key of a two-key command.
-            ("", 'd' | 'c' | 'y' | 'g' | 'Z') => self.pending.push(c),
+            ("", 'd' | 'c' | 'y' | 'g' | 'Z' | ':') => self.pending.push(c),
             _ => {}
         }
         Outcome::Stay
@@ -323,12 +358,18 @@ impl Vim {
 mod tests {
     use super::*;
 
-    /// Type `keys` in normal mode on `text` with the cursor at `cursor`; `<` is Escape.
+    /// Type `keys` in normal mode on `text` with the cursor at `cursor`; `<` is Escape
+    /// and a line break is Enter.
     fn run(vim: &mut Vim, text: &str, cursor: usize, keys: &str) -> (String, usize, Outcome) {
         let (mut text, mut cursor) = (text.to_string(), cursor);
         let mut outcome = Outcome::Stay;
         for c in keys.chars() {
-            outcome = vim.key(if c == '<' { Key::Escape } else { Key::Char(c) }, &mut text, &mut cursor);
+            let key = match c {
+                '<' => Key::Escape,
+                '\n' => Key::Enter,
+                c => Key::Char(c),
+            };
+            outcome = vim.key(key, &mut text, &mut cursor);
             if outcome != Outcome::Stay {
                 break;
             }
@@ -414,10 +455,43 @@ mod tests {
         assert_eq!(text, TEXT);
         vim.key(Key::Escape, &mut text, &mut cursor);
         assert_eq!((vim.mode, cursor), (Mode::Normal, 21));
-        assert_eq!(normal(TEXT, 12, "o").2, Outcome::OpenBelow);
-        assert_eq!(normal(TEXT, 12, "O").2, Outcome::OpenAbove);
         assert_eq!(normal(TEXT, 12, "ZZ").2, Outcome::Close);
         assert_eq!(normal(TEXT, 12, "ZQ").2, Outcome::Discard);
-        assert_eq!(normal(TEXT, 12, "<").2, Outcome::Close);
+    }
+
+    #[test]
+    fn o_adds_a_line_to_a_block_of_several_and_a_block_next_to_a_single_line() {
+        let mut vim = Vim::default();
+        assert_eq!(run(&mut vim, TEXT, 12, "o"), ("**Anna**\nHallo, du da.\n\nUnd weiter".to_string(), 23, Outcome::Stay));
+        assert_eq!(vim.mode, Mode::Insert);
+        let mut vim = Vim::default();
+        assert_eq!(run(&mut vim, TEXT, 12, "O"), ("**Anna**\n\nHallo, du da.\nUnd weiter".to_string(), 9, Outcome::Stay));
+        assert_eq!(vim.mode, Mode::Insert);
+        assert_eq!(normal(TEXT, 30, "o").0, "**Anna**\nHallo, du da.\nUnd weiter\n");
+        // Above a role's name there is no line of the role: that is a new block.
+        assert_eq!(normal(TEXT, 3, "O").2, Outcome::OpenAbove);
+        assert_eq!(normal("Licht aus.", 3, "o").2, Outcome::OpenBelow);
+        assert_eq!(normal("Licht aus.", 3, "O").2, Outcome::OpenAbove);
+    }
+
+    #[test]
+    fn the_editor_is_left_with_a_command_line_and_never_with_escape() {
+        assert_eq!(normal(TEXT, 12, "<<<"), (TEXT.to_string(), 12, Outcome::Stay));
+        assert_eq!(normal(TEXT, 12, "\n").2, Outcome::Stay);
+        assert_eq!(normal(TEXT, 12, ":w\n").2, Outcome::Close);
+        assert_eq!(normal(TEXT, 12, ":wq\n").2, Outcome::Close);
+        assert_eq!(normal(TEXT, 12, ":x\n").2, Outcome::Close);
+        assert_eq!(normal(TEXT, 12, ":q\n").2, Outcome::Quit);
+        assert_eq!(normal(TEXT, 12, ":q!\n").2, Outcome::Discard);
+        // While a command line is typed its letters are not commands, and Escape drops it.
+        assert_eq!(normal(TEXT, 12, ":dd<"), (TEXT.to_string(), 12, Outcome::Stay));
+        assert_eq!(normal(TEXT, 12, ":unsinn\nx").0, "**Anna**\nHalo, du da.\nUnd weiter");
+        let mut vim = Vim::default();
+        let (mut text, mut cursor) = (TEXT.to_string(), 12);
+        for key in [Key::Char(':'), Key::Char('q'), Key::Backspace, Key::Char('w')] {
+            vim.key(key, &mut text, &mut cursor);
+        }
+        assert_eq!(vim.pending(), ":w");
+        assert_eq!(vim.key(Key::Enter, &mut text, &mut cursor), Outcome::Close);
     }
 }

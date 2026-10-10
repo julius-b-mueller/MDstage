@@ -793,7 +793,8 @@ impl ScriptView {
                         let known = match key {
                             Key::Escape => Some(vim::Key::Escape),
                             Key::Enter => Some(vim::Key::Enter),
-                            Key::ArrowLeft | Key::Backspace => Some(vim::Key::Char('h')),
+                            Key::Backspace => Some(vim::Key::Backspace),
+                            Key::ArrowLeft => Some(vim::Key::Char('h')),
                             Key::ArrowRight => Some(vim::Key::Char('l')),
                             Key::ArrowUp => Some(vim::Key::Char('k')),
                             Key::ArrowDown => Some(vim::Key::Char('j')),
@@ -852,6 +853,8 @@ impl ScriptView {
             vim::Outcome::Stay => {}
             vim::Outcome::Close => close = true,
             vim::Outcome::Discard => cancel = true,
+            // `:q` only leaves a block that is as it was.
+            vim::Outcome::Quit => close = Self::typed_block(&editing.buffer).as_ref() == cx.script.blocks.get(index),
             vim::Outcome::LeaveUp => {
                 leave = above;
                 self.vim_from_below = above.is_some();
@@ -884,12 +887,14 @@ impl ScriptView {
             }
         }
 
-        let field = Rect::from_min_size(rect.min + vec2(0.0, BLOCK_PAD), vec2(rect.width(), 0.0));
+        // With Vim keys the mode is shown to the right of the field, which is that much narrower.
+        let beside = if cx.vim { 84.0 } else { 0.0 };
+        let field = Rect::from_min_size(rect.min + vec2(0.0, BLOCK_PAD), vec2(rect.width() - beside, 0.0));
         let mut child = ui.new_child(UiBuilder::new().max_rect(field));
         let output = egui::TextEdit::multiline(&mut editing.buffer)
             .id(id)
             .font(FontId::proportional(17.0))
-            .desired_width(rect.width())
+            .desired_width(rect.width() - beside)
             .desired_rows(1)
             .lock_focus(true)
             .show(&mut child);
@@ -900,8 +905,22 @@ impl ScriptView {
         if cx.vim {
             // The mode at the right edge; in normal mode a block cursor on its character.
             let normal = self.vim.mode == vim::Mode::Normal;
-            let label = if normal { format!("NORMAL {}", self.vim.pending()) } else { "INSERT".to_string() };
-            child.painter().text(pos2(rect.right(), rect.top() + 2.0), Align2::RIGHT_TOP, label.trim_end(), FontId::monospace(10.0), if normal { BLUE } else { GREEN });
+            // A command line being typed (`:w`) shows in the mode's place.
+            let label = match (normal, self.vim.pending()) {
+                (false, _) => "INSERT".to_string(),
+                (true, "") => "NORMAL".to_string(),
+                (true, pending) => pending.to_string(),
+            };
+            ui.painter().text(pos2(rect.right(), rect.top() + BLOCK_PAD + 6.0), Align2::RIGHT_TOP, label, FontId::monospace(12.0), if normal { BLUE } else { GREEN });
+            // Escape belongs to Vim here: without this the text field would give up the
+            // keyboard on it. And a click anywhere else is how the editor is left.
+            let filter = egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: true };
+            ui.memory_mut(|m| m.set_focus_lock_filter(id, filter));
+            if output.response.clicked_elsewhere() {
+                close = true;
+            } else if editing.focused && !output.response.has_focus() && !elsewhere {
+                output.response.request_focus();
+            }
             if let Some(at) = vim_cursor {
                 let here = output.galley.pos_from_cursor(&output.galley.from_ccursor(CCursor::new(at)));
                 let next = output.galley.pos_from_cursor(&output.galley.from_ccursor(CCursor::new(at + 1)));

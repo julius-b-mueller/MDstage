@@ -182,8 +182,8 @@ impl SettingsUi {
             ui.checkbox(&mut draft.group_mics, t("Mikrofone in Gruppen bündeln", "Bundle microphones into groups"));
             ui.checkbox(&mut draft.line_numbers, t("Markdown-Zeilennummern anzeigen", "Show Markdown line numbers"));
             ui.checkbox(&mut draft.vim_keys, t("Vim-Tasten im Texteditor", "Vim keys in the text editor")).on_hover_text(t(
-                "Normal- und Einfügemodus beim Bearbeiten von Text: h j k l, w b e, 0 ^ $, gg G · i a I A, o O · x, dd, dw, D, cc, cw, C, J · yy, yw, p P · u · Esc oder Enter schließt, ZQ verwirft. j und k wechseln am Rand in den Block darunter oder darüber.",
-                "Normal and insert mode when editing text: h j k l, w b e, 0 ^ $, gg G · i a I A, o O · x, dd, dw, D, cc, cw, C, J · yy, yw, p P · u · Esc or Enter closes, ZQ discards. At the edge, j and k go on in the block below or above.",
+                "Normal- und Einfügemodus beim Bearbeiten von Text: h j k l, w b e, 0 ^ $, gg G · i a I A, o O · x, dd, dw, D, cc, cw, C, J · yy, yw, p P · u · :w oder ein Klick daneben schließt, :q! verwirft. j und k wechseln am Rand in den Block darunter oder darüber; o und O fügen eine Zeile hinzu, bei einzeiligen Blöcken einen Block.",
+                "Normal and insert mode when editing text: h j k l, w b e, 0 ^ $, gg G · i a I A, o O · x, dd, dw, D, cc, cw, C, J · yy, yw, p P · u · :w or a click beside it closes, :q! discards. At the edge, j and k go on in the block below or above; o and O add a line, or a block next to a single line.",
             ));
             ui.horizontal(|ui| {
                 ui.label(t("Texteditor (Rechtsklick auf einen Block)", "Text editor (right-click on a block)"));
