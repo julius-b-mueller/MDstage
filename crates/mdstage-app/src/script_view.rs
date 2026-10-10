@@ -197,7 +197,11 @@ impl ScriptView {
     /// Open the inline editor on a block (a freshly inserted one if `fresh`).
     pub fn edit(&mut self, script: &Script, index: usize, fresh: bool) {
         let Some(block) = script.blocks.get(index) else { return };
-        let buffer = Script { blocks: vec![block.clone()] }.to_markdown().trim_end().to_string();
+        let buffer = match block {
+            // A stage direction is edited as what it says; its asterisks are the file's business.
+            Block::Stage(text) => text.clone(),
+            block => Script { blocks: vec![block.clone()] }.to_markdown().trim_end().to_string(),
+        };
         self.editing = Some(Editing { index, buffer, focused: false, fresh });
         self.dirty = true;
     }
@@ -702,6 +706,17 @@ impl ScriptView {
     }
 
     /// Role name completing what has been typed so far: `(full name, missing rest)`.
+    /// The block that text typed into the editor makes. Text with nothing to mark it
+    /// (no `#` for a heading, no `**Name**` for a role) is a stage direction: the show
+    /// file has no other use for a bare paragraph.
+    fn typed_block(buffer: &str) -> Option<Block> {
+        match Script::parse(&buffer.replace("\n\n", "\n")).blocks.into_iter().next()? {
+            // An asterisk inside would end the direction early when the file is read again.
+            Block::Text(text) if !text.contains('*') && !text.trim().is_empty() => Some(Block::Stage(text.trim().to_string())),
+            block => Some(block),
+        }
+    }
+
     /// The role names of a block being typed whose text is still empty or one word:
     /// `(names, what is typed after them)`.
     fn role_header(buffer: &str) -> Option<(Vec<&str>, &str)> {
@@ -807,7 +822,7 @@ impl ScriptView {
             // Whatever was typed becomes one block. An emptied editor leaves an existing
             // block as it was and removes one that was only just inserted.
             let mut removed = false;
-            match Script::parse(&editing.buffer.replace("\n\n", "\n")).blocks.into_iter().next() {
+            match Self::typed_block(&editing.buffer) {
                 Some(with) => {
                     actions.push(Action::Replace { block: index, with });
                     // Enter carries on writing in a new block below.
@@ -1331,5 +1346,27 @@ impl ScriptView {
             }
         });
         close
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bare_text_typed_into_the_editor_is_a_stage_direction() {
+        assert_eq!(ScriptView::typed_block("Licht aus."), Some(Block::Stage("Licht aus.".into())));
+        assert_eq!(ScriptView::typed_block("*Licht aus.*"), Some(Block::Stage("Licht aus.".into())));
+        assert_eq!(ScriptView::typed_block("# Akt 2"), Some(Block::Heading { level: 1, text: "Akt 2".into() }));
+        assert_eq!(ScriptView::typed_block("**Anna**\nHallo."), Some(Block::Role { names: vec!["Anna".into()], text: "Hallo.".into() }));
+        assert_eq!(ScriptView::typed_block(""), None);
+        // What is typed comes back the same from the file.
+        for typed in ["Licht aus.", "Zwei\nZeilen", "x"] {
+            let block = ScriptView::typed_block(typed).unwrap();
+            let written = Script { blocks: vec![block.clone()] }.to_markdown();
+            assert_eq!(Script::parse(&written).blocks, [block], "{written:?}");
+        }
+        // Text with an asterisk in it cannot be one and stays as typed.
+        assert_eq!(ScriptView::typed_block("Hallo *(leise)* du"), Some(Block::Text("Hallo *(leise)* du".into())));
     }
 }
