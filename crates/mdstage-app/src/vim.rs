@@ -40,6 +40,15 @@ pub enum Outcome {
     OpenAbove,
     /// Remove the whole block (its only line was deleted).
     DeleteBlock,
+    /// Move the block one place up / down in the script.
+    MoveUp,
+    MoveDown,
+    /// Copy the whole block; cut it (copy and remove).
+    YankBlock,
+    CutBlock,
+    /// Put the block last copied or cut below / above this one.
+    PasteBelow,
+    PasteAbove,
 }
 
 #[derive(Default)]
@@ -55,6 +64,11 @@ pub struct Vim {
     undo: Vec<(String, usize)>,
     /// Set when something was yanked or deleted: text for the system clipboard.
     pub copied: Option<String>,
+    /// A number typed before a movement: how many times to make it. 0 = none typed.
+    count: usize,
+    /// Lines still to go when `j` or `k` with a number ran out of block: the editor
+    /// carries on in the next one.
+    pub carry: usize,
 }
 
 fn line_start(text: &[char], at: usize) -> usize {
@@ -159,11 +173,16 @@ impl Vim {
         self.mode = mode;
         self.pending.clear();
         self.undo.clear();
+        self.count = 0;
     }
 
-    /// The first key of a command that waits for its second.
-    pub fn pending(&self) -> &str {
-        &self.pending
+    /// What has been typed of a command that is not complete yet: a number, the first
+    /// key of a two-key command, or a command line.
+    pub fn pending(&self) -> String {
+        match self.count {
+            0 => self.pending.clone(),
+            count => format!("{count}{}", self.pending),
+        }
     }
 
     fn yank(&mut self, text: &[char], linewise: bool) {
@@ -194,6 +213,7 @@ impl Vim {
             // Escape only ever leads back to plain normal mode; it never closes the editor.
             (Mode::Normal, Key::Escape) => {
                 self.pending.clear();
+                self.count = 0;
                 Outcome::Stay
             }
             // A command line: `:w` and its relatives are how the editor is left.
@@ -219,7 +239,20 @@ impl Vim {
                 Outcome::OpenBelow
             }
             (Mode::Normal, Key::Backspace) => self.command('h', &mut text, &mut at),
-            (Mode::Normal, Key::Char(c)) => self.command(c, &mut text, &mut at),
+            // A number before a movement (a lone 0 is the movement to the line's start).
+            (Mode::Normal, Key::Char(c)) if c.is_ascii_digit() && (c != '0' || self.count > 0) && !matches!(self.pending.as_str(), "d" | "c" | "y" | "da" | "ya" | "Z") => {
+                self.count = (self.count * 10 + c as usize - '0' as usize).min(9999);
+                Outcome::Stay
+            }
+            (Mode::Normal, Key::Char(c)) => {
+                let outcome = self.command(c, &mut text, &mut at);
+                // The number belongs to the command just carried out, unless that was only
+                // the first key of one.
+                if self.pending.is_empty() {
+                    self.count = 0;
+                }
+                outcome
+            }
         };
         if self.mode == Mode::Normal {
             // In normal mode the cursor sits on a character, not behind the last one.
@@ -238,6 +271,7 @@ impl Vim {
         let (start, end) = (line_start(text, *at), line_end(text, *at));
         let save = |vim: &mut Vim, text: &Vec<char>, at: usize| vim.undo.push((text.iter().collect(), at));
         let first_letter = |text: &Vec<char>| start + text[start..end].iter().take_while(|c| c.is_whitespace()).count();
+        let times = self.count.max(1);
         // In the line of a role block's names only whole roles go (or the whole line,
         // with `dd`): the asterisks around them are not to be picked apart.
         if start == 0 {
@@ -275,29 +309,48 @@ impl Vim {
             }
         }
         match (pending.as_str(), c) {
-            // Moving.
-            ("", 'h') => *at = at.saturating_sub(1).max(start),
-            ("", 'l') => *at = (*at + 1).min(end),
+            // Moving; a number typed before says how many times.
+            ("", 'h') => *at = at.saturating_sub(times).max(start),
+            ("", 'l') => *at = (*at + times).min(end),
             ("", 'j') => {
-                if end == text.len() {
-                    return Outcome::LeaveDown;
+                for done in 0..times {
+                    let (start, end) = (line_start(text, *at), line_end(text, *at));
+                    if end == text.len() {
+                        self.carry = times - done - 1;
+                        return Outcome::LeaveDown;
+                    }
+                    let below = end + 1;
+                    *at = (below + (*at - start)).min(line_end(text, below));
                 }
-                let below = end + 1;
-                *at = (below + (*at - start)).min(line_end(text, below));
             }
             ("", 'k') => {
-                if start == 0 {
-                    return Outcome::LeaveUp;
+                for done in 0..times {
+                    let start = line_start(text, *at);
+                    if start == 0 {
+                        self.carry = times - done - 1;
+                        return Outcome::LeaveUp;
+                    }
+                    let above = line_start(text, start - 1);
+                    *at = (above + (*at - start)).min(start - 1);
                 }
-                let above = line_start(text, start - 1);
-                *at = (above + (*at - start)).min(start - 1);
             }
             ("", '0') => *at = start,
             ("", '^') => *at = first_letter(text),
             ("", '$') => *at = end,
-            ("", 'w') => *at = next_word(text, *at),
-            ("", 'b') => *at = previous_word(text, *at),
-            ("", 'e') => *at = word_end(text, *at),
+            ("", 'w') => (0..times).for_each(|_| *at = next_word(text, *at)),
+            ("", 'b') => (0..times).for_each(|_| *at = previous_word(text, *at)),
+            ("", 'e') => (0..times).for_each(|_| *at = word_end(text, *at)),
+            // With a number, G and gg go to that line of the block.
+            ("", 'G') | ("g", 'g') if self.count > 0 => {
+                *at = 0;
+                for _ in 1..times {
+                    let end = line_end(text, *at);
+                    if end == text.len() {
+                        break;
+                    }
+                    *at = end + 1;
+                }
+            }
             ("", 'G') => *at = line_start(text, text.len()),
             ("g", 'g') => *at = 0,
 
@@ -329,6 +382,14 @@ impl Vim {
             // A new block, below or above this one.
             ("g", 'o') => return Outcome::OpenBelow,
             ("g", 'O') => return Outcome::OpenAbove,
+            // The block as a whole: move it, copy or cut it ("a block"), put it elsewhere.
+            ("g", 'J') => return Outcome::MoveDown,
+            ("g", 'K') => return Outcome::MoveUp,
+            ("y", 'a') | ("d", 'a') => self.pending = format!("{pending}a"),
+            ("ya", 'b') => return Outcome::YankBlock,
+            ("da", 'b') => return Outcome::CutBlock,
+            ("g", 'p') => return Outcome::PasteBelow,
+            ("g", 'P') => return Outcome::PasteAbove,
 
             // Deleting and changing.
             ("", 'x') if *at < end => {
@@ -480,6 +541,42 @@ mod tests {
         assert_eq!(normal(TEXT, 9, "e").1, 13);
         assert_eq!(normal(TEXT, 16, "b").1, 14);
         assert_eq!(normal("  eingerückt", 8, "^").1, 2);
+    }
+
+    #[test]
+    fn a_number_repeats_a_movement() {
+        const LINES: &str = "eins zwei drei vier\nb\nc\nd\ne";
+        assert_eq!(normal(LINES, 0, "3l").1, 3);
+        assert_eq!(normal(LINES, 0, "2w").1, 10);
+        assert_eq!(normal(LINES, 0, "3wb").1, 10);
+        assert_eq!(normal(LINES, 0, "12l").1, 12, "two digits");
+        assert_eq!(normal(LINES, 5, "10l0").1, 0, "a lone 0 is still the start of the line");
+        assert_eq!(normal(LINES, 0, "2j").1, 22);
+        assert_eq!(normal(LINES, 26, "3k").1, 20);
+        assert_eq!(normal(LINES, 0, "3G").1, 22);
+        assert_eq!(normal(LINES, 26, "2gg").1, 20);
+        // Past the block's edge the rest is carried into the next block.
+        let mut vim = Vim::default();
+        assert_eq!(run(&mut vim, LINES, 22, "5j").2, Outcome::LeaveDown);
+        assert_eq!(vim.carry, 2, "two lines in this block, one to step over, two left");
+        let mut vim = Vim::default();
+        assert_eq!(run(&mut vim, LINES, 0, "2k").2, Outcome::LeaveUp);
+        assert_eq!(vim.carry, 1);
+        // A number does not multiply anything else, and does not linger.
+        assert_eq!(normal(LINES, 0, "3x").0, "ins zwei drei vier\nb\nc\nd\ne");
+        assert_eq!(normal(LINES, 0, "3xl").1, 1);
+        assert_eq!(normal(LINES, 0, "3<l").1, 1, "Escape drops the number");
+    }
+
+    #[test]
+    fn the_block_as_a_whole_is_moved_copied_cut_and_put() {
+        assert_eq!(normal(TEXT, 12, "gJ").2, Outcome::MoveDown);
+        assert_eq!(normal(TEXT, 12, "gK").2, Outcome::MoveUp);
+        assert_eq!(normal(TEXT, 12, "yab").2, Outcome::YankBlock);
+        assert_eq!(normal(TEXT, 12, "dab").2, Outcome::CutBlock);
+        assert_eq!(normal(TEXT, 12, "gp").2, Outcome::PasteBelow);
+        assert_eq!(normal(TEXT, 12, "gP").2, Outcome::PasteAbove);
+        assert_eq!(normal(TEXT, 12, "da<x").0, "**Anna**\nHalo, du da.\nUnd weiter");
     }
 
     #[test]

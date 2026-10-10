@@ -523,6 +523,24 @@ impl App {
                     self.after_edit();
                 }
                 Action::OpenInEditor(block) => self.open_in_editor(*block),
+                Action::MoveAndEdit { block, up } => {
+                    let Some(show) = &mut self.show else { continue };
+                    let at = show.script.move_block(*block, *up);
+                    if at != *block {
+                        self.after_edit();
+                    }
+                    if let Some(show) = &self.show {
+                        self.view.edit(&show.script, at, false);
+                    }
+                }
+                Action::InsertAndEdit { at, block } => {
+                    let Some(show) = &mut self.show else { continue };
+                    show.script.insert_block(*at, block.clone());
+                    self.after_edit();
+                    if let Some(show) = &self.show {
+                        self.view.edit(&show.script, *at, false);
+                    }
+                }
                 Action::EditText(block) => {
                     if let Some(show) = &self.show {
                         self.view.edit(&show.script, *block, false);

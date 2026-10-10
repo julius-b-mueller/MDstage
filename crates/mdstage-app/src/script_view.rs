@@ -27,6 +27,8 @@ const WAVE_HEIGHT: f32 = 64.0;
 /// Height of the row of transport controls under a waveform.
 const CONTROLS: f32 = 26.0;
 const MAX_ZOOM: f32 = 32.0;
+/// Width of the column beside the inline editor that holds its move buttons.
+const ARROWS: f32 = 30.0;
 
 /// The markers on a waveform, in seconds: where the audio starts and ends, and how long
 /// it fades in and out.
@@ -63,6 +65,10 @@ pub enum Action {
     ArmLive(usize),
     /// Open an existing text block for editing.
     EditText(usize),
+    /// Move a block one place up or down and go on editing it there.
+    MoveAndEdit { block: usize, up: bool },
+    /// Put a block in before this index and edit it.
+    InsertAndEdit { at: usize, block: Block },
     /// Open the show file at this block in the text editor set up in the settings.
     OpenInEditor(usize),
     /// A click on a cue.
@@ -174,6 +180,12 @@ pub struct ScriptView {
     /// The block about to be edited was reached with `k` from the one below: the cursor
     /// belongs on its last line.
     vim_from_below: bool,
+    /// The block last copied or cut as a whole (`yab`, `dab`).
+    vim_block: Option<Block>,
+    /// Whether the block being edited was entered from below (for a carried count).
+    vim_came_from_below: bool,
+    /// The next block opened is the one just moved: stay in the mode the editor is in.
+    vim_keep_mode: bool,
     /// Where the script was drawn last: the screen position of its top left corner
     /// (scrolled along) and the part of the window it shows in.
     drawn_at: Option<(egui::Pos2, Rect)>,
@@ -770,7 +782,8 @@ impl ScriptView {
         let elsewhere = ui.memory(|m| m.focused()).is_some_and(|focused| focused != id);
         if cx.vim && !elsewhere {
             if !editing.focused {
-                self.vim.begin(if editing.fresh { vim::Mode::Insert } else { vim::Mode::Normal });
+                let keep = std::mem::take(&mut self.vim_keep_mode).then_some(self.vim.mode);
+                self.vim.begin(keep.unwrap_or(if editing.fresh { vim::Mode::Insert } else { vim::Mode::Normal }));
             }
             // The text field's cursor is still the previous block's on the first frame.
             let cursor = cursor.filter(|_| editing.focused);
@@ -811,11 +824,20 @@ impl ScriptView {
             // Where the cursor starts in a block just opened: at its top, or on its last
             // line when it was reached from below; behind the text of a new block.
             let length = editing.buffer.chars().count();
+            if cursor.is_none() {
+                self.vim_came_from_below = self.vim_from_below;
+            }
             let mut at = cursor.unwrap_or_else(|| match (editing.fresh, std::mem::take(&mut self.vim_from_below)) {
                 (true, _) => length,
                 (false, true) => editing.buffer.rfind('\n').map_or(0, |newline| editing.buffer[..=newline].chars().count()),
                 (false, false) => 0,
             });
+            // A `5j` that ran out of block in the one before goes on here.
+            if cursor.is_none() {
+                let rest = std::mem::take(&mut self.vim.carry);
+                let direction = if self.vim_came_from_below { 'k' } else { 'j' };
+                keys.splice(0..0, std::iter::repeat_n(vim::Key::Char(direction), rest));
+            }
             for key in &keys {
                 vim_outcome = self.vim.key(*key, &mut editing.buffer, &mut at);
                 if vim_outcome != vim::Outcome::Stay {
@@ -850,7 +872,19 @@ impl ScriptView {
         };
         // What a Vim key asked for beyond the text.
         let (mut close, mut open_above, mut delete_block) = (false, false, false);
+        // Moving the block (the arrow buttons, `gK`/`gJ`) and putting a copied one beside it.
+        let mut moved: Option<bool> = None;
+        let mut put: Option<usize> = None;
         match vim_outcome {
+            vim::Outcome::MoveUp => moved = Some(true),
+            vim::Outcome::MoveDown => moved = Some(false),
+            vim::Outcome::YankBlock => self.vim_block = Self::typed_block(&editing.buffer),
+            vim::Outcome::CutBlock => {
+                self.vim_block = Self::typed_block(&editing.buffer);
+                delete_block = true;
+            }
+            vim::Outcome::PasteBelow => put = self.vim_block.is_some().then_some(index + 1),
+            vim::Outcome::PasteAbove => put = self.vim_block.is_some().then_some(index),
             vim::Outcome::Stay => {}
             vim::Outcome::Close => close = true,
             vim::Outcome::Discard => cancel = true,
@@ -915,7 +949,7 @@ impl ScriptView {
         }
 
         // With Vim keys the mode is shown to the right of the field, which is that much narrower.
-        let beside = if cx.vim { 84.0 } else { 0.0 };
+        let beside = ARROWS + if cx.vim { 70.0 } else { 0.0 };
         let field = Rect::from_min_size(rect.min + vec2(0.0, BLOCK_PAD), vec2(rect.width() - beside, 0.0));
         let mut child = ui.new_child(UiBuilder::new().max_rect(field));
         let before_typing = editing.buffer.clone();
@@ -946,21 +980,30 @@ impl ScriptView {
                 ui.ctx().request_repaint();
             }
         }
+        // Beside the field: move the block one place up or down.
+        for (up, y) in [(true, 0.0), (false, 20.0)] {
+            let button = Rect::from_min_size(pos2(rect.right() - 22.0, rect.top() + BLOCK_PAD + y), vec2(22.0, 18.0));
+            let response = ui.put(button, egui::Button::new(egui::RichText::new(if up { "▲" } else { "▼" }).size(10.0)).small());
+            let hint = if up { t("Block nach oben verschieben", "Move the block up") } else { t("Block nach unten verschieben", "Move the block down") };
+            if response.on_hover_text(hint).clicked() {
+                moved = Some(up);
+            }
+        }
         if cx.vim {
             // The mode at the right edge; in normal mode a block cursor on its character.
             let normal = self.vim.mode == vim::Mode::Normal;
             // A command line being typed (`:w`) shows in the mode's place.
             let label = match (normal, self.vim.pending()) {
                 (false, _) => "INSERT".to_string(),
-                (true, "") => "NORMAL".to_string(),
-                (true, pending) => pending.to_string(),
+                (true, pending) if pending.is_empty() => "NORMAL".to_string(),
+                (true, pending) => pending,
             };
-            ui.painter().text(pos2(rect.right(), rect.top() + BLOCK_PAD + 6.0), Align2::RIGHT_TOP, label, FontId::monospace(12.0), if normal { BLUE } else { GREEN });
+            ui.painter().text(pos2(rect.right() - ARROWS, rect.top() + BLOCK_PAD + 6.0), Align2::RIGHT_TOP, label, FontId::monospace(12.0), if normal { BLUE } else { GREEN });
             // Escape belongs to Vim here: without this the text field would give up the
             // keyboard on it. And a click anywhere else is how the editor is left.
             let filter = egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: true };
             ui.memory_mut(|m| m.set_focus_lock_filter(id, filter));
-            if output.response.clicked_elsewhere() {
+            if output.response.clicked_elsewhere() && moved.is_none() {
                 close = true;
             } else if editing.focused && !output.response.has_focus() && !elsewhere {
                 output.response.request_focus();
@@ -979,7 +1022,8 @@ impl ScriptView {
             child.painter().text(pos, Align2::LEFT_TOP, format!("{rest}  Tab"), FontId::proportional(17.0), MUTED);
         }
 
-        let height = child.min_rect().height() + 2.0 * BLOCK_PAD;
+        // At least as tall as the two move buttons beside the field.
+        let height = child.min_rect().height().max(38.0) + 2.0 * BLOCK_PAD;
         if (height - self.heights[index]).abs() > 0.5 {
             self.heights[index] = height;
             self.reflow();
@@ -997,6 +1041,20 @@ impl ScriptView {
             if let Some(to) = below.map(|b| b - 1).or(above) {
                 actions.push(Action::EditText(to));
             }
+            self.dirty = true;
+        } else if let (Some(up), Some(with)) = (moved, Self::typed_block(&editing.buffer)) {
+            if cx.script.blocks.get(index) != Some(&with) {
+                actions.push(Action::Replace { block: index, with });
+            }
+            // Entered again in its new place, the editor keeps the mode it is in.
+            self.vim_keep_mode = cx.vim;
+            actions.push(Action::MoveAndEdit { block: index, up });
+            self.dirty = true;
+        } else if let (Some(at), Some(with), Some(block)) = (put, Self::typed_block(&editing.buffer), self.vim_block.clone()) {
+            if cx.script.blocks.get(index) != Some(&with) {
+                actions.push(Action::Replace { block: index, with });
+            }
+            actions.push(Action::InsertAndEdit { at, block });
             self.dirty = true;
         } else if commit || close || open_above || leave.is_some() {
             // Whatever was typed becomes one block. With nothing left in the editor the
