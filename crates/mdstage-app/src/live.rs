@@ -67,28 +67,51 @@ fn summary(script: &Script, cue: usize) -> String {
     parts.join("  ·  ")
 }
 
-/// A rounded label: a name on a tint of its own colour.
-fn chip(ui: &mut Ui, text: &str, colour: Color32, size: f32) {
-    egui::Frame::new().fill(colour.gamma_multiply(0.16)).corner_radius(CornerRadius::same(4)).inner_margin(egui::Margin::symmetric(7, 1)).show(ui, |ui| {
-        ui.label(RichText::new(text).size(size).color(colour).strong());
-    });
-}
-
+/// The microphones that are open, as rounded labels: each role on a tint of its colour,
+/// a group as its name in an outline followed by its members. They are set one after the
+/// other and go on in further rows where the width ends — a group, too, breaks between
+/// its members.
 fn mic_chips(ui: &mut Ui, cx: &Context, mic: &Mic, size: f32) {
     let colour = |color: &Option<String>| named(color.as_deref()).unwrap_or(BRIGHT);
+    // (text, colour, whether it is a group's name)
+    let mut chips: Vec<(String, Color32, bool)> = Vec::new();
     for entry in cx.cast.chips(mic, cx.group_mics) {
         match entry {
-            MicChip::Role { name, color } => chip(ui, &name, colour(&color), size),
+            MicChip::Role { name, color } => chips.push((name, colour(&color), false)),
             MicChip::Group { name, color, members } => {
-                egui::Frame::new().stroke(Stroke::new(1.0_f32, WAVE_DIM)).corner_radius(CornerRadius::same(5)).inner_margin(egui::Margin::symmetric(3, 1)).show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    ui.label(RichText::new(name).size(size).color(colour(&color)).strong());
-                    for (member, color) in members {
-                        chip(ui, &member, colour(&color), size - 1.0);
-                    }
-                });
+                chips.push((name, colour(&color), true));
+                chips.extend(members.into_iter().map(|(member, color)| (member, colour(&color), false)));
             }
         }
+    }
+    let (pad, gap) = (vec2(7.0, 2.0), 5.0);
+    // Too little room left in this row of the bar to be worth starting in.
+    if ui.available_width() < 220.0 {
+        ui.end_row();
+    }
+    let width = ui.available_width().max(120.0);
+    let font = FontId::proportional(size);
+    let galleys: Vec<_> = chips.iter().map(|(text, colour, _)| ui.painter().layout_no_wrap(text.clone(), font.clone(), *colour)).collect();
+    let row = galleys.iter().map(|g| g.size().y).fold(size, f32::max) + 2.0 * pad.y;
+    let mut places = Vec::with_capacity(chips.len());
+    let (mut x, mut y) = (0.0f32, 0.0f32);
+    for galley in &galleys {
+        let chip = galley.size().x + 2.0 * pad.x;
+        if x > 0.0 && x + chip > width {
+            x = 0.0;
+            y += row + gap;
+        }
+        places.push(vec2(x, y));
+        x += chip + gap;
+    }
+    let (area, _) = ui.allocate_exact_size(vec2(width, y + row), Sense::hover());
+    for (((_, colour, group), galley), place) in chips.iter().zip(galleys).zip(places) {
+        let chip = Rect::from_min_size(area.min + place, vec2(galley.size().x + 2.0 * pad.x, row));
+        match group {
+            true => drop(ui.painter().rect_stroke(chip, 4.0, Stroke::new(1.0_f32, colour.gamma_multiply(0.7)), egui::StrokeKind::Inside)),
+            false => drop(ui.painter().rect_filled(chip, 4.0, colour.gamma_multiply(0.16))),
+        }
+        ui.painter().galley(chip.min + pad, galley, *colour);
     }
 }
 
