@@ -111,14 +111,36 @@ pub fn tool_toggle<'a>(text: &str, on: bool) -> egui::Button<'a> {
     }
 }
 
-/// One of the round red emergency buttons. `on` shows it held down (a latched one).
-pub fn emergency_button<'a>(text: &str, on: bool) -> egui::Button<'a> {
-    let label = RichText::new(text).size(14.0).strong().color(Color32::BLACK);
-    egui::Button::new(label)
-        .fill(if on { BRIGHT } else { RED })
-        .stroke(Stroke::new(2.0_f32, if on { RED } else { DARK_RED }))
-        .corner_radius(CornerRadius::same((TOOL / 2.0) as u8))
-        .min_size(egui::vec2(TOOL + 20.0, TOOL))
+/// The pictures on the emergency buttons.
+pub fn light_icon() -> egui::ImageSource<'static> {
+    egui::include_image!("../assets/em-light.svg")
+}
+
+pub fn mic_icon() -> egui::ImageSource<'static> {
+    egui::include_image!("../assets/em-mic.svg")
+}
+
+pub fn music_icon() -> egui::ImageSource<'static> {
+    egui::include_image!("../assets/em-music.svg")
+}
+
+/// One of the round red emergency buttons, its picture filling it. `on` shows it held
+/// down (a latched one).
+pub fn emergency_button(ui: &mut egui::Ui, icon: egui::ImageSource<'static>, on: bool, enabled: bool) -> egui::Response {
+    ui.scope(|ui| {
+        ui.spacing_mut().button_padding = egui::Vec2::ZERO;
+        let hovered = Color32::from_rgb(0xf0, 0x7c, 0x85);
+        let widgets = &mut ui.visuals_mut().widgets;
+        let fills = [(&mut widgets.inactive, RED), (&mut widgets.hovered, hovered), (&mut widgets.active, DARK_RED)];
+        for (widget, fill) in fills {
+            widget.weak_bg_fill = if on { BRIGHT } else { fill };
+            widget.bg_stroke = Stroke::new(2.0_f32, if on { RED } else { DARK_RED });
+            widget.corner_radius = CornerRadius::same((TOOL / 2.0) as u8);
+        }
+        let image = egui::Image::new(icon).fit_to_exact_size(egui::vec2(TOOL, TOOL));
+        ui.add_enabled(enabled, egui::Button::image(image))
+    })
+    .inner
 }
 
 /// A readout set into the bar: dark, with a fine edge, text in a fixed-width face.
@@ -146,6 +168,17 @@ mod tests {
                 .filter(|symbol| !ctx.fonts(|f| f.has_glyphs(&egui::FontId::proportional(14.0), symbol)))
                 .collect();
             assert!(missing.is_empty(), "no glyphs for {missing:?}");
+            // The emergency buttons' pictures can be drawn, and are not empty.
+            egui_extras::install_image_loaders(ctx);
+            for icon in [light_icon(), mic_icon(), music_icon()] {
+                let egui::ImageSource::Bytes { uri, bytes } = icon else { panic!("the pictures are built in") };
+                ctx.include_bytes(uri.clone(), bytes);
+                match ctx.try_load_image(&uri, egui::SizeHint::Size(88, 88)) {
+                    Ok(egui::load::ImagePoll::Ready { image }) => assert!(image.pixels.iter().any(|p| p.a() > 0), "{uri} is empty"),
+                    Ok(_) => panic!("{uri} is not drawn at once"),
+                    Err(e) => panic!("{uri}: {e}"),
+                }
+            }
             assert!(ctx.style().visuals.dark_mode);
             assert_eq!(ctx.style().visuals.panel_fill, BACKGROUND);
         });

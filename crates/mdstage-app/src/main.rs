@@ -70,6 +70,7 @@ struct App {
 impl App {
     fn new(cc: &eframe::CreationContext<'_>, path: Option<PathBuf>) -> App {
         theme::apply(&cc.egui_ctx);
+        egui_extras::install_image_loaders(&cc.egui_ctx);
         let settings = Settings::load(&store::settings_path());
         lang::set_english(settings.language == "en");
         let last = settings.recent_files.first().map(PathBuf::from).filter(|p| p.exists());
@@ -420,16 +421,16 @@ impl App {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // Right to left: the emergency buttons sit in the corner, as a group.
-                if ui.add_enabled(has_show, theme::emergency_button(self.t("Musik", "Music"), false)).on_hover_text(self.t("Notfall: alle Musik ausblenden", "Emergency: fade out all music")).clicked() {
+                if theme::emergency_button(ui, theme::music_icon(), false, has_show).on_hover_text(self.t("Notfall: alle Musik ausblenden", "Emergency: fade out all music")).clicked() {
                     self.request(Request::StopAll);
                 }
-                if ui.add_enabled(has_show, theme::emergency_button(self.t("Mics", "Mics"), false)).on_hover_text(self.t("Notfall: alle Mikrofone aus", "Emergency: all microphones off")).clicked() {
+                if theme::emergency_button(ui, theme::mic_icon(), false, has_show).on_hover_text(self.t("Notfall: alle Mikrofone aus", "Emergency: all microphones off")).clicked() {
                     self.request(Request::MicsOff);
                 }
                 if self.settings.emergency_light.is_some() {
                     let on = self.snapshot.emergency_light;
                     let hint = self.t("Notlicht an oder aus", "Emergency light on or off");
-                    if ui.add_enabled(has_show, theme::emergency_button(self.t("Licht", "Light"), on)).on_hover_text(hint).clicked() {
+                    if theme::emergency_button(ui, theme::light_icon(), on, has_show).on_hover_text(hint).clicked() {
                         self.request(Request::EmergencyLight(!on));
                     }
                 }
