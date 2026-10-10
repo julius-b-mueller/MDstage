@@ -4,7 +4,10 @@
 //!
 //! Without an argument the last show is opened again.
 
+mod cue_dialog;
+mod export;
 mod live;
+mod roles_ui;
 mod script_view;
 mod settings_ui;
 mod store;
@@ -22,6 +25,8 @@ use mdstage_engine::mtc::Timecode;
 use mdstage_engine::session::{Request, Session, Snapshot};
 use mdstage_engine::settings::Settings;
 
+use cue_dialog::CueDialog;
+use roles_ui::RolesUi;
 use script_view::{Action, Context, ScriptView};
 use settings_ui::SettingsUi;
 use theme::*;
@@ -45,6 +50,12 @@ struct App {
     view: ScriptView,
     live_open: bool,
     settings_ui: Option<SettingsUi>,
+    cue_dialog: Option<CueDialog>,
+    roles_ui: Option<RolesUi>,
+    /// The export dialog's options, while it is open.
+    export: Option<mdstage_core::export::Options>,
+    /// A copied cue's fields, for pasting.
+    copied: Option<mdstage_core::yaml::Value>,
     /// Show lock: no editing, clicks only arm.
     locked: bool,
     /// Something that went wrong in the app itself (a file that could not be written …).
@@ -64,6 +75,10 @@ impl App {
             view: ScriptView::default(),
             live_open: false,
             settings_ui: None,
+            cue_dialog: None,
+            roles_ui: None,
+            export: None,
+            copied: None,
             locked: false,
             message: None,
             followed: None,
@@ -160,18 +175,74 @@ impl App {
 
     fn apply(&mut self, actions: Vec<Action>) {
         for action in actions {
-            match action {
+            match &action {
                 // With the live view open a click only chooses the next Go.
-                Action::Fire(cue) if self.live_open || self.locked => self.request(Request::Arm(Some(cue))),
-                Action::Fire(cue) => self.request(Request::Fire(cue)),
+                Action::Fire(cue) if self.live_open || self.locked => self.request(Request::Arm(Some(*cue))),
+                Action::Fire(cue) => self.request(Request::Fire(*cue)),
+                Action::Arm(cue) => self.request(Request::Arm(Some(*cue))),
+                Action::EditCue(block) | Action::NewCue(block) => {
+                    let block = *block;
+                    let Some(show) = &self.show else { continue };
+                    let existing = match (&action, show.script.blocks.get(block)) {
+                        (Action::EditCue(_), Some(Block::Cue(cue))) => Some(&cue.yaml),
+                        _ => None,
+                    };
+                    // Auto-Mic on any *other* cue rules out choosing microphones by hand.
+                    let others_auto = show.script.blocks.iter().enumerate().any(|(i, b)| matches!(b, Block::Cue(c) if c.auto_mic() && (i != block || existing.is_none())));
+                    let audio_dir = show.path.parent().unwrap_or(Path::new(".")).join("audio");
+                    self.cue_dialog = Some(CueDialog::new(block, existing.is_none(), existing, &audio_dir, others_auto));
+                }
+                Action::NewText(at) => {
+                    let at = *at;
+                    if let Some(show) = &mut self.show {
+                        show.script.insert_block(at, Block::Text(String::new()));
+                        self.view.edit(&show.script, at, true);
+                    }
+                }
+                Action::Move { block, up } => {
+                    if let Some(show) = &mut self.show {
+                        show.script.move_block(*block, *up);
+                    }
+                    self.after_edit();
+                }
+                Action::Delete(block) => {
+                    if let Some(show) = &mut self.show {
+                        show.script.delete_block(*block);
+                    }
+                    self.after_edit();
+                }
+                Action::Copy(block) => {
+                    if let Some(Block::Cue(cue)) = self.show.as_ref().and_then(|s| s.script.blocks.get(*block)) {
+                        self.copied = Some(cue.yaml.clone());
+                    }
+                }
+                Action::Paste(at) => {
+                    let (Some(show), Some(mut fields)) = (&mut self.show, self.copied.clone()) else { continue };
+                    // A pasted cue stands on its own: fresh trigger note, not a variant.
+                    if let Some(map) = fields.as_mapping_mut() {
+                        map.shift_remove("trigger_note");
+                        map.shift_remove("sibling");
+                    }
+                    let cue = show.script.new_cue(fields);
+                    show.script.insert_block(*at, cue);
+                    self.after_edit();
+                }
+                Action::Variant(block) => {
+                    let Some(show) = &mut self.show else { continue };
+                    if let Some(variant) = show.script.copy_cue(*block, true) {
+                        show.script.insert_block(*block + 1, variant);
+                        self.after_edit();
+                    }
+                }
                 Action::Replace { block, with } => {
                     if let Some(show) = &mut self.show {
-                        show.script.blocks[block] = with;
+                        show.script.blocks[*block] = with.clone();
                     }
                     self.after_edit();
                 }
                 Action::Markers { block, start, end } => {
-                    let Some(Block::Cue(cue)) = self.show.as_mut().and_then(|s| s.script.blocks.get_mut(block)) else { continue };
+                    let (start, end) = (*start, *end);
+                    let Some(Block::Cue(cue)) = self.show.as_mut().and_then(|s| s.script.blocks.get_mut(*block)) else { continue };
                     let mut yaml = cue.yaml.clone();
                     let Some(map) = yaml.as_mapping_mut() else { continue };
                     // The short form `music: file.wav` becomes the object form to hold the times.
@@ -201,6 +272,12 @@ impl App {
         }
         if pressed(ctx, Key::L) {
             self.live_open = true;
+        }
+        if pressed(ctx, Key::F) && self.show.is_some() {
+            self.view.open_search();
+        }
+        if pressed(ctx, Key::E) && self.show.is_some() {
+            self.export.get_or_insert(EXPORT_DEFAULTS);
         }
         if pressed(ctx, Key::Comma) && self.settings_ui.is_none() {
             self.settings_ui = Some(SettingsUi::new(&self.settings));
@@ -254,6 +331,16 @@ impl App {
                     }
                 }
                 ui.separator();
+                if ui.button(self.t("Exportieren…", "Export…")).clicked() {
+                    ui.close_menu();
+                    if self.show.is_some() {
+                        self.export.get_or_insert(EXPORT_DEFAULTS);
+                    }
+                }
+                if ui.button(self.t("Rolleneditor…", "Role Editor…")).clicked() {
+                    ui.close_menu();
+                    self.roles_ui = self.show.as_ref().map(|s| RolesUi::new(&s.cast));
+                }
                 if ui.button(self.t("Einstellungen…", "Settings…")).clicked() {
                     ui.close_menu();
                     self.settings_ui = Some(SettingsUi::new(&self.settings));
@@ -263,6 +350,10 @@ impl App {
                 }
             });
             ui.menu_button(self.t("Ansicht", "View"), |ui| {
+                if ui.button(self.t("Suchen…", "Find…")).clicked() {
+                    ui.close_menu();
+                    self.view.open_search();
+                }
                 if ui.button(self.t("Live-Ansicht", "Live View")).clicked() {
                     ui.close_menu();
                     self.live_open = true;
@@ -395,12 +486,89 @@ impl App {
         }
     }
 
+    fn export_window(&mut self, ctx: &egui::Context) {
+        let (Some(mut options), Some(show)) = (self.export, &self.show) else { return };
+        let mut open = true;
+        let mut format = None;
+        egui::Window::new(self.t("Exportieren", "Export")).open(&mut open).resizable(false).show(ctx, |ui| {
+            ui.checkbox(&mut options.cues, self.t("Cues einschließen", "Include cues"));
+            ui.checkbox(&mut options.colours, self.t("Rollenfarben", "Role colours"));
+            ui.checkbox(&mut options.grouped_mics, self.t("Mikrofone gruppiert", "Grouped mics"));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button("PDF…").clicked() {
+                    format = Some("pdf");
+                }
+                if ui.button("DOCX…").clicked() {
+                    format = Some("docx");
+                }
+            });
+        });
+        self.export = open.then_some(options);
+        let Some(format) = format else { return };
+        let book = show.script.book(&show.cast, options);
+        let name = format!("{}.{format}", book.title.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_"));
+        let Some(path) = rfd::FileDialog::new().set_file_name(name).save_file() else { return };
+        let date = store::today();
+        let bytes = if format == "pdf" { export::pdf(&book, &date) } else { export::docx(&book, &date) };
+        self.message = Some(match bytes.and_then(|b| std::fs::write(&path, b).map_err(|e| e.to_string())) {
+            Ok(()) => format!("Exportiert: {}", path.display()),
+            Err(e) => format!("Export fehlgeschlagen: {e}"),
+        });
+        self.export = None;
+    }
+
+    fn cue_window(&mut self, ctx: &egui::Context) {
+        let (Some(mut dialog), Some(show)) = (self.cue_dialog.take(), &mut self.show) else { return };
+        let title = if dialog.is_new { "Neuer Cue" } else { "Cue bearbeiten" };
+        let mut open = true;
+        let mut result = None;
+        egui::Window::new(title).open(&mut open).default_size([640.0, 600.0]).show(ctx, |ui| result = dialog.show(ui, &show.cast));
+        match result {
+            Some(true) => {
+                if dialog.is_new {
+                    let cue = show.script.new_cue(dialog.value());
+                    show.script.insert_block(dialog.block, cue);
+                } else if let Some(Block::Cue(cue)) = show.script.blocks.get_mut(dialog.block) {
+                    cue.set_yaml(dialog.value());
+                    // A cue must keep a trigger note even if it was deleted from the YAML.
+                    show.script.assign_trigger_notes();
+                }
+                self.after_edit();
+            }
+            Some(false) => {}
+            None if open => self.cue_dialog = Some(dialog),
+            None => {}
+        }
+    }
+
+    fn roles_window(&mut self, ctx: &egui::Context) {
+        let (Some(mut editor), Some(show)) = (self.roles_ui.take(), &mut self.show) else { return };
+        let mut open = true;
+        let mut result = None;
+        let mixers = self.settings.mixers.len();
+        egui::Window::new(if self.settings.language == "en" { "Role Editor" } else { "Rolleneditor" })
+            .open(&mut open)
+            .default_size([620.0, 560.0])
+            .show(ctx, |ui| result = editor.show(ui, mixers));
+        match result {
+            Some(true) => {
+                let (roles, groups, renames) = editor.result();
+                show.script.save_roles(&roles, &groups, &renames);
+                self.after_edit();
+            }
+            Some(false) => {}
+            None if open => self.roles_ui = Some(editor),
+            None => {}
+        }
+    }
+
     fn live_window(&mut self, ctx: &egui::Context) {
         if !self.live_open {
             return;
         }
         let Some(show) = &self.show else { return };
-        let cx = Context { script: &show.script, cast: &show.cast, snapshot: &self.snapshot, locked: self.locked };
+        let cx = Context { script: &show.script, cast: &show.cast, snapshot: &self.snapshot, locked: self.locked, can_paste: self.copied.is_some() };
         let mut requests = Vec::new();
         let mut close = false;
         let builder = egui::ViewportBuilder::default().with_title(self.t("MDstage — Live-Ansicht", "MDstage — Live View")).with_inner_size([620.0, 720.0]);
@@ -427,6 +595,21 @@ impl App {
     }
 }
 
+const EXPORT_DEFAULTS: mdstage_core::export::Options = mdstage_core::export::Options { cues: true, colours: true, grouped_mics: true };
+
+/// `mdstage SHOW.md --export OUT.pdf|OUT.docx`: write the book and exit, without a window.
+fn export_from_command_line(show: &Path, out: &Path) -> Result<(), String> {
+    let script = Script::parse(&std::fs::read_to_string(show).map_err(|e| format!("{}: {e}", show.display()))?);
+    let book = script.book(&Cast::from_script(&script, false), EXPORT_DEFAULTS);
+    let date = store::today();
+    let bytes = match out.extension().and_then(|e| e.to_str()) {
+        Some("pdf") => export::pdf(&book, &date)?,
+        Some("docx") => export::docx(&book, &date)?,
+        _ => return Err("the output file must end in .pdf or .docx".into()),
+    };
+    std::fs::write(out, bytes).map_err(|e| format!("{}: {e}", out.display()))
+}
+
 /// An empty YAML mapping (the type lives in a dependency of `mdstage-core`).
 fn serde_yaml_mapping() -> mdstage_core::yaml::Mapping {
     mdstage_core::yaml::Mapping::new()
@@ -445,6 +628,9 @@ impl eframe::App for App {
             self.menu(ui);
             self.toolbar(ui);
             self.banners(ui);
+            if let Some(show) = &self.show {
+                self.view.search_bar(ui, &show.script);
+            }
             ui.add_space(2.0);
         });
 
@@ -454,7 +640,7 @@ impl eframe::App for App {
         }
         egui::CentralPanel::default().show(ctx, |ui| match &self.show {
             Some(show) => {
-                let cx = Context { script: &show.script, cast: &show.cast, snapshot: &self.snapshot, locked: self.locked };
+                let cx = Context { script: &show.script, cast: &show.cast, snapshot: &self.snapshot, locked: self.locked, can_paste: self.copied.is_some() };
                 self.view.show(ui, &cx, &mut actions);
             }
             None => {
@@ -483,11 +669,24 @@ impl eframe::App for App {
         }
         self.live_window(ctx);
         self.settings_window(ctx);
+        self.cue_window(ctx);
+        self.roles_window(ctx);
+        self.export_window(ctx);
     }
 }
 
 fn main() -> eframe::Result {
-    let path = std::env::args().nth(1).map(PathBuf::from);
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let [show, flag, out] = args.as_slice() {
+        if flag == "--export" {
+            if let Err(e) = export_from_command_line(Path::new(show), Path::new(out)) {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
+    }
+    let path = args.first().map(PathBuf::from);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([1200.0, 900.0]).with_title("MDstage"),
         ..Default::default()

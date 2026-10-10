@@ -7,6 +7,7 @@ pub mod audio;
 pub mod cues;
 pub mod edit;
 pub mod effects;
+pub mod export;
 pub mod format;
 pub mod mic;
 pub mod validate;

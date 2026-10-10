@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use eframe::egui::text::{CCursor, CCursorRange, LayoutJob, TextFormat};
-use eframe::egui::{self, Align2, Color32, FontId, Id, Key, Modifiers, Rect, Sense, Stroke, Ui, UiBuilder, pos2, vec2};
+use eframe::egui::{self, Align2, Color32, FontId, Id, Key, Modifiers, Rect, RichText, Sense, Stroke, Ui, UiBuilder, pos2, vec2};
 use mdstage_core::cues::{AutoWhen, Cues, Slf};
 use mdstage_core::effects::Effect;
 use mdstage_core::mic::{Cast, Mic, MicChip};
@@ -29,6 +29,22 @@ pub enum Action {
     Replace { block: usize, with: Block },
     /// The start/end markers of a cue's audio were dragged (seconds).
     Markers { block: usize, start: f64, end: f64 },
+    /// Make this cue the next Go.
+    Arm(usize),
+    /// Open the cue dialog for an existing cue.
+    EditCue(usize),
+    /// Open the cue dialog for a new cue before this block index.
+    NewCue(usize),
+    /// Insert an empty text block before this index and edit it.
+    NewText(usize),
+    Move { block: usize, up: bool },
+    Delete(usize),
+    /// Remember this cue for pasting.
+    Copy(usize),
+    /// Insert the remembered cue before this block index.
+    Paste(usize),
+    /// Add a variant of this cue right after it.
+    Variant(usize),
 }
 
 /// What the view shows; borrowed from the app each frame.
@@ -38,12 +54,26 @@ pub struct Context<'a> {
     pub snapshot: &'a Snapshot,
     /// Editing is off (show lock).
     pub locked: bool,
+    /// A cue has been copied and can be pasted.
+    pub can_paste: bool,
 }
 
 struct Editing {
     index: usize,
     buffer: String,
     focused: bool,
+    /// The block was just inserted; leaving it empty removes it again.
+    fresh: bool,
+}
+
+/// Full-text search over the script.
+#[derive(Default)]
+struct Search {
+    query: String,
+    /// Blocks containing the query, and which of them is the current hit.
+    hits: Vec<usize>,
+    current: usize,
+    focus: bool,
 }
 
 /// One coloured piece of a row in a cue panel.
@@ -66,6 +96,7 @@ pub struct ScriptView {
     scroll_to: Option<f32>,
     scroll_y: f32,
     waveforms: Option<Waveforms>,
+    search: Option<Search>,
 }
 
 impl ScriptView {
@@ -81,6 +112,68 @@ impl ScriptView {
 
     pub fn is_editing(&self) -> bool {
         self.editing.is_some()
+    }
+
+    /// Open the inline editor on a block (a freshly inserted one if `fresh`).
+    pub fn edit(&mut self, script: &Script, index: usize, fresh: bool) {
+        let Some(block) = script.blocks.get(index) else { return };
+        let buffer = Script { blocks: vec![block.clone()] }.to_markdown().trim_end().to_string();
+        self.editing = Some(Editing { index, buffer, focused: false, fresh });
+        self.dirty = true;
+    }
+
+    /// Open the search bar (or put the cursor back into it).
+    pub fn open_search(&mut self) {
+        self.search.get_or_insert_with(Search::default).focus = true;
+    }
+
+    /// The search bar, if open. Enter goes to the next hit, Shift+Enter back, Escape closes.
+    pub fn search_bar(&mut self, ui: &mut Ui, script: &Script) {
+        let Some(search) = &mut self.search else { return };
+        let mut close = false;
+        let mut step: i64 = 0;
+        ui.horizontal(|ui| {
+            ui.label("Suche");
+            let response = ui.add(egui::TextEdit::singleline(&mut search.query).desired_width(260.0));
+            if std::mem::take(&mut search.focus) {
+                response.request_focus();
+            }
+            if response.changed() {
+                let needle = search.query.to_lowercase();
+                search.hits = if needle.is_empty() {
+                    Vec::new()
+                } else {
+                    let text = |b: &Block| Script { blocks: vec![b.clone()] }.to_markdown().to_lowercase();
+                    (0..script.blocks.len()).filter(|&i| !matches!(script.blocks[i], Block::Config(_)) && text(&script.blocks[i]).contains(&needle)).collect()
+                };
+                search.current = 0;
+                step = 0;
+                if !search.hits.is_empty() {
+                    self.scroll_to = self.offsets.get(search.hits[0]).map(|y| (y - 80.0).max(0.0));
+                }
+            }
+            if response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                step = if ui.input(|i| i.modifiers.shift) { -1 } else { 1 };
+                response.request_focus();
+            }
+            if ui.small_button("▲").clicked() {
+                step = -1;
+            }
+            if ui.small_button("▼").clicked() {
+                step = 1;
+            }
+            let count = if search.hits.is_empty() { "0".to_string() } else { format!("{} / {}", search.current + 1, search.hits.len()) };
+            ui.label(RichText::new(count).color(MUTED));
+            close = ui.small_button("✕").clicked() || ui.input(|i| i.key_pressed(Key::Escape));
+        });
+        if step != 0 && !search.hits.is_empty() {
+            let n = search.hits.len() as i64;
+            search.current = ((search.current as i64 + step).rem_euclid(n)) as usize;
+            self.scroll_to = self.offsets.get(search.hits[search.current]).map(|y| (y - 80.0).max(0.0));
+        }
+        if close {
+            self.search = None;
+        }
     }
 
     /// Bring a cue to the top third of the view.
@@ -340,15 +433,53 @@ impl ScriptView {
         let Some(job) = Self::job(cx.cast, block, rect.width()) else { return };
         let response = ui.interact(rect, Id::new(("block", index)), Sense::click());
         let shift = ui.input(|i| i.modifiers.shift);
+        if let Some(search) = &self.search {
+            if search.hits.contains(&index) {
+                let current = search.hits.get(search.current) == Some(&index);
+                let colour = if current { Color32::from_rgb(0x5c, 0x4a, 0x1e) } else { Color32::from_rgb(0x3a, 0x35, 0x26) };
+                ui.painter().rect_filled(rect.expand2(vec2(8.0, 0.0)), 4.0, colour);
+            }
+        }
         if response.hovered() && shift && !cx.locked {
             ui.painter().rect_filled(rect.expand2(vec2(8.0, 0.0)), 4.0, PANEL);
         }
         let galley = ui.fonts(|f| f.layout_job(job));
         ui.painter().galley(rect.min + vec2(0.0, BLOCK_PAD), galley, TEXT);
         if response.clicked() && shift && !cx.locked {
-            let buffer = Script { blocks: vec![block.clone()] }.to_markdown();
-            self.editing = Some(Editing { index, buffer: buffer.trim_end().to_string(), focused: false });
+            self.edit(cx.script, index, false);
         }
+        if !cx.locked {
+            response.context_menu(|ui| {
+                if ui.button("Bearbeiten").clicked() {
+                    self.edit(cx.script, index, false);
+                    ui.close_menu();
+                }
+                Self::block_menu(ui, cx, index, actions);
+            });
+        }
+    }
+
+    /// The menu entries every block has: insert around it, move it, delete it.
+    fn block_menu(ui: &mut Ui, cx: &Context, index: usize, actions: &mut Vec<Action>) {
+        let mut pick = |ui: &mut Ui, label: &str, action: Action| {
+            if ui.button(label).clicked() {
+                actions.push(action);
+                ui.close_menu();
+            }
+        };
+        ui.separator();
+        pick(ui, "Text davor einfügen", Action::NewText(index));
+        pick(ui, "Text danach einfügen", Action::NewText(index + 1));
+        pick(ui, "Cue davor einfügen…", Action::NewCue(index));
+        pick(ui, "Cue danach einfügen…", Action::NewCue(index + 1));
+        if cx.can_paste {
+            pick(ui, "Kopierten Cue davor einfügen", Action::Paste(index));
+            pick(ui, "Kopierten Cue danach einfügen", Action::Paste(index + 1));
+        }
+        ui.separator();
+        pick(ui, "Nach oben", Action::Move { block: index, up: true });
+        pick(ui, "Nach unten", Action::Move { block: index, up: false });
+        pick(ui, "Löschen", Action::Delete(index));
     }
 
     /// Role name completing what has been typed so far: `(full name, missing rest)`.
@@ -409,11 +540,17 @@ impl ScriptView {
         }
 
         if cancel {
+            if editing.fresh {
+                actions.push(Action::Delete(index));
+            }
             self.dirty = true;
         } else if commit {
-            // Whatever was typed becomes one block; an emptied editor leaves it as it was.
-            if let Some(with) = Script::parse(&editing.buffer.replace("\n\n", "\n")).blocks.into_iter().next() {
-                actions.push(Action::Replace { block: index, with });
+            // Whatever was typed becomes one block. An emptied editor leaves an existing
+            // block as it was and removes one that was only just inserted.
+            match Script::parse(&editing.buffer.replace("\n\n", "\n")).blocks.into_iter().next() {
+                Some(with) => actions.push(Action::Replace { block: index, with }),
+                None if editing.fresh => actions.push(Action::Delete(index)),
+                None => {}
             }
             self.dirty = true;
         } else {
@@ -492,6 +629,21 @@ impl ScriptView {
         if response.clicked() {
             actions.push(Action::Fire(cue_index));
         }
+        response.context_menu(|ui| {
+            let mut pick = |ui: &mut Ui, label: &str, action: Action| {
+                if ui.button(label).clicked() {
+                    actions.push(action);
+                    ui.close_menu();
+                }
+            };
+            pick(ui, "Als nächsten Go scharf schalten", Action::Arm(cue_index));
+            if !cx.locked {
+                pick(ui, "Bearbeiten…", Action::EditCue(block));
+                pick(ui, "Kopieren", Action::Copy(block));
+                pick(ui, "Variante anlegen", Action::Variant(block));
+                Self::block_menu(ui, cx, block, actions);
+            }
+        });
     }
 
     #[allow(clippy::too_many_arguments)]

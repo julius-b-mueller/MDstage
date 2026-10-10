@@ -14,5 +14,9 @@ path = "src/main.rs"
 eframe = "0.31"
 rfd = "0.15"
 sha2 = "0.10"
+docx-rs = "0.4"
+typst = "0.13"
+typst-pdf = "0.13"
+typst-assets = { version = "0.13", features = ["fonts"] }
 mdstage-core = { path = "../mdstage-core" }
 mdstage-engine = { path = "../mdstage-engine" }

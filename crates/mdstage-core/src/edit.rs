@@ -144,6 +144,89 @@ impl Script {
     }
 }
 
+impl Script {
+    /// A variant group must start with a cue that is not a variant. After blocks were
+    /// removed or moved, a "variant" left without such a cue before it becomes a cue of its own.
+    fn repair_variants(&mut self) {
+        let mut previous_is_cue = false;
+        for block in &mut self.blocks {
+            match block {
+                Block::Cue(cue) => {
+                    if cue.is_variant() && !previous_is_cue {
+                        let mut yaml = cue.yaml.clone();
+                        if let Some(map) = yaml.as_mapping_mut() {
+                            map.shift_remove("sibling");
+                        }
+                        cue.set_yaml(yaml);
+                    }
+                    previous_is_cue = true;
+                }
+                // Variants follow their cue directly; anything in between ends the group.
+                Block::Config(_) => {}
+                _ => previous_is_cue = false,
+            }
+        }
+    }
+
+    /// Remove a block. The config block cannot be removed.
+    pub fn delete_block(&mut self, index: usize) {
+        if matches!(self.blocks.get(index), Some(Block::Config(_)) | None) {
+            return;
+        }
+        self.blocks.remove(index);
+        self.repair_variants();
+    }
+
+    /// Insert a block before `index` (or at the end).
+    pub fn insert_block(&mut self, index: usize, block: Block) {
+        self.blocks.insert(index.min(self.blocks.len()), block);
+        self.repair_variants();
+    }
+
+    /// Swap a block with its neighbour above (`up`) or below. Returns its new index.
+    /// The config block stays where it is.
+    pub fn move_block(&mut self, index: usize, up: bool) -> usize {
+        let target = if up { index.checked_sub(1) } else { Some(index + 1).filter(|&t| t < self.blocks.len()) };
+        let is_config = |i: usize| matches!(self.blocks.get(i), Some(Block::Config(_)));
+        match target {
+            Some(target) if index < self.blocks.len() && !is_config(index) && !is_config(target) => {
+                self.blocks.swap(index, target);
+                self.repair_variants();
+                target
+            }
+            _ => index,
+        }
+    }
+
+    /// A new cue built from YAML fields, with the lowest free trigger note.
+    pub fn new_cue(&mut self, fields: Value) -> Block {
+        let mut cue = Cue { yaml: Value::Null, invalid: false, source: String::new() };
+        cue.set_yaml(fields);
+        // Let the existing note assignment pick the note, on a copy that includes the cue.
+        self.blocks.push(Block::Cue(cue));
+        self.assign_trigger_notes();
+        self.blocks.pop().expect("the cue just pushed")
+    }
+
+    /// A copy of the cue at `index` as a cue of its own: fresh trigger note, not a variant.
+    /// With `variant`, the copy is a variant of the original instead.
+    pub fn copy_cue(&mut self, index: usize, variant: bool) -> Option<Block> {
+        let Some(Block::Cue(original)) = self.blocks.get(index) else { return None };
+        let mut yaml = original.yaml.clone();
+        let map = yaml.as_mapping_mut()?;
+        map.shift_remove("trigger_note");
+        map.shift_remove("sibling");
+        if variant {
+            // `sibling` leads the block, as the app has always written it.
+            let mut with_flag = Mapping::new();
+            with_flag.insert("sibling".into(), true.into());
+            with_flag.extend(map.clone());
+            *map = with_flag;
+        }
+        Some(self.new_cue(yaml))
+    }
+}
+
 /// One step into a YAML value.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Step {
@@ -610,6 +693,49 @@ config:
         // Removing all groups drops the key.
         script.save_roles(&cast.roles, &[], &[]);
         assert!(!script.to_markdown().contains("groups"));
+    }
+
+    #[test]
+    fn inserts_moves_and_deletes_blocks() {
+        let mut script = Script::parse(&format!("{CONFIG}\n# One\n\n*Two*\n\nThree\n"));
+        script.delete_block(0);
+        assert_eq!(script.blocks.len(), 4, "the config block stays");
+        assert_eq!(script.move_block(1, true), 1, "nothing moves above the config block");
+        assert_eq!(script.move_block(1, false), 2);
+        assert_eq!(script.move_block(3, false), 3, "the last block cannot go further down");
+        script.insert_block(99, Block::Text("Four".into()));
+        script.delete_block(3);
+        assert!(script.to_markdown().ends_with("*Two*\n\n# One\n\nFour\n"));
+    }
+
+    #[test]
+    fn copies_cues_and_keeps_variant_groups_sound() {
+        let text = format!("{CONFIG}\n```yaml\nlight: A\ntrigger_note: {{ch: 1, note: 1}}\n```\n");
+        let mut script = Script::parse(&text);
+        let copy = script.copy_cue(1, false).unwrap();
+        let variant = script.copy_cue(1, true).unwrap();
+        script.insert_block(2, variant);
+        script.insert_block(3, copy);
+        assert_eq!(
+            cue_sources(&script),
+            ["light: A\ntrigger_note: {ch: 1, note: 1}", "sibling: true\nlight: A\ntrigger_note: {ch: 1, note: 2}", "light: A\ntrigger_note: {ch: 1, note: 2}"],
+            "each copy got the lowest note free at the time"
+        );
+        assert_eq!(script.validate().note_conflicts.len(), 1, "which the check then reports, as two were made from the same state");
+
+        // Deleting the cue a variant belongs to makes the variant a cue of its own.
+        script.delete_block(1);
+        assert_eq!(cue_sources(&script)[0], "light: A\ntrigger_note: {ch: 1, note: 2}");
+        // So does moving text in between.
+        let mut script = Script::parse(&text);
+        let variant = script.copy_cue(1, true).unwrap();
+        script.insert_block(2, variant);
+        script.insert_block(2, Block::Text("in between".into()));
+        assert!(!cue_sources(&script)[1].contains("sibling"));
+
+        let fresh = script.new_cue(serde_yaml_ng::from_str("note: Neu").unwrap());
+        assert!(matches!(&fresh, Block::Cue(c) if c.source == "note: Neu\ntrigger_note: {ch: 1, note: 3}"));
+        assert_eq!(script.blocks.len(), 4, "new_cue does not insert by itself");
     }
 
     #[test]
