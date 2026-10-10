@@ -29,6 +29,9 @@ pub struct SettingsUi {
     pub channels: Vec<(Option<String>, String)>,
     /// Set when a channel's test button was pressed: the physical output (0-based).
     pub test_output: Option<usize>,
+    /// The colour each output device is marked with on the cues, by device name. Kept
+    /// in the show file, with the device's name and kind.
+    pub colours: std::collections::HashMap<String, String>,
     /// Stylesheets in the open show's `css/` folder.
     css_files: Vec<String>,
     /// This machine's address in the local network, if it has one.
@@ -38,6 +41,31 @@ pub struct SettingsUi {
 /// A text field that takes the remaining room up to `width`.
 fn field(ui: &mut Ui, value: &mut String, hint: &str, width: f32) {
     ui.add(egui::TextEdit::singleline(value).hint_text(hint).desired_width(width));
+}
+
+/// Choose the colour a device is marked with on the cues. `was` is the device's name
+/// before this frame's edit, `name` its name now: the colour moves along with a rename.
+fn colour_choice(ui: &mut Ui, id: impl std::hash::Hash, colours: &mut std::collections::HashMap<String, String>, was: &str, name: &str) {
+    if was != name {
+        if let Some(colour) = colours.remove(was) {
+            colours.insert(name.to_string(), colour);
+        }
+    }
+    let current = colours.get(name).cloned().unwrap_or_default();
+    let mut picked = current.clone();
+    let swatch = |colour: &str| RichText::new("⏺").color(named(Some(colour)).unwrap_or(MUTED));
+    egui::ComboBox::from_id_salt(id).selected_text(swatch(&picked)).width(36.0).show_ui(ui, |ui| {
+        ui.selectable_value(&mut picked, String::new(), t("keine Farbe", "no colour"));
+        for colour in ["red", "green", "yellow", "blue", "purple", "cyan", "darkred", "darkgreen", "darkyellow", "darkblue", "darkpurple", "darkcyan"] {
+            ui.selectable_value(&mut picked, colour.to_string(), swatch(colour));
+        }
+    });
+    if picked != current {
+        match picked.is_empty() {
+            true => drop(colours.remove(name)),
+            false => drop(colours.insert(name.to_string(), picked)),
+        }
+    }
 }
 
 /// Choose one of `options`, or type a name that is not present right now.
@@ -88,10 +116,17 @@ impl SettingsUi {
             learning: None,
             channels: Vec::new(),
             test_output: None,
+            colours: Default::default(),
             css_files: Vec::new(),
             // Asking which local address a route to the outside would use sends nothing.
             lan_address: std::net::UdpSocket::bind("0.0.0.0:0").and_then(|s| s.connect("192.0.2.1:9").and_then(|()| s.local_addr())).ok().map(|a| a.ip().to_string()),
         }
+    }
+
+    /// The device colours declared in the open show.
+    pub fn with_colours(mut self, colours: std::collections::HashMap<String, String>) -> SettingsUi {
+        self.colours = colours;
+        self
     }
 
     /// List the stylesheets of the open show (`css/*.css` next to the show file).
@@ -133,6 +168,7 @@ impl SettingsUi {
         let channels = &mut self.channels;
         let mut test_output = None;
         let (css_files, lan_address) = (&self.css_files, &self.lan_address);
+        let colours = &mut self.colours;
         egui::ScrollArea::vertical().auto_shrink([false, false]).max_height(ui.available_height() - 44.0).show(ui, |ui| {
             let draft = &mut self.draft;
             ui.heading(t("Allgemein", "General"));
@@ -215,7 +251,11 @@ impl SettingsUi {
                     DeviceSetting::Midi { name, port, enabled, trigger_notes, timecode } => {
                         ui.checkbox(enabled, "");
                         ui.label(RichText::new("MIDI").color(BLUE));
+                        let was = name.clone();
                         field(ui, name, "Name", 120.0);
+                        if has_show {
+                            colour_choice(ui, ("device-colour", i), colours, &was, name);
+                        }
                         port_picker(ui, ("midi-port", i), port, &self.midi_outputs);
                         ui.checkbox(trigger_notes, t("Trigger-Noten", "Trigger notes"));
                         ui.checkbox(timecode, "Timecode");
@@ -226,7 +266,11 @@ impl SettingsUi {
                     DeviceSetting::Osc { name, host, port, enabled, trigger_notes } => {
                         ui.checkbox(enabled, "");
                         ui.label(RichText::new("OSC").color(GREEN));
+                        let was = name.clone();
                         field(ui, name, "Name", 120.0);
+                        if has_show {
+                            colour_choice(ui, ("device-colour", i), colours, &was, name);
+                        }
                         field(ui, host, "Host", 130.0);
                         ui.add(egui::DragValue::new(port).range(1..=65535));
                         ui.checkbox(trigger_notes, t("Trigger-Noten", "Trigger notes"));
@@ -237,7 +281,11 @@ impl SettingsUi {
                     DeviceSetting::Http { name, url, enabled } => {
                         ui.checkbox(enabled, "");
                         ui.label(RichText::new("HTTP").color(YELLOW));
+                        let was = name.clone();
                         field(ui, name, "Name", 120.0);
+                        if has_show {
+                            colour_choice(ui, ("device-colour", i), colours, &was, name);
+                        }
                         field(ui, url, "http://192.168.1.50:8080", 260.0);
                         if ui.small_button("×").clicked() {
                             remove = Some(i);
@@ -245,7 +293,11 @@ impl SettingsUi {
                     }
                     DeviceSetting::Display { name, style, scroll_seconds, language, repeat } => {
                         ui.label(RichText::new("Display").color(RED));
+                        let was = name.clone();
                         field(ui, name, "Name", 120.0);
+                        if has_show {
+                            colour_choice(ui, ("device-colour", i), colours, &was, name);
+                        }
                         egui::ComboBox::from_id_salt(("display-style", i)).selected_text(if style.is_empty() { "dark" } else { style.as_str() }).width(130.0).show_ui(ui, |ui| {
                             for choice in ["dark", "light", "subtitle"].into_iter().chain(css_files.iter().map(String::as_str)) {
                                 ui.selectable_value(style, choice.to_string(), choice);

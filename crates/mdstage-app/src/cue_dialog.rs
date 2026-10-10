@@ -139,6 +139,31 @@ impl CueDialog {
         let mut changed = false;
 
         ui.horizontal(|ui| {
+            ui.label(t("Trigger-Note", "Trigger note"));
+            match note_of(self.yaml.get("trigger_note")) {
+                Some(mut note) => {
+                    let hint = t("Die Note, die beim Auslösen gesendet wird und über die andere Cues diesen ansprechen. Verknüpfungen anderer Cues folgen einer Änderung.", "The note sent on firing and by which other cues refer to this one. Links from other cues follow a change.");
+                    let mut edited = ui.add(egui::DragValue::new(&mut note.ch).range(1..=16).prefix(t("Kanal ", "Channel "))).on_hover_text(hint).changed();
+                    edited |= ui.add(egui::DragValue::new(&mut note.note).range(0..=127).prefix("Note ")).on_hover_text(hint).changed();
+                    if edited {
+                        changed = true;
+                        self.yaml.insert("trigger_note".into(), note_value(note));
+                    }
+                }
+                None => drop(ui.label(RichText::new(t("wird beim Speichern vergeben", "is assigned on saving")).color(MUTED))),
+            }
+            ui.add_space(12.0);
+            let mut variant = self.yaml.get("sibling").and_then(Value::as_bool) == Some(true);
+            if ui.checkbox(&mut variant, t("Variante des vorangehenden Cues", "Variant of the cue before")).changed() {
+                changed = true;
+                match variant {
+                    true => drop(self.yaml.insert("sibling".into(), true.into())),
+                    false => drop(self.yaml.shift_remove("sibling")),
+                }
+            }
+        });
+
+        ui.horizontal(|ui| {
             ui.label(t("Notiz", "Note"));
             let mut note = self.yaml.get("note").and_then(Value::as_str).unwrap_or_default().to_string();
             if ui.add(egui::TextEdit::singleline(&mut note).desired_width(f32::INFINITY)).changed() {
@@ -336,11 +361,13 @@ impl CueDialog {
                     }
                 });
                 ui.horizontal(|ui| {
+                    changed |= seconds(ui, music, "start", "Start");
+                    changed |= seconds(ui, music, "end", t("Ende", "End"));
                     changed |= seconds(ui, music, "fadein", t("Einblenden", "Fade in"));
                     changed |= seconds(ui, music, "fadeout", t("Ausblenden", "Fade out"));
                     changed |= seconds(ui, music, "fading_point", t("Loop-Punkt", "Loop point"));
                 });
-                ui.label(RichText::new(t("Start und Ende: Marker an der Wellenform mit Shift ziehen.", "Start and end: drag the markers on the waveform with Shift.")).color(MUTED));
+                ui.label(RichText::new(t("Ende 0 = bis zum Dateiende. Alle Zeiten lassen sich auch an der Wellenform mit Shift ziehen.", "End 0 = up to the end of the file. All times can also be dragged on the waveform with Shift.")).color(MUTED));
             }
             if changed && !before {
                 self.yaml.insert("music".into(), Value::Mapping(copy));
@@ -370,7 +397,9 @@ impl CueDialog {
         let has_sequence = self.yaml.contains_key("music_seq");
         egui::CollapsingHeader::new(t("Weitere Dateien (Sequenz)", "Further files (sequence)")).id_salt("cue-sequence").default_open(has_sequence).show(ui, |ui| {
             ui.label(RichText::new(t("Die Dateien spielen nacheinander und beginnen dann wieder von vorn; jede übergibt an ihrem Loop-Punkt.", "The files play one after the other and then start over; each hands on at its loop point.")).color(MUTED));
-            changed |= crate::cue_forms::sequence(ui, &mut self.yaml, &self.audio_files);
+            let (dir, cache) = (self.audio_dir.clone(), &mut self.info);
+            let mut channels_of = |file: &str| cache.entry(file.to_string()).or_insert_with(|| probe(&dir, file)).map(|(channels, _)| channels);
+            changed |= crate::cue_forms::sequence(ui, &mut self.yaml, &self.audio_files, &self.channels, &mut channels_of);
         });
         let sends = ["cue_midi", "cue_osc", "cue_http", "cue_display", "osc"].iter().any(|key| self.yaml.contains_key(*key));
         egui::CollapsingHeader::new(t("Nachrichten an Geräte", "Messages to devices")).id_salt("cue-messages").default_open(sends).show(ui, |ui| {

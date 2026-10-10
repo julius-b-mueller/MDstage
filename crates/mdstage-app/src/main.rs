@@ -58,6 +58,8 @@ struct App {
     /// Audio files no cue uses, waiting for the operator to confirm moving them away.
     unused_audio: Option<Vec<String>>,
     about_open: bool,
+    /// Files dropped onto the window, the pointer position known then, and when.
+    pending_drop: Option<(Vec<PathBuf>, Option<egui::Pos2>, std::time::Instant)>,
     /// Problem lines the operator chose not to see any more (this session).
     ignored: Vec<String>,
     /// What "Clean up YAML" would remove (`(YAML block, key)`), waiting to be confirmed.
@@ -97,6 +99,7 @@ impl App {
             live_open: false,
             unused_audio: None,
             about_open: false,
+            pending_drop: None,
             ignored: Vec::new(),
             cleanup: None,
             link_dialog: None,
@@ -549,7 +552,7 @@ impl App {
             self.export.get_or_insert((EXPORT_DEFAULTS, false));
         }
         if pressed(ctx, Key::Comma) && self.settings_ui.is_none() {
-            self.settings_ui = Some(SettingsUi::new(&self.settings).with_channels(self.show.as_ref().map(|s| s.script.virtual_channels()).unwrap_or_default()).with_show_dir(self.show.as_ref().and_then(|s| s.path.parent())));
+            self.settings_ui = Some(SettingsUi::new(&self.settings).with_channels(self.show.as_ref().map(|s| s.script.virtual_channels()).unwrap_or_default()).with_show_dir(self.show.as_ref().and_then(|s| s.path.parent())).with_colours(self.device_colours()));
         }
         // Go and Back only when nothing is being typed.
         if self.show.is_some() && !self.view.is_editing() && !ctx.wants_keyboard_input() {
@@ -624,7 +627,7 @@ impl App {
                 }
                 if ui.button(self.t("Einstellungen…", "Settings…")).clicked() {
                     ui.close_menu();
-                    self.settings_ui = Some(SettingsUi::new(&self.settings).with_channels(self.show.as_ref().map(|s| s.script.virtual_channels()).unwrap_or_default()).with_show_dir(self.show.as_ref().and_then(|s| s.path.parent())));
+                    self.settings_ui = Some(SettingsUi::new(&self.settings).with_channels(self.show.as_ref().map(|s| s.script.virtual_channels()).unwrap_or_default()).with_show_dir(self.show.as_ref().and_then(|s| s.path.parent())).with_colours(self.device_colours()));
                 }
                 if ui.button(self.t("Beenden", "Quit")).clicked() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -870,8 +873,34 @@ impl App {
                         form.draft.routing.insert(name.clone(), output);
                     }
                 }
-                if let Some(show) = self.show.as_mut().filter(|s| s.script.virtual_channels() != names) {
-                    show.script.set_virtual_channels(&names, &renames);
+                // So do the devices' names, kinds and colours (their addresses do not).
+                let colours_changed = form.colours != self.device_colours();
+                let mut edited = false;
+                if let Some(show) = &mut self.show {
+                    if show.script.virtual_channels() != names {
+                        show.script.set_virtual_channels(&names, &renames);
+                        edited = true;
+                    }
+                    if colours_changed {
+                        let devices: Vec<(String, String, Option<String>)> = form
+                            .draft
+                            .devices
+                            .iter()
+                            .map(|device| {
+                                let kind = match device {
+                                    mdstage_engine::settings::DeviceSetting::Midi { .. } => "midi",
+                                    mdstage_engine::settings::DeviceSetting::Osc { .. } => "osc",
+                                    mdstage_engine::settings::DeviceSetting::Http { .. } => "http",
+                                    mdstage_engine::settings::DeviceSetting::Display { .. } => "display",
+                                };
+                                (device.name().to_string(), kind.to_string(), form.colours.get(device.name()).cloned())
+                            })
+                            .collect();
+                        show.script.set_output_devices(&devices);
+                        edited = true;
+                    }
+                }
+                if edited {
                     self.after_edit();
                 }
                 let restart = form.draft.display_host != self.settings.display_host || form.draft.display_port != self.settings.display_port;
@@ -943,7 +972,14 @@ impl App {
                     let cue = show.script.new_cue(dialog.value());
                     show.script.insert_block(dialog.block, cue);
                 } else if let Some(Block::Cue(cue)) = show.script.blocks.get_mut(dialog.block) {
+                    let before = cue.note();
                     cue.set_yaml(dialog.value());
+                    // A changed trigger note takes along every link other cues have to it.
+                    if let (Some(before), Some(after)) = (before, cue.note()) {
+                        if before != after {
+                            show.script.renumber_note(before, after);
+                        }
+                    }
                     // A cue must keep a trigger note even if it was deleted from the YAML.
                     show.script.assign_trigger_notes();
                 }
@@ -1005,6 +1041,12 @@ impl App {
         }
     }
 
+    /// The colour the open show gives each output device, by device name.
+    fn device_colours(&self) -> std::collections::HashMap<String, String> {
+        let declared = self.show.as_ref().and_then(|s| s.script.config()).and_then(|c| c.get("outputDevices")).and_then(|d| d.as_sequence()).cloned().unwrap_or_default();
+        declared.iter().filter_map(|d| Some((d.get("name")?.as_str()?.to_string(), d.get("color")?.as_str()?.to_string()))).collect()
+    }
+
     /// Open the show file at a block in the text editor set up in the settings.
     fn open_in_editor(&mut self, block: usize) {
         let Some(show) = &self.show else { return };
@@ -1043,11 +1085,15 @@ impl App {
     }
 
     /// Audio files were dropped onto the window: copy them into the show's `audio/`
-    /// folder. A file of the same name that is there already is left alone.
-    fn audio_dropped(&mut self, files: Vec<PathBuf>) {
-        let Some(show) = &self.show else { return };
+    /// folder (a file of the same name that is there already is left alone). Dropped
+    /// between two blocks of the script, each file becomes a cue there that plays it.
+    fn audio_dropped(&mut self, files: Vec<PathBuf>, at: Option<egui::Pos2>) {
+        let Some(show) = &mut self.show else { return };
         let audio_dir = show.path.parent().unwrap_or(Path::new(".")).join("audio");
-        let (mut copied, mut present, mut failed) = (0, 0, 0);
+        // Not onto a dialog, and not while editing is locked.
+        let dialog_open = self.cue_dialog.is_some() || self.settings_ui.is_some() || self.roles_ui.is_some();
+        let mut insert_at = at.filter(|_| !self.locked && !dialog_open).and_then(|point| self.view.insert_index_at(point, &show.script));
+        let (mut copied, mut present, mut failed, mut cues) = (0, 0, 0, 0);
         for file in files {
             let Some(name) = file.file_name().and_then(|n| n.to_str()).filter(|n| store::is_audio_name(n)) else { continue };
             let target = audio_dir.join(name);
@@ -1057,6 +1103,15 @@ impl App {
                 copied += 1;
             } else {
                 failed += 1;
+                continue;
+            }
+            if let Some(index) = insert_at {
+                let mut fields = serde_yaml_mapping();
+                fields.insert("music".into(), name.into());
+                let cue = show.script.new_cue(fields.into());
+                show.script.insert_block(index, cue);
+                insert_at = Some(index + 1);
+                cues += 1;
             }
         }
         if copied + present + failed == 0 {
@@ -1069,9 +1124,15 @@ impl App {
         if failed > 0 {
             text += &if lang::english() { format!(" {failed} could not be copied.") } else { format!(" {failed} konnten nicht kopiert werden.") };
         }
+        if cues > 0 {
+            text += &if lang::english() { format!(" {cues} cue(s) created.") } else { format!(" {cues} Cue(s) angelegt.") };
+        }
         self.message = Some(text);
         if let Some(dialog) = &mut self.cue_dialog {
             dialog.refresh_audio(&audio_dir);
+        }
+        if cues > 0 {
+            self.after_edit();
         }
     }
 
@@ -1269,9 +1330,21 @@ impl eframe::App for App {
             ctx.request_repaint_after(Duration::from_millis(33));
         }
         self.shortcuts(ctx);
+        // Files dropped onto the window. Where they landed is only known once the pointer
+        // reports in again (it does not while the system drags), so wait a moment for that.
         let dropped: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
+        let pointer = ctx.input(|i| i.pointer.latest_pos());
         if !dropped.is_empty() {
-            self.audio_dropped(dropped);
+            self.pending_drop = Some((dropped, pointer, std::time::Instant::now()));
+        }
+        if let Some((files, before, since)) = self.pending_drop.take() {
+            let landed = pointer.filter(|p| Some(*p) != before);
+            if landed.is_some() || since.elapsed() > Duration::from_millis(1200) {
+                self.audio_dropped(files, landed.or(pointer));
+            } else {
+                self.pending_drop = Some((files, before, since));
+                ctx.request_repaint();
+            }
         }
 
         let bar = |fill, x, y| egui::Frame::new().fill(fill).inner_margin(egui::Margin::symmetric(x, y));

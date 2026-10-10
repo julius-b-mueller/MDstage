@@ -163,6 +163,9 @@ pub struct ScriptView {
     zoom: HashMap<usize, (f32, f64)>,
     /// The line of the show file each block begins on.
     lines: Vec<usize>,
+    /// Where the script was drawn last: the screen position of its top left corner
+    /// (scrolled along) and the part of the window it shows in.
+    drawn_at: Option<(egui::Pos2, Rect)>,
     /// A connection being set up: the next cue clicked completes it.
     picking: Option<(Link, usize)>,
     /// Lengths of the audio files seen so far, in seconds.
@@ -563,6 +566,10 @@ impl ScriptView {
                 }
                 self.draw_block(ui, cx, i, rect, actions);
             }
+            self.drawn_at = Some((origin, ui.clip_rect()));
+            if !cx.locked && self.editing.is_none() && self.picking.is_none() {
+                self.insert_zones(ui, cx, origin, viewport, actions);
+            }
         });
         self.scroll_y = output.state.offset.y;
     }
@@ -604,6 +611,58 @@ impl ScriptView {
                 Self::block_menu(ui, cx, index, actions);
             });
         }
+    }
+
+    /// Between any two blocks, at the left edge: a "+" that shows when the pointer is
+    /// there. A click adds a cue at that place, Shift+click a text block; with a cue on
+    /// the clipboard there is a paste button beside it.
+    fn insert_zones(&mut self, ui: &mut Ui, cx: &Context, origin: egui::Pos2, viewport: Rect, actions: &mut Vec<Action>) {
+        let blocks = &cx.script.blocks;
+        // Nothing goes before the config block.
+        let first = if matches!(blocks.first(), Some(Block::Config(_))) { 1 } else { 0 };
+        let shift = ui.input(|i| i.modifiers.shift);
+        for at in first..=blocks.len() {
+            let y = self.offsets.get(at).copied().unwrap_or(0.0);
+            if y < viewport.min.y - 20.0 || y > viewport.max.y + 20.0 {
+                continue;
+            }
+            let zone = Rect::from_min_size(pos2(origin.x - 22.0, origin.y + y - 11.0), vec2(if cx.can_paste { 78.0 } else { 46.0 }, 22.0));
+            let response = ui.interact(zone, Id::new(("insert", at)), Sense::hover());
+            if !response.hovered() && !ui.rect_contains_pointer(zone) {
+                continue;
+            }
+            let button = Rect::from_center_size(pos2(origin.x - 6.0, origin.y + y), vec2(20.0, 20.0));
+            let plus = ui.interact(button, Id::new(("insert-button", at)), Sense::click());
+            let colour = if shift { BLUE } else { GREEN };
+            ui.painter().circle_filled(button.center(), 10.0, if plus.hovered() { colour } else { colour.gamma_multiply(0.8) });
+            ui.painter().text(button.center(), Align2::CENTER_CENTER, "+", FontId::proportional(16.0), Color32::BLACK);
+            let plus = plus.on_hover_text(t("Klick: Cue hier einfügen · Shift+Klick: Text hier einfügen", "Click: insert a cue here · Shift+click: insert text here"));
+            if plus.clicked() {
+                actions.push(if shift { Action::NewText(at) } else { Action::NewCue(at) });
+            }
+            if cx.can_paste {
+                let paste = Rect::from_center_size(pos2(origin.x + 22.0, origin.y + y), vec2(26.0, 20.0));
+                let response = ui.interact(paste, Id::new(("insert-paste", at)), Sense::click());
+                ui.painter().rect_filled(paste, 10.0, Color32::from_rgb(0x56, 0xb6, 0xc2).gamma_multiply(if response.hovered() { 1.0 } else { 0.8 }));
+                ui.painter().text(paste.center(), Align2::CENTER_CENTER, "📋", FontId::proportional(12.0), Color32::BLACK);
+                if response.on_hover_text(t("Kopierten Cue hier einfügen", "Paste the copied cue here")).clicked() {
+                    actions.push(Action::Paste(at));
+                }
+            }
+        }
+    }
+
+    /// The place between two blocks nearest to a point on the screen, as the index a
+    /// new block would get there. `None` if the point is not on the script.
+    pub fn insert_index_at(&self, point: egui::Pos2, script: &Script) -> Option<usize> {
+        let (origin, shown) = self.drawn_at?;
+        if !shown.contains(point) || self.offsets.len() != script.blocks.len() + 1 {
+            return None;
+        }
+        let y = point.y - origin.y;
+        // Before the first block whose middle lies below the point.
+        let at = (0..script.blocks.len()).find(|&i| self.offsets[i] + self.heights[i] / 2.0 > y).unwrap_or(script.blocks.len());
+        Some(at.max(if matches!(script.blocks.first(), Some(Block::Config(_))) { 1 } else { 0 }))
     }
 
     /// The menu entries every block has: insert around it, move it, delete it.

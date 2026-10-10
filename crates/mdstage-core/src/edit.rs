@@ -35,6 +35,71 @@ impl Script {
         }
     }
 
+    /// A cue's trigger note changed: point everything that referred to the old note
+    /// (`chain_end`, `loop_outro`, `auto_trigger`, `music.adjust`) at the new one.
+    /// Returns how many references there were.
+    pub fn renumber_note(&mut self, from: Note, to: Note) -> usize {
+        fn is(value: &Value, note: Note) -> bool {
+            value.get("ch").and_then(Value::as_u64) == Some(note.ch) && value.get("note").and_then(Value::as_u64) == Some(note.note)
+        }
+        let mut hits = 0;
+        for block in &mut self.blocks {
+            let Block::Cue(cue) = block else { continue };
+            if cue.invalid {
+                continue;
+            }
+            let mut yaml = cue.yaml.clone();
+            let mut found = 0;
+            let mut point = |reference: Option<&mut Value>| {
+                if let Some(reference) = reference.filter(|r| is(r, from)) {
+                    let mut map = serde_yaml_ng::Mapping::new();
+                    map.insert("ch".into(), to.ch.into());
+                    map.insert("note".into(), to.note.into());
+                    *reference = Value::Mapping(map);
+                    found += 1;
+                }
+            };
+            point(yaml.get_mut("chain_end"));
+            point(yaml.get_mut("loop_outro"));
+            point(yaml.get_mut("auto_trigger").and_then(|a| a.get_mut("trigger_note")));
+            point(yaml.get_mut("music").and_then(|m| m.get_mut("adjust")).and_then(|a| a.get_mut("trigger_note")));
+            if found > 0 {
+                cue.set_yaml(yaml);
+                hits += found;
+            }
+        }
+        hits
+    }
+
+    /// Declare the show's output devices in the config block: `(name, type, colour)`,
+    /// the colour optional. Addresses are not part of the show file.
+    pub fn set_output_devices(&mut self, devices: &[(String, String, Option<String>)]) {
+        for block in &mut self.blocks {
+            let Block::Config(config) = block else { continue };
+            let mut yaml = config.yaml.clone();
+            let Some(Value::Mapping(inner)) = yaml.get_mut("config") else { continue };
+            let list: Vec<Value> = devices
+                .iter()
+                .map(|(name, kind, colour)| {
+                    let mut device = serde_yaml_ng::Mapping::new();
+                    device.insert("name".into(), name.as_str().into());
+                    device.insert("type".into(), kind.as_str().into());
+                    if let Some(colour) = colour {
+                        device.insert("color".into(), colour.as_str().into());
+                    }
+                    Value::Mapping(device)
+                })
+                .collect();
+            match list.is_empty() {
+                true => drop(inner.shift_remove("outputDevices")),
+                false => drop(inner.insert("outputDevices".into(), Value::Sequence(list))),
+            }
+            if yaml != config.yaml {
+                config.set_yaml(yaml);
+            }
+        }
+    }
+
     /// Set the names of the show's virtual audio channels. `renames` (`(old, new)`) are
     /// followed through the patches of every cue, so audio stays on its channel.
     pub fn set_virtual_channels(&mut self, names: &[String], renames: &[(String, String)]) {
@@ -923,5 +988,31 @@ config:
         assert!(!script.cleanup_one(2, "foo"));
         assert_eq!(script.cleanup_preview().iter().map(|r| r.key.as_str()).collect::<Vec<_>>(), ["bar"]);
         assert!(script.to_markdown().contains("note: x"));
+    }
+
+    #[test]
+    fn a_changed_trigger_note_takes_its_references_along() {
+        let mut script = Script::parse("```yaml\ntrigger_note: {ch: 1, note: 1}\nmusic:\n    file: a.wav\n    adjust:\n        trigger_note: {ch: 1, note: 2}\n        fadeout: true\nchain_end: {ch: 1, note: 2}\n```\n\n```yaml\ntrigger_note: {ch: 1, note: 2}\nloop_outro: {ch: 1, note: 3}\n```\n\n```yaml\ntrigger_note: {ch: 1, note: 3}\nauto_trigger:\n    trigger_note: {ch: 1, note: 2}\n    delay: 1\n```\n");
+        let (from, to) = (Note { ch: 1, note: 2 }, Note { ch: 2, note: 40 });
+        assert_eq!(script.renumber_note(from, to), 3);
+        let cues = crate::cues::Cues::new(&script);
+        assert_eq!(cues.get(0).unwrap().chain_end(), Some(to));
+        assert_eq!(cues.get(0).unwrap().adjust().unwrap().target, to);
+        assert_eq!(cues.get(2).unwrap().auto_trigger().unwrap().source, to);
+        // The cue's own note is the caller's business, and other notes are left alone.
+        assert_eq!(cues.get(1).unwrap().note(), Some(from));
+        assert_eq!(cues.get(1).unwrap().loop_outro(), Some(Note { ch: 1, note: 3 }));
+    }
+
+    #[test]
+    fn output_devices_are_declared_in_the_config() {
+        let mut script = Script::parse("```yaml\nconfig:\n    roles: {}\n```\n");
+        script.set_output_devices(&[("Licht".into(), "midi".into(), Some("yellow".into())), ("QLab".into(), "osc".into(), None)]);
+        let declared = script.config().unwrap().get("outputDevices").unwrap().clone();
+        assert_eq!(declared[0].get("color").and_then(Value::as_str), Some("yellow"));
+        assert_eq!(declared[1].get("name").and_then(Value::as_str), Some("QLab"));
+        assert!(declared[1].get("color").is_none());
+        script.set_output_devices(&[]);
+        assert!(script.config().unwrap().get("outputDevices").is_none());
     }
 }

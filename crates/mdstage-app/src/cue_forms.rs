@@ -227,8 +227,9 @@ pub fn audios(ui: &mut Ui, id: usize, part: &mut Mapping, files: &[String], chan
     )
 }
 
-/// The further files of a multi-part loop (`music_seq`).
-pub fn sequence(ui: &mut Ui, yaml: &mut Mapping, files: &[String]) -> bool {
+/// The further files of a multi-part loop (`music_seq`). Each entry is one file, or
+/// several audios with a patch like the main entry, with its own times and level.
+pub fn sequence(ui: &mut Ui, yaml: &mut Mapping, files: &[String], channels: &[String], channels_of: &mut dyn FnMut(&str) -> Option<usize>) -> bool {
     list(
         ui,
         yaml,
@@ -236,14 +237,25 @@ pub fn sequence(ui: &mut Ui, yaml: &mut Mapping, files: &[String]) -> bool {
         t("+ Datei hinzufügen", "+ Add file"),
         || mapping(&[("file", "".into())]),
         |ui, i, slot| {
+            let mut changed = false;
             if slot.contains_key("audios") {
-                ui.label(RichText::new(t("mehrere Audios mit Patch – unten im YAML bearbeiten", "several audios with a patch – edit them in the YAML below")).color(MUTED));
-                return false;
+                ui.vertical(|ui| {
+                    changed |= audios(ui, i + 1, slot, files, channels, channels_of);
+                });
+                ui.end_row();
+            } else {
+                changed |= file(ui, ("seq-file", i), slot, files);
+                if ui.small_button(t("+ Audio", "+ Audio")).on_hover_text(t("Mehrere Audios mit Kanal-Patch in diesem Teil", "Several audios with a channel patch in this part")).clicked() {
+                    changed = true;
+                    let first = slot.shift_remove("file").unwrap_or_default();
+                    slot.insert("audios".into(), Value::Sequence(vec![Value::Mapping(mapping(&[("file", first)])), Value::Mapping(mapping(&[("file", "".into())]))]));
+                }
             }
-            let mut changed = file(ui, ("seq-file", i), slot, files);
-            changed |= crate::cue_dialog::seconds(ui, slot, "fading_point", t("Loop-Punkt", "Loop point"));
             changed |= crate::cue_dialog::seconds(ui, slot, "start", "Start");
             changed |= crate::cue_dialog::seconds(ui, slot, "end", t("Ende", "End"));
+            changed |= crate::cue_dialog::seconds(ui, slot, "fading_point", t("Loop-Punkt", "Loop point"));
+            changed |= crate::cue_dialog::seconds(ui, slot, "fadein", t("Einblenden", "Fade in"));
+            changed |= crate::cue_dialog::seconds(ui, slot, "fadeout", t("Ausblenden", "Fade out"));
             let mut volume = slot.get("volume").and_then(Value::as_f64).unwrap_or(mdstage_core::cues::DEFAULT_VOLUME);
             ui.label(t("Lautstärke", "Volume"));
             if ui.add(egui::DragValue::new(&mut volume).speed(0.01).range(0.0..=1.0)).changed() {
@@ -305,6 +317,7 @@ pub fn messages(ui: &mut Ui, yaml: &mut Mapping, devices: &Devices) -> bool {
                     changed |= integer(ui, message, "vel", "Velocity", 0..=127);
                 }
             }
+            changed |= text(ui, message, "comment", t("Kommentar", "Comment"), 120.0);
             changed
         },
     );
@@ -321,6 +334,7 @@ pub fn messages(ui: &mut Ui, yaml: &mut Mapping, devices: &Devices) -> bool {
             let mut changed = device(ui, ("osc-device", i), message, &devices.osc);
             changed |= text(ui, message, "path", "/pfad", 200.0);
             changed |= argument(ui, ("osc-arg", i), message, "arg", "arg_type");
+            changed |= text(ui, message, "comment", t("Kommentar", "Comment"), 120.0);
             changed
         },
     );
@@ -339,6 +353,7 @@ pub fn messages(ui: &mut Ui, yaml: &mut Mapping, devices: &Devices) -> bool {
             changed |= text(ui, message, "path", "/api/…", 170.0);
             changed |= text(ui, message, "body", t("Body (optional)", "Body (optional)"), 170.0);
             changed |= text(ui, message, "content_type", "Content-Type", 130.0);
+            changed |= text(ui, message, "comment", t("Kommentar", "Comment"), 120.0);
             changed
         },
     );
@@ -368,6 +383,12 @@ pub fn messages(ui: &mut Ui, yaml: &mut Mapping, devices: &Devices) -> bool {
         ui.label(RichText::new(t("OSC-Pfad (alt)", "OSC path (legacy)")).color(MUTED));
         changed |= text(ui, yaml, "osc", "/pfad/{ch}", 200.0);
         changed |= argument(ui, "legacy-osc-arg", yaml, "osc_arg", "osc_arg_type");
+    });
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new("QLC+").color(MUTED));
+        changed |= text(ui, yaml, "qlcplus", "", 160.0);
+        ui.label(RichText::new(t("Projektion", "Projection")).color(MUTED));
+        changed |= text(ui, yaml, "projection", "", 160.0);
     });
     changed
 }
