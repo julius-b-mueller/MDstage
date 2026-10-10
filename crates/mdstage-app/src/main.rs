@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use eframe::egui::{self, Color32, Key, KeyboardShortcut, Modifiers, RichText};
+use mdstage_core::cues::Cues;
 use mdstage_core::mic::Cast;
 use mdstage_core::validate::Report;
 use mdstage_core::{Block, Script};
@@ -31,7 +32,7 @@ use mdstage_engine::settings::Settings;
 
 use cue_dialog::CueDialog;
 use roles_ui::RolesUi;
-use script_view::{Action, Context, ScriptView};
+use script_view::{Action, Context, Link, ScriptView};
 use settings_ui::SettingsUi;
 use theme::*;
 
@@ -55,6 +56,11 @@ struct App {
     live_open: bool,
     /// Audio files no cue uses, waiting for the operator to confirm moving them away.
     unused_audio: Option<Vec<String>>,
+    /// A connection between two cues whose details are being asked for.
+    link_dialog: Option<LinkDialog>,
+    /// Auto-Mic is about to be switched on for this block while cues still name
+    /// microphones by hand: the operator is asked what to do with those.
+    auto_mic_prompt: Option<usize>,
     settings_ui: Option<SettingsUi>,
     cue_dialog: Option<CueDialog>,
     roles_ui: Option<RolesUi>,
@@ -83,6 +89,8 @@ impl App {
             view: ScriptView::default(),
             live_open: false,
             unused_audio: None,
+            link_dialog: None,
+            auto_mic_prompt: None,
             settings_ui: None,
             cue_dialog: None,
             roles_ui: None,
@@ -180,6 +188,154 @@ impl App {
         show.session.send(Request::SetScript(Box::new(show.script.clone())));
         self.view.invalidate();
         self.save_settings();
+    }
+
+    /// Change the cue in `block` and save.
+    fn edit_cue(&mut self, block: usize, change: impl FnOnce(&mut mdstage_core::yaml::Mapping)) {
+        let Some(Block::Cue(cue)) = self.show.as_mut().and_then(|s| s.script.blocks.get_mut(block)) else { return };
+        let mut yaml = cue.yaml.clone();
+        let Some(map) = yaml.as_mapping_mut() else { return };
+        change(map);
+        cue.set_yaml(yaml);
+        self.after_edit();
+    }
+
+    /// While a connection was being set up for the cue in `block`, the cue `other` was
+    /// clicked: make the connection, or ask for what is still open.
+    fn link_picked(&mut self, link: Link, block: usize, other: usize) {
+        let Some(show) = &self.show else { return };
+        let cues = Cues::new(&show.script);
+        let Some(note) = cues.get(other).and_then(|c| c.note()) else { return };
+        match link {
+            Link::Chain => self.edit_cue(block, |map| drop(map.insert("chain_end".into(), note_value(note)))),
+            Link::LoopOutro => self.edit_cue(block, |map| drop(map.insert("loop_outro".into(), note_value(note)))),
+            Link::AutoCue => {
+                // Where the source's audio stands, paused or playing, is where the cue fires.
+                let paused = self.snapshot.paused.iter().find(|(c, _)| *c == other).map(|(_, seconds)| *seconds);
+                let playing = self.snapshot.audio.iter().find(|(c, s)| *c == other && s.part == 0).map(|(_, s)| s.seconds);
+                match paused.or(playing) {
+                    Some(at) => self.edit_cue(block, |map| {
+                        let mut auto = serde_yaml_mapping();
+                        auto.insert("trigger_note".into(), note_value(note));
+                        auto.insert("at".into(), ((at * 1000.0).round() / 1000.0).into());
+                        map.insert("auto_trigger".into(), auto.into());
+                    }),
+                    None => self.link_dialog = Some(LinkDialog::Delay { block, source: note, seconds: 5.0 }),
+                }
+            }
+            Link::Adjust => {
+                let existing = show.script.blocks.get(block).and_then(|b| match b {
+                    Block::Cue(cue) => cue.adjust().filter(|a| a.target == note),
+                    _ => None,
+                });
+                self.link_dialog = Some(LinkDialog::Adjust {
+                    block,
+                    target: note,
+                    fadeout: existing.as_ref().is_none_or(|a| a.fadeout),
+                    volume: existing.as_ref().and_then(|a| a.volume).unwrap_or(0.3),
+                    fadetime: existing.as_ref().and_then(|a| a.fadetime).unwrap_or(3.0),
+                });
+            }
+        }
+    }
+
+    fn link_window(&mut self, ctx: &egui::Context) {
+        let Some(mut dialog) = self.link_dialog.take() else { return };
+        let mut open = true;
+        let mut result = None;
+        let title = match dialog {
+            LinkDialog::Delay { .. } => lang::t("Verzögerung wählen", "Choose a delay"),
+            LinkDialog::Adjust { .. } => lang::t("Bezug konfigurieren", "Set up the adjustment"),
+        };
+        egui::Window::new(title).open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
+            match &mut dialog {
+                LinkDialog::Delay { seconds, .. } => {
+                    ui.label(lang::t(
+                        "Das Audio der Quelle steht an keiner Stelle. Der Cue wird nach der eingegebenen Zeit ausgelöst, sobald die Quelle startet.",
+                        "The source's audio is not standing anywhere. The cue fires the given time after the source starts.",
+                    ));
+                    ui.add(egui::DragValue::new(seconds).speed(0.1).range(0.0..=36000.0).suffix(" s"));
+                }
+                LinkDialog::Adjust { fadeout, volume, fadetime, .. } => {
+                    ui.radio_value(fadeout, true, lang::t("Ausfaden (stoppen)", "Fade out (stop)"));
+                    ui.horizontal(|ui| {
+                        ui.radio_value(fadeout, false, lang::t("Lautstärke auf", "Volume to"));
+                        ui.add_enabled(!*fadeout, egui::Slider::new(volume, 0.0..=1.0).custom_formatter(|v, _| format!("{:.0} %", v * 100.0)));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(lang::t("Fadezeit", "Fade time"));
+                        ui.add(egui::DragValue::new(fadetime).speed(0.1).range(0.0..=600.0).suffix(" s"));
+                    });
+                }
+            }
+            ui.separator();
+            ui.horizontal(|ui| {
+                if ui.button("OK").clicked() {
+                    result = Some(true);
+                }
+                if ui.button(lang::t("Abbrechen", "Cancel")).clicked() {
+                    result = Some(false);
+                }
+            });
+        });
+        match (result, dialog) {
+            (Some(true), LinkDialog::Delay { block, source, seconds }) => self.edit_cue(block, |map| {
+                let mut auto = serde_yaml_mapping();
+                auto.insert("trigger_note".into(), note_value(source));
+                auto.insert("delay".into(), ((seconds * 1000.0).round() / 1000.0).into());
+                map.insert("auto_trigger".into(), auto.into());
+            }),
+            (Some(true), LinkDialog::Adjust { block, target, fadeout, volume, fadetime }) => self.edit_music(block, |music| {
+                let mut adjust = serde_yaml_mapping();
+                adjust.insert("trigger_note".into(), note_value(target));
+                match fadeout {
+                    true => drop(adjust.insert("fadeout".into(), true.into())),
+                    false => drop(adjust.insert("volume".into(), ((volume * 100.0).round() / 100.0).into())),
+                }
+                adjust.insert("fadetime".into(), ((fadetime * 1000.0).round() / 1000.0).into());
+                music.insert("adjust".into(), adjust.into());
+            }),
+            (None, dialog) if open => self.link_dialog = Some(dialog),
+            _ => {}
+        }
+    }
+
+    /// Asked when the first cue is switched to Auto-Mic while others name microphones.
+    fn auto_mic_window(&mut self, ctx: &egui::Context) {
+        let Some(block) = self.auto_mic_prompt else { return };
+        let mut open = true;
+        let mut choice = None;
+        let mut cancelled = false;
+        egui::Window::new("Auto-Mic").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
+            ui.label(lang::t("Wenn Auto-Mic aktiv ist, werden manuell gesetzte Mikrofone ignoriert.", "While auto mic is in use, microphones chosen by hand are ignored."));
+            ui.add_space(6.0);
+            if ui.button(lang::t("Manuelle Mikros behalten (aber ignorieren)", "Keep the manual microphones (but ignore them)")).clicked() {
+                choice = Some(false);
+            }
+            if ui.button(lang::t("Manuelle Mikrofone aus allen Cues entfernen", "Remove the manual microphones from all cues")).clicked() {
+                choice = Some(true);
+            }
+            cancelled = ui.button(lang::t("Abbrechen", "Cancel")).clicked();
+        });
+        open &= !cancelled;
+        if let Some(remove) = choice {
+            self.auto_mic_prompt = None;
+            if let (true, Some(show)) = (remove, &mut self.show) {
+                for cue in show.script.blocks.iter_mut().filter_map(|b| match b {
+                    Block::Cue(cue) if !cue.invalid && cue.yaml.get("mic").is_some() => Some(cue),
+                    _ => None,
+                }) {
+                    let mut yaml = cue.yaml.clone();
+                    if let Some(map) = yaml.as_mapping_mut() {
+                        map.shift_remove("mic");
+                    }
+                    cue.set_yaml(yaml);
+                }
+            }
+            self.edit_cue(block, |map| drop(map.insert("auto_mic".into(), true.into())));
+        } else if !open {
+            self.auto_mic_prompt = None;
+        }
     }
 
     /// Change the `music` entry of the cue in `block` and save. The short form
@@ -309,6 +465,35 @@ impl App {
                     auto.insert("at".into(), at.into());
                     cue.set_yaml(yaml);
                     self.after_edit();
+                }
+                Action::ArmLive(cue) => {
+                    self.live_open = true;
+                    self.request(Request::Arm(Some(*cue)));
+                }
+                Action::Picked { link, block, cue } => self.link_picked(*link, *block, *cue),
+                Action::Unlink { link, block } => {
+                    let link = *link;
+                    self.edit_cue(*block, |map| match link {
+                        Link::AutoCue => drop(map.shift_remove("auto_trigger")),
+                        Link::Adjust => {
+                            if let Some(music) = map.get_mut("music").and_then(|m| m.as_mapping_mut()) {
+                                music.shift_remove("adjust");
+                            }
+                        }
+                        Link::Chain | Link::LoopOutro => {
+                            map.shift_remove("chain_end");
+                            map.shift_remove("loop_outro");
+                        }
+                    });
+                }
+                Action::AutoMic { block, on } => {
+                    let by_hand = |show: &OpenShow| show.script.blocks.iter().any(|b| matches!(b, Block::Cue(c) if c.yaml.get("mic").is_some()));
+                    match (*on, &self.show) {
+                        // The first Auto-Mic cue makes every hand-picked microphone void.
+                        (true, Some(show)) if !show.script.has_auto_mic() && by_hand(show) => self.auto_mic_prompt = Some(*block),
+                        (true, _) => self.edit_cue(*block, |map| drop(map.insert("auto_mic".into(), true.into()))),
+                        (false, _) => self.edit_cue(*block, |map| drop(map.shift_remove("auto_mic"))),
+                    }
                 }
                 Action::PlayPause(cue) => self.request(Request::PlayPause(*cue)),
                 Action::StopCue(cue) => self.request(Request::StopCue(*cue)),
@@ -807,6 +992,21 @@ impl App {
     }
 }
 
+/// The details of a connection from the cue in `block` to another cue.
+enum LinkDialog {
+    /// Fire by itself this long after `source` fires.
+    Delay { block: usize, source: mdstage_core::cues::Note, seconds: f64 },
+    /// Change the audio of `target` when the cue fires.
+    Adjust { block: usize, target: mdstage_core::cues::Note, fadeout: bool, volume: f64, fadetime: f64 },
+}
+
+fn note_value(note: mdstage_core::cues::Note) -> mdstage_core::yaml::Value {
+    let mut map = serde_yaml_mapping();
+    map.insert("ch".into(), note.ch.into());
+    map.insert("note".into(), note.note.into());
+    map.into()
+}
+
 const EXPORT_DEFAULTS: mdstage_core::export::Options = mdstage_core::export::Options { cues: true, colours: true, grouped_mics: true };
 
 /// `mdstage SHOW.md --export OUT.pdf|OUT.docx`: write the book and exit, without a window.
@@ -860,6 +1060,14 @@ impl eframe::App for App {
         }
         egui::TopBottomPanel::top("notices").frame(bar(PANEL, 10, 3)).show_separator_line(false).show(ctx, |ui| {
             self.banners(ui);
+            if let Some(hint) = self.view.picking_hint() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new(hint).color(YELLOW));
+                    if ui.small_button(lang::t("Abbrechen", "Cancel")).clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
+                        self.view.cancel_pick();
+                    }
+                });
+            }
             if let Some(show) = &self.show {
                 self.view.search_bar(ui, &show.script);
             }
@@ -910,6 +1118,8 @@ impl eframe::App for App {
         self.roles_window(ctx);
         self.export_window(ctx);
         self.unused_audio_window(ctx);
+        self.link_window(ctx);
+        self.auto_mic_window(ctx);
     }
 }
 

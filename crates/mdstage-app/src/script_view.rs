@@ -12,6 +12,7 @@ use mdstage_core::cues::{AutoWhen, Cues, Note, Slf};
 use mdstage_core::effects::Effect;
 use mdstage_core::mic::{Cast, Mic, MicChip};
 use mdstage_core::{Block, Cue, Script};
+use mdstage_engine::mtc::Timecode;
 use mdstage_engine::session::Snapshot;
 
 use crate::lang::t;
@@ -36,8 +37,29 @@ pub struct Marks {
     pub fadeout: f64,
 }
 
+/// A connection from one cue to another, set up by clicking the other cue.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Link {
+    /// The cue changes the other's audio when it fires (`music.adjust`).
+    Adjust,
+    /// The cue fires by itself, triggered by the other (`auto_trigger`).
+    AutoCue,
+    /// At its end the cue carries straight on with the other (`chain_end`).
+    Chain,
+    /// The cue loops until the other, its outro, is fired (`loop_outro`).
+    LoopOutro,
+}
+
 /// What the operator did in the view; the app carries it out.
 pub enum Action {
+    /// While setting up a `link` for the cue in `block`, the cue `cue` was clicked.
+    Picked { link: Link, block: usize, cue: usize },
+    /// Remove a connection from the cue in `block` (`Chain` removes both S/L/F kinds).
+    Unlink { link: Link, block: usize },
+    /// Switch Auto-Mic on or off for the cue in `block`.
+    AutoMic { block: usize, on: bool },
+    /// Open the live view with this cue as the next Go.
+    ArmLive(usize),
     /// A click on a cue.
     Fire(usize),
     /// A block was edited.
@@ -129,6 +151,10 @@ pub struct ScriptView {
     volumes: HashMap<usize, f64>,
     /// Waveforms that are zoomed in: block → (factor, where the view begins in seconds).
     zoom: HashMap<usize, (f32, f64)>,
+    /// A connection being set up: the next cue clicked completes it.
+    picking: Option<(Link, usize)>,
+    /// Lengths of the audio files seen so far, in seconds.
+    durations: HashMap<String, f64>,
     scroll_to: Option<f32>,
     scroll_y: f32,
     waveforms: Option<Waveforms>,
@@ -161,6 +187,23 @@ impl ScriptView {
     /// Open the search bar (or put the cursor back into it).
     pub fn open_search(&mut self) {
         self.search.get_or_insert_with(Search::default).focus = true;
+    }
+
+    /// What the operator is asked to do while a connection is being set up.
+    pub fn picking_hint(&self) -> Option<&'static str> {
+        Some(match self.picking?.0 {
+            Link::Adjust => t("Bezug: den Cue anklicken, dessen Audio verändert werden soll.", "Adjust: click the cue whose audio is to be changed."),
+            Link::AutoCue => t(
+                "Auto-Cue: die Quelle anklicken. Steht ihr Audio pausiert an einer Stelle, wird dort ausgelöst, sonst nach einer Verzögerung.",
+                "Auto-cue: click the source. If its audio is paused somewhere, the cue fires there, otherwise after a delay.",
+            ),
+            Link::Chain => t("Start: den Cue anklicken, mit dem es am Ende nahtlos weitergeht.", "Start: click the cue it carries straight on with at the end."),
+            Link::LoopOutro => t("Loop: den Cue anklicken, der als Outro den Loop beendet.", "Loop: click the cue that ends the loop as its outro."),
+        })
+    }
+
+    pub fn cancel_pick(&mut self) {
+        self.picking = None;
     }
 
     /// The search bar, if open. Enter goes to the next hit, Shift+Enter back, Escape closes.
@@ -268,7 +311,37 @@ impl ScriptView {
     }
 
     /// The rows of a cue panel: a label and coloured spans.
-    fn cue_rows(cx: &Context, block: usize, cue_index: usize, cue: &Cue) -> Vec<(&'static str, Vec<Span>)> {
+    /// The cue that leads into `cue`: the one that chains on with it or loops until it.
+    fn predecessor(cues: &Cues, cue: usize) -> Option<usize> {
+        let note = cues.get(cue)?.note()?;
+        (0..cues.len()).find(|&p| p != cue && cues.get(p).is_some_and(|c| c.chain_end() == Some(note) || c.loop_outro() == Some(note)))
+    }
+
+    /// The timecode a cue without `start_tc` starts at because the timecode of the cue
+    /// before it in its chain runs on. `None`: there is none. `Some(None)`: there is,
+    /// but an audio file's length is not known yet.
+    fn derived_timecode(cues: &Cues, cue: usize, durations: &HashMap<String, f64>, depth: usize) -> Option<Option<f64>> {
+        let before = Self::predecessor(cues, cue).filter(|_| depth < 8)?;
+        let earlier = cues.get(before)?;
+        let base = match earlier.text("start_tc").and_then(Timecode::parse) {
+            Some(timecode) => Some(timecode.to_frames() as f64 / mdstage_engine::mtc::FPS as f64),
+            None => Self::derived_timecode(cues, before, durations, depth + 1)?,
+        };
+        // How long the earlier cue plays before it hands over: every part from its start
+        // to its transition point.
+        let length = earlier.audio().and_then(|audio| {
+            audio.parts.iter().try_fold(0.0, |sum, part| {
+                let end = match part.fading_point.or(part.end) {
+                    Some(end) => end,
+                    None => part.audios.iter().map(|a| durations.get(&a.file).copied()).try_fold(0.0f64, |longest, d| Some(longest.max(d?)))?,
+                };
+                Some(sum + (end - part.start.unwrap_or(0.0)).max(0.0))
+            })
+        });
+        Some(base.zip(length).map(|(base, length)| base + length))
+    }
+
+    fn cue_rows(cx: &Context, block: usize, cue_index: usize, cue: &Cue, durations: &HashMap<String, f64>) -> Vec<(&'static str, Vec<Span>)> {
         let mut rows = Vec::new();
         if cue.invalid {
             rows.push(("YAML", vec![(t("nicht lesbar", "unreadable").to_string(), RED)]));
@@ -316,6 +389,18 @@ impl ScriptView {
             rows.push(("♬", spans));
         }
         let cues = Cues::new(cx.script);
+        if cue.text("start_tc").is_none() {
+            if let Some(derived) = Self::derived_timecode(&cues, cue_index, durations, 0) {
+                let timecode = derived.map_or("--:--:--:--".to_string(), |seconds| Timecode::from_frames((seconds * mdstage_engine::mtc::FPS as f64).round() as u64).to_string());
+                rows.push(("TC", vec![(timecode, TEXT), (t("(abgeleitet)", "(derived)").to_string(), MUTED)]));
+            }
+        }
+        // Compressed files carry padding at their edges: a handover is not seamless.
+        let in_chain = cue.chain_end().is_some() || cue.loop_outro().is_some() || Self::predecessor(&cues, cue_index).is_some();
+        let compressed = |file: &str| [".mp3", ".aac", ".m4a", ".ogg"].iter().any(|ext| file.to_lowercase().ends_with(ext));
+        if in_chain && cue.audio().is_some_and(|a| a.parts.iter().flat_map(|p| &p.audios).any(|a| compressed(&a.file))) {
+            rows.push(("⚠", vec![(t("Kein nahtloser Übergang – MP3/AAC haben Encoder-Padding. WAV verwenden.", "No seamless transition – MP3/AAC carry encoder padding. Use WAV.").to_string(), YELLOW)]));
+        }
         let cue_label = |target: Option<usize>| target.map_or("?".to_string(), |c| format!("Cue {}", c + 1));
         match cues.slf(cue_index) {
             Some(Slf::Start { next }) => rows.push(("S/L/F", vec![(format!("Start → {}", cue_label(cues.find(next))), BLUE)])),
@@ -395,7 +480,7 @@ impl ScriptView {
             self.heights[i] = match block {
                 Block::Config(_) => 0.0,
                 Block::Cue(cue) => {
-                    let rows = Self::cue_rows(cx, i, self.cue_of_block[i].unwrap_or(0), cue);
+                    let rows = Self::cue_rows(cx, i, self.cue_of_block[i].unwrap_or(0), cue, &self.durations);
                     Self::cue_height(rows.len(), cue.audio().is_some())
                 }
                 block => {
@@ -643,11 +728,10 @@ impl ScriptView {
         if sounding {
             badge(t("♪ läuft", "♪ playing"), BLUE);
         }
-        if let Some(note) = cue.note() {
-            painter.text(pos2(panel.right() - 12.0, y), Align2::RIGHT_TOP, note.to_string(), font.clone(), MUTED);
-        }
+        self.cue_buttons(ui, cx, block, cue_index, cue, Rect::from_min_max(pos2(x, panel.top() + 6.0), pos2(panel.right() - 10.0, panel.top() + 6.0 + ROW + 4.0)), actions);
+        self.learn_durations(cx, cue_index);
         y += ROW;
-        for (label, spans) in Self::cue_rows(cx, block, cue_index, cue) {
+        for (label, spans) in Self::cue_rows(cx, block, cue_index, cue, &self.durations) {
             painter.text(pos2(left, y), Align2::LEFT_TOP, label, font.clone(), MUTED);
             let mut x = left + 56.0;
             for (text, colour) in spans {
@@ -666,8 +750,21 @@ impl ScriptView {
             let row = Rect::from_min_size(pos2(left, wave.bottom() + 4.0), vec2(width, CONTROLS));
             self.draw_transport(ui, cx, (block, cue_index), part, audio.looped, sounding, position, duration, row, actions);
         }
-        if response.clicked() {
-            actions.push(Action::Fire(cue_index));
+        match self.picking {
+            // A connection is being set up: the click names its other end.
+            Some((link, from)) => {
+                if response.hovered() && from != block {
+                    painter.rect_stroke(panel, 4.0, Stroke::new(2.0_f32, YELLOW), egui::StrokeKind::Inside);
+                }
+                if response.clicked() {
+                    self.picking = None;
+                    if from != block {
+                        actions.push(Action::Picked { link, block: from, cue: cue_index });
+                    }
+                }
+            }
+            None if response.clicked() => actions.push(Action::Fire(cue_index)),
+            None => {}
         }
         response.context_menu(|ui| {
             let mut pick = |ui: &mut Ui, label: &str, action: Action| {
@@ -684,6 +781,101 @@ impl ScriptView {
                 Self::block_menu(ui, cx, block, actions);
             }
         });
+    }
+
+    /// Ask for the lengths of the audio files the cues leading into this one play, so
+    /// that its derived timecode can be worked out even while they are off screen.
+    fn learn_durations(&mut self, cx: &Context, cue: usize) {
+        let cues = Cues::new(cx.script);
+        let (mut at, mut steps) = (cue, 0);
+        while let Some(before) = Self::predecessor(&cues, at).filter(|_| steps < 8) {
+            for file in cues.get(before).and_then(|c| c.audio()).into_iter().flat_map(|a| a.parts).flat_map(|p| p.audios) {
+                if !self.durations.contains_key(&file.file) {
+                    if let Some(WaveState::Ready { duration, .. }) = self.waveforms.as_mut().map(|w| w.get(&file.file)) {
+                        self.durations.insert(file.file, duration);
+                    }
+                }
+            }
+            (at, steps) = (before, steps + 1);
+        }
+    }
+
+    /// The buttons in a cue's top line, from the right: its trigger note, arm in the
+    /// live view, edit, variant, and the connections to other cues.
+    #[allow(clippy::too_many_arguments)]
+    fn cue_buttons(&mut self, ui: &mut Ui, cx: &Context, block: usize, cue_index: usize, cue: &Cue, rect: Rect, actions: &mut Vec<Action>) {
+        let mut row = ui.new_child(UiBuilder::new().id_salt(("cue-buttons", block)).max_rect(rect).layout(egui::Layout::right_to_left(egui::Align::Center)));
+        row.spacing_mut().item_spacing.x = 4.0;
+        row.spacing_mut().button_padding = vec2(6.0, 1.0);
+        if let Some(note) = cue.note() {
+            row.label(RichText::new(note.to_string()).size(14.0).color(MUTED));
+            row.add_space(4.0);
+        }
+        let shift = row.input(|i| i.modifiers.shift);
+        let small = |text: &str, colour: Color32| egui::Button::new(RichText::new(text).size(13.0).color(colour));
+        if row.add(small("◉ Live", TEXT)).on_hover_text(t("Live-Ansicht öffnen und diesen Cue als nächsten scharf schalten", "Open the live view with this cue armed as the next")).clicked() {
+            actions.push(Action::ArmLive(cue_index));
+        }
+        if cx.locked || cue.invalid {
+            return;
+        }
+        if row.add(small("✏", TEXT)).on_hover_text(t("Cue bearbeiten", "Edit cue")).clicked() {
+            actions.push(Action::EditCue(block));
+        }
+        if row.add(small("⊕", TEXT)).on_hover_text(t("Als Variante duplizieren", "Duplicate as a variant")).clicked() {
+            actions.push(Action::Variant(block));
+        }
+
+        // The connections: a click sets one up (then click the other cue), Shift+click
+        // on one that exists removes it.
+        let mut link_button = |row: &mut Ui, link: Link, text: &str, exists: bool, enabled: bool, hint: &str| {
+            let colour = if self.picking == Some((link, block)) { YELLOW } else if exists { GREEN } else { TEXT };
+            let hint = if exists { format!("{hint}\n{}", t("Shift+Klick löscht.", "Shift+click removes it.")) } else { hint.to_string() };
+            if row.add_enabled(enabled, small(text, colour)).on_hover_text(hint).clicked() {
+                match exists && shift {
+                    true => actions.push(Action::Unlink { link, block }),
+                    false if self.picking == Some((link, block)) => self.picking = None,
+                    false => self.picking = Some((link, block)),
+                }
+            }
+        };
+        let has_audio = cue.audio().is_some();
+        link_button(&mut row, Link::AutoCue, "⏱ Auto-Cue", cue.auto_trigger().is_some(), true, t("Diesen Cue von selbst auslösen lassen: danach die Quelle anklicken.", "Let this cue fire by itself: then click its source."));
+        link_button(&mut row, Link::Adjust, t("⇢ Bezug", "⇢ Adjust"), cue.adjust().is_some(), has_audio, t("Beim Auslösen das Audio eines anderen Cues ausfaden oder leiser stellen: danach den anderen Cue anklicken.", "On firing, fade out or turn down another cue's audio: then click that cue."));
+
+        let slf = match Cues::new(cx.script).slf(cue_index) {
+            Some(Slf::Start { .. }) => "Start",
+            Some(Slf::Loop { .. }) => "Loop",
+            Some(Slf::Finish { .. }) => "Finish",
+            Some(Slf::Bridge { .. }) => "Bridge",
+            None => "S/L/F",
+        };
+        let linked = cue.chain_end().is_some() || cue.loop_outro().is_some();
+        let label = RichText::new(slf).size(13.0).color(if matches!(self.picking, Some((Link::Chain | Link::LoopOutro, b)) if b == block) { YELLOW } else if slf != "S/L/F" { BLUE } else { TEXT });
+        row.add_enabled_ui(has_audio, |row| {
+            row.menu_button(label, |ui| {
+                if ui.button(t("Start: am Ende nahtlos weiter mit … (Cue anklicken)", "Start: at the end carry straight on with … (click a cue)")).clicked() {
+                    self.picking = Some((Link::Chain, block));
+                    ui.close_menu();
+                }
+                if ui.button(t("Loop: läuft, bis dieses Outro kommt … (Cue anklicken)", "Loop: runs until this outro comes … (click a cue)")).clicked() {
+                    self.picking = Some((Link::LoopOutro, block));
+                    ui.close_menu();
+                }
+                if ui.add_enabled(linked, egui::Button::new(t("Verbindung löschen", "Remove the connection"))).clicked() {
+                    actions.push(Action::Unlink { link: Link::Chain, block });
+                    ui.close_menu();
+                }
+            })
+            .response
+            .on_hover_text(t("Loop-Struktur einrichten (Start, Loop, Finish …)", "Set up a loop structure (start, loop, finish …)"));
+        });
+
+        let auto_mic = cue.auto_mic();
+        let hint = if auto_mic { t("Auto-Mic ist an: Mikrofone kommen aus dem folgenden Text. Klick schaltet es aus.", "Auto mic is on: the microphones come from the text that follows. Click to switch it off.") } else { t("Auto-Mic: Mikrofone aus dem folgenden Rollentext bestimmen", "Auto mic: work out the microphones from the text that follows") };
+        if row.add(small("Auto-Mic", if auto_mic { GREEN } else { TEXT })).on_hover_text(hint).clicked() {
+            actions.push(Action::AutoMic { block, on: !auto_mic });
+        }
     }
 
     /// The row under a waveform: play/pause, stop, zoom, loop and volume.
@@ -792,6 +984,10 @@ impl ScriptView {
                 return None;
             }
         };
+        if self.durations.insert(file.clone(), duration) != Some(duration) {
+            // Derived timecodes further down may be known now.
+            ui.ctx().request_repaint();
+        }
         let end = part.end.unwrap_or(duration).min(duration);
         let saved = Marks { start: part.start.unwrap_or(0.0).min(end), end, fadein: part.fadein.unwrap_or(0.0), fadeout: part.fadeout.unwrap_or(0.0) };
         let mut marks = self.dragging.get(&block).copied().unwrap_or(saved);
