@@ -10,6 +10,7 @@ pub mod device;
 pub mod mixer;
 pub mod mtc;
 pub mod player;
+pub mod show;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

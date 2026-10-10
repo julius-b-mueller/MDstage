@@ -14,6 +14,9 @@ use crate::clock::{EngineClock, VoiceShared, VoiceState};
 use crate::mixer::{AtTransition, Command, MixerHandle, Route, VoiceId, VoiceSpec};
 use crate::{Error, Result};
 
+/// Ramp with which resumed audio comes in, in seconds.
+const RESUME_RAMP: f64 = 0.012;
+
 /// Where each virtual channel comes out: name → physical output (0-based).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Routing {
@@ -241,7 +244,7 @@ impl Player {
                     end,
                     initial: resume_at.filter(|_| index == resume_part).map(|s| self.frames(s)),
                     at_transition,
-                    gain: part.volume as f32,
+                    gain: if resume_at.is_some() { 0.0 } else { part.volume as f32 },
                     fade_in: part.fadein.map_or(0, |s| self.frames(s) as u32),
                     fade_out: part.fadeout.map_or(0, |s| self.frames(s) as u32),
                     routes: self.routes(file, clip),
@@ -252,10 +255,31 @@ impl Player {
                 shared.push(spec.shared.clone());
                 self.send(Command::Add(spec))?;
             }
+            if resume_at.is_some() {
+                // Resumed audio comes in mid-waveform: a short ramp instead of a click.
+                let frames = self.frames(RESUME_RAMP) as u32;
+                self.send(Command::Fade { id, target: part.volume as f32, frames, then_stop: false })?;
+            }
             active.parts.push(ActivePart { id, shared, start: region_start, transition, end });
         }
         self.active.insert(cue, active);
         Ok(())
+    }
+
+    /// The stretch each part of `audio` cycles through, in seconds: `(start, transition)`.
+    /// Decodes the files if necessary (their length is the default end).
+    pub fn spans(&mut self, audio: &CueAudio) -> Result<Vec<(f64, f64)>> {
+        let mut spans = Vec::with_capacity(audio.parts.len());
+        for part in &audio.parts {
+            let mut longest = 0.0f64;
+            for file in &part.audios {
+                longest = longest.max(self.cache.get(&file.file)?.duration());
+            }
+            let end = part.end.unwrap_or(longest);
+            let start = part.start.unwrap_or(0.0).min(end);
+            spans.push((start, part.fading_point.unwrap_or(end).clamp(start, end)));
+        }
+        Ok(spans)
     }
 
     fn part_ids(&self, cue: usize) -> Vec<VoiceId> {
