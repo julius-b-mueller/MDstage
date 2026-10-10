@@ -12,6 +12,7 @@ mod cue_forms;
 mod export;
 mod lang;
 mod live;
+mod pointer;
 mod roles_ui;
 mod script_view;
 mod settings_ui;
@@ -1499,10 +1500,9 @@ enum LinkDialog {
 
 /// Where the pointer is in the window, asked of the system rather than taken from the
 /// window's own events (which stop while something is dragged in from another program).
-/// `None` where the system does not tell (Wayland) or the window's place is not known.
+/// `None` where the system does not tell (Linux) or the window's place is not known.
 fn system_pointer(ctx: &egui::Context) -> Option<egui::Pos2> {
-    use mouse_position::mouse_position::Mouse;
-    let Mouse::Position { x, y } = Mouse::get_mouse_position() else { return None };
+    let (x, y) = pointer::on_screen()?;
     let (inner, scale) = ctx.input(|i| (i.viewport().inner_rect, i.viewport().native_pixels_per_point.unwrap_or(1.0)));
     // macOS reports points like the window does; elsewhere the pointer comes in pixels.
     let scale = if cfg!(target_os = "macos") { 1.0 } else { scale };
