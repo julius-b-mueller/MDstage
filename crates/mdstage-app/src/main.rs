@@ -700,6 +700,24 @@ impl eframe::App for App {
         let bar = |fill, x, y| egui::Frame::new().fill(fill).inner_margin(egui::Margin::symmetric(x, y));
         egui::TopBottomPanel::top("menu").frame(bar(PANEL, 8, 2)).show_separator_line(false).show(ctx, |ui| self.menu(ui));
         egui::TopBottomPanel::top("tools").frame(bar(theme::BAR, 10, 8).stroke(egui::Stroke::new(1.0_f32, Color32::BLACK))).show(ctx, |ui| self.toolbar(ui));
+        // Where in the show the view is: the act and scene its top lies under.
+        if let (Some(_), (act, scene)) = (&self.show, self.view.current_headings()) {
+            if act.is_some() || scene.is_some() {
+                egui::TopBottomPanel::top("scene").frame(bar(theme::BAR, 14, 6).stroke(egui::Stroke::new(1.0_f32, Color32::BLACK))).show_separator_line(false).show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        let heading = |text: &str, colour| egui::Label::new(RichText::new(text).size(20.0).strong().color(colour)).truncate();
+                        match (act, scene) {
+                            (Some(act), Some(scene)) => {
+                                ui.label(RichText::new(act).size(14.0).color(MUTED));
+                                ui.label(RichText::new("›").size(14.0).color(MUTED));
+                                ui.add(heading(scene, BRIGHT));
+                            }
+                            (one, other) => drop(ui.add(heading(one.or(other).unwrap_or_default(), BRIGHT))),
+                        }
+                    });
+                });
+            }
+        }
         egui::TopBottomPanel::top("notices").frame(bar(PANEL, 10, 3)).show_separator_line(false).show(ctx, |ui| {
             self.banners(ui);
             if let Some(show) = &self.show {

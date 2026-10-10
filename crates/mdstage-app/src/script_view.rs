@@ -726,6 +726,17 @@ impl ScriptView {
         }
     }
 
+    /// The headings the top of the view lies under: the first-level one and, if one has
+    /// come since, the second-level one below it.
+    pub fn current_headings(&self) -> (Option<&str>, Option<&str>) {
+        let passed = || self.headings.iter().rev().filter(|(i, _, _)| self.offsets.get(*i).is_some_and(|&o| o <= self.scroll_y + 1.0));
+        let top = passed().position(|(_, level, _)| *level == 1);
+        let act = top.and_then(|n| passed().nth(n)).map(|(_, _, text)| text.as_str());
+        // A scene only counts if it comes after the act (nearer in the reversed walk).
+        let scene = passed().take(top.unwrap_or(usize::MAX)).find(|(_, level, _)| *level == 2).map(|(_, _, text)| text.as_str());
+        (act, scene)
+    }
+
     /// The scene list: first- and second-level headings, the one in view highlighted.
     /// Returns whether its close button was pressed.
     pub fn sidebar(&mut self, ui: &mut Ui) -> bool {
