@@ -747,16 +747,26 @@ impl ScriptView {
         (!names.is_empty() && !typed.contains(['\n', ' '])).then(|| (names.split('/').collect(), typed))
     }
 
-    /// The role or group name the typed text begins: `(name, the letters still missing)`.
-    /// At the very start of a block, and again right after the names of a role block, so
-    /// several roles can be given one after the other.
-    fn ghost(cast: &Cast, buffer: &str) -> Option<(String, String)> {
-        let (taken, typed) = match Self::role_header(buffer) {
-            Some((names, typed)) => (names, typed),
-            None if buffer.contains('\n') || buffer.starts_with(['#', '*']) => return None,
-            None => (Vec::new(), buffer),
+    /// The role or group name that the line the cursor is at the end of begins:
+    /// `(name, the letters still missing)`. Offered in the first line of a block that
+    /// has no role yet, and in the line right below a role's names (for a further role) —
+    /// whether or not text follows further down.
+    fn completion(cast: &Cast, buffer: &str, cursor: usize) -> Option<(String, String)> {
+        let lines: Vec<&str> = buffer.split('\n').collect();
+        let mut start = 0;
+        let (line, typed) = lines.iter().enumerate().find_map(|(line, text)| {
+            let end = start + text.chars().count();
+            let here = (cursor == end).then_some((line, *text));
+            start = end + 1;
+            here
+        })?;
+        let names = vim::role_names(&lines[0].chars().collect::<Vec<_>>()).map(|_| lines[0][2..lines[0].len() - 2].split('/').collect::<Vec<_>>());
+        let taken = match (names, line) {
+            (None, 0) if !typed.starts_with(['#', '*']) => Vec::new(),
+            (Some(names), 1) => names,
+            _ => return None,
         };
-        if typed.is_empty() {
+        if typed.trim().is_empty() {
             return None;
         }
         let lower = typed.to_lowercase();
@@ -765,10 +775,25 @@ impl ScriptView {
         Some((name.clone(), rest))
     }
 
+    /// Take the completion: the name becomes the block's role, or joins the roles it has.
+    /// Returns the text and where the cursor goes — to an empty line below the names,
+    /// where a further role or the text can be typed.
+    fn complete(buffer: &str, name: &str) -> (String, usize) {
+        let mut lines: Vec<String> = buffer.split('\n').map(str::to_string).collect();
+        if vim::role_names(&lines[0].chars().collect::<Vec<_>>()).is_some() {
+            let names = lines[0][..lines[0].len() - 2].to_string();
+            lines[0] = format!("{names}/{name}**");
+            lines[1] = String::new();
+        } else {
+            lines[0] = format!("**{name}**");
+            lines.insert(1, String::new());
+        }
+        (lines.join("\n"), lines[0].chars().count() + 1)
+    }
+
     fn draw_editor(&mut self, ui: &mut Ui, cx: &Context, index: usize, rect: Rect, actions: &mut Vec<Action>) {
         let Some(mut editing) = self.editing.take() else { return };
         let id = Id::new("block-editor");
-        let ghost = Self::ghost(cx.cast, &editing.buffer);
 
         let cursor = egui::TextEdit::load_state(ui.ctx(), id).and_then(|state| state.cursor.char_range()).map(|range| range.primary.index);
         let is_text = |i: usize| !matches!(cx.script.blocks.get(i), Some(Block::Cue(_) | Block::Config(_)) | None);
@@ -934,17 +959,15 @@ impl ScriptView {
                 };
             }
         }
-        if tab {
-            if let Some((name, _)) = &ghost {
-                editing.buffer = match Self::role_header(&editing.buffer) {
-                    Some((names, _)) => format!("**{}/{name}**\n", names.join("/")),
-                    None => format!("**{name}**\n"),
-                };
-                let end = CCursor::new(editing.buffer.chars().count());
-                if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), id) {
-                    state.cursor.set_char_range(Some(CCursorRange::one(end)));
-                    state.store(ui.ctx(), id);
-                }
+        // While nothing has been drawn yet the cursor is at the end of what is there.
+        let typing_at = range.map_or(editing.buffer.chars().count(), |r| r.primary.index);
+        if tab && typing {
+            if let Some((name, _)) = Self::completion(cx.cast, &editing.buffer, typing_at) {
+                let (text, place) = Self::complete(&editing.buffer, &name);
+                editing.buffer = text;
+                let mut state = egui::TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
+                state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(place))));
+                state.store(ui.ctx(), id);
             }
         }
 
@@ -1016,8 +1039,10 @@ impl ScriptView {
                 child.painter().rect_filled(block, 1.0, BRIGHT.gamma_multiply(0.35));
             }
         }
-        if let Some((_, rest)) = Self::ghost(cx.cast, &editing.buffer).filter(|_| vim_cursor.is_none()) {
-            let end = output.galley.pos_from_cursor(&output.galley.end());
+        // The rest of a role name that Tab would complete, in grey behind the cursor.
+        let now_at = output.cursor_range.map(|range| range.primary.ccursor.index).filter(|_| vim_cursor.is_none());
+        if let Some((at, (_, rest))) = now_at.and_then(|at| Some((at, Self::completion(cx.cast, &editing.buffer, at)?))) {
+            let end = output.galley.pos_from_cursor(&output.galley.from_ccursor(CCursor::new(at)));
             let pos = output.galley_pos + end.right_top().to_vec2();
             child.painter().text(pos, Align2::LEFT_TOP, format!("{rest}  Tab"), FontId::proportional(17.0), MUTED);
         }
@@ -1594,6 +1619,33 @@ impl ScriptView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn role_names_complete_in_the_first_line_and_below_the_names() {
+        let script = Script::parse("```yaml\nconfig:\n    roles:\n        Anna: {}\n        Ben: {}\n        New Yorker: {}\n```\n");
+        let cast = Cast::from_script(&script, false);
+        let offer = |text: &str, cursor: usize| ScriptView::completion(&cast, text, cursor).map(|(name, rest)| format!("{name}|{rest}"));
+        // A new block.
+        assert_eq!(offer("An", 2).as_deref(), Some("Anna|na"));
+        assert_eq!(offer("new y", 5).as_deref(), Some("New Yorker|orker"));
+        assert_eq!(offer("# An", 4), None);
+        assert_eq!(offer("Xy", 2), None);
+        assert_eq!(ScriptView::complete("An", "Anna"), ("**Anna**\n".to_string(), 9));
+        // A block whose names were taken out, with its text still there.
+        assert_eq!(offer("Be\nHallo.", 2).as_deref(), Some("Ben|n"));
+        assert_eq!(offer("Be\nHallo.", 1), None, "only at the end of the line");
+        assert_eq!(offer("Be\nHa", 5), None, "and not in the text further down");
+        assert_eq!(ScriptView::complete("Be\nHallo.", "Ben"), ("**Ben**\n\nHallo.".to_string(), 8));
+        // Below the names: a further role, but not one that is there already.
+        assert_eq!(offer("**Ben**\nA\nHallo.", 9).as_deref(), Some("Anna|nna"));
+        assert_eq!(offer("**Ben**\nB\nHallo.", 9), None);
+        assert_eq!(offer("**Ben**\n\nHallo.", 8), None, "nothing typed, nothing offered");
+        assert_eq!(offer("**Ben**\nHallo.\nA", 16), None, "only right below the names");
+        assert_eq!(ScriptView::complete("**Ben**\nA\nHallo.", "Anna"), ("**Ben/Anna**\n\nHallo.".to_string(), 13));
+        assert_eq!(ScriptView::complete("**Ben**\nA", "Anna"), ("**Ben/Anna**\n".to_string(), 13));
+        // What comes of it is the role block one expects.
+        assert_eq!(ScriptView::typed_block("**Ben/Anna**\n\nHallo."), Some(Block::Role { names: vec!["Ben".into(), "Anna".into()], text: "Hallo.".into() }));
+    }
 
     #[test]
     fn bare_text_typed_into_the_editor_is_a_stage_direction() {
