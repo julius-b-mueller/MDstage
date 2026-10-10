@@ -86,6 +86,8 @@ pub struct Snapshot {
     pub fired: Vec<usize>,
     /// The cues fired in the current pass through the script (since the last jump back).
     pub done: Vec<usize>,
+    /// The cue that fired last, by the operator or by itself.
+    pub latest: Option<usize>,
     pub current: Option<usize>,
     pub next: Option<usize>,
     /// The variant chosen for the next Go, if the operator chose one.
@@ -475,6 +477,7 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
         *snapshot.lock().unwrap() = Snapshot {
             fired: show.history().cues().collect(),
             done: show.history().this_pass().collect(),
+            latest: show.history().cues().last(),
             current: show.current(),
             next: show.next(),
             selected_variant: show.selected_variant(),
@@ -526,6 +529,56 @@ mod tests {
             assert!(Instant::now() < deadline, "timed out waiting for {what}: {snapshot:?}");
             thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    /// Auto-cues at a place in the audio fire in a running session, with the audio read
+    /// from a file and nobody rendering in step with the show's ticks.
+    #[test]
+    fn position_auto_cues_fire_in_a_running_session() {
+        let dir = std::env::temp_dir().join(format!("mdstage-auto-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("audio")).unwrap();
+        crate::stream::write_wav(&dir.join("audio/a.wav"), 48_000, 2, 48_000 * 3);
+        let cue = |n: usize, more: &str| format!("```yaml\ntrigger_note: {{ch: 1, note: {n}}}\n{more}\n```\n\n");
+        let script = Script::parse(&[
+            cue(0, "music: a.wav"),
+            cue(1, "music:\n    adjust:\n        trigger_note: {ch: 1, note: 0}\n        volume: 0.8\n        fadetime: 2\nauto_trigger:\n    trigger_note: {ch: 1, note: 0}\n    at: 0.4"),
+            cue(2, "auto_trigger:\n    trigger_note: {ch: 1, note: 0}\n    at: 1.2"),
+        ].concat());
+        let settings: Settings = serde_json::from_str(r#"{"audio_device": "no such device", "display_port": 0, "outputs_blocked": true}"#).unwrap();
+        let session = Session::start(script, dir.clone(), settings, true).unwrap();
+        wait(&session, "start-up", |s| s.next == Some(0));
+        session.send(Request::Go);
+        wait(&session, "the first auto-cue", |s| s.fired == [0, 1]);
+        let all = wait(&session, "the second auto-cue", |s| s.fired == [0, 1, 2]);
+        assert_eq!(all.current, Some(0), "the operator's place stays with the cue they fired");
+        assert_eq!(all.latest, Some(2), "and the view is told which cue fired last");
+        drop(session);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The same with this machine's real audio device, silently (volume 0). Not run by
+    /// default: `cargo test -p mdstage-engine probe_real_device -- --ignored`.
+    #[test]
+    #[ignore]
+    fn probe_real_device() {
+        let dir = std::env::temp_dir().join(format!("mdstage-probe-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("audio")).unwrap();
+        crate::stream::write_wav(&dir.join("audio/a.wav"), 48_000, 2, 48_000 * 3);
+        let cue = |n: usize, more: &str| format!("```yaml\ntrigger_note: {{ch: 1, note: {n}}}\n{more}\n```\n\n");
+        let script = Script::parse(&[
+            cue(0, "music:\n    file: a.wav\n    volume: 0"),
+            cue(1, "auto_trigger:\n    trigger_note: {ch: 1, note: 0}\n    at: 0.4"),
+            cue(2, "auto_trigger:\n    trigger_note: {ch: 1, note: 0}\n    at: 1.2"),
+        ].concat());
+        let settings: Settings = serde_json::from_str(r#"{"display_port": 0, "outputs_blocked": true}"#).unwrap();
+        let session = Session::start(script, dir.clone(), settings, true).unwrap();
+        let idle = wait(&session, "start-up", |s| s.next == Some(0));
+        std::thread::sleep(Duration::from_millis(500));
+        session.send(Request::Go);
+        let all = wait(&session, "the auto-cues", |s| s.fired == [0, 1, 2]);
+        assert!(all.output.is_some() || !idle.problems.is_empty());
+        drop(session);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

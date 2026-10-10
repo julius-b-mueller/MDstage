@@ -521,7 +521,9 @@ impl Player {
                 // device has asked for its next block — whoever looks in between would
                 // otherwise take the cue for silent and give up on what hangs on it.
                 let state = if spec.armed { VoiceState::Armed } else { VoiceState::Playing };
-                spec.shared.publish(0, initial.unwrap_or(region_start).clamp(region_start, end) as u64, state);
+                // The engine frame is "never": until the mixer has reported, the position
+                // stands still instead of being reckoned on from the engine's start.
+                spec.shared.publish(u64::MAX, initial.unwrap_or(region_start).clamp(region_start, end) as u64, state);
                 shared.push(spec.shared.clone());
                 files.push(file.file.clone());
                 self.send(Command::Add(spec))?;

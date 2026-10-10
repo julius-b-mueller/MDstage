@@ -241,4 +241,18 @@ mod tests {
         driver.publish_at(1440, 3.0); // stream stalled for two seconds
         assert_eq!(f64::from_bits(clock.anchor.read().1), 3.0);
     }
+
+    /// A voice the mixer has not reported on yet stands where it was put, however long
+    /// the engine has been running. (Reckoned on from the engine's start it would seem
+    /// to be hours into its audio.)
+    #[test]
+    fn an_unreported_voice_stands_still() {
+        let clock = Arc::new(EngineClock::new(48_000));
+        let mut driver = ClockDriver::new(clock.clone());
+        driver.publish(480_000);
+        assert!(clock.frames_now() >= 480_000.0);
+        let voice = VoiceShared::default();
+        voice.publish(u64::MAX, 1_000, VoiceState::Playing);
+        assert_eq!(voice.clip_frame_now(&clock), 1_000.0);
+    }
 }

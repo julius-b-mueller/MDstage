@@ -101,6 +101,8 @@ struct App {
     /// Something that went wrong in the app itself (a file that could not be written …).
     message: Option<String>,
     followed: Option<usize>,
+    /// How many cues had fired when the view last followed one that fired by itself.
+    followed_fired: usize,
 }
 
 impl App {
@@ -138,6 +140,7 @@ impl App {
             locked: settings_open_locked,
             message: None,
             followed: None,
+            followed_fired: 0,
         };
         if let Some(path) = path.or(last) {
             app.open(&path, &cc.egui_ctx);
@@ -1674,6 +1677,15 @@ impl eframe::App for App {
                 self.view.scroll_to_cue(cue);
             }
         }
+        // A cue that fires by itself is shown as well: the view goes there and outlines
+        // it for a moment. The operator's own cue stays the current one.
+        let fired = self.snapshot.fired.len();
+        if fired > self.followed_fired {
+            if let Some(cue) = self.snapshot.latest.filter(|latest| Some(*latest) != self.snapshot.current) {
+                self.view.go_to_cue(cue, ctx.input(|i| i.time));
+            }
+        }
+        self.followed_fired = fired;
         self.live_window(ctx);
         self.settings_window(ctx);
         self.cue_window(ctx);
