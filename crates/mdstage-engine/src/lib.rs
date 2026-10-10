@@ -9,6 +9,7 @@ pub mod clock;
 pub mod device;
 pub mod mixer;
 pub mod mtc;
+pub mod outputs;
 pub mod player;
 pub mod show;
 

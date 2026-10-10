@@ -575,7 +575,7 @@ Hi.
         let mut roles = cast.roles.clone();
         roles[0].name = "Annabel".into();
         roles[0].color = Some("red".into());
-        roles.push(Role { name: "Clara".into(), color: None, channel: Some(7) });
+        roles.push(Role { name: "Clara".into(), color: None, channel: Some(7), mixer: 0 });
         script.save_roles(&roles, &cast.groups, &[("Anna".into(), "Annabel".into())]);
 
         let written = script.to_markdown();

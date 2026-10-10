@@ -15,3 +15,4 @@ rubato = "0.16"
 symphonia = { version = "0.5", features = ["mp3", "aac", "isomp4", "flac", "vorbis", "ogg", "wav", "aiff", "pcm"] }
 thiserror = "2"
 thread-priority = "1"
+ureq = "2"

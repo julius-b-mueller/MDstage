@@ -31,6 +31,8 @@ pub struct Role {
     pub color: Option<String>,
     /// Mixer channel of the role's microphone.
     pub channel: Option<u64>,
+    /// Which mixer the microphone is on (index into the machine's mixer list).
+    pub mixer: usize,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -65,7 +67,12 @@ impl Cast {
         };
         let roles = entries("roles")
             .into_iter()
-            .map(|(name, v)| Role { name, color: text(&v, "color"), channel: v.get("ch").and_then(Value::as_u64) })
+            .map(|(name, v)| Role {
+                name,
+                color: text(&v, "color"),
+                channel: v.get("ch").and_then(Value::as_u64),
+                mixer: v.get("device").and_then(Value::as_u64).unwrap_or(0) as usize,
+            })
             .collect();
         let groups = entries("groups")
             .into_iter()
@@ -296,7 +303,7 @@ mic: muteall
         let script = Script::parse(SHOW);
         let cast = Cast::from_script(&script, false);
         assert_eq!(cast.roles.len(), 3);
-        assert_eq!(cast.role("Anna"), Some(&Role { name: "Anna".into(), color: Some("blue".into()), channel: Some(3) }));
+        assert_eq!(cast.role("Anna"), Some(&Role { name: "Anna".into(), color: Some("blue".into()), channel: Some(3), mixer: 0 }));
         assert_eq!(cast.role("Clara").unwrap().channel, None);
         assert_eq!(cast.group_roles("Duo"), ["Anna", "Ben", "Gone"]);
         assert_eq!(cast.group_roles("Alle"), ["Anna", "Ben", "Clara"]);
