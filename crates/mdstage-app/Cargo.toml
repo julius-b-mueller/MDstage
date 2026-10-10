@@ -12,5 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 eframe = "0.31"
+rfd = "0.15"
+sha2 = "0.10"
 mdstage-core = { path = "../mdstage-core" }
 mdstage-engine = { path = "../mdstage-engine" }

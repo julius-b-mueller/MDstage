@@ -4,7 +4,7 @@
 //! The layout follows what earlier MDstage versions produced, so a cue that is edited
 //! and saved looks like its neighbours and existing files do not churn.
 
-use serde_yaml_ng::{Mapping, Value};
+pub use serde_yaml_ng::{Mapping, Value};
 
 const INDENT: usize = 4;
 

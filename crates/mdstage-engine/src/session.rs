@@ -46,6 +46,8 @@ pub enum Request {
     /// device takes effect when the session is restarted.
     Configure(Box<Settings>, bool),
     ClearProblems,
+    /// The show file was edited.
+    SetScript(Box<Script>),
 }
 
 /// The audio output in use.
@@ -163,7 +165,7 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
         Sink::Null { .. } => (NULL_RATE, None),
     };
 
-    let cast = Cast::from_script(&script, settings.language == "en");
+    let mut cast = Cast::from_script(&script, settings.language == "en");
     let player = Player::new(handle, ClipCache::new(show_dir.join("audio"), sample_rate), settings.routing(&script.virtual_channels()));
     let mut show = Show::new(script, player, clock, settings.language == "en");
 
@@ -240,6 +242,10 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
                 Request::StopAll => show.stop_all(),
                 Request::MicsOff => Ok(show.mics_off()),
                 Request::ClearProblems => Ok(problems.clear()),
+                Request::SetScript(script) => {
+                    cast = Cast::from_script(&script, settings.language == "en");
+                    show.replace_script(*script)
+                }
                 Request::Configure(new, now_trusted) => {
                     settings = *new;
                     trusted = now_trusted;

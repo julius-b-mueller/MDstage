@@ -119,6 +119,26 @@ impl Show {
         &self.script
     }
 
+    /// Swap in an edited script. The fired cues are kept if the cues are still the same
+    /// ones in the same order (text was edited, a cue's fields changed); otherwise the
+    /// show starts over, with all audio stopped.
+    pub fn replace_script(&mut self, script: Script) -> Result<()> {
+        let notes = |s: &Script| Cues::new(s).len();
+        let same_cues = notes(&self.script) == notes(&script);
+        self.cast = Cast::from_script(&script, self.cast.english);
+        self.script = Arc::new(script);
+        if !same_cues {
+            self.history = History::default();
+            self.armed = None;
+            self.selected_variant = None;
+            self.loop_epochs.clear();
+            self.stopped_at.clear();
+            self.stop_all()?;
+            self.report_displays();
+        }
+        Ok(())
+    }
+
     pub fn history(&self) -> &History {
         &self.history
     }
