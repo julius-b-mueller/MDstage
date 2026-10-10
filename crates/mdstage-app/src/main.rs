@@ -288,6 +288,9 @@ impl App {
         if pressed(ctx, Key::L) {
             self.live_open = true;
         }
+        if pressed(ctx, Key::B) && self.show.is_some() {
+            self.toggle_sidebar();
+        }
         if pressed(ctx, Key::F) && self.show.is_some() {
             self.view.open_search();
         }
@@ -373,6 +376,11 @@ impl App {
                     ui.close_menu();
                     self.live_open = true;
                 }
+                let scenes = if self.settings.sidebar_hidden { self.t("Szenenmenü einblenden", "Show Scene List") } else { self.t("Szenenmenü ausblenden", "Hide Scene List") };
+                if ui.button(scenes).clicked() {
+                    ui.close_menu();
+                    self.toggle_sidebar();
+                }
                 if ui.button(self.t("Zum aktuellen Cue", "Show current cue")).clicked() {
                     ui.close_menu();
                     if let Some(cue) = self.snapshot.current.or(self.snapshot.next) {
@@ -383,49 +391,87 @@ impl App {
         });
     }
 
+    fn toggle_sidebar(&mut self) {
+        self.settings.sidebar_hidden = !self.settings.sidebar_hidden;
+        self.save_settings();
+    }
+
+    /// The bar under the menu: scene list switch, Go and Back at the left; clock,
+    /// timecode, view switches and the emergency buttons at the right.
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 10.0;
             let has_show = self.show.is_some();
-            let go = egui::Button::new(RichText::new("GO").size(18.0).color(Color32::BLACK).strong()).fill(GREEN).min_size(egui::vec2(72.0, 34.0));
+            let scenes = theme::tool_button(RichText::new("☰").size(20.0));
+            if ui.add_enabled(has_show, scenes).on_hover_text(self.t("Szenenmenü ein- und ausblenden", "Show or hide the scene list")).clicked() {
+                self.toggle_sidebar();
+            }
+            let go = egui::Button::new(RichText::new("GO").size(20.0).color(Color32::BLACK).strong())
+                .fill(GREEN)
+                .stroke(egui::Stroke::new(1.0_f32, Color32::BLACK))
+                .min_size(egui::vec2(96.0, theme::TOOL));
             if ui.add_enabled(has_show && self.snapshot.next.is_some(), go).on_hover_text(self.t("Leertaste", "Space")).clicked() {
                 self.request(Request::Go);
             }
-            if ui.add_enabled(has_show, egui::Button::new("Back").min_size(egui::vec2(56.0, 34.0))).on_hover_text(self.t("Rücktaste", "Backspace")).clicked() {
+            let back = theme::tool_button(RichText::new("Back").size(15.0).strong()).min_size(egui::vec2(64.0, theme::TOOL));
+            if ui.add_enabled(has_show, back).on_hover_text(self.t("Rücktaste", "Backspace")).clicked() {
                 self.request(Request::Back);
             }
-            ui.separator();
-            let tc = self.snapshot.timecode.map_or("--:--:--:--".to_string(), |s| Timecode::from_frames((s * 25.0).floor().max(0.0) as u64).to_string());
-            ui.label(RichText::new(tc).monospace().size(18.0).color(if self.snapshot.timecode.is_some() { BRIGHT } else { MUTED }));
-            ui.separator();
-            if ui.add_enabled(has_show, egui::Button::new(RichText::new(self.t("Musik Stop", "Music Stop")).color(RED))).clicked() {
-                self.request(Request::StopAll);
-            }
-            if ui.add_enabled(has_show, egui::Button::new(RichText::new(self.t("Mics aus", "Mics Off")).color(RED))).clicked() {
-                self.request(Request::MicsOff);
-            }
-            if self.settings.emergency_light.is_some() {
-                let on = self.snapshot.emergency_light;
-                let label = RichText::new(self.t("Notlicht", "Emergency Light")).color(if on { Color32::BLACK } else { RED });
-                let button = egui::Button::new(label).fill(if on { RED } else { Color32::TRANSPARENT });
-                if ui.add_enabled(has_show, button).clicked() {
-                    self.request(Request::EmergencyLight(!on));
-                }
-            }
-            ui.separator();
-            let (lock, lock_hint) = (self.t("🔒 Gesperrt", "🔒 Locked"), self.t("Kein Bearbeiten; Klicks schalten nur scharf", "No editing; clicks only arm"));
-            let live = self.t("Live-Ansicht", "Live View");
-            ui.toggle_value(&mut self.locked, lock).on_hover_text(lock_hint);
-            ui.toggle_value(&mut self.live_open, live);
+
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if let Some(files) = self.snapshot.loading {
-                    ui.label(RichText::new(format!("{} ({files})", self.t("Audio lädt", "Loading audio"))).color(YELLOW));
+                // Right to left: the emergency buttons sit in the corner, as a group.
+                if ui.add_enabled(has_show, theme::emergency_button(self.t("Musik", "Music"), false)).on_hover_text(self.t("Notfall: alle Musik ausblenden", "Emergency: fade out all music")).clicked() {
+                    self.request(Request::StopAll);
                 }
-                let output = match &self.snapshot.output {
-                    Some(o) => format!("{} · {} {} · {} Hz", o.name, o.channels, lang::t("Kanäle", "channels"), o.sample_rate),
-                    None if has_show => self.t("kein Audiogerät", "no audio device").to_string(),
-                    None => String::new(),
-                };
-                ui.label(RichText::new(output).color(MUTED));
+                if ui.add_enabled(has_show, theme::emergency_button(self.t("Mics", "Mics"), false)).on_hover_text(self.t("Notfall: alle Mikrofone aus", "Emergency: all microphones off")).clicked() {
+                    self.request(Request::MicsOff);
+                }
+                if self.settings.emergency_light.is_some() {
+                    let on = self.snapshot.emergency_light;
+                    let hint = self.t("Notlicht an oder aus", "Emergency light on or off");
+                    if ui.add_enabled(has_show, theme::emergency_button(self.t("Licht", "Light"), on)).on_hover_text(hint).clicked() {
+                        self.request(Request::EmergencyLight(!on));
+                    }
+                }
+                ui.add_space(6.0);
+                let current = theme::tool_button(RichText::new("Cue").size(15.0).strong());
+                if ui.add_enabled(has_show, current).on_hover_text(self.t("Zum aktuellen Cue springen", "Jump to the current cue")).clicked() {
+                    if let Some(cue) = self.snapshot.current.or(self.snapshot.next) {
+                        self.view.scroll_to_cue(cue);
+                    }
+                }
+                let lock_hint = self.t("Bearbeitungssperre: kein Bearbeiten, Klicks schalten nur scharf", "Edit lock: no editing, clicks only arm");
+                if ui.add(theme::tool_toggle("🔒", self.locked)).on_hover_text(lock_hint).clicked() {
+                    self.locked = !self.locked;
+                }
+                if ui.add(theme::tool_toggle("LIVE", self.live_open)).on_hover_text(self.t("Live-Ansicht öffnen", "Open the live view")).clicked() {
+                    self.live_open = !self.live_open;
+                }
+                ui.add_space(6.0);
+                let running = self.snapshot.timecode.is_some();
+                let tc = self.snapshot.timecode.map_or("--:--:--:--".to_string(), |s| Timecode::from_frames((s * 25.0).floor().max(0.0) as u64).to_string());
+                theme::readout(ui, &tc, 20.0, if running { YELLOW } else { MUTED }).on_hover_text("Timecode");
+                theme::readout(ui, &chrono::Local::now().format("%H:%M:%S").to_string(), 26.0, TEXT).on_hover_text(self.t("Uhrzeit", "Time of day"));
+            });
+        });
+    }
+
+    /// The line at the bottom of the window: the audio device and what is loading.
+    fn status_bar(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            let output = match &self.snapshot.output {
+                Some(o) => format!("{} · {} {} · {} Hz", o.name, o.channels, lang::t("Kanäle", "channels"), o.sample_rate),
+                None if self.show.is_some() => self.t("kein Audiogerät", "no audio device").to_string(),
+                None => String::new(),
+            };
+            ui.label(RichText::new(output).size(12.0).color(MUTED));
+            if let Some(files) = self.snapshot.loading {
+                ui.label(RichText::new(format!("{} ({files})", self.t("Audio lädt", "Loading audio"))).size(12.0).color(YELLOW));
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if self.snapshot.audio_memory_mb >= 1.0 {
+                    ui.label(RichText::new(format!("Audio {:.0} MB", self.snapshot.audio_memory_mb)).size(12.0).color(MUTED));
+                }
             });
         });
     }
@@ -651,19 +697,25 @@ impl eframe::App for App {
         }
         self.shortcuts(ctx);
 
-        egui::TopBottomPanel::top("top").show(ctx, |ui| {
-            self.menu(ui);
-            self.toolbar(ui);
+        let bar = |fill, x, y| egui::Frame::new().fill(fill).inner_margin(egui::Margin::symmetric(x, y));
+        egui::TopBottomPanel::top("menu").frame(bar(PANEL, 8, 2)).show_separator_line(false).show(ctx, |ui| self.menu(ui));
+        egui::TopBottomPanel::top("tools").frame(bar(theme::BAR, 10, 8).stroke(egui::Stroke::new(1.0_f32, Color32::BLACK))).show(ctx, |ui| self.toolbar(ui));
+        egui::TopBottomPanel::top("notices").frame(bar(PANEL, 10, 3)).show_separator_line(false).show(ctx, |ui| {
             self.banners(ui);
             if let Some(show) = &self.show {
                 self.view.search_bar(ui, &show.script);
             }
-            ui.add_space(2.0);
         });
+        egui::TopBottomPanel::bottom("status").frame(bar(PANEL, 10, 3)).show(ctx, |ui| self.status_bar(ui));
 
         let mut actions = Vec::new();
-        if self.show.is_some() {
-            egui::SidePanel::left("scenes").default_width(220.0).show(ctx, |ui| self.view.sidebar(ui));
+        if self.show.is_some() && !self.settings.sidebar_hidden {
+            let frame = egui::Frame::new().fill(theme::SIDEBAR).inner_margin(egui::Margin::symmetric(12, 8));
+            let mut hide = false;
+            egui::SidePanel::left("scenes").default_width(230.0).frame(frame).show(ctx, |ui| hide = self.view.sidebar(ui));
+            if hide {
+                self.toggle_sidebar();
+            }
         }
         egui::CentralPanel::default().show(ctx, |ui| match &self.show {
             Some(show) => {

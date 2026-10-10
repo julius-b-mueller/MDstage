@@ -252,7 +252,8 @@ impl Show {
     ///
     /// Two cases do not fire: a cue whose audio is playing is stopped instead (a second
     /// press undoes an accidental one), and the outro of a running loop is queued for
-    /// the loop's end (or un-queued by a second press).
+    /// the loop's end. While it waits there, firing it again does nothing — a nervous
+    /// second Go must not call the transition off; Back does that.
     pub fn fire(&mut self, cue: usize, auto: bool) -> Result<()> {
         let script = self.script.clone();
         let cues = Cues::new(&script);
@@ -268,11 +269,7 @@ impl Show {
             cues.get(l).and_then(|c| c.loop_outro()).and_then(|n| cues.find(n)) == Some(cue) && self.is_playing(l)
         });
         if let (Some(looped), Some(audio)) = (running_loop, self.audio(cue)) {
-            if let Some(i) = self.pending_outros.iter().position(|&p| p == (looped, cue)) {
-                self.pending_outros.remove(i);
-                self.player.cancel_outro(looped)?;
-                self.player.stop(cue, 0.0)?;
-            } else {
+            if !self.pending_outros.contains(&(looped, cue)) {
                 self.player.start(cue, &audio, Start::armed(self.then(cue)))?;
                 self.player.queue_outro(looped, cue)?;
                 self.pending_outros.push((looped, cue));
@@ -727,6 +724,23 @@ mod tests {
         assert_eq!(rig.notes(), [2]);
         assert!(rig.show.pending_outros().is_empty());
         assert_eq!(rig.show.current(), Some(2), "the queued finish counts as the operator's cue");
+    }
+
+    #[test]
+    fn a_second_go_leaves_a_waiting_outro_alone() {
+        let mut rig = rig(&SLF, &SLF_CLIPS);
+        rig.show.go().unwrap();
+        rig.run(64);
+        rig.show.go().unwrap();
+        rig.run(8);
+        // Pressed again while the finish waits for the loop's end: nothing changes.
+        rig.show.go().unwrap();
+        rig.show.go().unwrap();
+        assert_eq!(rig.show.pending_outros(), [(1, 2)]);
+        assert_eq!(rig.fired(), [0, 1]);
+        rig.run(56);
+        assert_eq!((rig.out[87], rig.out[88]), (2.0, 4.0), "the finish comes in at the loop's end as planned");
+        assert_eq!(rig.fired(), [0, 1, 2]);
     }
 
     #[test]

@@ -530,7 +530,7 @@ impl ScriptView {
         if let Some((_, rest)) = Self::ghost(cx.cast, &editing.buffer) {
             let end = output.galley.pos_from_cursor(&output.galley.end());
             let pos = output.galley_pos + end.right_top().to_vec2();
-            child.painter().text(pos, Align2::LEFT_TOP, format!("{rest}  ⇥"), FontId::proportional(17.0), MUTED);
+            child.painter().text(pos, Align2::LEFT_TOP, format!("{rest}  Tab"), FontId::proportional(17.0), MUTED);
         }
 
         let height = child.min_rect().height() + 2.0 * BLOCK_PAD;
@@ -727,16 +727,26 @@ impl ScriptView {
     }
 
     /// The scene list: first- and second-level headings, the one in view highlighted.
-    pub fn sidebar(&mut self, ui: &mut Ui) {
-        ui.add_space(6.0);
-        ui.label(egui::RichText::new("SZENEN").size(12.0).color(MUTED));
+    /// Returns whether its close button was pressed.
+    pub fn sidebar(&mut self, ui: &mut Ui) -> bool {
+        let mut close = false;
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(t("SZENEN", "SCENES")).size(12.0).strong().color(MUTED));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                close = ui.add(egui::Button::new(egui::RichText::new("«").color(MUTED)).frame(false)).on_hover_text(t("Szenenmenü ausblenden", "Hide the scene list")).clicked();
+            });
+        });
+        ui.separator();
         let active = self.headings.iter().rposition(|(i, _, _)| self.offsets.get(*i).is_some_and(|&o| o <= self.scroll_y + 1.0));
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             let mut jump = None;
             for (n, (index, level, text)) in self.headings.iter().enumerate() {
-                let colour = if active == Some(n) { BLUE } else { TEXT };
+                let colour = if active == Some(n) { BLUE } else if *level > 1 { TEXT } else { BRIGHT };
                 let indent = if *level > 1 { "    " } else { "" };
-                let label = egui::RichText::new(format!("{indent}{text}")).color(colour);
+                let mut label = egui::RichText::new(format!("{indent}{text}")).color(colour);
+                if *level == 1 {
+                    label = label.strong();
+                }
                 if ui.add(egui::Label::new(label).truncate().sense(Sense::click())).clicked() {
                     jump = Some(*index);
                 }
@@ -745,5 +755,6 @@ impl ScriptView {
                 self.scroll_to = Some(self.offsets[index]);
             }
         });
+        close
     }
 }

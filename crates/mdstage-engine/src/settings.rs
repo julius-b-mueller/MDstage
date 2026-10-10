@@ -157,6 +157,8 @@ pub struct Settings {
     pub display_port: u16,
     /// `de` or `en`.
     pub language: String,
+    /// The scene list at the left of the window is folded away.
+    pub sidebar_hidden: bool,
     pub recent_files: Vec<String>,
     /// SHA-256 of each show file as this machine last wrote it. A file that differs was
     /// changed elsewhere and must be confirmed before it may drive devices.
@@ -179,6 +181,7 @@ impl Default for Settings {
             display_host: "127.0.0.1".into(),
             display_port: 7590,
             language: "de".into(),
+            sidebar_hidden: false,
             recent_files: Vec::new(),
             trusted: HashMap::new(),
         }
