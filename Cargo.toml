@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "2.0.0-alpha.1"
+edition = "2024"
+license = "MIT"
+authors = ["Julius B. Müller <hello@mdstage.org>"]
+
+[profile.dev]
+# The audio callback and the script view are unusable unoptimized.
+opt-level = 1
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

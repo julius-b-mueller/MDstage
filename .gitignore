@@ -9,5 +9,6 @@ artifacts/
 BACKLOG.md
 public/
 website/app/
+target/
 **/.DS_Store
 

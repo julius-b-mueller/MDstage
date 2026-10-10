@@ -1,0 +1,16 @@
+[package]
+name = "mdstage-engine"
+description = "Realtime audio, MIDI and timecode engine for MDstage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+cpal = "0.15"
+midir = "0.10"
+rtrb = "0.3"
+rubato = "0.16"
+symphonia = { version = "0.5", features = ["mp3", "aac", "isomp4", "flac", "vorbis", "ogg", "wav", "aiff", "pcm"] }
+thiserror = "2"
+thread-priority = "1"

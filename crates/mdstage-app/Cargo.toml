@@ -1,0 +1,16 @@
+[package]
+name = "mdstage-app"
+description = "MDstage desktop application"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "mdstage"
+path = "src/main.rs"
+
+[dependencies]
+eframe = "0.31"
+mdstage-core = { path = "../mdstage-core" }
+mdstage-engine = { path = "../mdstage-engine" }
