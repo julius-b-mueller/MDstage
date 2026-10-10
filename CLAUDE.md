@@ -1,6 +1,10 @@
 # Build-Struktur
 
-## Quelldateien vs. generierte Dateien
+Ausgeliefert wird die native Rust-App (siehe „Nativer Rewrite"). Die Abschnitte zu
+`website/app/`, `dist/` und `package.json` betreffen nur noch die alte Electron-App, die im
+Repository liegt, aber von der CI nicht mehr gebaut oder veröffentlicht wird.
+
+## Quelldateien vs. generierte Dateien (Electron, nur lokal)
 
 `website/app/` ist ein **Build-Artefakt** und darf nicht direkt bearbeitet werden.
 Der Ordner wird bei jedem Build-Schritt vollständig gelöscht und aus `dist/` neu generiert:
@@ -23,15 +27,30 @@ scripts/copy-preview.js: dist/ → website/app/  (rmSync + cpSync)
 
 ## Versionsnummer pflegen
 
-Bei jedem Version-Bump müssen folgende Stellen angepasst werden:
+Für ein Release der nativen App müssen drei Stellen dieselbe Version tragen:
+
+| Stelle | Wie |
+|---|---|
+| `Cargo.toml` (`[workspace.package]` → `version`) | **manuell** — die Single Source of Truth |
+| `website/index.html` (`softwareVersion` im JSON-LD) | **manuell** — leicht zu vergessen |
+| Git-Tag | ohne `v`-Präfix, z. B. `2.0.0` |
+
+Die CI (Job `versions`) bricht ein Tag ab, das nicht zu `Cargo.toml` passt, und bei einem
+vollen Release auch eines, das nicht zu `softwareVersion` passt. Ein Tag mit Zusatz
+(`2.0.0-beta.1`) wird als Vorabversion veröffentlicht: Die Download-Links der Website
+(`releases/latest`) zeigen dann weiter auf das letzte volle Release, und `softwareVersion`
+bleibt unberührt.
+
+### Electron-App (alt)
+
+Bei einem Version-Bump der Electron-App müssen folgende Stellen angepasst werden:
 
 | Stelle | Wie |
 |---|---|
 | `package.json` (`version`) | **manuell** — die Single Source of Truth |
 | `dist/version.json` | **generiert** aus `package.json` via `scripts/build-version.js` (nicht von Hand) |
-| `website/index.html` (`softwareVersion` im JSON-LD) | **manuell** — wird **nicht** vom Build aktualisiert, leicht zu vergessen |
 
-Also: `package.json` und das JSON-LD in `website/index.html` immer **beide** von Hand auf dieselbe Version setzen.
+Das JSON-LD der Website folgt nicht mehr `package.json`, sondern der nativen App.
 
 ## Nativer Rewrite (Zweig `native-rewrite`)
 
@@ -55,8 +74,15 @@ scripts/bundle-appimage.sh                # AppImage (nur unter Linux)
   `package.json`, solange beide Apps existieren.
 - `crates/mdstage-engine/src/display.rs` bindet `dist/display/index.html` und
   `dist/display/app.js` ein – der Display-Client bleibt eine Webseite.
-- CI für die native App: `.github/workflows/native.yml` (nur Artefakte, kein Release):
-  dmg, AppImage, deb, rpm, Windows-Installer (`scripts/windows-installer.nsi`) und zip.
+- CI: `.github/workflows/build.yml`. Push auf `main`: Tests, dann geht `website/` auf
+  GitHub Pages (reine Dateien, nichts wird gebaut). Push auf `native-rewrite`: Tests und
+  Pakete als Artefakte. Tag: Tests, Pakete, GitHub-Release.
+- Pakete und ihre Namen im Release (die Website verlinkt sie über `releases/latest`):
+  `MDstage-macos-arm64.dmg`, `MDstage-windows-{x64,arm64}.exe` (Installer,
+  `scripts/windows-installer.nsi`), `MDstage-windows-{x64,arm64}-portable.zip`,
+  `MDstage-linux-{x64,arm64}.{AppImage,deb,rpm,tar.gz}`. Wer einen Namen ändert, muss die
+  Download-Links in `website/index.html` mitändern.
+- Die Website hat keine Browser-Vorschau mehr (`website/preview/` ist entfernt).
 - Texte der Oberfläche: `crates/mdstage-app/src/lang.rs`, an Ort und Stelle als
   `t("Deutsch", "English")`. Neue Texte immer in beiden Sprachen.
 - Audio wird gestreamt (`crates/mdstage-engine/src/stream.rs`), nie ganz geladen. Ob

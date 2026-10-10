@@ -1,189 +1,197 @@
 name: Build & Deploy
 
+# The native (Rust) app and the website.
+#
+#   push to main            tests, then the website goes to GitHub Pages
+#   push to native-rewrite  tests and packages for all five targets (artifacts only)
+#   tag 2.0.0               tests, packages, GitHub release
+#   tag 2.0.0-beta.1        the same, marked as a pre-release ("latest" stays as it is)
+#
+# A release tag has to be the version in Cargo.toml, and for a full release also the
+# softwareVersion on the website; the `versions` job refuses the tag otherwise.
+
 on:
   push:
-    branches: [main]
+    branches: [main, native-rewrite]
     tags:
       - '[0-9]+.[0-9]+.[0-9]+'
+      - '[0-9]+.[0-9]+.[0-9]+-*'
+  pull_request:
+  workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  CARGO_TERM_COLOR: always
 
 permissions: read-all
 
-concurrency:
-  group: pages
-  cancel-in-progress: false
-
 jobs:
 
-  # ── Web-Bundle (immer) ────────────────────────────────────────────────────
-  build-web:
-    runs-on: ubuntu-latest
+  # ── Tests (always) ────────────────────────────────────────────────────────
+  test:
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: 24
-          cache: 'npm'
-      - run: npm ci
-      - run: npx webpack --mode production
-      - run: node scripts/build-version.js
-      - run: rm -f dist/*.map
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: web-bundle
-          path: dist/
-          retention-days: 14
-
-  # ── Linux (nur bei Tags) ──────────────────────────────────────────────────
-  build-linux:
-    if: github.ref_type == 'tag'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: 24
-          cache: 'npm'
-      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-        with:
-          path: ~/.cache/electron
-          key: linux-electron-${{ hashFiles('package-lock.json') }}
-      - run: npm ci
-      - run: npx webpack --mode production
-      - run: node scripts/build-version.js
-      - run: npx electron-builder --linux AppImage deb rpm --x64 --arm64 --publish never
+      - run: rustup toolchain install stable --profile minimal
       - run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev libgtk-3-dev
+      - run: cargo test --workspace
+
+  # ── Versions agree (tags only) ────────────────────────────────────────────
+  versions:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - run: |
+          tag="${{ github.ref_name }}"
+          cargo=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          site=$(sed -n 's/.*"softwareVersion": "\(.*\)".*/\1/p' website/index.html | head -1)
+          echo "tag $tag · Cargo.toml $cargo · website $site"
+          if [ "$cargo" != "$tag" ]; then
+            echo "::error::The tag is $tag, but Cargo.toml says $cargo."
+            exit 1
+          fi
+          # A pre-release does not go on the website.
+          case "$tag" in
+            *-*) ;;
+            *) if [ "$site" != "$tag" ]; then
+                 echo "::error::The tag is $tag, but softwareVersion in website/index.html says $site."
+                 exit 1
+               fi ;;
+          esac
+
+  # ── Linux ─────────────────────────────────────────────────────────────────
+  linux:
+    if: github.ref_type == 'tag' || github.ref_name == 'native-rewrite' || github.event_name == 'workflow_dispatch'
+    strategy:
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, arch: x64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - run: rustup toolchain install stable --profile minimal
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev libgtk-3-dev
+      - run: cargo build --release -p mdstage-app
+      - run: |
+          cargo install cargo-deb cargo-generate-rpm --locked
+          cargo deb -p mdstage-app --no-build
+          # rpm takes no "-" in a version: 2.0.0-alpha.1 becomes 2.0.0~alpha.1.
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1 | tr - '~')
+          cargo generate-rpm -p crates/mdstage-app --set-metadata "version = \"$version\""
+          scripts/bundle-appimage.sh
           mkdir -p artifacts
-          # x64
-          find release -name "*.AppImage" ! -name "*arm64*" -exec cp {} artifacts/MDstage-linux-x64.AppImage \; 2>/dev/null || true
-          find release -name "*amd64.deb"                    -exec cp {} artifacts/MDstage-linux-x64.deb \;      2>/dev/null || true
-          find release -name "*x86_64.rpm"                   -exec cp {} artifacts/MDstage-linux-x64.rpm \;      2>/dev/null || true
-          # arm64 (Raspberry Pi 64-bit)
-          find release -name "*arm64.AppImage"               -exec cp {} artifacts/MDstage-linux-arm64.AppImage \; 2>/dev/null || true
-          find release -name "*arm64.deb"                    -exec cp {} artifacts/MDstage-linux-arm64.deb \;      2>/dev/null || true
-          find release -name "*aarch64.rpm"                  -exec cp {} artifacts/MDstage-linux-arm64.rpm \;      2>/dev/null || true
+          tar -czf artifacts/MDstage-linux-${{ matrix.arch }}.tar.gz -C target/release mdstage
+          cp target/debian/*.deb artifacts/MDstage-linux-${{ matrix.arch }}.deb
+          cp target/generate-rpm/*.rpm artifacts/MDstage-linux-${{ matrix.arch }}.rpm
+          cp target/bundle/MDstage-linux-${{ matrix.arch }}.AppImage artifacts/
           ls -lh artifacts/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: linux
+          name: linux-${{ matrix.arch }}
           path: artifacts/
           retention-days: 14
 
-  # ── Windows (nur bei Tags) ────────────────────────────────────────────────
-  build-windows:
-    if: github.ref_type == 'tag'
-    runs-on: windows-latest
+  # ── Windows ───────────────────────────────────────────────────────────────
+  windows:
+    if: github.ref_type == 'tag' || github.ref_name == 'native-rewrite' || github.event_name == 'workflow_dispatch'
+    strategy:
+      matrix:
+        include:
+          - { runner: windows-latest, arch: x64 }
+          - { runner: windows-11-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: 24
-          cache: 'npm'
-      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-        with:
-          path: ~\AppData\Local\electron\Cache
-          key: windows-electron-${{ hashFiles('package-lock.json') }}
-      - run: npm ci
-      - run: npx webpack --mode production
-      - run: node scripts/build-version.js
-      - run: npx electron-builder --win nsis --publish never
+      - run: rustup toolchain install stable --profile minimal
+      - run: cargo build --release -p mdstage-app
       - run: |
-          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-          Get-ChildItem -Recurse release -Filter "*Setup*.exe" | Select-Object -First 1 | Copy-Item -Destination artifacts/MDstage-windows-x64.exe
+          New-Item -ItemType Directory -Force -Path artifacts, target/bundle | Out-Null
+          # Without installing: the program by itself, zipped.
+          Copy-Item target/release/mdstage.exe artifacts/MDstage.exe
+          Compress-Archive -Path artifacts/MDstage.exe -DestinationPath artifacts/MDstage-windows-${{ matrix.arch }}-portable.zip
+          Remove-Item artifacts/MDstage.exe
+          # The installer. NSIS comes with most runner images; fetch it where it does not.
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install nsis -y --no-progress
+            $env:PATH += ";${env:ProgramFiles(x86)}\NSIS"
+          }
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
+          makensis /DVERSION=$version /DARCH=${{ matrix.arch }} scripts/windows-installer.nsi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item target/bundle/MDstage-windows-${{ matrix.arch }}-setup.exe artifacts/MDstage-windows-${{ matrix.arch }}.exe
           Get-ChildItem artifacts/
         shell: pwsh
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: windows
+          name: windows-${{ matrix.arch }}
           path: artifacts/
           retention-days: 14
 
-  # ── macOS (nur bei Tags) ──────────────────────────────────────────────────
-  build-macos:
-    if: github.ref_type == 'tag'
+  # ── macOS (Apple Silicon) ─────────────────────────────────────────────────
+  macos:
+    if: github.ref_type == 'tag' || github.ref_name == 'native-rewrite' || github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: 24
-          cache: 'npm'
-      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-        with:
-          path: ~/Library/Caches/electron
-          key: macos-electron-${{ hashFiles('package-lock.json') }}
-      - run: npm ci
-      - run: npx webpack --mode production
-      - run: node scripts/build-version.js
-      - run: npx electron-builder --mac dmg --arm64 --x64 --publish never
-      - run: |
-          mkdir -p artifacts
-          find release -name "*arm64.dmg"                    -exec cp {} artifacts/MDstage-macos-arm64.dmg \; 2>/dev/null || true
-          find release -name "*.dmg" ! -name "*arm64*" -exec cp {} artifacts/MDstage-macos-x64.dmg \;        2>/dev/null || true
-          ls -lh artifacts/
+      - run: rustup toolchain install stable --profile minimal
+      - run: scripts/bundle-macos.sh --dmg
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: macos
-          path: artifacts/
+          name: macos-arm64
+          path: target/bundle/MDstage-macos-arm64.dmg
           retention-days: 14
 
-  # ── GitHub Pages ──────────────────────────────────────────────────────────
+  # ── GitHub Pages (main only) ──────────────────────────────────────────────
   deploy-pages:
-    needs: [build-web]
-    if: github.ref_type == 'branch' && needs.build-web.result == 'success'
+    needs: [test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       pages: write
       id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: web-bundle
-          path: dist/
-      - run: |
-          cp -r website public
-          cp -r dist public/app
+      # The website is plain files; nothing is built.
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
-          path: public/
+          path: website/
       - uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5
         id: deployment
 
-  # ── GitHub Release (nur bei Tags) ─────────────────────────────────────────
+  # ── GitHub Release (tags only) ────────────────────────────────────────────
   release:
-    needs: [build-linux, build-windows, build-macos]
-    if: |
-      github.ref_type == 'tag' &&
-      needs.build-linux.result == 'success' &&
-      needs.build-windows.result == 'success'
+    needs: [test, versions, linux, windows, macos]
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: linux
           path: release-assets/
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: windows
-          path: release-assets/
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: macos
-          path: release-assets/
-        continue-on-error: true
+          merge-multiple: true
       - run: |
+          ls -lh release-assets/
+          # A tag like 2.0.0-beta.1 is a pre-release: the website's download links
+          # (releases/latest) go on pointing at the last full release.
+          prerelease=""
+          case "${{ github.ref_name }}" in *-*) prerelease="--prerelease" ;; esac
           gh release create "${{ github.ref_name }}" \
             release-assets/* \
             --repo "${{ github.repository }}" \
             --title "${{ github.ref_name }}" \
-            --generate-notes
+            --generate-notes $prerelease
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
