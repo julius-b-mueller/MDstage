@@ -51,6 +51,86 @@ pub enum Outcome {
     PasteAbove,
 }
 
+/// Every key the editor understands, for the operator to look up: sections of
+/// `(keys, what they do)`.
+pub fn reference() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
+    use crate::lang::t;
+    vec![
+        (
+            t("Modi", "Modes"),
+            vec![
+                ("i  a", t("einfügen vor / nach dem Cursor", "insert before / after the cursor")),
+                ("I  A", t("einfügen am Zeilenanfang / Zeilenende", "insert at the start / end of the line")),
+                ("Esc", t("zurück in den Normalmodus (schließt den Editor nie)", "back to normal mode (never closes the editor)")),
+            ],
+        ),
+        (
+            t("Bewegen", "Moving"),
+            vec![
+                ("h  l", t("ein Zeichen nach links / rechts", "one character left / right")),
+                ("j  k", t("eine Zeile nach unten / oben; am Rand in den Textblock darunter / darüber", "one line down / up; at the edge into the text block below / above")),
+                ("w  b  e", t("nächstes Wort / Wortanfang zurück / Wortende", "next word / back to the start of a word / end of a word")),
+                ("0  ^  $", t("Zeilenanfang / erstes Zeichen / Zeilenende", "start of the line / first character / end of the line")),
+                ("gg  G", t("erste / letzte Zeile des Blocks", "first / last line of the block")),
+                (t("Zahl davor", "a number first"), t("wiederholt die Bewegung (3j, 2w); 3G springt zu Zeile 3", "repeats the movement (3j, 2w); 3G goes to line 3")),
+                (t("Pfeiltasten", "arrow keys"), t("wie h j k l", "like h j k l")),
+            ],
+        ),
+        (
+            t("Zeilen und Blöcke anlegen", "New lines and blocks"),
+            vec![
+                ("o  O", t("neue Zeile im Block darunter / darüber", "new line in the block below / above")),
+                ("go  gO", t("neuer Block darunter / darüber", "new block below / above")),
+                ("Enter", t("neuer Block darunter (auch im Einfügemodus)", "new block below (in insert mode too)")),
+                ("Shift+Enter", t("Zeilenumbruch im Einfügemodus", "line break in insert mode")),
+            ],
+        ),
+        (
+            t("Löschen und Ändern", "Deleting and changing"),
+            vec![
+                ("x", t("Zeichen löschen", "delete the character")),
+                ("dw  D", t("bis zum nächsten Wort / bis zum Zeilenende löschen", "delete up to the next word / to the end of the line")),
+                ("dd", t("Zeile löschen; die einzige Zeile: den ganzen Block", "delete the line; the only line: the whole block")),
+                ("cw  C  cc", t("Wort / Rest der Zeile / ganze Zeile ersetzen", "change the word / the rest of the line / the whole line")),
+                ("J", t("Zeile mit der nächsten verbinden", "join the line with the next")),
+                ("u", t("rückgängig", "undo")),
+            ],
+        ),
+        (
+            t("Kopieren und Einfügen", "Copying and pasting"),
+            vec![
+                ("yy  yw", t("Zeile / Wort kopieren", "copy the line / the word")),
+                ("p  P", t("dahinter / davor einfügen (bleibt von Block zu Block erhalten)", "paste after / before (kept from block to block)")),
+            ],
+        ),
+        (
+            t("Ganzer Block", "The whole block"),
+            vec![
+                ("gK  gJ", t("Block nach oben / unten verschieben", "move the block up / down")),
+                ("yab  dab", t("Block kopieren / ausschneiden", "copy / cut the block")),
+                ("gp  gP", t("kopierten Block darunter / darüber einfügen", "put the copied block below / above")),
+            ],
+        ),
+        (
+            t("Rollennamen", "Role names"),
+            vec![
+                ("x  dw  D", t("die Rolle unter dem Cursor entfernen", "remove the role under the cursor")),
+                ("cw  C", t("die Rolle unter dem Cursor ersetzen", "change the role under the cursor")),
+                ("cc  dd", t("alle Namen leeren / die Namenszeile entfernen", "empty all names / remove the line of names")),
+            ],
+        ),
+        (
+            t("Editor verlassen", "Leaving the editor"),
+            vec![
+                (":w  :wq  :x  ZZ", t("speichern und schließen", "save and close")),
+                (t("Klick daneben", "click beside it"), t("speichern und schließen", "save and close")),
+                (":q!  ZQ", t("Änderung verwerfen und schließen", "discard the change and close")),
+                (":q", t("schließen, wenn nichts geändert wurde", "close if nothing was changed")),
+            ],
+        ),
+    ]
+}
+
 #[derive(Default)]
 pub struct Vim {
     pub mode: Mode,

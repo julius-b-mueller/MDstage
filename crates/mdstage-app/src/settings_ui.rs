@@ -32,6 +32,8 @@ pub struct SettingsUi {
     /// The colour each output device is marked with on the cues, by device name. Kept
     /// in the show file, with the device's name and kind.
     pub colours: std::collections::HashMap<String, String>,
+    /// The window listing the Vim keys is open.
+    vim_help: bool,
     /// Stylesheets in the open show's `css/` folder.
     css_files: Vec<String>,
     /// This machine's address in the local network, if it has one.
@@ -117,6 +119,7 @@ impl SettingsUi {
             channels: Vec::new(),
             test_output: None,
             colours: Default::default(),
+            vim_help: false,
             css_files: Vec::new(),
             // Asking which local address a route to the outside would use sends nothing.
             lan_address: std::net::UdpSocket::bind("0.0.0.0:0").and_then(|s| s.connect("192.0.2.1:9").and_then(|()| s.local_addr())).ok().map(|a| a.ip().to_string()),
@@ -169,6 +172,7 @@ impl SettingsUi {
         let mut test_output = None;
         let (css_files, lan_address) = (&self.css_files, &self.lan_address);
         let colours = &mut self.colours;
+        let mut vim_help = self.vim_help;
         egui::ScrollArea::vertical().auto_shrink([false, false]).max_height(ui.available_height() - 44.0).show(ui, |ui| {
             let draft = &mut self.draft;
             ui.heading(t("Allgemein", "General"));
@@ -181,10 +185,12 @@ impl SettingsUi {
             ui.checkbox(&mut draft.open_locked, t("Gesperrt öffnen", "Open locked"));
             ui.checkbox(&mut draft.group_mics, t("Mikrofone in Gruppen bündeln", "Bundle microphones into groups"));
             ui.checkbox(&mut draft.line_numbers, t("Markdown-Zeilennummern anzeigen", "Show Markdown line numbers"));
-            ui.checkbox(&mut draft.vim_keys, t("Vim-Tasten im Texteditor", "Vim keys in the text editor")).on_hover_text(t(
-                "Normal- und Einfügemodus beim Bearbeiten von Text: h j k l, w b e, 0 ^ $, gg G · i a I A, o O · x, dd, dw, D, cc, cw, C, J · yy, yw, p P · u · :w oder ein Klick daneben schließt, :q! verwirft. j und k wechseln am Rand in den Block darunter oder darüber. o und O fügen dem Block eine Zeile hinzu; go, gO und Enter legen einen neuen Block an. Zahlen vor Bewegungen (3j, 2w). Ganzer Block: gK/gJ verschieben, yab kopieren, dab ausschneiden, gp/gP einfügen.",
-                "Normal and insert mode when editing text: h j k l, w b e, 0 ^ $, gg G · i a I A, o O · x, dd, dw, D, cc, cw, C, J · yy, yw, p P · u · :w or a click beside it closes, :q! discards. At the edge, j and k go on in the block below or above. o and O add a line to the block; go, gO and Enter start a new block. Numbers before movements (3j, 2w). Whole block: gK/gJ move, yab copy, dab cut, gp/gP put.",
-            ));
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut draft.vim_keys, t("Vim-Tasten im Texteditor", "Vim keys in the text editor")).on_hover_text(t("Normal- und Einfügemodus beim Bearbeiten von Text", "Normal and insert mode when editing text"));
+                if ui.small_button("Info").on_hover_text(t("Alle unterstützten Tasten anzeigen", "Show all supported keys")).clicked() {
+                    vim_help = !vim_help;
+                }
+            });
             ui.horizontal(|ui| {
                 ui.label(t("Texteditor (Rechtsklick auf einen Block)", "Text editor (right-click on a block)"));
                 let presets = [("", t("— deaktiviert —", "— disabled —")), ("code -g {file}:{line}", "VS Code"), ("zed {file}:{line}", "Zed")];
@@ -589,6 +595,23 @@ impl SettingsUi {
         });
 
         self.test_output = test_output;
+        // The list of Vim keys, in a window of its own.
+        egui::Window::new(t("Vim-Tasten", "Vim keys")).open(&mut vim_help).default_size([560.0, 620.0]).show(ui.ctx(), |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for (section, keys) in crate::vim::reference() {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(section).strong().color(BRIGHT));
+                    egui::Grid::new(section).num_columns(2).spacing([18.0, 4.0]).show(ui, |ui| {
+                        for (key, does) in keys {
+                            ui.label(RichText::new(key).monospace().color(YELLOW));
+                            ui.label(does);
+                            ui.end_row();
+                        }
+                    });
+                }
+            });
+        });
+        self.vim_help = vim_help;
         ui.separator();
         ui.horizontal(|ui| {
             if ui.add_enabled(problem.is_none(), egui::Button::new(t("Speichern", "Save"))).clicked() {
