@@ -425,7 +425,85 @@ fn block_removals(yaml: &Value, is_config: bool, channels: &[String]) -> Vec<Vec
     paths
 }
 
+/// Call `visit` with every place in a cue that names an audio file: the short form
+/// `music: file.wav`, `music.file`, and every entry of an `audios` list — in `music` as
+/// well as in each `music_seq` entry.
+fn audio_refs(cue: &mut Value, visit: &mut dyn FnMut(&mut Value)) {
+    fn entry(entry: &mut Value, visit: &mut dyn FnMut(&mut Value)) {
+        if !entry.is_mapping() {
+            return;
+        }
+        if let Some(file) = entry.get_mut("file").filter(|f| f.is_string()) {
+            visit(file);
+        }
+        if let Some(Value::Sequence(audios)) = entry.get_mut("audios") {
+            for file in audios.iter_mut().filter_map(|a| a.get_mut("file")).filter(|f| f.is_string()) {
+                visit(file);
+            }
+        }
+    }
+    match cue.get_mut("music") {
+        Some(music) if music.is_string() => visit(music),
+        Some(music) => entry(music, visit),
+        None => {}
+    }
+    if let Some(Value::Sequence(parts)) = cue.get_mut("music_seq") {
+        parts.iter_mut().for_each(|part| entry(part, visit));
+    }
+}
+
+/// Point every reference to the audio file `from` in one cue at `to`. Returns how many
+/// there were.
+pub fn rename_audio_in(cue: &mut Value, from: &str, to: &str) -> usize {
+    let mut hits = 0;
+    audio_refs(cue, &mut |file| {
+        if file.as_str().and_then(crate::audio::sanitize_path).as_deref() == Some(from) {
+            *file = to.into();
+            hits += 1;
+        }
+    });
+    hits
+}
+
 impl Script {
+    /// Every audio file the cues name, and how many cue blocks cannot be read. Those may
+    /// name files too, so with any of them the list is not to be relied on.
+    pub fn audio_files_used(&self) -> (Vec<String>, usize) {
+        let mut used: Vec<String> = Vec::new();
+        let mut unreadable = 0;
+        for block in &self.blocks {
+            match block {
+                Block::Cue(cue) if cue.invalid => unreadable += 1,
+                Block::Cue(cue) => audio_refs(&mut cue.yaml.clone(), &mut |file| {
+                    if let Some(name) = file.as_str().and_then(crate::audio::sanitize_path).filter(|n| !used.contains(n)) {
+                        used.push(name);
+                    }
+                }),
+                _ => {}
+            }
+        }
+        (used, unreadable)
+    }
+
+    /// Point every reference to the audio file `from` at `to`. Only cues that name the
+    /// file are rewritten. Returns how many references changed.
+    pub fn rename_audio(&mut self, from: &str, to: &str) -> usize {
+        let mut hits = 0;
+        for block in &mut self.blocks {
+            let Block::Cue(cue) = block else { continue };
+            if cue.invalid {
+                continue;
+            }
+            let mut yaml = cue.yaml.clone();
+            let found = rename_audio_in(&mut yaml, from, to);
+            if found > 0 {
+                cue.set_yaml(yaml);
+                hits += found;
+            }
+        }
+        hits
+    }
+
     /// Everything "Clean up YAML" would remove: keys outside the show-file format, loop
     /// settings on cues that do not loop, and audios patched to missing virtual channels.
     pub fn cleanup_preview(&self) -> Vec<Removal> {
@@ -742,5 +820,18 @@ config:
     fn default_virtual_channels_are_left_and_right() {
         assert_eq!(Script::parse("```yaml\nconfig:\n    roles: {}\n```\n").virtual_channels(), ["L", "R"]);
         assert_eq!(Script::parse(CONFIG).virtual_channels(), ["Saal L", "Saal R"]);
+    }
+    #[test]
+    fn finds_and_renames_audio_references_everywhere() {
+        let text = "```yaml\nmusic: a.wav\n```\n\nText\n\n```yaml\nmusic:\n    file: b.wav\n    volume: 0.5\nmusic_seq:\n    - file: ./a.wav\n    - audios:\n          - file: c.wav\n          - file: a.wav\n```\n\n```yaml\nmusic:\n    audios:\n        - file: d.wav\n```\n\n```yaml\nnote: [broken\n```\n";
+        let mut script = Script::parse(text);
+        assert_eq!(script.audio_files_used(), (vec!["a.wav".to_string(), "b.wav".into(), "c.wav".into(), "d.wav".into()], 1));
+
+        let untouched = script.blocks[4].clone();
+        assert_eq!(script.rename_audio("a.wav", "intro.wav"), 3);
+        assert_eq!(script.audio_files_used().0, ["intro.wav", "b.wav", "c.wav", "d.wav"]);
+        assert!(script.blocks[4] == untouched, "a cue that does not name the file keeps its text");
+        assert!(script.to_markdown().contains("note: [broken"), "as does one that cannot be read");
+        assert_eq!(script.rename_audio("missing.wav", "x.wav"), 0);
     }
 }
