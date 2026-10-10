@@ -226,7 +226,7 @@ The **🎙 Auto-Mic** button in the cue action row enables automatic microphone 
 - When an Auto-Mic cue fires, the app looks at all role blocks with dialogue between that cue and the **next** Auto-Mic cue in the script. All matching microphone channels are opened; everything else is muted.
 - The **last** Auto-Mic cue (no further Auto-Mic cue after it) mutes all channels.
 - The computed microphone list is shown in the cue header.
-- **Delayed switch-off:** an Auto-Mic cue opens the microphones it needs at once, but closes those it no longer needs only after a delay (Settings → *Auto mic: switch microphones off after*, default 2 s; 0 switches off at once). Whoever comes on stage is heard immediately, whoever leaves can finish speaking. While the delay runs, the leaving microphones are shown as labels that run out – in the live view's microphone bar and on the cue's card. The next cue that sets microphones, Back, or "Mics Off" ends the delay at once.
+- **Delayed switch-off:** an Auto-Mic cue opens the microphones it needs at once, but closes those it no longer needs only after a delay (Settings → *Auto mic: switch microphones off after*, default 7 s; 0 switches off at once). Whoever comes on stage is heard immediately, whoever leaves can finish speaking. While the delay runs, the leaving microphones are shown as labels that run out – in the live view's microphone bar and on the cue's card. The next cue that sets microphones, Back, or "Mics Off" ends the delay at once.
 - **Labels:** groups come first, as outlined labels with coloured type; single roles follow as filled labels with dark type. A role that is open as part of a group is not listed again.
 
 ### Manual selection is disabled when Auto-Mic is in use

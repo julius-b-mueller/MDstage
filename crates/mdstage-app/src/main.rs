@@ -450,6 +450,13 @@ impl App {
                     }
                     self.cue_dialog = Some(CueDialog::new(block, existing.is_none(), existing, &audio_dir, others_auto, links).with_setup(show.script.virtual_channels(), devices));
                 }
+                Action::InsertCue(at) => {
+                    if let Some(show) = &mut self.show {
+                        let cue = show.script.new_cue(serde_yaml_mapping().into());
+                        show.script.insert_block(*at, cue);
+                    }
+                    self.after_edit();
+                }
                 Action::NewText(at) => {
                     let at = *at;
                     if let Some(show) = &mut self.show {

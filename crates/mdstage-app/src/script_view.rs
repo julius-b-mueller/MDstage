@@ -98,6 +98,8 @@ pub enum Action {
     EditCue(usize),
     /// Open the cue dialog for a new cue before this block index.
     NewCue(usize),
+    /// Put a new, empty cue in before this block index, without opening its dialog.
+    InsertCue(usize),
     /// Insert an empty text block before this index and edit it.
     NewText(usize),
     Move { block: usize, up: bool },
@@ -262,6 +264,8 @@ const AUTO_STRIP: f32 = 5.0;
 /// Distance between two lanes of connection lines in the margin.
 const LANE: f32 = 8.0;
 const MAX_LANES: usize = 4;
+/// Room kept free at the right of a cue's card for its edit button.
+const EDIT_BUTTON: f32 = 36.0;
 /// How long a cue that was gone to stays outlined, in seconds.
 const FLASH: f64 = 1.4;
 
@@ -901,7 +905,7 @@ impl ScriptView {
     /// How many lines a cue's rows take when its panel is `width` wide.
     fn cue_lines(ui: &Ui, rows: &[Row], width: f32) -> usize {
         let font = FontId::proportional(15.0);
-        rows.iter().map(|row| Self::flow(ui, None, &row.spans, &row.chips, &font, 0.0, width - 16.0 - 56.0 - 12.0, 0.0, ROW, None)).sum()
+        rows.iter().map(|row| Self::flow(ui, None, &row.spans, &row.chips, &font, 0.0, width - 16.0 - 56.0 - 12.0 - EDIT_BUTTON, 0.0, ROW, None)).sum()
     }
 
     /// The position auto-cues that hang on a cue's audio, in the order of their places:
@@ -1142,7 +1146,7 @@ impl ScriptView {
             ui.painter().text(button.center(), Align2::CENTER_CENTER, "+", FontId::proportional(16.0), Color32::BLACK);
             let plus = plus.on_hover_text(t("Klick: Text hier einfügen · Shift+Klick: Cue hier einfügen", "Click: insert text here · Shift+click: insert a cue here"));
             if plus.clicked() {
-                actions.push(if shift { Action::NewCue(at) } else { Action::NewText(at) });
+                actions.push(if shift { Action::InsertCue(at) } else { Action::NewText(at) });
             }
             if cx.can_paste {
                 let paste = Rect::from_center_size(pos2(origin.x + 22.0, origin.y + y), vec2(26.0, 20.0));
@@ -1692,7 +1696,7 @@ impl ScriptView {
             painter.text(pos2(left, y), Align2::LEFT_TOP, row.label, font.clone(), MUTED);
             // Long rows (many microphones, a long note) go on in further lines.
             let mut places = Vec::new();
-            let lines = Self::flow(ui, Some(&painter), &row.spans, &row.chips, &font, left + 56.0, panel.right() - 12.0, y, ROW, Some(&mut places));
+            let lines = Self::flow(ui, Some(&painter), &row.spans, &row.chips, &font, left + 56.0, panel.right() - 12.0 - EDIT_BUTTON, y, ROW, Some(&mut places));
             // A reference to another cue is underlined; a click goes there.
             for (span, target) in row.links.into_iter().filter(|_| !cx.locked) {
                 let Some(place) = places.get(span) else { continue };
@@ -1727,10 +1731,18 @@ impl ScriptView {
             let position = playing.or(snapshot.paused.iter().find(|(c, _)| *c == cue_index).map(|(_, seconds)| *seconds));
             let duration = self.draw_waveform(ui, cx, block, cue_index, cue.note(), part, (position, ghost), playing.is_some(), wave, actions);
             let strips = autos as f32 * AUTO_STRIP;
-            let row = Rect::from_min_size(pos2(left, wave.bottom() + 4.0 + strips), vec2(width, CONTROLS));
+            let row = Rect::from_min_size(pos2(left, wave.bottom() + 4.0 + strips), vec2(width - EDIT_BUTTON, CONTROLS));
             // While a later part plays, the row says so instead of a position in this one.
             let later = snapshot.audio.iter().find(|(c, s)| *c == cue_index && s.part > 0 && s.state == VoiceState::Playing).map(|(_, s)| (s.part, s.seconds));
             self.draw_transport(ui, cx, (block, cue_index), part, audio.looped, sounding, (position, later), duration, row, actions);
+        }
+        // The edit button has a place of its own, in the card's bottom right corner.
+        if !cx.locked && !cue.invalid {
+            let size = EDIT_BUTTON - 8.0;
+            let corner = Rect::from_min_size(pos2(panel.right() - 10.0 - size, panel.bottom() - 9.0 - size), vec2(size, size));
+            if ui.put(corner, egui::Button::image(Icon::Pencil.image(17.0, TEXT))).on_hover_text(t("Cue bearbeiten", "Edit cue")).clicked() {
+                actions.push(Action::EditCue(block));
+            }
         }
         match self.picking {
             // A connection is being set up: the click names its other end.
@@ -1808,9 +1820,6 @@ impl ScriptView {
         }
         if cx.locked || cue.invalid {
             return;
-        }
-        if row.add(egui::Button::image(Icon::Pencil.image(13.0, TEXT))).on_hover_text(t("Cue bearbeiten", "Edit cue")).clicked() {
-            actions.push(Action::EditCue(block));
         }
         if row.add(small("⊕", TEXT)).on_hover_text(t("Als Variante duplizieren", "Duplicate as a variant")).clicked() {
             actions.push(Action::Variant(block));

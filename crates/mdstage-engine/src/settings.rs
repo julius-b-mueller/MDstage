@@ -209,7 +209,7 @@ impl Default for Settings {
             editor_command: String::new(),
             open_locked: false,
             group_mics: true,
-            mic_off_delay: 2.0,
+            mic_off_delay: 7.0,
             recent_files: Vec::new(),
             trusted: HashMap::new(),
         }
