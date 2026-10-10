@@ -85,7 +85,7 @@ impl RolesUi {
                     if ui.add_enabled(mixers > 1 || role.mixer > 0, egui::DragValue::new(&mut mixer).range(1..=mixers.max(role.mixer + 1))).changed() {
                         role.mixer = mixer - 1;
                     }
-                    if ui.small_button("✕").clicked() {
+                    if ui.small_button("×").clicked() {
                         remove = Some(i);
                     }
                     ui.end_row();
@@ -110,7 +110,7 @@ impl RolesUi {
                 ui.horizontal(|ui| {
                     ui.add(egui::TextEdit::singleline(&mut group.name).desired_width(180.0));
                     colour_picker(ui, ("group-colour", i), &mut group.color);
-                    if ui.small_button("✕").clicked() {
+                    if ui.small_button("×").clicked() {
                         remove = Some(i);
                     }
                 });

@@ -7,7 +7,8 @@ use std::path::PathBuf;
 
 use eframe::egui::text::{CCursor, CCursorRange, LayoutJob, TextFormat};
 use eframe::egui::{self, Align2, Color32, FontId, Id, Key, Modifiers, Rect, RichText, Sense, Stroke, Ui, UiBuilder, pos2, vec2};
-use mdstage_core::cues::{AutoWhen, Cues, Slf};
+use mdstage_core::audio::Part;
+use mdstage_core::cues::{AutoWhen, Cues, Note, Slf};
 use mdstage_core::effects::Effect;
 use mdstage_core::mic::{Cast, Mic, MicChip};
 use mdstage_core::{Block, Cue, Script};
@@ -21,6 +22,19 @@ const MARGIN: f32 = 24.0;
 const BLOCK_PAD: f32 = 6.0;
 const ROW: f32 = 21.0;
 const WAVE_HEIGHT: f32 = 64.0;
+/// Height of the row of transport controls under a waveform.
+const CONTROLS: f32 = 26.0;
+const MAX_ZOOM: f32 = 32.0;
+
+/// The markers on a waveform, in seconds: where the audio starts and ends, and how long
+/// it fades in and out.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Marks {
+    pub start: f64,
+    pub end: f64,
+    pub fadein: f64,
+    pub fadeout: f64,
+}
 
 /// What the operator did in the view; the app carries it out.
 pub enum Action {
@@ -28,8 +42,23 @@ pub enum Action {
     Fire(usize),
     /// A block was edited.
     Replace { block: usize, with: Block },
-    /// The start/end markers of a cue's audio were dragged (seconds).
-    Markers { block: usize, start: f64, end: f64 },
+    /// The markers of a cue's audio were dragged.
+    Markers { block: usize, marks: Marks },
+    /// The marker of an audio-position auto-cue was dragged: the cue in `block` now
+    /// fires `at` seconds into its source.
+    AutoCueAt { block: usize, at: f64 },
+    /// Play or pause a cue's audio by itself.
+    PlayPause(usize),
+    /// Stop a cue's audio and put it back to its start.
+    StopCue(usize),
+    /// A click into a waveform: move the cue's audio there.
+    Seek { cue: usize, seconds: f64 },
+    /// The volume slider is being moved: the level for audio that is playing.
+    LiveVolume { cue: usize, volume: f64 },
+    /// The volume slider was let go: the level to save.
+    Volume { block: usize, volume: f64 },
+    /// Switch a cue's audio to looping or back.
+    Loop { block: usize, on: bool },
     /// Make this cue the next Go.
     Arm(usize),
     /// Open the cue dialog for an existing cue.
@@ -92,8 +121,14 @@ pub struct ScriptView {
     cue_of_block: Vec<Option<usize>>,
     block_of_cue: Vec<usize>,
     editing: Option<Editing>,
-    /// Markers being dragged: block → (start, end).
-    dragging: HashMap<usize, (f64, f64)>,
+    /// Markers being dragged, by block.
+    dragging: HashMap<usize, Marks>,
+    /// Auto-cue markers being dragged: block of the auto-cue → seconds.
+    auto_dragging: HashMap<usize, f64>,
+    /// Volume sliders being dragged, by block.
+    volumes: HashMap<usize, f64>,
+    /// Waveforms that are zoomed in: block → (factor, where the view begins in seconds).
+    zoom: HashMap<usize, (f32, f64)>,
     scroll_to: Option<f32>,
     scroll_y: f32,
     waveforms: Option<Waveforms>,
@@ -165,7 +200,7 @@ impl ScriptView {
             }
             let count = if search.hits.is_empty() { "0".to_string() } else { format!("{} / {}", search.current + 1, search.hits.len()) };
             ui.label(RichText::new(count).color(MUTED));
-            close = ui.small_button("✕").clicked() || ui.input(|i| i.key_pressed(Key::Escape));
+            close = ui.small_button("×").clicked() || ui.input(|i| i.key_pressed(Key::Escape));
         });
         if step != 0 && !search.hits.is_empty() {
             let n = search.hits.len() as i64;
@@ -336,7 +371,7 @@ impl ScriptView {
     }
 
     fn cue_height(rows: usize, has_audio: bool) -> f32 {
-        let wave = if has_audio { WAVE_HEIGHT + 10.0 } else { 0.0 };
+        let wave = if has_audio { WAVE_HEIGHT + 10.0 + CONTROLS + 4.0 } else { 0.0 };
         8.0 + 10.0 + ROW + rows as f32 * ROW + wave + 10.0
     }
 
@@ -621,11 +656,15 @@ impl ScriptView {
             y += ROW;
         }
         if let Some(audio) = cue.audio() {
-            let wave = Rect::from_min_size(pos2(left, y + 4.0), vec2(panel.right() - 12.0 - left, WAVE_HEIGHT));
+            let width = panel.right() - 12.0 - left;
             let part = &audio.parts[0];
+            let wave = Rect::from_min_size(pos2(left, y + 4.0), vec2(width, WAVE_HEIGHT));
             // The cursor only makes sense on the part whose waveform is shown.
-            let cursor = status.filter(|s| s.part == 0 && sounding).map(|s| s.seconds);
-            self.draw_waveform(ui, cx, block, &part.audios[0].file, (part.start, part.end, part.fading_point), cursor, wave, actions);
+            let playing = status.filter(|s| s.part == 0 && sounding).map(|s| s.seconds);
+            let position = playing.or(snapshot.paused.iter().find(|(c, _)| *c == cue_index).map(|(_, seconds)| *seconds));
+            let duration = self.draw_waveform(ui, cx, block, cue_index, cue.note(), part, position, playing.is_some(), wave, actions);
+            let row = Rect::from_min_size(pos2(left, wave.bottom() + 4.0), vec2(width, CONTROLS));
+            self.draw_transport(ui, cx, (block, cue_index), part, audio.looped, sounding, position, duration, row, actions);
         }
         if response.clicked() {
             actions.push(Action::Fire(cue_index));
@@ -647,59 +686,176 @@ impl ScriptView {
         });
     }
 
+    /// The row under a waveform: play/pause, stop, zoom, loop and volume.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_transport(
+        &mut self,
+        ui: &mut Ui,
+        cx: &Context,
+        (block, cue): (usize, usize),
+        part: &Part,
+        looped: bool,
+        sounding: bool,
+        position: Option<f64>,
+        duration: Option<f64>,
+        rect: Rect,
+        actions: &mut Vec<Action>,
+    ) {
+        let mut row = ui.new_child(egui::UiBuilder::new().id_salt(("transport", block)).max_rect(rect).layout(egui::Layout::left_to_right(egui::Align::Center)));
+        row.spacing_mut().item_spacing.x = 6.0;
+        row.spacing_mut().button_padding = vec2(7.0, 2.0);
+        row.spacing_mut().slider_width = 110.0;
+        let play_hint = if sounding { t("Pause", "Pause") } else { t("Nur das Audio dieses Cues abspielen", "Play this cue's audio by itself") };
+        if row.button(if sounding { "⏸" } else { "▶" }).on_hover_text(play_hint).clicked() {
+            actions.push(Action::PlayPause(cue));
+        }
+        if row.button("⏹").on_hover_text(t("Stopp und zurück zum Anfang", "Stop and return to the start")).clicked() {
+            actions.push(Action::StopCue(cue));
+        }
+
+        row.add_space(6.0);
+        let (zoom, view_start) = self.zoom.get(&block).copied().unwrap_or((1.0, 0.0));
+        let mut zoomed = None;
+        if row.add_enabled(zoom > 1.0, egui::Button::new("−")).on_hover_text(t("Herauszoomen", "Zoom out")).clicked() {
+            zoomed = Some(zoom / 2.0);
+        }
+        if row.add_enabled(zoom < MAX_ZOOM, egui::Button::new("+")).on_hover_text(t("Hineinzoomen (seitlich scrollen verschiebt)", "Zoom in (scroll sideways to move)")).clicked() {
+            zoomed = Some(zoom * 2.0);
+        }
+        if let (Some(new), Some(duration)) = (zoomed, duration) {
+            // Keep the playback position in view, or else the middle of what was shown.
+            let centre = position.unwrap_or(view_start + duration / zoom as f64 / 2.0);
+            match new <= 1.0 {
+                true => drop(self.zoom.remove(&block)),
+                false => drop(self.zoom.insert(block, (new, centre - duration / new as f64 / 2.0))),
+            }
+        }
+
+        row.add_space(6.0);
+        if row.add_enabled(!cx.locked, egui::SelectableLabel::new(looped, "⟳")).on_hover_text("Loop").clicked() {
+            actions.push(Action::Loop { block, on: !looped });
+        }
+        row.add_space(6.0);
+        row.label(egui::RichText::new("🔊").color(MUTED));
+        let mut volume = self.volumes.get(&block).copied().unwrap_or(part.volume);
+        let slider = row.add_enabled(!cx.locked, egui::Slider::new(&mut volume, 0.0..=1.0).show_value(false));
+        if slider.changed() {
+            self.volumes.insert(block, volume);
+            actions.push(Action::LiveVolume { cue, volume });
+        }
+        if slider.drag_stopped() || (slider.changed() && !slider.dragged()) {
+            if let Some(volume) = self.volumes.remove(&block) {
+                actions.push(Action::Volume { block, volume });
+            }
+        }
+        row.label(egui::RichText::new(format!("{:.0} %", volume * 100.0)).size(13.0).color(MUTED));
+
+        if let Some(duration) = duration {
+            let clock = |seconds: f64| format!("{}:{:04.1}", (seconds / 60.0) as u32, seconds % 60.0);
+            let text = match position {
+                Some(position) => format!("{} / {}", clock(position), clock(duration)),
+                None => clock(duration),
+            };
+            row.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.label(egui::RichText::new(text).monospace().size(12.0).color(MUTED)));
+        }
+    }
+
+    /// Draw a cue's waveform with its markers. A click moves the audio there; with Shift
+    /// the markers can be dragged: start and end in the lower half, the fades in the upper.
+    /// Returns the file's length once it is known.
     #[allow(clippy::too_many_arguments)]
     fn draw_waveform(
         &mut self,
         ui: &mut Ui,
         cx: &Context,
         block: usize,
-        file: &str,
-        (start, end, fading_point): (Option<f64>, Option<f64>, Option<f64>),
+        cue_index: usize,
+        note: Option<Note>,
+        part: &Part,
         cursor: Option<f64>,
+        playing: bool,
         rect: Rect,
         actions: &mut Vec<Action>,
-    ) {
-        let painter = ui.painter().clone();
+    ) -> Option<f64> {
+        let painter = ui.painter().with_clip_rect(rect);
         painter.rect_filled(rect, 3.0, BACKGROUND);
+        let file = &part.audios[0].file;
         let state = self.waveforms.as_mut().map_or(WaveState::Failed, |w| w.get(file));
         let (peaks, duration) = match state {
             WaveState::Ready { peaks, duration } if duration > 0.0 => (peaks, duration),
             WaveState::Loading => {
                 painter.text(rect.center(), Align2::CENTER_CENTER, t("lädt …", "loading …"), FontId::proportional(13.0), MUTED);
-                return;
+                return None;
             }
             _ => {
                 painter.text(rect.center(), Align2::CENTER_CENTER, format!("{file}: {}", t("nicht lesbar", "unreadable")), FontId::proportional(13.0), RED);
-                return;
+                return None;
             }
         };
-        let saved = (start.unwrap_or(0.0), end.unwrap_or(duration).min(duration));
-        let (mut start, mut end) = self.dragging.get(&block).copied().unwrap_or(saved);
+        let end = part.end.unwrap_or(duration).min(duration);
+        let saved = Marks { start: part.start.unwrap_or(0.0).min(end), end, fadein: part.fadein.unwrap_or(0.0), fadeout: part.fadeout.unwrap_or(0.0) };
+        let mut marks = self.dragging.get(&block).copied().unwrap_or(saved);
+
+        // The stretch of the file in view: all of it, unless zoomed in.
+        let area = ui.interact(rect, Id::new(("wave", block)), Sense::click());
+        let (zoom, mut view_start) = self.zoom.get(&block).copied().unwrap_or((1.0, 0.0));
+        let view_len = duration / zoom as f64;
+        if zoom > 1.0 {
+            if area.hovered() {
+                view_start -= ui.input(|i| i.smooth_scroll_delta.x) as f64 / rect.width() as f64 * view_len;
+            }
+            if let Some(at) = cursor.filter(|at| playing && (*at < view_start || *at > view_start + view_len)) {
+                view_start = at - 0.1 * view_len;
+            }
+            view_start = view_start.clamp(0.0, duration - view_len);
+            self.zoom.insert(block, (zoom, view_start));
+        } else {
+            view_start = 0.0;
+        }
+        let x_of = |t: f64| rect.left() + ((t - view_start) / view_len) as f32 * rect.width();
+        let t_of = |x: f32| (view_start + ((x - rect.left()) / rect.width()).clamp(0.0, 1.0) as f64 * view_len).clamp(0.0, duration);
+
+        let shift_held = ui.input(|i| i.modifiers.shift);
+        let shift = shift_held && !cx.locked;
+        if area.clicked() && !shift_held {
+            if let Some(pointer) = area.interact_pointer_pos() {
+                actions.push(Action::Seek { cue: cue_index, seconds: t_of(pointer.x) });
+            }
+        }
 
         // Markers first, so a drag in this frame already moves the shading.
-        let shift = ui.input(|i| i.modifiers.shift) && !cx.locked;
-        let x_of = |t: f64| rect.left() + (t / duration) as f32 * rect.width();
-        for which in 0..2 {
-            let x = x_of(if which == 0 { start } else { end });
-            let handle = Rect::from_center_size(pos2(x, rect.center().y), vec2(12.0, rect.height()));
+        let quarter = rect.height() / 4.0;
+        for which in 0..4 {
+            let (time, y) = match which {
+                0 => (marks.start, rect.bottom() - quarter),
+                1 => (marks.end, rect.bottom() - quarter),
+                2 => (marks.start + marks.fadein, rect.top() + quarter),
+                _ => (marks.end - marks.fadeout, rect.top() + quarter),
+            };
+            let handle = Rect::from_center_size(pos2(x_of(time), y), vec2(12.0, rect.height() / 2.0));
             let response = ui.interact(handle, Id::new(("marker", block, which)), Sense::drag());
             if shift && (response.hovered() || response.dragged()) {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
             }
             if shift && response.dragged() {
                 if let Some(pointer) = response.interact_pointer_pos() {
-                    let t = ((pointer.x - rect.left()) / rect.width()).clamp(0.0, 1.0) as f64 * duration;
-                    if which == 0 {
-                        start = t.min(end);
-                    } else {
-                        end = t.max(start);
+                    let t = t_of(pointer.x);
+                    match which {
+                        0 => marks.start = t.min(marks.end),
+                        1 => marks.end = t.max(marks.start),
+                        2 => marks.fadein = (t - marks.start).max(0.0),
+                        _ => marks.fadeout = (marks.end - t).max(0.0),
                     }
-                    self.dragging.insert(block, (start, end));
+                    // The fades have to fit between start and end.
+                    let length = marks.end - marks.start;
+                    marks.fadein = marks.fadein.min(length);
+                    marks.fadeout = marks.fadeout.min(length - marks.fadein);
+                    self.dragging.insert(block, marks);
                 }
             }
             if response.drag_stopped() {
-                if let Some((start, end)) = self.dragging.remove(&block) {
-                    actions.push(Action::Markers { block, start, end });
+                if let Some(marks) = self.dragging.remove(&block) {
+                    actions.push(Action::Markers { block, marks });
                 }
             }
         }
@@ -707,23 +863,73 @@ impl ScriptView {
         let columns = rect.width().max(1.0) as usize;
         let mid = rect.center().y;
         let half = rect.height() / 2.0 - 2.0;
+        let bucket = |t: f64| ((t / duration) * peaks.len() as f64) as usize;
         for column in 0..columns {
-            let from = column * peaks.len() / columns;
-            let to = ((column + 1) * peaks.len() / columns).clamp(from + 1, peaks.len());
+            let t = view_start + column as f64 / columns as f64 * view_len;
+            let from = bucket(t).min(peaks.len() - 1);
+            let to = bucket(t + view_len / columns as f64).clamp(from + 1, peaks.len());
             let (lo, hi) = peaks[from..to].iter().fold((0.0f32, 0.0f32), |(lo, hi), p| (lo.min(p.0), hi.max(p.1)));
-            let t = column as f64 / columns as f64 * duration;
-            let colour = if t < start || t > end { WAVE_DIM } else { BLUE };
+            let colour = if t < marks.start || t > marks.end { WAVE_DIM } else { BLUE };
             let x = rect.left() + column as f32 + 0.5;
             painter.line_segment([pos2(x, mid - hi * half), pos2(x, mid - lo * half + 1.0)], Stroke::new(1.0_f32, colour));
         }
-        painter.vline(x_of(start), rect.y_range(), Stroke::new(2.0_f32, YELLOW));
-        painter.vline(x_of(end), rect.y_range(), Stroke::new(2.0_f32, YELLOW));
-        if let Some(point) = fading_point.filter(|p| *p > start && *p < end) {
+        painter.vline(x_of(marks.start), rect.y_range(), Stroke::new(2.0_f32, YELLOW));
+        painter.vline(x_of(marks.end), rect.y_range(), Stroke::new(2.0_f32, YELLOW));
+
+        // The fades: a slope from silence up to full level and back down, with a grip
+        // at the top where each one meets full level.
+        let fade = Stroke::new(1.5_f32, GREEN);
+        let (fade_in_end, fade_out_start) = (marks.start + marks.fadein, marks.end - marks.fadeout);
+        if marks.fadein > 0.0 {
+            painter.line_segment([pos2(x_of(marks.start), rect.bottom()), pos2(x_of(fade_in_end), rect.top() + 1.0)], fade);
+        }
+        if marks.fadeout > 0.0 {
+            painter.line_segment([pos2(x_of(fade_out_start), rect.top() + 1.0), pos2(x_of(marks.end), rect.bottom())], fade);
+        }
+        for at in [fade_in_end, fade_out_start] {
+            painter.rect_filled(Rect::from_center_size(pos2(x_of(at), rect.top() + 4.0), vec2(8.0, 8.0)), 2.0, GREEN);
+        }
+        for at in [marks.start, marks.end] {
+            painter.rect_filled(Rect::from_center_size(pos2(x_of(at), rect.bottom() - 4.0), vec2(8.0, 8.0)), 2.0, YELLOW);
+        }
+
+        if let Some(point) = part.fading_point.filter(|p| *p > marks.start && *p < marks.end) {
             painter.vline(x_of(point), rect.y_range(), Stroke::new(2.0_f32, Color32::from_rgb(0xd1, 0x9a, 0x66)));
         }
+
+        // Cues that fire by themselves at a place in this audio.
+        if let Some(note) = note {
+            let cues = Cues::new(cx.script);
+            for target in 0..cues.len() {
+                let Some(auto) = cues.get(target).and_then(|c| c.auto_trigger()).filter(|a| a.source == note) else { continue };
+                let (AutoWhen::At(saved), Some(target_block)) = (auto.when, cues.block_index(target)) else { continue };
+                let mut at = self.auto_dragging.get(&target_block).copied().unwrap_or(saved);
+                let handle = Rect::from_center_size(pos2(x_of(at), rect.center().y), vec2(8.0, rect.height()));
+                let response = ui.interact(handle, Id::new(("auto-cue", block, target)), Sense::drag());
+                if shift && (response.hovered() || response.dragged()) {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                }
+                if shift && response.dragged() {
+                    if let Some(pointer) = response.interact_pointer_pos() {
+                        at = t_of(pointer.x);
+                        self.auto_dragging.insert(target_block, at);
+                    }
+                }
+                if response.drag_stopped() {
+                    if let Some(at) = self.auto_dragging.remove(&target_block) {
+                        actions.push(Action::AutoCueAt { block: target_block, at });
+                    }
+                }
+                let colour = Color32::from_rgb(0xc6, 0x78, 0xdd);
+                painter.vline(x_of(at), rect.y_range(), Stroke::new(1.5_f32, colour));
+                painter.text(pos2(x_of(at) + 3.0, rect.bottom() - 1.0), Align2::LEFT_BOTTOM, format!("⏱ {}", target + 1), FontId::proportional(11.0), colour);
+            }
+        }
+
         if let Some(seconds) = cursor {
             painter.vline(x_of(seconds.clamp(0.0, duration)), rect.y_range(), Stroke::new(1.5_f32, BRIGHT));
         }
+        Some(duration)
     }
 
     /// The headings the top of the view lies under: the first-level one and, if one has

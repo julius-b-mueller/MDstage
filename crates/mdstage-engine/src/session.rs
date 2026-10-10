@@ -48,6 +48,14 @@ pub enum Request {
     Fire(usize),
     Arm(Option<usize>),
     SelectVariant(Option<usize>),
+    /// The transport on a cue's waveform: play the cue's audio by itself, or pause it.
+    PlayPause(usize),
+    /// Move a cue's audio to a place in its file (seconds).
+    Seek(usize, f64),
+    /// Stop a cue's audio and put it back to its start.
+    StopCue(usize),
+    /// Set the level of a cue's audio while it plays.
+    Volume(usize, f64),
     /// Emergency: fade all audio out.
     StopAll,
     /// Emergency: mute all microphones.
@@ -81,6 +89,8 @@ pub struct Snapshot {
     /// The microphones as the fired cues left them; `None` before any cue set them.
     pub mic: Option<Mic>,
     pub audio: Vec<(usize, Status)>,
+    /// Where paused audio stands: `(cue, seconds into its file)`.
+    pub paused: Vec<(usize, f64)>,
     pub timecode: Option<f64>,
     pub delays: Vec<DelayProgress>,
     pub display_clients: Vec<Client>,
@@ -314,6 +324,10 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
                 Request::Fire(cue) => show.fire(cue, false),
                 Request::Arm(cue) => Ok(show.arm(cue)),
                 Request::SelectVariant(cue) => Ok(show.select_variant(cue)),
+                Request::PlayPause(cue) => show.play_pause(cue),
+                Request::Seek(cue, seconds) => show.seek(cue, seconds),
+                Request::StopCue(cue) => show.stop_cue(cue),
+                Request::Volume(cue, volume) => show.set_volume(cue, volume),
                 Request::StopAll => show.stop_all(),
                 Request::MicsOff => Ok(show.mics_off()),
                 Request::ClearProblems => Ok(problems.clear()),
@@ -458,6 +472,7 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
             pending_outros: show.pending_outros().to_vec(),
             mic: (mic != Mic::Unchanged).then_some(mic),
             audio: show.audio_status(),
+            paused: show.paused(),
             timecode: show.timecode_seconds(),
             delays: show.delay_progress(),
             display_clients: display.as_ref().map(|d| d.clients()).unwrap_or_default(),

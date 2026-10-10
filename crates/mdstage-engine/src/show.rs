@@ -81,6 +81,9 @@ pub struct Show {
     loop_epochs: HashMap<usize, f64>,
     /// Where audio stood when a cue faded it out, to pick it up there on Back.
     stopped_at: HashMap<usize, (usize, f64)>,
+    /// Where audio stands that the operator paused or placed by hand on its waveform:
+    /// `(part, seconds)`. Playing the cue's audio from the waveform starts there.
+    paused: HashMap<usize, (usize, f64)>,
     timecode: Option<TimecodeSource>,
     effects: Vec<Effect>,
     /// Things that went wrong and the operator should know about.
@@ -107,6 +110,7 @@ impl Show {
             watches: Vec::new(),
             loop_epochs: HashMap::new(),
             stopped_at: HashMap::new(),
+            paused: HashMap::new(),
             timecode: None,
             effects: Vec::new(),
             problems: Vec::new(),
@@ -193,6 +197,66 @@ impl Show {
     pub fn audio_status(&self) -> Vec<(usize, crate::player::Status)> {
         let clock = self.clock.as_deref();
         self.player.active_cues().into_iter().filter_map(|cue| Some((cue, self.player.status(cue, clock)?))).collect()
+    }
+
+    /// Where paused audio stands: `(cue, seconds)`, for cues paused in their first part.
+    pub fn paused(&self) -> Vec<(usize, f64)> {
+        let mut paused: Vec<(usize, f64)> = self.paused.iter().filter(|(_, (part, _))| *part == 0).map(|(cue, (_, seconds))| (*cue, *seconds)).collect();
+        paused.sort_by_key(|(cue, _)| *cue);
+        paused
+    }
+
+    fn sounding(&self, cue: usize) -> Option<crate::player::Status> {
+        self.player.status(cue, self.clock.as_deref()).filter(|s| matches!(s.state, VoiceState::Playing | VoiceState::Tail))
+    }
+
+    /// The transport on a cue's waveform: play the cue's audio by itself, or pause it
+    /// where it is. Nothing else of the cue happens — no microphones, no messages, no
+    /// entry in the history.
+    pub fn play_pause(&mut self, cue: usize) -> Result<()> {
+        if let Some(status) = self.sounding(cue) {
+            self.paused.insert(cue, (status.part, status.seconds));
+            return self.player.stop(cue, 0.02);
+        }
+        let Some(audio) = self.audio(cue) else { return Ok(()) };
+        let resume = self.paused.remove(&cue);
+        // On its own the audio does not chain on into another cue.
+        let then = match self.then(cue) {
+            Then::Chain(_) => Then::End,
+            then => then,
+        };
+        self.player.start(cue, &audio, Start { armed: false, then, resume })
+    }
+
+    /// Move a cue's audio to a place in its (first) file: audio that is playing carries
+    /// on from there, audio that is not will start there when played from its waveform.
+    pub fn seek(&mut self, cue: usize, seconds: f64) -> Result<()> {
+        let Some(audio) = self.audio(cue) else { return Ok(()) };
+        if self.sounding(cue).is_none() {
+            self.paused.insert(cue, (0, seconds.max(0.0)));
+            return Ok(());
+        }
+        self.player.start(cue, &audio, Start { armed: false, then: self.then(cue), resume: Some((0, seconds.max(0.0))) })?;
+        // An outro that was waiting for this loop's end still is.
+        for (looped, outro) in self.pending_outros.clone() {
+            if looped == cue {
+                self.player.queue_outro(looped, outro)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Stop a cue's audio and put it back to its start.
+    pub fn stop_cue(&mut self, cue: usize) -> Result<()> {
+        self.paused.remove(&cue);
+        self.player.stop(cue, 0.02)?;
+        self.forget_audio_of(&[cue]);
+        Ok(())
+    }
+
+    /// Set the level of a cue's audio while it plays (the slider on its waveform).
+    pub fn set_volume(&mut self, cue: usize, volume: f64) -> Result<()> {
+        self.player.fade(cue, volume.clamp(0.0, 1.0), 0.03)
     }
 
     /// Make a cue the next Go, whatever the position (jump, "arm in live view").
@@ -285,6 +349,8 @@ impl Show {
     /// Everything a cue does when it fires. `started` means its audio is already running
     /// (it came in through a handoff inside the audio engine).
     fn begin(&mut self, cue: usize, auto: bool, started: bool) -> Result<()> {
+        // A cue that fires plays from its start, wherever its waveform was left.
+        self.paused.remove(&cue);
         let script = self.script.clone();
         let cues = Cues::new(&script);
         let (Some(c), Some(block)) = (cues.get(cue), cues.block_index(cue)) else { return Ok(()) };
@@ -724,6 +790,42 @@ mod tests {
         assert_eq!(rig.notes(), [2]);
         assert!(rig.show.pending_outros().is_empty());
         assert_eq!(rig.show.current(), Some(2), "the queued finish counts as the operator's cue");
+    }
+
+    #[test]
+    fn the_waveform_transport_plays_pauses_and_seeks() {
+        let mut rig = rig(&["music:\n    file: ramp.wav\n    volume: 1"], &[]);
+        let ramp: Vec<f32> = (0..400).map(|n| n as f32).collect();
+        rig.show.player().cache().insert("ramp.wav", Clip::from_planar(SR, vec![ramp]));
+
+        rig.show.play_pause(0).unwrap();
+        rig.run(48);
+        assert!(rig.fired().is_empty(), "playing from the waveform is not firing the cue");
+        assert!(rig.notes().is_empty());
+        rig.show.play_pause(0).unwrap();
+        rig.run(64);
+        assert_eq!(rig.level(), 0.0);
+        let paused = rig.show.paused();
+        assert_eq!(paused.len(), 1);
+        assert!((paused[0].1 - 0.048).abs() < 0.02, "{paused:?}");
+
+        // Placed by hand while paused, then played on from there.
+        rig.show.seek(0, 0.2).unwrap();
+        assert_eq!(rig.show.paused(), [(0, 0.2)]);
+        rig.show.play_pause(0).unwrap();
+        rig.run(48);
+        assert!((230.0..260.0).contains(&rig.level()), "{}", rig.level());
+        assert!(rig.show.paused().is_empty());
+
+        // Moved while playing: carries on from the new place.
+        rig.show.seek(0, 0.3).unwrap();
+        rig.run(48);
+        assert!((330.0..360.0).contains(&rig.level()), "{}", rig.level());
+
+        rig.show.stop_cue(0).unwrap();
+        rig.run(64);
+        assert_eq!(rig.level(), 0.0);
+        assert!(rig.show.paused().is_empty());
     }
 
     #[test]

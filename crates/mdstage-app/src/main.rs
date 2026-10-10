@@ -182,6 +182,23 @@ impl App {
         self.save_settings();
     }
 
+    /// Change the `music` entry of the cue in `block` and save. The short form
+    /// `music: file.wav` becomes the object form first, so it can hold more.
+    fn edit_music(&mut self, block: usize, change: impl FnOnce(&mut mdstage_core::yaml::Mapping)) {
+        let Some(Block::Cue(cue)) = self.show.as_mut().and_then(|s| s.script.blocks.get_mut(block)) else { return };
+        let mut yaml = cue.yaml.clone();
+        let Some(map) = yaml.as_mapping_mut() else { return };
+        if let Some(file) = map.get("music").and_then(|m| m.as_str()).map(str::to_string) {
+            let mut music = serde_yaml_mapping();
+            music.insert("file".into(), file.into());
+            map.insert("music".into(), music.into());
+        }
+        let Some(music) = map.get_mut("music").and_then(|m| m.as_mapping_mut()) else { return };
+        change(music);
+        cue.set_yaml(yaml);
+        self.after_edit();
+    }
+
     fn apply(&mut self, actions: Vec<Action>) {
         for action in actions {
             match &action {
@@ -259,24 +276,44 @@ impl App {
                     }
                     self.after_edit();
                 }
-                Action::Markers { block, start, end } => {
-                    let (start, end) = (*start, *end);
+                Action::Markers { block, marks } => {
+                    let marks = *marks;
+                    let milliseconds = |seconds: f64| (seconds * 1000.0).round() / 1000.0;
+                    self.edit_music(*block, |music| {
+                        music.insert("start".into(), milliseconds(marks.start).into());
+                        music.insert("end".into(), milliseconds(marks.end).into());
+                        for (key, seconds) in [("fadein", marks.fadein), ("fadeout", marks.fadeout)] {
+                            match seconds >= 0.001 {
+                                true => drop(music.insert(key.into(), milliseconds(seconds).into())),
+                                false => drop(music.shift_remove(key)),
+                            }
+                        }
+                    });
+                }
+                Action::Volume { block, volume } => {
+                    let volume = (*volume * 100.0).round() / 100.0;
+                    self.edit_music(*block, |music| drop(music.insert("volume".into(), volume.into())));
+                }
+                Action::Loop { block, on } => {
+                    let on = *on;
+                    self.edit_music(*block, |music| match on {
+                        true => drop(music.insert("loop".into(), true.into())),
+                        false => drop(music.shift_remove("loop")),
+                    });
+                }
+                Action::AutoCueAt { block, at } => {
+                    let at = (*at * 1000.0).round() / 1000.0;
                     let Some(Block::Cue(cue)) = self.show.as_mut().and_then(|s| s.script.blocks.get_mut(*block)) else { continue };
                     let mut yaml = cue.yaml.clone();
-                    let Some(map) = yaml.as_mapping_mut() else { continue };
-                    // The short form `music: file.wav` becomes the object form to hold the times.
-                    if let Some(file) = map.get("music").and_then(|m| m.as_str()).map(str::to_string) {
-                        let mut music = serde_yaml_mapping();
-                        music.insert("file".into(), file.into());
-                        map.insert("music".into(), music.into());
-                    }
-                    let Some(music) = map.get_mut("music").and_then(|m| m.as_mapping_mut()) else { continue };
-                    let milliseconds = |seconds: f64| (seconds * 1000.0).round() / 1000.0;
-                    music.insert("start".into(), milliseconds(start).into());
-                    music.insert("end".into(), milliseconds(end).into());
+                    let Some(auto) = yaml.get_mut("auto_trigger").and_then(|a| a.as_mapping_mut()) else { continue };
+                    auto.insert("at".into(), at.into());
                     cue.set_yaml(yaml);
                     self.after_edit();
                 }
+                Action::PlayPause(cue) => self.request(Request::PlayPause(*cue)),
+                Action::StopCue(cue) => self.request(Request::StopCue(*cue)),
+                Action::Seek { cue, seconds } => self.request(Request::Seek(*cue, *seconds)),
+                Action::LiveVolume { cue, volume } => self.request(Request::Volume(*cue, *volume)),
             }
         }
     }

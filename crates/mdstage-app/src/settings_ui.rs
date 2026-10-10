@@ -135,7 +135,7 @@ impl SettingsUi {
                         port_picker(ui, ("midi-port", i), port, &self.midi_outputs);
                         ui.checkbox(trigger_notes, t("Trigger-Noten", "Trigger notes"));
                         ui.checkbox(timecode, "Timecode");
-                        if ui.small_button("✕").clicked() {
+                        if ui.small_button("×").clicked() {
                             remove = Some(i);
                         }
                     }
@@ -146,7 +146,7 @@ impl SettingsUi {
                         field(ui, host, "Host", 130.0);
                         ui.add(egui::DragValue::new(port).range(1..=65535));
                         ui.checkbox(trigger_notes, t("Trigger-Noten", "Trigger notes"));
-                        if ui.small_button("✕").clicked() {
+                        if ui.small_button("×").clicked() {
                             remove = Some(i);
                         }
                     }
@@ -155,7 +155,7 @@ impl SettingsUi {
                         ui.label(RichText::new("HTTP").color(YELLOW));
                         field(ui, name, "Name", 120.0);
                         field(ui, url, "http://192.168.1.50:8080", 260.0);
-                        if ui.small_button("✕").clicked() {
+                        if ui.small_button("×").clicked() {
                             remove = Some(i);
                         }
                     }
@@ -167,7 +167,7 @@ impl SettingsUi {
                         ui.add(egui::DragValue::new(scroll_seconds).range(0..=600));
                         field(ui, language, t("Sprache (de, en …)", "Language (de, en …)"), 60.0);
                         ui.checkbox(repeat, t("Durchsage wiederholen", "Repeat announcement"));
-                        if ui.small_button("✕").clicked() {
+                        if ui.small_button("×").clicked() {
                             remove = Some(i);
                         }
                     }
@@ -246,7 +246,7 @@ impl SettingsUi {
                             },
                         };
                     }
-                    if ui.small_button("✕").clicked() {
+                    if ui.small_button("×").clicked() {
                         remove = Some(i);
                     }
                 });
