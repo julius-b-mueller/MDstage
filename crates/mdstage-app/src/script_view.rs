@@ -2068,7 +2068,7 @@ impl ScriptView {
             false => t("Diesen Cue von selbst auslösen lassen: danach die Quelle anklicken.", "Let this cue fire by itself: then click its source."),
         };
         link_button(&mut row, Link::AutoCue, "Auto-Cue", cue.auto_trigger().is_some(), !in_group || cue.auto_trigger().is_some(), auto_hint);
-        link_button(&mut row, Link::Adjust, t("⇢ Bezug", "⇢ Adjust"), cue.adjust().is_some(), has_audio, t("Beim Auslösen das Audio eines anderen Cues ausfaden oder leiser stellen: danach den anderen Cue anklicken.", "On firing, fade out or turn down another cue's audio: then click that cue."));
+        link_button(&mut row, Link::Adjust, t("⇢ Bezug", "⇢ Adjust"), cue.adjust().is_some(), true, t("Beim Auslösen das Audio eines anderen Cues ausfaden oder leiser stellen: danach den anderen Cue anklicken. Dieser Cue braucht dafür kein eigenes Audio.", "On firing, fade out or turn down another cue's audio: then click that cue. This cue needs no audio of its own for it."));
 
         let slf = match Cues::new(cx.script).slf(cue_index) {
             Some(Slf::Start { .. }) => "Start",

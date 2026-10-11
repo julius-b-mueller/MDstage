@@ -532,6 +532,8 @@ A cue can affect another cue when it fires (e.g. fade out music when dialogue st
 - **Volume to X:** Fades the target audio to a value (keeps playing)
 - **Fade time:** Duration of the fade in seconds
 
+The cue that does the adjusting needs no audio of its own: a cue that only sets microphones or sends a light cue can fade out the music that is playing. (The adjust is stored under `music.adjust`; for a cue without audio `music` then holds nothing else.)
+
 ### YAML Representation
 
 ```yaml

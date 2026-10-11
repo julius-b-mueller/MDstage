@@ -471,7 +471,7 @@ impl App {
                     map.insert("auto_trigger".into(), auto.into());
                 });
             }
-            (Some(true), LinkDialog::Adjust { block, target, fadeout, volume, fadetime }) => self.edit_music(block, |music| {
+            (Some(true), LinkDialog::Adjust { block, target, fadeout, volume, fadetime }) => self.edit_adjust(block, |music| {
                 let mut adjust = serde_yaml_mapping();
                 adjust.insert("trigger_note".into(), note_value(target));
                 match fadeout {
@@ -526,6 +526,27 @@ impl App {
 
     /// Change the `music` entry of the cue in `block` and save. The short form
     /// `music: file.wav` becomes the object form first, so it can hold more.
+    /// Change what a cue does to another cue's audio. It is stored under `music`, which a
+    /// cue without audio of its own gets for it and loses again when nothing is left there.
+    fn edit_adjust(&mut self, block: usize, change: impl FnOnce(&mut mdstage_core::yaml::Mapping)) {
+        self.edit_cue(block, |map| {
+            if let Some(file) = map.get("music").and_then(|m| m.as_str()).map(str::to_string) {
+                let mut music = serde_yaml_mapping();
+                music.insert("file".into(), file.into());
+                map.insert("music".into(), music.into());
+            }
+            if !map.contains_key("music") {
+                map.insert("music".into(), serde_yaml_mapping().into());
+            }
+            if let Some(music) = map.get_mut("music").and_then(|m| m.as_mapping_mut()) {
+                change(music);
+            }
+            if map.get("music").and_then(|m| m.as_mapping()).is_some_and(|music| music.is_empty()) {
+                map.shift_remove("music");
+            }
+        });
+    }
+
     fn edit_music(&mut self, block: usize, change: impl FnOnce(&mut mdstage_core::yaml::Mapping)) {
         let Some(Block::Cue(cue)) = self.show.as_mut().and_then(|s| s.script.blocks.get_mut(block)) else { return };
         let mut yaml = cue.yaml.clone();
@@ -770,6 +791,10 @@ impl App {
                         Link::Adjust => {
                             if let Some(music) = map.get_mut("music").and_then(|m| m.as_mapping_mut()) {
                                 music.shift_remove("adjust");
+                            }
+                            // A cue that had `music` only for its adjust loses it again.
+                            if map.get("music").and_then(|m| m.as_mapping()).is_some_and(|music| music.is_empty()) {
+                                map.shift_remove("music");
                             }
                         }
                         Link::Chain | Link::LoopOutro => {

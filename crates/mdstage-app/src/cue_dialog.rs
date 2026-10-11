@@ -136,6 +136,15 @@ impl CueDialog {
     }
 
     /// The `music` entry as a mapping, converting the short form `music: file.wav`.
+    /// Whether the cue has audio of its own (and not only an adjust stored under `music`).
+    fn has_audio(&self) -> bool {
+        match self.yaml.get("music") {
+            Some(Value::String(file)) => !file.is_empty(),
+            Some(music) => music.get("file").is_some() || music.get("audios").is_some(),
+            None => false,
+        }
+    }
+
     fn music(&mut self) -> Option<&mut Mapping> {
         if let Some(file) = self.yaml.get("music").and_then(Value::as_str).map(str::to_string) {
             let mut music = Mapping::new();
@@ -352,7 +361,7 @@ impl CueDialog {
                 }
             }
         }
-        if self.yaml.contains_key("music") {
+        if self.has_audio() {
             // Worked on as a copy, so that the short form `music: file.wav` only becomes
             // the long one when something is actually set.
             let mut copy = match self.yaml.get("music") {
@@ -499,8 +508,9 @@ impl CueDialog {
             }
         }
 
-        // Adjust: what this cue does to another cue's audio. Stored with this cue's audio.
-        if self.yaml.contains_key("music") && !self.yaml.get("music").is_some_and(|m| m.get("audios").is_some()) {
+        // Adjust: what this cue does to another cue's audio. A cue needs no audio of its
+        // own for it. (It is stored under `music`, which then holds nothing else.)
+        if !self.yaml.get("music").is_some_and(|m| m.get("audios").is_some()) {
             let adjust = self.yaml.get("music").and_then(|m| m.get("adjust")).cloned();
             let target = note_of(adjust.as_ref().and_then(|a| a.get("trigger_note")));
             let mut fade_out = adjust.as_ref().and_then(|a| a.get("fadeout")).and_then(Value::as_bool) == Some(true);
@@ -527,6 +537,9 @@ impl CueDialog {
             }
             if adjust_changed {
                 changed = true;
+                if !self.yaml.contains_key("music") && new_target.is_some() {
+                    self.yaml.insert("music".into(), Value::Mapping(Mapping::new()));
+                }
                 if let Some(music) = self.music() {
                     match new_target {
                         Some(note) => {
@@ -545,6 +558,10 @@ impl CueDialog {
                         }
                         None => drop(music.shift_remove("adjust")),
                     }
+                }
+                // Nothing left under `music`: the key goes.
+                if self.yaml.get("music").and_then(Value::as_mapping).is_some_and(|music| music.is_empty()) {
+                    self.yaml.shift_remove("music");
                 }
             }
         }
