@@ -204,7 +204,8 @@ impl Show {
 
     /// How long an auto-mic cue leaves microphones on that it switches off (seconds).
     pub fn set_mic_off_delay(&mut self, seconds: f64) {
-        self.mic_off_delay = seconds.max(0.0);
+        // (Never longer than ten minutes, whatever the settings file says.)
+        self.mic_off_delay = if seconds.is_finite() { seconds.clamp(0.0, 600.0) } else { 0.0 };
     }
 
     /// The microphones that are staying on a little longer, if any.

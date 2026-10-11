@@ -108,7 +108,7 @@ The script can be edited directly inside the app — no external editor required
 
 **Role names** complete as you type, in the first line and in the lines below it (to add further roles). A role's name can only be removed or replaced as a whole, so that no stray `**` is left behind.
 
-**Vim keys** (Settings → *Vim keys in the text editor*): normal and insert mode in the inline editor. Movements (`h j k l w b e 0 ^ $ f F t T gg G`, with counts), operators with movements (`dfx`, `ct,`, `ye` …), lines (`dd`, `yy`, `p`, `o`, `O`, `J`, `u`), new blocks (`go`, `gO`, Enter) and whole blocks (`gK`/`gJ` move, `yab`/`dab` copy/cut, `gp`/`gP` paste). `j`/`k` leave a block at its last/first line into the next/previous one. Escape only returns to normal mode; the editor is left with `:w`, `:q` or a click outside. The **Info** button beside the setting lists every supported key.
+**Vim keys** (Settings → *Vim keys in the text editor*): normal and insert mode in the inline editor. Movements (`h j k l w b e E 0 ^ $ f F t T gg G`, with counts), operators with movements (`dfx`, `ct,`, `ye`, `dE` …), single characters (`x`, `r`), lines (`dd`, `yy`, `p`, `o`, `O`, `J`, `u`; Shift+Enter is a new line in the block in either mode), new blocks (`go`, `gO`, Enter) and whole blocks (`gK`/`gJ` move, `yab`/`dab` copy/cut, `gp`/`gP` paste). `j`/`k` leave a block at its last/first line into the next/previous one. Escape only returns to normal mode; the editor is left with `:w`, `:q` or a click outside. The **Info** button beside the setting lists every supported key.
 
 Right-clicking a block (if an editor command is set in the settings) offers to open the corresponding line of the show file in that editor.
 
@@ -764,7 +764,7 @@ Double-clicking a playing cue **stops** it immediately (undo function).
 
 The view glides to where it is sent (a fired cue, a scene, a search hit, a referenced cue) instead of jumping; scrolling by hand takes over at once.
 
-**Go waits for cues that come by themselves:** while a cue is on its way without the operator — a delay auto-cue counting down, an auto-cue at a place in audio that plays once, an outro waiting for its loop's end, a cue its predecessor chains into — Go does nothing: the button is greyed out, and the space bar and a remote Go (MIDI/OSC) are ignored too. A cue can still be fired by clicking it, and Back works. (An auto-cue in a loop comes round on every pass and does not hold Go back.) The waiting cue shows a bar — in the live view on its card, in the main window along the bottom edge of its card — that always starts empty when the wait begins and is full when the cue fires, wherever the audio stood at that moment.
+**Go waits for cues that come by themselves:** while a cue is on its way without the operator — a delay auto-cue counting down, an auto-cue at a place in audio that plays once, an outro waiting for its loop's end, a cue its predecessor chains into — Go does nothing: the button is greyed out, and the space bar and a remote Go (MIDI/OSC) are ignored too. A cue can still be fired by clicking it, and Back works. (An auto-cue in a loop comes round on every pass and does not hold Go back.) The waiting cue shows a bar — in the live view on its card, in the main window along the bottom edge of its card — that always starts empty when the wait begins and is full when the cue fires, wherever the audio stood at that moment. The bar is orange for an auto-cue and purple for a start/loop/finish handover.
 
 **Go after jumping back:** Go fires the next cue after the operator's position that has not fired *in the current pass*. After clicking an earlier cue, every cue from there on is due again — nothing is skipped because it had fired before the jump. Cues that fired by themselves in the current pass (a loop its start chained into, an auto-cue) are still stepped over.
 
@@ -791,6 +791,8 @@ The **Role Editor…** menu opens a dedicated window for managing roles.
 - **Name** of the role
 - **Color** (red, green, blue, purple, cyan, yellow, darkred, …) — determines the text colour in the script and in exports
 - **MIDI channel** (ch) — the microphone channel on the mixer
+
+A new role or group gets the colour that has been used least so far, so that new roles go through the colours one after the other.
 
 Roles can be renamed; all `**Role name**` occurrences in the script are updated automatically.
 

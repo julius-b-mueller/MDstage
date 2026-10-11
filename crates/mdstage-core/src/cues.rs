@@ -92,7 +92,9 @@ impl Cue {
 
     pub fn auto_trigger(&self) -> Option<AutoTrigger> {
         let at = self.field("auto_trigger")?;
-        let number = |key: &str| at.get(key).and_then(Value::as_f64);
+        // (Times that are no times — negative, infinite, not a number — are not taken: a
+        // delay without end would hold Go back for good.)
+        let number = |key: &str| at.get(key).and_then(Value::as_f64).filter(|seconds| seconds.is_finite() && *seconds >= 0.0);
         let when = match (number("at"), number("delay")) {
             (Some(at), _) => AutoWhen::At(at),
             (None, Some(delay)) => AutoWhen::Delay(delay),
@@ -294,9 +296,19 @@ impl<'a> Cues<'a> {
     /// Pairs of auto-cues of one source that stand in the script in another order than
     /// they fire in: `(the earlier in the script, the later)`.
     pub fn auto_order_conflicts(&self) -> Vec<(usize, usize)> {
+        // Which auto-cues fire with which source, worked out in one pass over the
+        // auto-cues (a show file may hold a great many cues).
+        let mut by_source: Vec<Vec<(usize, AutoWhen)>> = vec![Vec::new(); self.len()];
+        for cue in 0..self.len() {
+            let Some(auto) = self.get(cue).and_then(Cue::auto_trigger) else { continue };
+            let Some(named) = self.find(auto.source) else { continue };
+            let whole_group = auto.group && matches!(auto.when, AutoWhen::Delay(_));
+            for source in if whole_group { self.group(named) } else { named..named + 1 } {
+                by_source[source].push((cue, auto.when));
+            }
+        }
         let mut conflicts = Vec::new();
-        for source in 0..self.len() {
-            let autos = self.autos_of(source);
+        for (source, autos) in by_source.iter().enumerate() {
             if autos.len() < 2 {
                 continue;
             }
@@ -842,5 +854,32 @@ mod tests {
         // A cue that has no auto-cue yet gets the range of the place it stands in.
         let script = Script::parse(&[looped, cue(5, "note: neu")].concat());
         assert_eq!(Cues::new(&script).auto_range(5, 0, false), (Some(20.0), None));
+    }
+
+    #[test]
+    fn times_that_are_no_times_make_no_auto_cue() {
+        let cue = |when: &str| Script::parse(&format!("```yaml\ntrigger_note: {{ch: 1, note: 1}}\nauto_trigger: {{trigger_note: {{ch: 1, note: 0}}, {when}}}\n```\n"));
+        let auto = |script: &Script| Cues::new(script).get(0).unwrap().auto_trigger().map(|a| a.when);
+        assert_eq!(auto(&cue("delay: 5")), Some(AutoWhen::Delay(5.0)));
+        assert_eq!(auto(&cue("delay: .inf")), None, "a delay without end would hold Go back for good");
+        assert_eq!(auto(&cue("delay: .nan")), None);
+        assert_eq!(auto(&cue("delay: -3")), None);
+        assert_eq!(auto(&cue("at: -1")), None);
+        assert_eq!(auto(&cue("at: 0")), Some(AutoWhen::At(0.0)));
+    }
+
+    /// Checking the order of auto-cues stays quick in a show with very many cues.
+    #[test]
+    fn the_order_check_copes_with_many_cues() {
+        let mut text = String::from("```yaml\ntrigger_note: {ch: 1, note: 0}\nmusic: a.wav\n```\n\n");
+        for n in 1..=1500 {
+            let (ch, note) = (1 + n / 120, n % 120);
+            text.push_str(&format!("```yaml\ntrigger_note: {{ch: {ch}, note: {note}}}\nauto_trigger: {{trigger_note: {{ch: 1, note: 0}}, delay: {}}}\n```\n\n", 3000 - n));
+        }
+        let script = Script::parse(&text);
+        let started = std::time::Instant::now();
+        let conflicts = Cues::new(&script).auto_order_conflicts();
+        assert_eq!(conflicts.len(), 1499, "every one of them fires before the one above it");
+        assert!(started.elapsed().as_secs_f64() < 5.0, "{:?}", started.elapsed());
     }
 }
