@@ -29,11 +29,22 @@ pub struct Report {
     /// Auto-cues of one source that stand in another order than they fire in: the names
     /// of the cue that stands first and of the one that fires before it.
     pub auto_order: Vec<(String, String)>,
+    /// Variants that would fire by themselves, with the names of the cues concerned.
+    pub variants: Vec<VariantIssue>,
+}
+
+/// A broken rule for variants, with cue names for telling the user.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VariantIssue {
+    /// A cue of a variant group is an auto-cue.
+    AutoCue(String),
+    /// `from` carries straight on into the variant `to`.
+    ChainedInto { from: String, to: String },
 }
 
 impl Report {
     pub fn is_clean(&self) -> bool {
-        self.problems.is_empty() && self.note_conflicts.is_empty() && self.auto_order.is_empty()
+        self.problems.is_empty() && self.note_conflicts.is_empty() && self.auto_order.is_empty() && self.variants.is_empty()
     }
 }
 
@@ -235,6 +246,14 @@ impl Script {
         report.problems.sort_by_key(|p| p.block);
         let cues = crate::cues::Cues::new(self);
         report.auto_order = cues.auto_order_conflicts().into_iter().map(|(first, second)| (cues.name(first), cues.name(second))).collect();
+        report.variants = cues
+            .variant_problems()
+            .into_iter()
+            .map(|problem| match problem {
+                crate::cues::VariantProblem::AutoCue { cue } => VariantIssue::AutoCue(cues.name(cue)),
+                crate::cues::VariantProblem::ChainedInto { from, to } => VariantIssue::ChainedInto { from: cues.name(from), to: cues.name(to) },
+            })
+            .collect();
         report
     }
 }

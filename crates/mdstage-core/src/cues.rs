@@ -43,6 +43,18 @@ pub enum AutoWhen {
 pub struct AutoTrigger {
     pub source: Note,
     pub when: AutoWhen,
+    /// For a delay on a source that has variants: fire whichever of the variants was
+    /// fired (`group: true`), not only the one the note names.
+    pub group: bool,
+}
+
+/// A cue that breaks the rules for variants.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VariantProblem {
+    /// A cue of a variant group that is set to fire by itself.
+    AutoCue { cue: usize },
+    /// A cue that carries straight on (`chain_end`) into a variant group.
+    ChainedInto { from: usize, to: usize },
 }
 
 /// What a cue does to another cue's audio when it fires (`music.adjust`).
@@ -86,7 +98,8 @@ impl Cue {
             (None, Some(delay)) => AutoWhen::Delay(delay),
             (None, None) => return None,
         };
-        Some(AutoTrigger { source: Note::from_yaml(at.get("trigger_note")?)?, when })
+        let group = at.get("group").and_then(Value::as_bool) == Some(true);
+        Some(AutoTrigger { source: Note::from_yaml(at.get("trigger_note")?)?, when, group })
     }
 
     pub fn adjust(&self) -> Option<Adjust> {
@@ -190,16 +203,56 @@ impl<'a> Cues<'a> {
         }
     }
 
-    /// The auto-cues that hang on `source` (or on a variant of it), in the order they
-    /// stand in the script, each with when it fires.
+    /// The auto-cues that fire when `source` does, in the order they stand in the
+    /// script, each with when it fires. An auto-cue hangs on the cue its note names; one
+    /// with a delay can instead hang on that cue's whole variant group (`group: true`)
+    /// and then fires whichever of the variants was fired.
     pub fn autos_of(&self, source: usize) -> Vec<(usize, AutoWhen)> {
-        let root = self.group_root(source);
         (0..self.len())
             .filter_map(|cue| {
                 let auto = self.get(cue)?.auto_trigger()?;
-                (self.find(auto.source).map(|s| self.group_root(s)) == Some(root)).then_some((cue, auto.when))
+                let named = self.find(auto.source)?;
+                let whole_group = auto.group && matches!(auto.when, AutoWhen::Delay(_)) && self.group_root(named) == self.group_root(source);
+                (named == source || whole_group).then_some((cue, auto.when))
             })
             .collect()
+    }
+
+    /// Whether a cue is one of several variants (the root of such a group included).
+    pub fn in_group(&self, cue: usize) -> bool {
+        self.group(cue).len() > 1
+    }
+
+    /// Whether a reference to `note` means `cue`: it names the cue itself or, since a
+    /// reference to a variant means its whole group, another variant of the same group.
+    pub fn refers_to(&self, note: Note, cue: usize) -> bool {
+        self.find(note).is_some_and(|named| self.group_root(named) == self.group_root(cue))
+    }
+
+    /// The volume of a variant group as a whole (`group_volume` on its first cue), by
+    /// which each variant's own volume is multiplied. 1 for a cue that has no variants.
+    pub fn group_volume(&self, cue: usize) -> f64 {
+        if !self.in_group(cue) {
+            return 1.0;
+        }
+        self.get(self.group_root(cue)).and_then(|root| root.field("group_volume")).and_then(Value::as_f64).map_or(1.0, |v| v.clamp(0.0, 1.0))
+    }
+
+    /// What breaks the rules for variants: a variant cannot fire by itself, because the
+    /// operator has to choose which one is taken. So no cue of a variant group may be an
+    /// auto-cue, and no cue may carry straight on into one.
+    pub fn variant_problems(&self) -> Vec<VariantProblem> {
+        let mut problems = Vec::new();
+        for cue in 0..self.len() {
+            let Some(c) = self.get(cue) else { continue };
+            if self.in_group(cue) && c.auto_trigger().is_some() {
+                problems.push(VariantProblem::AutoCue { cue });
+            }
+            if let Some(next) = c.chain_end().and_then(|note| self.find(note)).filter(|&next| self.in_group(next)) {
+                problems.push(VariantProblem::ChainedInto { from: cue, to: next });
+            }
+        }
+        problems
     }
 
     /// Whether a cue's audio plays through once (no loop of any kind) and where in its
@@ -229,7 +282,7 @@ impl<'a> Cues<'a> {
     /// after it. For a place in the audio (`as_place`) these are seconds into the file,
     /// for a delay seconds after the source fires. `None` at an end that is open.
     pub fn auto_range(&self, target: usize, source: usize, as_place: bool) -> (Option<f64>, Option<f64>) {
-        let (once, start) = self.plays_once_from(self.group_root(source));
+        let (once, start) = self.plays_once_from(source);
         let others: Vec<(usize, f64)> =
             self.autos_of(source).into_iter().filter(|(cue, _)| *cue != target).filter_map(|(cue, when)| Some((cue, Self::auto_time(once, start, when, as_place)?))).collect();
         let unit = |time: f64| if as_place { time + start } else { time };
@@ -242,15 +295,12 @@ impl<'a> Cues<'a> {
     /// they fire in: `(the earlier in the script, the later)`.
     pub fn auto_order_conflicts(&self) -> Vec<(usize, usize)> {
         let mut conflicts = Vec::new();
-        let mut seen: Vec<usize> = Vec::new();
-        for cue in 0..self.len() {
-            let Some(source) = self.get(cue).and_then(Cue::auto_trigger).and_then(|auto| self.find(auto.source)).map(|s| self.group_root(s)) else { continue };
-            if seen.contains(&source) {
+        for source in 0..self.len() {
+            let autos = self.autos_of(source);
+            if autos.len() < 2 {
                 continue;
             }
-            seen.push(source);
             let (once, start) = self.plays_once_from(source);
-            let autos = self.autos_of(source);
             // In audio that plays once there is one order; in a loop one for the places
             // and one for the delays.
             for as_place in [true, false] {
@@ -292,11 +342,12 @@ impl<'a> Cues<'a> {
         root..end
     }
 
-    /// The cue's S/L/F role, if it is part of such a structure.
+    /// The cue's S/L/F role, if it is part of such a structure. (A loop whose outro is a
+    /// variant has every variant of that group as its outro.)
     pub fn slf(&self, cue: usize) -> Option<Slf> {
         let me = self.get(cue)?;
         let from: Vec<usize> = (0..self.len())
-            .filter(|&i| self.get(i).and_then(Cue::loop_outro).and_then(|n| self.find(n)) == Some(cue))
+            .filter(|&i| i != cue && self.get(i).and_then(Cue::loop_outro).is_some_and(|n| self.refers_to(n, cue)))
             .collect();
         match (me.chain_end(), me.loop_outro(), from.is_empty()) {
             (Some(next), _, false) => Some(Slf::Bridge { from, next }),
@@ -466,23 +517,27 @@ impl History {
     /// cues: its own start, every adjust aimed at it, and the handoff to its successor.
     /// Back uses this to restore audio the undone cues had ducked or faded out.
     pub fn audio_state(&self, cues: &Cues, target: usize) -> (bool, f64) {
-        let mut volume = cues.get(target).and_then(Cue::music_volume).unwrap_or(DEFAULT_VOLUME);
+        // A variant's own volume counts times its group's; an adjust aimed at the group
+        // sets the group's share anew.
+        let own = cues.get(target).and_then(Cue::music_volume).unwrap_or(DEFAULT_VOLUME);
+        let grouped = cues.in_group(target);
+        let mut volume = own * cues.group_volume(target);
         let mut playing = false;
         let successor = cues.successor(target);
         for fired in self.cues() {
             let Some(cue) = cues.get(fired) else { continue };
             if fired == target && cue.music_volume().is_some() {
                 playing = true;
-                volume = cue.music_volume().unwrap_or(DEFAULT_VOLUME);
-            } else if Some(fired) == successor && playing {
+                volume = own * cues.group_volume(target);
+            } else if successor.is_some_and(|s| cues.group_root(s) == cues.group_root(fired)) && playing {
                 playing = false;
             }
-            if let Some(adjust) = cue.adjust().filter(|a| cues.find(a.target) == Some(target)) {
+            if let Some(adjust) = cue.adjust().filter(|a| cues.refers_to(a.target, target)) {
                 if adjust.fadeout {
                     playing = false;
                     volume = 0.0;
                 } else if let Some(v) = adjust.volume {
-                    volume = v;
+                    volume = if grouped { own * v } else { v };
                 }
             }
         }
@@ -519,8 +574,8 @@ mod tests {
         assert_eq!(cues.len(), 4);
         assert_eq!(cues.get(0).unwrap().note(), Some(note(0)));
         assert_eq!(cues.get(0).unwrap().chain_end(), Some(note(1)));
-        assert_eq!(cues.get(1).unwrap().auto_trigger(), Some(AutoTrigger { source: note(0), when: AutoWhen::At(4.5) }));
-        assert_eq!(cues.get(2).unwrap().auto_trigger(), Some(AutoTrigger { source: note(1), when: AutoWhen::Delay(8.0) }));
+        assert_eq!(cues.get(1).unwrap().auto_trigger(), Some(AutoTrigger { source: note(0), when: AutoWhen::At(4.5), group: false }));
+        assert_eq!(cues.get(2).unwrap().auto_trigger(), Some(AutoTrigger { source: note(1), when: AutoWhen::Delay(8.0), group: false }));
         assert_eq!(
             cues.get(2).unwrap().adjust(),
             Some(Adjust { target: note(1), fadeout: true, volume: None, fadetime: Some(2.0) })

@@ -390,7 +390,7 @@ const CONFIG_KEYS: &[&str] = &["roles", "groups", "app_version", "emLightNote", 
 const CUE_KEYS: &[&str] = &[
     "sibling", "trigger_note", "note", "auto_mic", "mic", "music", "music_seq", "osc", "osc_arg", "osc_arg_type",
     "qlcplus", "projection", "start_tc", "auto_trigger", "chain_end", "loop_outro", "cue_midi", "cue_osc",
-    "cue_http", "cue_display",
+    "cue_http", "cue_display", "group_volume",
 ];
 const NOTE_REF_KEYS: &[&str] = &["ch", "note"];
 const MUSIC_KEYS: &[&str] =
@@ -399,7 +399,7 @@ const MARKER_KEYS: &[&str] = &["at", "name"];
 const MUSIC_SEQ_KEYS: &[&str] = &["file", "volume", "start", "end", "fadein", "fadeout", "fading_point", "audios"];
 const AUDIO_KEYS: &[&str] = &["file", "mono", "volume", "patch"];
 const ADJUST_KEYS: &[&str] = &["trigger_note", "fadeout", "fadetime", "volume"];
-const AUTO_TRIGGER_KEYS: &[&str] = &["trigger_note", "at", "delay"];
+const AUTO_TRIGGER_KEYS: &[&str] = &["trigger_note", "at", "delay", "group"];
 const CUE_MIDI_KEYS: &[&str] = &["device", "type", "ch", "note", "vel", "cc", "value", "program", "bytes", "comment"];
 const CUE_OSC_KEYS: &[&str] = &["device", "path", "arg", "arg_type", "comment"];
 const CUE_HTTP_KEYS: &[&str] = &["device", "method", "path", "body", "content_type", "comment"];

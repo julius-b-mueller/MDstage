@@ -370,8 +370,17 @@ impl Show {
         self.selected_variant = cue;
     }
 
+    /// A cue's audio as it is to be played: a variant at its own volume times its group's.
     fn audio(&self, cue: usize) -> Option<CueAudio> {
-        Cues::new(&self.script).get(cue)?.audio()
+        let cues = Cues::new(&self.script);
+        let mut audio = cues.get(cue)?.audio()?;
+        let group = cues.group_volume(cue);
+        if group != 1.0 {
+            for part in &mut audio.parts {
+                part.volume *= group;
+            }
+        }
+        Some(audio)
     }
 
     /// How a cue's audio ends: loops loop, a `chain_end` with playable audio chains.
@@ -381,7 +390,8 @@ impl Show {
         if c.loop_outro().is_some() || audio.looped || audio.parts.len() > 1 {
             return Then::Loop;
         }
-        match c.chain_end().and_then(|n| cues.find(n)).filter(|&next| self.audio(next).is_some()) {
+        // (Nothing carries straight on into a variant: the operator has to choose one.)
+        match c.chain_end().and_then(|n| cues.find(n)).filter(|&next| !cues.in_group(next) && self.audio(next).is_some()) {
             Some(next) => Then::Chain(next),
             None => Then::End,
         }
@@ -435,9 +445,8 @@ impl Show {
             self.forget_audio_of(&[cue]);
             return Ok(());
         }
-        let running_loop = (0..cues.len()).find(|&l| {
-            cues.get(l).and_then(|c| c.loop_outro()).and_then(|n| cues.find(n)) == Some(cue) && self.is_playing(l)
-        });
+        // (A loop whose outro is a variant takes whichever variant of that group is fired.)
+        let running_loop = (0..cues.len()).find(|&l| l != cue && cues.get(l).and_then(|c| c.loop_outro()).is_some_and(|n| cues.refers_to(n, cue)) && self.is_playing(l));
         if let (Some(looped), Some(audio)) = (running_loop, self.audio(cue)) {
             if !self.pending_outros.contains(&(looped, cue)) {
                 self.player.start(cue, &audio, Start::armed(self.then(cue)))?;
@@ -498,14 +507,11 @@ impl Show {
         let start_tc = c.text("start_tc").and_then(Timecode::parse);
         // A handoff happens at the end of the source's stretch, so that is where the
         // count carries on — the source itself may already be gone.
-        let hands_off = |from: usize| {
-            let source = cues.get(from)?;
-            cues.find(source.loop_outro().or(source.chain_end())?)
-        };
+        let hands_off_here = |from: usize| cues.get(from).and_then(|source| source.loop_outro().or(source.chain_end())).is_some_and(|note| cues.refers_to(note, cue));
         let continued = self
             .timecode
             .as_ref()
-            .filter(|t| started && start_tc.is_none() && hands_off(t.cue) == Some(cue))
+            .filter(|t| started && start_tc.is_none() && hands_off_here(t.cue))
             .map(|t| t.base + t.spans.iter().map(|(a, b)| b - a).sum::<f64>());
         if start_tc.is_some() {
             if let Some(previous) = self.timecode.take().filter(|t| t.cue != cue) {
@@ -555,7 +561,14 @@ impl Show {
         }
 
         if let Some(adjust) = c.adjust() {
-            if let Some(target) = cues.find(adjust.target) {
+            // An adjust aimed at a variant means its group: it acts on whichever variant
+            // is there, and a volume is the group's share of each variant's own volume.
+            let targets: Vec<usize> = cues.find(adjust.target).map(|named| cues.group(named).collect()).unwrap_or_default();
+            let grouped = targets.len() > 1;
+            for target in targets {
+                if grouped && self.player.status(target, None).is_none() {
+                    continue;
+                }
                 let fade = adjust.fadetime.unwrap_or(DEFAULT_ADJUST_FADE);
                 if adjust.fadeout {
                     if let Some(status) = self.player.status(target, self.clock.as_deref()) {
@@ -563,7 +576,8 @@ impl Show {
                     }
                     self.player.stop(target, fade)?;
                 } else if let Some(volume) = adjust.volume {
-                    self.player.fade(target, volume, fade)?;
+                    let own = cues.get(target).and_then(|t| t.audio()).and_then(|a| a.parts.first().map(|p| p.volume)).unwrap_or(1.0);
+                    self.player.fade(target, if grouped { own * volume } else { volume }, fade)?;
                 }
             }
         }
@@ -571,14 +585,13 @@ impl Show {
         self.effects.extend(c.fire_effects());
         self.history.push(cue, auto);
 
-        // Auto-cues that hang on this cue (or on a variant of it).
-        let root = cues.group_root(cue);
-        for target in 0..cues.len() {
-            let Some(auto_trigger) = cues.get(target).and_then(|t| t.auto_trigger()) else { continue };
-            if cues.find(auto_trigger.source).map(|s| cues.group_root(s)) != Some(root) {
+        // Auto-cues that hang on this cue, or with a delay on its variant group. (A
+        // variant is never fired by itself: the operator has to choose one.)
+        for (target, when) in cues.autos_of(cue) {
+            if cues.in_group(target) {
                 continue;
             }
-            match auto_trigger.when {
+            match when {
                 AutoWhen::Delay(seconds) => {
                     self.delays.retain(|d| d.target != target);
                     self.delays.push(Delay { target, source: cue, started: self.now, due: self.now + seconds.max(0.0) });
@@ -595,11 +608,9 @@ impl Show {
     /// comes back in at `resumed` has the auto-cues before that place behind it.
     fn watch(&mut self, cue: usize, resumed: Option<f64>) {
         let cues = Cues::new(&self.script);
-        let root = cues.group_root(cue);
-        for target in 0..cues.len() {
-            let Some(auto_trigger) = cues.get(target).and_then(|t| t.auto_trigger()) else { continue };
-            let AutoWhen::At(at) = auto_trigger.when else { continue };
-            if cues.find(auto_trigger.source).map(|s| cues.group_root(s)) != Some(root) {
+        for (target, when) in cues.autos_of(cue) {
+            let AutoWhen::At(at) = when else { continue };
+            if cues.in_group(target) {
                 continue;
             }
             self.watches.retain(|w| w.target != target);
@@ -761,7 +772,8 @@ impl Show {
         let script = self.script.clone();
         let cues = Cues::new(&script);
         let note = cues.get(cue)?.note()?;
-        let before = (0..cues.len()).find(|&p| p != cue && cues.get(p).is_some_and(|c| c.chain_end() == Some(note) || c.loop_outro() == Some(note)))?;
+        let _ = note;
+        let before = (0..cues.len()).find(|&p| p != cue && cues.get(p).is_some_and(|c| c.chain_end().or(c.loop_outro()).is_some_and(|n| cues.refers_to(n, cue))))?;
         let base = match cues.get(before)?.text("start_tc").and_then(Timecode::parse) {
             Some(tc) => tc.to_frames() as f64 / crate::mtc::FPS as f64,
             None => self.derived_timecode(before, depth + 1)?,
@@ -804,15 +816,18 @@ impl Show {
         }
 
         // Loops that an undone cue took over from come back in beat.
-        let successor = |cue: usize| cues.get(cue).and_then(|c| c.loop_outro()).and_then(|n| cues.find(n));
+        // (The outro that took a loop over may have been any variant of its group.)
+        let took_over = |looped: usize| -> Vec<usize> {
+            cues.get(looped).and_then(|c| c.loop_outro()).and_then(|n| cues.find(n)).map(|named| cues.group(named).filter(|member| popped.contains(member)).collect()).unwrap_or_default()
+        };
         let mut returning: Vec<usize> = self
             .history
             .cues()
-            .filter(|&cue| self.then(cue) == Then::Loop && successor(cue).is_some_and(|s| popped.contains(&s)))
+            .filter(|&cue| self.then(cue) == Then::Loop && !took_over(cue).is_empty())
             .filter(|&cue| !self.player.is_sounding(cue) && self.history.audio_state(&cues, cue).0)
             .collect();
         returning.dedup();
-        let handed_over: Vec<usize> = returning.iter().filter_map(|&l| successor(l)).collect();
+        let handed_over: Vec<usize> = returning.iter().flat_map(|&l| took_over(l)).collect();
 
         for &cue in popped {
             let fade = if handed_over.contains(&cue) { HANDOVER_FADE } else { BACK_FADE };
@@ -827,19 +842,22 @@ impl Show {
         // history implies. `popped` is newest first, so the latest adjust per target wins.
         let mut restored = Vec::new();
         for &cue in popped {
-            let Some(target) = cues.get(cue).and_then(|c| c.adjust()).and_then(|a| cues.find(a.target)) else { continue };
-            if restored.contains(&target) {
-                continue;
-            }
-            restored.push(target);
-            let (playing, volume) = self.history.audio_state(&cues, target);
-            if !playing || volume <= 0.0 {
-                continue;
-            }
-            if self.player.is_sounding(target) {
-                self.player.fade(target, volume, BACK_FADE)?;
-            } else {
-                self.resume(target, volume)?;
+            let Some(named) = cues.get(cue).and_then(|c| c.adjust()).and_then(|a| cues.find(a.target)) else { continue };
+            // (An adjust aimed at a variant acted on its whole group.)
+            for target in cues.group(named) {
+                if restored.contains(&target) {
+                    continue;
+                }
+                restored.push(target);
+                let (playing, volume) = self.history.audio_state(&cues, target);
+                if !playing || volume <= 0.0 {
+                    continue;
+                }
+                if self.player.is_sounding(target) {
+                    self.player.fade(target, volume, BACK_FADE)?;
+                } else {
+                    self.resume(target, volume)?;
+                }
             }
         }
 
@@ -1423,6 +1441,61 @@ mod tests {
         rig.run(80);
         let tc = rig.show.timecode_seconds().unwrap();
         assert!((tc - 3600.68).abs() < 0.009, "{tc}");
+    }
+
+    /// Variants are cues of their own. What points at one of them means the group: a
+    /// loop's outro is whichever variant is chosen, an adjust acts on the one that
+    /// sounds, and a delayed auto-cue can hang on the group or on one variant.
+    #[test]
+    fn references_to_a_variant_mean_its_group() {
+        let cues = [
+            "music:\n    file: loop.wav\n    volume: 1\nloop_outro: {ch: 1, note: 1}",
+            "music:\n    file: out_a.wav\n    volume: 1",
+            "sibling: true\nmusic:\n    file: out_b.wav\n    volume: 0.5",
+            "music:\n    adjust: {trigger_note: {ch: 1, note: 1}, volume: 0.5, fadetime: 0.008}",
+            "auto_trigger: {trigger_note: {ch: 1, note: 1}, delay: 0.016, group: true}",
+            "auto_trigger: {trigger_note: {ch: 1, note: 1}, delay: 0.016}",
+            "auto_trigger: {trigger_note: {ch: 1, note: 2}, delay: 0.016}",
+        ];
+        let clips = [("loop.wav", 2.0, 48), ("out_a.wav", 3.0, 800), ("out_b.wav", 4.0, 800)];
+        let mut rig = rig(&cues, &clips);
+        rig.show.go().unwrap();
+        rig.run(16);
+        // The second variant is chosen as the outro, though the loop names the first.
+        rig.show.select_variant(Some(2));
+        rig.show.go().unwrap();
+        assert_eq!(rig.show.pending_outros(), [(0, 2)]);
+        rig.run(48);
+        assert_eq!(rig.fired(), [0, 2]);
+        assert_eq!(rig.level(), 2.0, "the variant at its own volume: 4 × 0.5");
+        // The auto-cue on the group fires, and the one on this variant; not the one on the other.
+        rig.run(24);
+        assert_eq!(rig.fired(), [0, 2, 4, 6]);
+        // The adjust names the first variant and turns down the one that sounds, to half of its own volume.
+        rig.show.fire(3, false).unwrap();
+        rig.run(40);
+        assert_eq!(rig.level(), 1.0);
+        // Back restores it.
+        rig.show.back().unwrap();
+        rig.run(600);
+        assert_eq!(rig.level(), 2.0);
+    }
+
+    /// A variant is never fired by itself, and nothing carries straight on into one.
+    #[test]
+    fn variants_do_not_fire_by_themselves() {
+        let cues = [
+            "music:\n    file: start.wav\n    volume: 1\nchain_end: {ch: 1, note: 1}",
+            "music:\n    file: a.wav\n    volume: 1",
+            "sibling: true\nmusic:\n    file: b.wav\n    volume: 1\nauto_trigger: {trigger_note: {ch: 1, note: 0}, delay: 0.008}",
+        ];
+        let mut rig = rig(&cues, &[("start.wav", 1.0, 40), ("a.wav", 2.0, 400), ("b.wav", 3.0, 400)]);
+        rig.show.go().unwrap();
+        rig.run(120);
+        assert_eq!(rig.fired(), [0], "neither the chain nor the auto-cue fired a variant");
+        assert!(!rig.show.go_blocked());
+        rig.show.go().unwrap();
+        assert_eq!(rig.fired(), [0, 1]);
     }
 
     /// A wait is shown from 0, wherever the audio it hangs on stands when it begins.
