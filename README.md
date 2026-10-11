@@ -733,7 +733,7 @@ Three emergency buttons in the header:
 |---|---|
 | Click on trigger | Fire cue immediately |
 | Click with live view open | Pre-select cue as next (arm) |
-| **Go** (Space, when live view is open) | Fire next cue |
+| **Go** (Space in the live view; in the main window only while the show is locked) | Fire next cue |
 | **Back** (Backspace, when live view is open) | Undo last cue (fade-out + undo) |
 | MIDI Go/Back | Configurable MIDI notes |
 | Show current cue | Scrolls to current position |
@@ -957,7 +957,7 @@ A file that was last saved on another machine is not touched by opening it: it i
 | `Cmd/Ctrl+E` | Export |
 | `Cmd/Ctrl+B` | Toggle sidebar |
 | `Cmd/Ctrl+F` | Search |
-| `Space` | Go (when live view is open, no editor active) |
+| `Space` | Live view: Go. Main window: Go only while the show is locked; otherwise play/pause of the audio whose playhead was last moved on its waveform (nothing after a cue was fired by a click) |
 | `Backspace` | Back (when live view is open, no editor active) |
 | `Shift+Click` | Edit block |
 | `Tab` | Accept role name autocomplete |

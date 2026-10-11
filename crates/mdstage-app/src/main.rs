@@ -101,6 +101,9 @@ struct App {
     /// Something that went wrong in the app itself (a file that could not be written …).
     message: Option<String>,
     followed: Option<usize>,
+    /// The cue whose playhead was last moved on its waveform: the space bar plays and
+    /// pauses its audio until a cue fires.
+    space_cue: Option<usize>,
     /// How many cues had fired when the view last followed one that fired by itself.
     followed_fired: usize,
 }
@@ -140,6 +143,7 @@ impl App {
             locked: settings_open_locked,
             message: None,
             followed: None,
+            space_cue: None,
             followed_fired: 0,
         };
         if let Some(path) = path.or(last) {
@@ -459,7 +463,11 @@ impl App {
             match &action {
                 // With the live view open a click only chooses the next Go.
                 Action::Fire(cue) if self.live_open => self.request(Request::Arm(Some(*cue))),
-                Action::Fire(cue) => self.request(Request::Fire(*cue)),
+                // A cue started by a click is not the space bar's to pause.
+                Action::Fire(cue) => {
+                    self.space_cue = None;
+                    self.request(Request::Fire(*cue));
+                }
                 Action::Arm(cue) => self.request(Request::Arm(Some(*cue))),
                 Action::EditCue(block) | Action::NewCue(block) => {
                     let block = *block;
@@ -659,10 +667,20 @@ impl App {
                         (false, _) => self.edit_cue(*block, |map| drop(map.shift_remove("auto_mic"))),
                     }
                 }
-                Action::PlayPause(cue) => self.request(Request::PlayPause(*cue)),
+                Action::PlayPause(cue) => {
+                    self.space_cue = Some(*cue);
+                    self.request(Request::PlayPause(*cue));
+                }
                 // The stop button under a waveform is for trying audio out: at once.
-                Action::StopCue(cue) => self.request(Request::StopCue(*cue, 0.02)),
-                Action::Seek { cue, seconds } => self.request(Request::Seek(*cue, *seconds)),
+                Action::StopCue(cue) => {
+                    self.space_cue = None;
+                    self.request(Request::StopCue(*cue, 0.02));
+                }
+                // The playhead was moved: from now on the space bar is this audio's.
+                Action::Seek { cue, seconds } => {
+                    self.space_cue = Some(*cue);
+                    self.request(Request::Seek(*cue, *seconds));
+                }
                 Action::LiveVolume { cue, volume } => self.request(Request::Volume(*cue, *volume)),
             }
         }
@@ -693,8 +711,15 @@ impl App {
         }
         // Go and Back only when nothing is being typed.
         if self.show.is_some() && !self.view.is_editing() && !ctx.wants_keyboard_input() {
+            // The space bar: Go while the show is locked. While it is being worked on, it
+            // plays and pauses the audio whose playhead was last moved on its waveform —
+            // and does nothing otherwise, so that no cue is fired or paused by accident.
             if ctx.input(|i| i.key_pressed(Key::Space)) {
-                self.request(Request::Go);
+                match (self.locked, self.space_cue) {
+                    (true, _) => self.request(Request::Go),
+                    (false, Some(cue)) => self.request(Request::PlayPause(cue)),
+                    (false, None) => {}
+                }
             }
             if ctx.input(|i| i.key_pressed(Key::Backspace)) {
                 self.request(Request::Back);
@@ -1821,6 +1846,10 @@ impl eframe::App for App {
         // A cue that fires by itself is shown as well: the view goes there and outlines
         // it for a moment. The operator's own cue stays the current one.
         let fired = self.snapshot.fired.len();
+        if fired != self.followed_fired {
+            // A cue fired (or was taken back): the space bar is no longer a waveform's.
+            self.space_cue = None;
+        }
         if fired > self.followed_fired {
             if let Some(cue) = self.snapshot.latest.filter(|latest| Some(*latest) != self.snapshot.current) {
                 self.view.go_to_cue(cue, ctx.input(|i| i.time));
