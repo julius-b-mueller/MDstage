@@ -288,15 +288,17 @@ impl LiveView {
                 if ui.add(back).on_hover_text(t("Rücktaste", "Backspace")).clicked() {
                     requests.push(Request::Back);
                 }
-                // While an outro waits for its loop's end there is nothing for Go to do.
-                let ready = snapshot.next.is_some() && pending.is_none();
+                // While a cue is on its way by itself (an outro waiting for its loop's end,
+                // a delay running, a chained cue coming) there is nothing for Go to do.
+                let ready = snapshot.next.is_some() && pending.is_none() && !snapshot.go_blocked;
                 let ink = if ready { Color32::from_rgb(0x1e, 0x21, 0x27) } else { MUTED };
                 let go = egui::Button::image_and_text(Icon::Play.image(16.0, ink), RichText::new("Go").size(21.0).strong().color(ink))
                     .fill(if ready { GREEN } else { TRACK })
                     .stroke(Stroke::NONE)
                     .corner_radius(CornerRadius::same(8))
                     .min_size(vec2(ui.available_width(), height));
-                if ui.add_enabled(ready, go).on_hover_text(t("Leertaste", "Space")).clicked() {
+                let hint = if snapshot.go_blocked { t("Ein Cue wird gerade von selbst ausgelöst – Go wartet, bis er da ist.", "A cue is about to fire by itself – Go waits until it has.") } else { t("Leertaste", "Space") };
+                if ui.add_enabled(ready, go).on_hover_text(hint).on_disabled_hover_text(hint).clicked() {
                     requests.push(Request::Go);
                 }
             });
@@ -595,13 +597,11 @@ impl LiveView {
             y += lines as f32 * (size + 7.0);
         }
 
-        // What the cue is waiting for: its loop's end, or its auto-cue's delay.
-        let waiting = snapshot.pending_outros.iter().find(|(_, outro)| *outro == cue).and_then(|(looped, _)| {
-            let status = snapshot.audio.iter().find(|(a, _)| a == looped)?.1;
-            Some((((status.seconds - status.start) / (status.transition - status.start).max(0.001)) as f32, YELLOW))
-        });
-        let delayed = snapshot.delays.iter().find(|d| d.target == cue).map(|d| (d.fraction as f32, GREEN));
-        if let Some((fraction, colour)) = waiting.or(delayed) {
+        // A cue that is waiting to fire by itself shows how far its wait has got: for its
+        // loop's end, its predecessor's end, its delay or its place in the audio. The bar
+        // always starts at nothing when the wait begins.
+        let waiting = snapshot.waits.iter().find(|wait| wait.cue == cue).map(|wait| (wait.fraction as f32, YELLOW));
+        if let Some((fraction, colour)) = waiting {
             let track = Rect::from_min_size(pos2(left, rect.bottom() - 9.0), vec2(rect.right() - 16.0 - left, 4.0));
             painter.rect_filled(track, 2.0, tint(AUDIO));
             painter.rect_filled(Rect::from_min_size(track.min, vec2(track.width() * fraction.clamp(0.0, 1.0), 4.0)), 2.0, tint(colour));

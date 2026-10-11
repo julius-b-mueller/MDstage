@@ -742,6 +742,8 @@ Double-clicking a playing cue **stops** it immediately (undo function).
 
 The view glides to where it is sent (a fired cue, a scene, a search hit, a referenced cue) instead of jumping; scrolling by hand takes over at once.
 
+**Go waits for cues that come by themselves:** while a cue is on its way without the operator — a delay auto-cue counting down, an auto-cue at a place in audio that plays once, an outro waiting for its loop's end, a cue its predecessor chains into — Go does nothing: the button is greyed out, and the space bar and a remote Go (MIDI/OSC) are ignored too. A cue can still be fired by clicking it, and Back works. (An auto-cue in a loop comes round on every pass and does not hold Go back.) The waiting cue shows a bar — in the live view on its card, in the main window along the bottom edge of its card — that always starts empty when the wait begins and is full when the cue fires, wherever the audio stood at that moment.
+
 **Go after jumping back:** Go fires the next cue after the operator's position that has not fired *in the current pass*. After clicking an earlier cue, every cue from there on is due again — nothing is skipped because it had fired before the jump. Cues that fired by themselves in the current pass (a loop its start chained into, an auto-cue) are still stepped over.
 
 ### Cue History (Back)

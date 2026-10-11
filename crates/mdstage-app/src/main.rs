@@ -879,7 +879,9 @@ impl App {
                 .fill(GREEN)
                 .stroke(egui::Stroke::new(1.0_f32, Color32::BLACK))
                 .min_size(egui::vec2(96.0, theme::TOOL));
-            if ui.add_enabled(has_show && self.snapshot.next.is_some(), go).on_hover_text(self.t("Leertaste", "Space")).clicked() {
+            let blocked = self.snapshot.go_blocked;
+            let hint = if blocked { lang::t("Ein Cue wird gerade von selbst ausgelöst – Go wartet, bis er da ist.", "A cue is about to fire by itself – Go waits until it has.") } else { lang::t("Leertaste (bei gesperrter Show)", "Space (while the show is locked)") };
+            if ui.add_enabled(has_show && self.snapshot.next.is_some() && !blocked, go).on_hover_text(hint).on_disabled_hover_text(hint).clicked() {
                 self.request(Request::Go);
             }
             let back = theme::tool_button(RichText::new("Back").size(15.0).strong()).min_size(egui::vec2(64.0, theme::TOOL));

@@ -103,6 +103,10 @@ pub struct Snapshot {
     pub paused: Vec<(usize, f64)>,
     pub timecode: Option<f64>,
     pub delays: Vec<DelayProgress>,
+    /// The cues waiting to fire by themselves, with how far their wait has got.
+    pub waits: Vec<crate::show::Wait>,
+    /// Go is held back while a cue is on its way by itself.
+    pub go_blocked: bool,
     pub display_clients: Vec<Client>,
     pub display_address: Option<SocketAddr>,
     /// `None` if no audio device could be opened (the show still runs, silently).
@@ -494,6 +498,8 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
             paused: show.paused(),
             timecode: show.timecode_seconds(),
             delays: show.delay_progress(),
+            waits: show.waits(),
+            go_blocked: show.go_blocked(),
             display_clients: display.as_ref().map(|d| d.clients()).unwrap_or_default(),
             display_address: display.as_ref().map(|d| d.address()),
             output: output.clone(),

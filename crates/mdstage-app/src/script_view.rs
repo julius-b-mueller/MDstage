@@ -1707,7 +1707,8 @@ impl ScriptView {
         let waits = snapshot.pending_outros.iter().any(|&(_, outro)| outro == cue_index);
         let status = snapshot.audio.iter().find(|(c, _)| *c == cue_index).map(|(_, s)| *s);
         let sounding = status.is_some_and(|s| matches!(s.state, mdstage_engine::clock::VoiceState::Playing | mdstage_engine::clock::VoiceState::Tail));
-        let delay = snapshot.delays.iter().find(|d| d.target == cue_index).map(|d| d.fraction);
+        // Waiting to fire by itself: for a delay, a place in audio, a loop's or a predecessor's end.
+        let waiting = snapshot.waits.iter().find(|wait| wait.cue == cue_index).map(|wait| wait.fraction);
 
         let panel = rect.shrink2(vec2(0.0, 4.0));
         let response = ui.interact(panel, Id::new(("cue", block)), Sense::click());
@@ -1738,10 +1739,13 @@ impl ScriptView {
             painter.rect_stroke(panel, 4.0, Stroke::new(2.0_f32, BRIGHT.gamma_multiply(strength)), egui::StrokeKind::Outside);
             ui.ctx().request_repaint();
         }
-        if let Some(fraction) = delay {
-            // A delay auto-cue counting down fills the panel from the left.
-            let filled = Rect::from_min_size(panel.min, vec2(panel.width() * fraction as f32, panel.height()));
-            painter.rect_filled(filled, 4.0, Color32::from_rgba_unmultiplied(0x98, 0xc3, 0x79, 28));
+        if let Some(fraction) = waiting {
+            // A bar along the card's bottom edge shows how far the wait has got, from
+            // nothing when it began to the full width when the cue fires.
+            let track = Rect::from_min_max(pos2(panel.left(), panel.bottom() - 4.0), panel.max);
+            painter.rect_filled(track, 2.0, INSET);
+            painter.rect_filled(Rect::from_min_size(track.min, vec2(track.width() * fraction.clamp(0.0, 1.0) as f32, 4.0)), 2.0, YELLOW);
+            ui.ctx().request_repaint();
         }
 
         let left = panel.left() + 16.0;
@@ -1762,6 +1766,8 @@ impl ScriptView {
         }
         if waits {
             badge(t("wartet auf Loop-Ende", "waiting for loop end"), YELLOW);
+        } else if waiting.is_some() {
+            badge(t("kommt von selbst", "coming by itself"), YELLOW);
         } else if is_next {
             badge(t("nächster", "next"), YELLOW);
         }

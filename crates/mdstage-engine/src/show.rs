@@ -50,6 +50,16 @@ struct Watch {
     /// Done for this pass.
     fired: bool,
     last: Option<f64>,
+    /// Where the source's audio stood when the wait for this pass began.
+    from: Option<f64>,
+}
+
+/// A cue that is waiting to fire by itself, for the UI: how much of the wait is over,
+/// from 0 when the wait began to 1 when the cue fires.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Wait {
+    pub cue: usize,
+    pub fraction: f64,
 }
 
 /// Microphones that an auto-mic cue would have switched off and that stay on a little
@@ -106,6 +116,9 @@ pub struct Show {
     /// Seconds an auto-mic cue leaves a microphone on that it switches off.
     mic_off_delay: f64,
     mic_hold: Option<Hold>,
+    /// For cues waiting on another's audio to get somewhere (an outro on its loop's end,
+    /// a chained cue on its predecessor's): where that audio stood when the wait began.
+    waits_from: HashMap<usize, f64>,
     /// When each running loop was (or would have been) at the start of its cycle.
     loop_epochs: HashMap<usize, f64>,
     /// Where audio stood when a cue faded it out, to pick it up there on Back.
@@ -139,6 +152,7 @@ impl Show {
             watches: Vec::new(),
             mic_off_delay: 0.0,
             mic_hold: None,
+            waits_from: HashMap::new(),
             loop_epochs: HashMap::new(),
             stopped_at: HashMap::new(),
             paused: HashMap::new(),
@@ -198,6 +212,44 @@ impl Show {
         let hold = self.mic_hold.as_ref()?;
         let fraction = if hold.due > hold.started { ((self.now - hold.started) / (hold.due - hold.started)).clamp(0.0, 1.0) } else { 1.0 };
         Some(MicHold { cue: hold.cue, leaving: hold.leaving.clone(), fraction })
+    }
+
+    /// The cues that are waiting to fire by themselves, each with how far its wait has
+    /// got. Every wait runs from 0, wherever the audio it depends on stood when it began:
+    /// an outro queued in the middle of its loop starts at 0 and fills the faster.
+    pub fn waits(&self) -> Vec<Wait> {
+        let mut waits: Vec<Wait> = Vec::new();
+        let along = |from: f64, now: f64, to: f64| if to > from { ((now - from) / (to - from)).clamp(0.0, 1.0) } else { 1.0 };
+        for delay in &self.delays {
+            waits.push(Wait { cue: delay.target, fraction: along(delay.started, self.now, delay.due) });
+        }
+        // Waiting for another cue's audio to reach its end or loop point.
+        for &(source, waiting) in self.pending_outros.iter().chain(&self.chains) {
+            if let Some(status) = self.player.status(source, self.clock.as_deref()) {
+                let from = self.waits_from.get(&waiting).copied().unwrap_or(status.start).min(status.seconds);
+                waits.push(Wait { cue: waiting, fraction: along(from, status.seconds, status.transition) });
+            }
+        }
+        for watch in self.watches.iter().filter(|watch| !watch.fired) {
+            if let Some(status) = self.player.status(watch.source, self.clock.as_deref()).filter(|s| s.state == VoiceState::Playing) {
+                let from = watch.from.unwrap_or(status.start).min(status.seconds);
+                waits.push(Wait { cue: watch.target, fraction: along(from, status.seconds, watch.at) });
+            }
+        }
+        waits.sort_by_key(|wait| wait.cue);
+        waits.dedup_by_key(|wait| wait.cue);
+        waits
+    }
+
+    /// Whether Go is held back because a cue is on its way by itself: a delay is running,
+    /// an outro waits for its loop's end, a chained cue for its predecessor's, or an
+    /// auto-cue for a place in audio that plays once. (An auto-cue in a loop comes round
+    /// on every pass; it does not hold Go back, or the loop could never be left.)
+    pub fn go_blocked(&self) -> bool {
+        !self.delays.is_empty()
+            || !self.pending_outros.is_empty()
+            || !self.chains.is_empty()
+            || self.watches.iter().any(|watch| !watch.fired && self.is_playing(watch.source) && self.then(watch.source) != Then::Loop)
     }
 
     /// The operator's current cue.
@@ -341,6 +393,11 @@ impl Show {
 
     /// Go: fire the armed cue, or the next one.
     pub fn go(&mut self) -> Result<()> {
+        // While a cue is on its way by itself, Go does nothing: what is coming comes,
+        // and nothing is fired over it by accident.
+        if self.go_blocked() {
+            return Ok(());
+        }
         let cue = self.next();
         self.armed = None;
         self.selected_variant = None;
@@ -386,6 +443,10 @@ impl Show {
                 self.player.start(cue, &audio, Start::armed(self.then(cue)))?;
                 self.player.queue_outro(looped, cue)?;
                 self.pending_outros.push((looped, cue));
+                // Its wait begins here, wherever the loop stands.
+                if let Some(status) = self.player.status(looped, self.clock.as_deref()) {
+                    self.waits_from.insert(cue, status.seconds);
+                }
             }
             return Ok(());
         }
@@ -466,7 +527,12 @@ impl Show {
         if let (Some(_), Then::Chain(next)) = (&audio, then) {
             if let Some(next_audio) = self.audio(next).filter(|_| !self.chains.contains(&(cue, next))) {
                 match self.player.start(next, &next_audio, Start::armed(self.then(next))) {
-                    Ok(()) => self.chains.push((cue, next)),
+                    Ok(()) => {
+                        self.chains.push((cue, next));
+                        if let Some(status) = self.player.status(cue, self.clock.as_deref()) {
+                            self.waits_from.insert(next, status.seconds);
+                        }
+                    }
                     Err(e) => self.problems.push(format!("{}: {e}", cues.name(next))),
                 }
             }
@@ -537,7 +603,7 @@ impl Show {
                 continue;
             }
             self.watches.retain(|w| w.target != target);
-            self.watches.push(Watch { target, source: cue, at, fired: resumed.is_some_and(|from| at <= from), last: None });
+            self.watches.push(Watch { target, source: cue, at, fired: resumed.is_some_and(|from| at <= from), last: None, from: None });
         }
     }
 
@@ -586,6 +652,9 @@ impl Show {
         for target in due {
             self.fire(target, true)?;
         }
+        // Waits that are over are forgotten.
+        let (outros, chains) = (&self.pending_outros, &self.chains);
+        self.waits_from.retain(|cue, _| outros.iter().chain(chains).any(|(_, waiting)| waiting == cue));
         // Microphones that were left on a little longer go off now.
         if self.mic_hold.as_ref().is_some_and(|hold| hold.due <= now) {
             if let Some(hold) = self.mic_hold.take() {
@@ -603,6 +672,11 @@ impl Show {
             // The audio jumped back: the loop came round (or the operator moved it).
             if watch.last.is_some_and(|last| status.seconds < last - WRAP) {
                 watch.fired = false;
+                watch.from = None;
+            }
+            // The wait for this pass begins where the audio is first seen.
+            if watch.from.is_none() {
+                watch.from = Some(status.seconds);
             }
             if !watch.fired && status.seconds >= watch.at {
                 watch.fired = true;
@@ -1082,7 +1156,12 @@ mod tests {
         let mut rig = rig(&SLF, &SLF_CLIPS);
         rig.show.go().unwrap();
         rig.run(16);
-        rig.show.go().unwrap(); // the loop, 24 ms before the start would have chained into it
+        // The loop is on its way by itself: Go does nothing in the meantime.
+        assert!(rig.show.go_blocked());
+        rig.show.go().unwrap();
+        assert_eq!(rig.fired(), [0]);
+        // Clicked by hand, 24 ms before the start would have chained into it.
+        rig.show.fire(1, false).unwrap();
         rig.run(160);
         assert_eq!(rig.fired(), [0, 1]);
         assert_eq!(rig.notes(), [0, 1]);
@@ -1344,6 +1423,61 @@ mod tests {
         rig.run(80);
         let tc = rig.show.timecode_seconds().unwrap();
         assert!((tc - 3600.68).abs() < 0.009, "{tc}");
+    }
+
+    /// A wait is shown from 0, wherever the audio it hangs on stands when it begins.
+    #[test]
+    fn waits_run_from_zero_and_hold_go_back() {
+        let mut rig = rig(&SLF, &SLF_CLIPS);
+        rig.show.go().unwrap();
+        // The loop waits for the start's end (40 ms long).
+        rig.run(16);
+        let waits = rig.show.waits();
+        assert_eq!(waits.len(), 1);
+        assert_eq!(waits[0].cue, 1);
+        assert!((waits[0].fraction - 0.4).abs() < 0.05, "{waits:?}");
+        rig.run(32);
+        assert_eq!(rig.fired(), [0, 1]);
+        assert!(rig.show.waits().is_empty() && !rig.show.go_blocked());
+
+        // 8 ms into the loop the finish is asked for: its wait starts at 0, though the
+        // loop is not at its start, and is half over half-way to the loop's end.
+        rig.run(24);
+        rig.show.go().unwrap();
+        let wait = rig.show.waits().into_iter().find(|w| w.cue == 2).unwrap();
+        assert!(wait.fraction < 0.05, "{wait:?}");
+        assert!(rig.show.go_blocked());
+        let before = rig.fired();
+        rig.show.go().unwrap();
+        assert_eq!(rig.fired(), before, "Go is held back while the finish waits");
+        let left = (1.0 - rig.show.player().status(1, None).map_or(0.0, |s| (s.seconds - s.start) / (s.transition - s.start))) * 48.0;
+        rig.run((left / 2.0 / 8.0).round() as usize * 8);
+        let wait = rig.show.waits().into_iter().find(|w| w.cue == 2).unwrap();
+        assert!((wait.fraction - 0.5).abs() < 0.2, "{wait:?}");
+        rig.run(48);
+        assert_eq!(rig.fired().last(), Some(&2));
+        assert!(!rig.show.go_blocked());
+    }
+
+    /// An auto-cue in a loop comes round on every pass: it shows its wait, but Go stays free.
+    #[test]
+    fn an_auto_cue_in_a_loop_does_not_hold_go_back() {
+        let mut looped = rig(&["music: {file: long.wav, loop: true, end: 0.5}", "auto_trigger: {trigger_note: {ch: 1, note: 0}, at: 0.4}", "note: next"], &[("long.wav", 1.0, 1000)]);
+        looped.show.go().unwrap();
+        looped.run(200);
+        assert!(!looped.show.go_blocked());
+        let wait = looped.show.waits().into_iter().find(|w| w.cue == 1).unwrap();
+        assert!((wait.fraction - 0.5).abs() < 0.05, "{wait:?}");
+        // In audio that plays once it does hold Go back, as a delay does.
+        let mut once = rig(&["music: long.wav", "auto_trigger: {trigger_note: {ch: 1, note: 0}, at: 0.4}", "auto_trigger: {trigger_note: {ch: 1, note: 0}, delay: 0.6}", "note: next"], &[("long.wav", 1.0, 1000)]);
+        once.show.go().unwrap();
+        once.run(200);
+        assert!(once.show.go_blocked());
+        once.run(304);
+        assert!(once.show.go_blocked(), "the delay is still running");
+        once.run(200);
+        assert_eq!(once.fired(), [0, 1, 2]);
+        assert!(!once.show.go_blocked());
     }
 
     #[test]
