@@ -70,6 +70,7 @@ pub fn reference() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 ("h  l", t("ein Zeichen nach links / rechts", "one character left / right")),
                 ("j  k", t("eine Zeile nach unten / oben; am Rand in den Textblock darunter / darüber", "one line down / up; at the edge into the text block below / above")),
                 ("w  b  e", t("nächstes Wort / Wortanfang zurück / Wortende", "next word / back to the start of a word / end of a word")),
+                ("E", t("Ende des Wortes bis zum nächsten Leerzeichen (Satzzeichen zählen mit)", "end of the word up to the next space (punctuation counts as part of it)")),
                 ("0  ^  $", t("Zeilenanfang / erstes Zeichen / Zeilenende", "start of the line / first character / end of the line")),
                 ("f x  F x", t("zum nächsten / vorherigen x in der Zeile (x = beliebiges Zeichen)", "to the next / previous x in the line (x = any character)")),
                 ("t x  T x", t("bis vor das nächste / hinter das vorherige x", "up to just before the next / just after the previous x")),
@@ -84,13 +85,14 @@ pub fn reference() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 ("o  O", t("neue Zeile im Block darunter / darüber", "new line in the block below / above")),
                 ("go  gO", t("neuer Block darunter / darüber", "new block below / above")),
                 ("Enter", t("neuer Block darunter (auch im Einfügemodus)", "new block below (in insert mode too)")),
-                ("Shift+Enter", t("Zeilenumbruch im Einfügemodus", "line break in insert mode")),
+                ("Shift+Enter", t("neue Zeile im Block: im Einfügemodus am Cursor, im Normalmodus wie o", "new line in the block: in insert mode at the cursor, in normal mode like o")),
             ],
         ),
         (
             t("Löschen und Ändern", "Deleting and changing"),
             vec![
                 ("x", t("Zeichen löschen", "delete the character")),
+                ("r x", t("das Zeichen unter dem Cursor durch x ersetzen", "replace the character under the cursor by x")),
                 ("dw  D", t("bis zum nächsten Wort / bis zum Zeilenende löschen", "delete up to the next word / to the end of the line")),
                 (t("d + Bewegung", "d + movement"), t("löschen bis dorthin: dfx, dtx, dFx, dTx, de, db, d$, d0, d^, dh, dl", "delete up to there: dfx, dtx, dFx, dTx, de, db, d$, d0, d^, dh, dl")),
                 (t("c + Bewegung", "c + movement"), t("dasselbe und weiter im Einfügemodus: cfx, ctx, ce, cb, c$ …", "the same, then on in insert mode: cfx, ctx, ce, cb, c$ …")),
@@ -211,6 +213,18 @@ fn word_end(text: &[char], at: usize) -> usize {
         while i + 1 < text.len() && class(text[i + 1]) == word {
             i += 1;
         }
+    }
+    i.min(text.len().saturating_sub(1))
+}
+
+/// The end of the next word in the wider sense: everything up to the next space.
+fn big_word_end(text: &[char], at: usize) -> usize {
+    let mut i = (at + 1).min(text.len());
+    while i < text.len() && text[i].is_whitespace() {
+        i += 1;
+    }
+    while i + 1 < text.len() && !text[i + 1].is_whitespace() {
+        i += 1;
     }
     i.min(text.len().saturating_sub(1))
 }
@@ -393,6 +407,21 @@ impl Vim {
                 }
             }
         }
+        // r and a character: that character takes the place of the one under the cursor
+        // (with a number, of that many). Not among a role block's names.
+        if pending == "r" {
+            let in_names = start == 0 && role_names(text).is_some();
+            if !in_names && *at + times <= end {
+                save(self, text, *at);
+                text[*at..*at + times].fill(c);
+                *at += times - 1;
+            }
+            return Outcome::Stay;
+        }
+        if pending.is_empty() && c == 'r' {
+            self.pending = "r".to_string();
+            return Outcome::Stay;
+        }
         // Movements within the line that can stand alone or follow d, c or y: f, F, t, T
         // with the character to look for, and after an operator also h l 0 ^ $ e b.
         // (dw, cw, yw and the doubled dd, cc, yy have their own places below.)
@@ -429,6 +458,7 @@ impl Vim {
             ("", '^') if operator.is_some() => Some(Some((first_letter(text), false))),
             ("", '$') if operator.is_some() => Some(Some((end, false))),
             ("", 'e') if operator.is_some() => Some(Some(((0..times).fold(*at, |at, _| word_end(text, at)).min(end.saturating_sub(1)), true))),
+            ("", 'E') if operator.is_some() => Some(Some(((0..times).fold(*at, |at, _| big_word_end(text, at)).min(end.saturating_sub(1)), true))),
             ("", 'b') if operator.is_some() => Some(Some(((0..times).fold(*at, |at, _| previous_word(text, at)).max(start), false))),
             _ => None,
         };
@@ -508,6 +538,7 @@ impl Vim {
             ("", 'w') => (0..times).for_each(|_| *at = next_word(text, *at)),
             ("", 'b') => (0..times).for_each(|_| *at = previous_word(text, *at)),
             ("", 'e') => (0..times).for_each(|_| *at = word_end(text, *at)),
+            ("", 'E') => (0..times).for_each(|_| *at = big_word_end(text, *at)),
             // With a number, G and gg go to that line of the block.
             ("", 'G') | ("g", 'g') if self.count > 0 => {
                 *at = 0;
@@ -941,5 +972,33 @@ mod tests {
         }
         assert_eq!(vim.pending(), ":w");
         assert_eq!(vim.key(Key::Enter, &mut text, &mut cursor), Outcome::Close);
+    }
+
+    #[test]
+    fn replaces_a_character_and_moves_to_the_end_of_a_long_word() {
+        let mut vim = Vim::default();
+        vim.begin(Mode::Normal);
+        let (mut text, mut at) = ("Hallo Welt-raum, da".to_string(), 0);
+        let mut keys = |vim: &mut Vim, keys: &str, text: &mut String, at: &mut usize| keys.chars().for_each(|c| drop(vim.key(Key::Char(c), text, at)));
+        keys(&mut vim, "rJ", &mut text, &mut at);
+        assert_eq!((text.as_str(), at), ("Jallo Welt-raum, da", 0));
+        keys(&mut vim, "3rx", &mut text, &mut at);
+        assert_eq!((text.as_str(), at), ("xxxlo Welt-raum, da", 2));
+        keys(&mut vim, "u", &mut text, &mut at);
+        assert_eq!(text, "Jallo Welt-raum, da");
+        // E goes over the hyphen and the comma, e stops at each.
+        at = 6;
+        keys(&mut vim, "E", &mut text, &mut at);
+        assert_eq!(at, 15);
+        at = 6;
+        keys(&mut vim, "e", &mut text, &mut at);
+        assert_eq!(at, 9);
+        at = 6;
+        keys(&mut vim, "dE", &mut text, &mut at);
+        assert_eq!(text, "Jallo  da");
+        // Among a role's names nothing is replaced.
+        let (mut names, mut at) = ("**Anna**\nText".to_string(), 3);
+        keys(&mut vim, "rx", &mut names, &mut at);
+        assert_eq!(names, "**Anna**\nText");
     }
 }
