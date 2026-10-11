@@ -257,6 +257,8 @@ struct Relation {
 const PURPLE: Color32 = Color32::from_rgb(0xc6, 0x78, 0xdd);
 /// The colour of auto-cues: their marker on the waveform, their row and their line.
 const ORANGE: Color32 = Color32::from_rgb(0xd1, 0x9a, 0x66);
+/// The same, for the live view's dots.
+pub(crate) const AUTO_CUE: Color32 = ORANGE;
 /// The colour of the named markers set by hand on a waveform.
 const MARKER: Color32 = Color32::from_rgb(0x56, 0xb6, 0xc2);
 /// Height of the line above a waveform that names its markers.

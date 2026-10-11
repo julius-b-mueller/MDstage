@@ -151,7 +151,7 @@ fn device_summary(state: &DeviceState, kind: DeviceKind) -> String {
 }
 
 /// The bar of one audio: cut into pieces where the audio has named markers (as the show's
-/// bar is cut into scenes), with a yellow dot wherever an auto-cue fires. `gaps` and
+/// bar is cut into scenes), with an orange dot wherever an auto-cue fires. `gaps` and
 /// `dots` are places along the bar, from 0 to 1.
 fn marked_bar(ui: &mut Ui, width: f32, height: f32, fraction: f32, colour: Color32, gaps: &[f32], dots: &[f32]) {
     const GAP: f32 = 3.0;
@@ -179,7 +179,8 @@ fn marked_bar(ui: &mut Ui, width: f32, height: f32, fraction: f32, colour: Color
         let centre = pos2(rect.left() + rect.width() * dot, rect.center().y);
         // A dark rim keeps the dot apart from the bar under it.
         ui.painter().circle_filled(centre, height / 2.0 + 1.5, AUDIO);
-        ui.painter().circle_filled(centre, height / 2.0, YELLOW);
+        // In the colour of auto-cues everywhere else.
+        ui.painter().circle_filled(centre, height / 2.0, crate::script_view::AUTO_CUE);
     }
 }
 

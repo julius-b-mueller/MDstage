@@ -171,6 +171,9 @@ pub struct Settings {
     pub routing: HashMap<String, usize>,
     pub devices: Vec<DeviceSetting>,
     pub mixers: Vec<MixerSetting>,
+    /// Whether the microphones are switched on the mixers at all. Off: nothing is sent to
+    /// them (as a single output device can be switched off).
+    pub mics_enabled: bool,
     /// Hold back all outputs to devices.
     pub outputs_blocked: bool,
     pub go_note: Option<NoteSetting>,
@@ -213,6 +216,7 @@ impl Default for Settings {
             routing: HashMap::new(),
             devices: Vec::new(),
             mixers: Vec::new(),
+            mics_enabled: true,
             outputs_blocked: false,
             go_note: None,
             back_note: None,
@@ -281,6 +285,7 @@ impl Settings {
         let mixers = self
             .mixers
             .iter()
+            .filter(|_| self.mics_enabled)
             .map(|m| match m.clone() {
                 MixerSetting::X32 { port } => midi(&port, MuteMethod::X32),
                 MixerSetting::MidiNote { port, channel, note, on_velocity, off_velocity } => {
@@ -434,5 +439,16 @@ mod tests {
         assert_eq!(Settings::load(&path), settings);
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
         assert_eq!(Settings::load(&path), Settings::default(), "a missing file gives the defaults");
+    }
+
+    /// With microphone control switched off there is no mixer to send anything to.
+    #[test]
+    fn microphone_control_can_be_switched_off() {
+        let json = r#"{"mixers": [{"method": "x32", "port": "X32"}]}"#;
+        let mut settings: Settings = serde_json::from_str(json).unwrap();
+        assert!(settings.mics_enabled, "on unless said otherwise");
+        assert_eq!(settings.outputs(true).mixers.len(), 1);
+        settings.mics_enabled = false;
+        assert!(settings.outputs(true).mixers.is_empty());
     }
 }

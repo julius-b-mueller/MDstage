@@ -307,7 +307,7 @@ Every cue with an audio file shows an interactive waveform:
 **Drag** along the waveform (press and move) to move the playhead; the audio follows when the
 button is released. A plain click does nothing, so the audio is not moved by accident.
 
-**Named markers:** a **right click** on the waveform sets a marker at that place and asks for its name (optional). A right click on a marker renames or deletes it; **Shift+Drag** moves it. Markers are saved with the cue (`music.markers`, each with `at` in seconds and `name`). In the live view they cut the audio's progress bar into pieces, the way the show's bar is cut into scenes; where an auto-cue fires at a place in that audio, the bar carries a yellow dot.
+**Named markers:** a **right click** on the waveform sets a marker at that place and asks for its name (optional). A right click on a marker renames or deletes it; **Shift+Drag** moves it. Markers are saved with the cue (`music.markers`, each with `at` in seconds and `name`). In the live view they cut the audio's progress bar into pieces, the way the show's bar is cut into scenes; where an auto-cue fires at a place in that audio, the bar carries an orange dot.
 
 **Shift+Drag** on the waveform markers:
 
@@ -467,10 +467,15 @@ audio reaches a position, or after a delay once the source fires.
 2. Click the source cue (pick mode — any cue with a trigger note can be picked)
 3. **If the source audio is paused at a position**, that position is used (audio-position
    auto-cue). **Otherwise** a dialog asks for a time in seconds. If that time lies within the
-   source's audio, the auto-cue is put at that place in it and gets its marker on the
-   waveform, exactly as if it had been set from the playhead. If the source has no audio, or
-   the time lies past its end, it becomes a delay auto-cue: its line starts at the left edge
-   of the source's card, and the source's card names it with its seconds.
+   source's audio, you choose:
+   - **At that place in the source's audio:** the auto-cue gets its marker on the waveform,
+     exactly as if it had been set from the playhead. It fires whenever the audio reaches the
+     place — on every pass of a loop, and after a jump on the waveform too.
+   - **Once, with a delay:** it counts from the firing of the source and fires exactly once.
+
+   If the source has no audio, or the time lies past its end, it is always a delay auto-cue.
+   A delay auto-cue's line starts at the left edge of the source's card, and the source's
+   card names it with its seconds.
 
 Seconds are shown with two decimals at most.
 
@@ -859,7 +864,7 @@ fallback to a default device).
 
 ### Switching single devices off
 
-The **Devices** menu lists every MIDI, OSC and HTTP output device with a tick. Without the tick nothing is sent to that device — so that, say, the lighting desk is left alone while its operator is programming during a rehearsal. A line above the script names the devices that are switched off. *Block all outputs* in the same menu holds everything back, timecode included. (The tick is the same one as in the device list of the settings.)
+The **Devices** menu lists every MIDI, OSC and HTTP output device with a tick. Without the tick nothing is sent to that device — so that, say, the lighting desk is left alone while its operator is programming during a rehearsal. A line above the script names the devices that are switched off. *Microphone control* in the same menu does the same for the mixers: without the tick no microphone is switched, not by "Mics Off" either. *Block all outputs* holds everything back, timecode included. (The tick is the same one as in the device list of the settings.)
 
 ### Mixer Remote Control
 

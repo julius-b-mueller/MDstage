@@ -285,7 +285,7 @@ impl App {
                         auto.insert("at".into(), ((at * 1000.0).round() / 1000.0).into());
                         map.insert("auto_trigger".into(), auto.into());
                     }),
-                    None => self.link_dialog = Some(LinkDialog::Delay { block, source: note, seconds: 5.0 }),
+                    None => self.link_dialog = Some(LinkDialog::Delay { block, source: note, seconds: 5.0, at_place: true }),
                 }
             }
             Link::Adjust => {
@@ -306,6 +306,20 @@ impl App {
 
     fn link_window(&mut self, ctx: &egui::Context) {
         let Some(mut dialog) = self.link_dialog.take() else { return };
+        // For an auto-cue: the place in the source's audio that the time typed in would
+        // be, if the source has audio that long.
+        let place = match &dialog {
+            LinkDialog::Delay { source, seconds, .. } => self.show.as_ref().and_then(|show| {
+                let cues = Cues::new(&show.script);
+                let audio = cues.get(cues.find(*source)?)?.audio()?;
+                let part = audio.parts.first()?;
+                let length = self.view.duration(&part.audios.first()?.file)?;
+                let start = part.start.unwrap_or(0.0);
+                let end = part.end.unwrap_or(length).min(length);
+                (start + seconds < end).then_some(start + seconds)
+            }),
+            LinkDialog::Adjust { .. } => None,
+        };
         let mut open = true;
         let mut result = None;
         let title = match dialog {
@@ -314,12 +328,23 @@ impl App {
         };
         egui::Window::new(title).open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
             match &mut dialog {
-                LinkDialog::Delay { seconds, .. } => {
+                LinkDialog::Delay { seconds, at_place, .. } => {
                     ui.label(lang::t(
-                        "Das Audio der Quelle steht an keiner Stelle. Der Cue wird nach der eingegebenen Zeit ausgelöst, sobald die Quelle startet. Liegt die Zeit innerhalb des Audios der Quelle, entsteht dort eine Marke in der Wellenform.",
-                        "The source's audio is not standing anywhere. The cue fires the given time after the source starts. If that time lies within the source's audio, a marker is put there on its waveform.",
+                        "Das Audio der Quelle steht an keiner Stelle. Nach welcher Zeit soll der Cue ausgelöst werden?",
+                        "The source's audio is not standing anywhere. After what time is the cue to fire?",
                     ));
                     ui.add(egui::DragValue::new(seconds).speed(0.1).range(0.0..=36000.0).suffix(" s"));
+                    ui.add_space(4.0);
+                    // The choice only exists while the time lies within the source's audio.
+                    ui.add_enabled_ui(place.is_some(), |ui| {
+                        ui.radio_value(at_place, true, lang::t("An dieser Stelle im Audio der Quelle (Marke in der Wellenform)", "At that place in the source's audio (marker on the waveform)"))
+                            .on_hover_text(lang::t("Löst aus, sobald das Audio der Quelle die Stelle erreicht: bei einem Loop in jedem Durchgang, und auch nach einem Sprung in der Wellenform.", "Fires when the source's audio reaches the place: on every pass of a loop, and after a jump on the waveform too."));
+                        ui.radio_value(at_place, false, lang::t("Einmal, mit Verzögerung nach dem Start der Quelle", "Once, with a delay after the source starts"))
+                            .on_hover_text(lang::t("Zählt ab dem Auslösen der Quelle und löst genau einmal aus, was auch immer ihr Audio tut.", "Counts from the firing of the source and fires exactly once, whatever its audio does."));
+                    });
+                    if place.is_none() {
+                        ui.label(RichText::new(lang::t("Die Quelle hat kein Audio, das so lang ist: Der Cue wird einmal mit Verzögerung ausgelöst.", "The source has no audio that long: the cue fires once, with a delay.")).color(MUTED));
+                    }
                 }
                 LinkDialog::Adjust { fadeout, volume, fadetime, .. } => {
                     ui.radio_value(fadeout, true, lang::t("Ausfaden (stoppen)", "Fade out (stop)"));
@@ -344,19 +369,10 @@ impl App {
             });
         });
         match (result, dialog) {
-            (Some(true), LinkDialog::Delay { block, source, seconds }) => {
-                // Within the source's audio the delay is a place in it: the auto-cue gets
-                // its marker on the waveform, as if it had been set from the playhead.
-                // Past the end of the audio, or with a source that has none, it stays a delay.
-                let place = self.show.as_ref().and_then(|show| {
-                    let cues = Cues::new(&show.script);
-                    let audio = cues.get(cues.find(source)?)?.audio()?;
-                    let part = audio.parts.first()?;
-                    let length = self.view.duration(&part.audios.first()?.file)?;
-                    let start = part.start.unwrap_or(0.0);
-                    let end = part.end.unwrap_or(length).min(length);
-                    (start + seconds < end).then_some(start + seconds)
-                });
+            (Some(true), LinkDialog::Delay { block, source, seconds, at_place }) => {
+                // At the place in the source's audio (with its marker on the waveform, as
+                // if it had been set from the playhead), or once after a delay.
+                let place = place.filter(|_| at_place);
                 self.edit_cue(block, |map| {
                     let mut auto = serde_yaml_mapping();
                     auto.insert("trigger_note".into(), note_value(source));
@@ -801,6 +817,9 @@ impl App {
                 if !any {
                     ui.label(RichText::new(lang::t("Keine MIDI-, OSC- oder HTTP-Geräte eingerichtet", "No MIDI, OSC or HTTP devices set up")).color(MUTED));
                 }
+                if !self.settings.mixers.is_empty() {
+                    changed |= ui.checkbox(&mut self.settings.mics_enabled, lang::t("Mikrofonsteuerung (Mischpult)", "Microphone control (mixer)")).on_hover_text(lang::t("Ohne Haken werden keine Mikrofone am Mischpult geschaltet, auch nicht durch „Mics Off“.", "Without the tick no microphones are switched on the mixer, not by \"Mics Off\" either.")).changed();
+                }
                 ui.separator();
                 changed |= ui.checkbox(&mut self.settings.outputs_blocked, lang::t("Alle Ausgänge blockieren", "Block all outputs")).changed();
                 if changed {
@@ -934,6 +953,9 @@ impl App {
                 off.push(name);
             }
         }
+        if !self.settings.mics_enabled && !self.settings.mixers.is_empty() {
+            off.push(lang::t("Mikrofonsteuerung", "microphone control").to_string());
+        }
         if !off.is_empty() && !self.settings.outputs_blocked {
             let mut switch_on = false;
             ui.horizontal_wrapped(|ui| {
@@ -947,6 +969,7 @@ impl App {
                         *enabled = true;
                     }
                 }
+                self.settings.mics_enabled = true;
                 self.devices_changed();
             }
         }
@@ -1632,7 +1655,9 @@ impl App {
 /// The details of a connection from the cue in `block` to another cue.
 enum LinkDialog {
     /// Fire by itself this long after `source` fires.
-    Delay { block: usize, source: mdstage_core::cues::Note, seconds: f64 },
+    /// `at_place`: if the time lies within the source's audio, hang the auto-cue on that
+    /// place in it (it then fires on every pass of a loop) instead of counting once.
+    Delay { block: usize, source: mdstage_core::cues::Note, seconds: f64, at_place: bool },
     /// Change the audio of `target` when the cue fires.
     Adjust { block: usize, target: mdstage_core::cues::Note, fadeout: bool, volume: f64, fadetime: f64 },
 }
