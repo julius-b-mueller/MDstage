@@ -56,6 +56,13 @@ cat > "$app/Contents/Info.plist" <<EOF
 </plist>
 EOF
 
+# Sign the bundle ad hoc. The linker signs the executable by itself, but that signature
+# knows nothing of Info.plist and the icon: downloaded from the web, macOS then calls
+# the app "damaged" and offers no way to open it. With the whole bundle sealed it is
+# merely from an unidentified developer and can be let through in System Settings.
+codesign --force --deep --sign - "$app"
+codesign --verify --deep --strict "$app"
+
 echo "Built $app (version $version)"
 
 if [ "${1:-}" = "--dmg" ]; then
