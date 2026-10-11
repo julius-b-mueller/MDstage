@@ -11,7 +11,7 @@ use mdstage_core::audio::Part;
 use mdstage_core::cues::{AutoWhen, Cues, Note, Slf};
 use mdstage_core::effects::Effect;
 use mdstage_core::mic::{Cast, Mic, MicChip};
-use mdstage_core::{Block, Cue, Script};
+use mdstage_core::{Block, Cue, Script, format};
 use mdstage_engine::mtc::Timecode;
 use mdstage_engine::session::Snapshot;
 
@@ -363,7 +363,11 @@ impl ScriptView {
         let Some(block) = script.blocks.get(index) else { return };
         let buffer = match block {
             // A stage direction is edited as what it says; its asterisks are the file's business.
-            Block::Stage(text) => text.clone(),
+            Block::Stage(text) => format::shown(text),
+            // Dialogue is edited as it reads: flowing, a line break where the file has a
+            // `<br>`, a stage direction inside it simply in brackets.
+            Block::Role { names, text } => format!("**{}**\n{}", names.join("/"), format::unstarred(&format::shown(text))).trim_end().to_string(),
+            Block::Text(text) => format::shown(text),
             block => Script { blocks: vec![block.clone()] }.to_markdown().trim_end().to_string(),
         };
         self.editing = Some(Editing { index, buffer, focused: false, fresh });
@@ -654,7 +658,7 @@ impl ScriptView {
                 }
                 job.append(text, 0.0, plain(size, BRIGHT));
             }
-            Block::Stage(text) => job.append(text, 0.0, TextFormat { italics: true, ..body(16.0, MUTED) }),
+            Block::Stage(text) => job.append(&format::shown(text), 0.0, TextFormat { italics: true, ..body(16.0, MUTED) }),
             Block::Role { names, text } => {
                 let colour = names.first().map_or(BRIGHT, |n| Self::role_colour(cast, n));
                 for (i, name) in names.iter().enumerate() {
@@ -665,18 +669,20 @@ impl ScriptView {
                 }
                 if !text.is_empty() {
                     job.append("\n", 0.0, plain(13.0, colour));
-                    // Inline stage directions `*(…)*` are shown in grey italics.
+                    // The text flows; a `<br>` in the file is a line break here. Stage
+                    // directions inside it — `*(…)*`, or brackets alone — are grey italics.
+                    let text = format::unstarred(&format::shown(text));
                     let mut rest = text.as_str();
-                    while let Some(open) = rest.find("*(") {
-                        let Some(close) = rest[open..].find(")*") else { break };
+                    while let Some(open) = rest.find('(') {
+                        let Some(close) = rest[open..].find(')').filter(|close| !rest[open..open + close].contains('\n')) else { break };
                         job.append(&rest[..open], 0.0, body(17.0, colour));
-                        job.append(&rest[open + 1..open + close + 1], 0.0, TextFormat { italics: true, ..body(17.0, MUTED) });
-                        rest = &rest[open + close + 2..];
+                        job.append(&rest[open..=open + close], 0.0, TextFormat { italics: true, ..body(17.0, MUTED) });
+                        rest = &rest[open + close + 1..];
                     }
                     job.append(rest, 0.0, body(17.0, colour));
                 }
             }
-            Block::Text(text) => job.append(text, 0.0, body(17.0, TEXT)),
+            Block::Text(text) => job.append(&format::shown(text), 0.0, body(17.0, TEXT)),
             Block::Config(_) | Block::Cue(_) => return None,
         }
         Some(job)
@@ -1227,9 +1233,14 @@ impl ScriptView {
         // Lines with nothing on them (or only spaces) are dropped, as is space at the edges.
         // (So are the bare asterisks left when all of a role block's names were taken out.)
         let lines: Vec<&str> = buffer.lines().map(str::trim).filter(|line| !line.is_empty() && *line != "****").collect();
+        // Every line typed is a line: it is written with a `<br>` at its end, so that
+        // any Markdown reader breaks there too. Brackets in dialogue are stage directions.
         match Script::parse(&lines.join("\n")).blocks.into_iter().next()? {
             // An asterisk inside would end the direction early when the file is read again.
-            Block::Text(text) if !text.contains('*') && !text.trim().is_empty() => Some(Block::Stage(text.trim().to_string())),
+            Block::Text(text) if !text.contains('*') && !text.trim().is_empty() => Some(Block::Stage(format::stored(&text))),
+            Block::Text(text) => Some(Block::Text(format::stored(&text))),
+            Block::Stage(text) => Some(Block::Stage(format::stored(&text))),
+            Block::Role { names, text } => Some(Block::Role { names, text: format::stored(&format::starred(&text)) }),
             block => Some(block),
         }
     }
@@ -1322,9 +1333,11 @@ impl ScriptView {
                     }
                     // Shortcuts with Cmd/Ctrl (copy, select all, …) stay the text field's.
                     egui::Event::Key { modifiers, .. } if modifiers.command || modifiers.ctrl => true,
-                    egui::Event::Key { key, pressed, .. } => {
+                    egui::Event::Key { key, pressed, modifiers, .. } => {
                         let known = match key {
                             Key::Escape => Some(vim::Key::Escape),
+                            // Shift+Enter: a new line in the block, as `o`.
+                            Key::Enter if modifiers.shift => Some(vim::Key::Char('o')),
                             Key::Enter => Some(vim::Key::Enter),
                             Key::Backspace => Some(vim::Key::Backspace),
                             Key::ArrowLeft => Some(vim::Key::Char('h')),
@@ -1376,7 +1389,9 @@ impl ScriptView {
 
         // Keys the editor handles itself must be taken before the text field sees them.
         let tab = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Tab));
-        let mut commit = ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
+        // Enter finishes the block; Shift+Enter is a new line inside it, left to the field.
+        let shift_held = ui.input(|i| i.modifiers.shift);
+        let mut commit = !shift_held && ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));
         let mut cancel = !cx.vim && ui.input(|i| i.key_pressed(Key::Escape));
         // Arrow up on the first line and arrow down on the last leave for the text block
         // above or below.
@@ -2402,6 +2417,27 @@ mod tests {
         });
     }
 
+    /// What is typed line by line is stored with `<br>`, read back the same, and the
+    /// editor shows it as it was typed.
+    #[test]
+    fn typed_lines_are_stored_with_breaks_and_come_back() {
+        let role = ScriptView::typed_block("**Anna**\nErste Zeile (leise)\nZweite. Dritter Satz").unwrap();
+        assert_eq!(role, Block::Role { names: vec!["Anna".into()], text: "Erste Zeile *(leise)* <br>\nZweite.\nDritter Satz".into() });
+        let stage = ScriptView::typed_block("Licht aus.\nVorhang").unwrap();
+        assert_eq!(stage, Block::Stage("Licht aus. <br>\nVorhang".into()));
+        for block in [role, stage] {
+            let script = Script { blocks: vec![block.clone()] };
+            let read = Script::parse(&script.to_markdown());
+            assert_eq!(read.blocks, vec![block.clone()], "the file gives the same block back");
+            // Opened in the editor and left untouched, nothing changes.
+            let mut view = ScriptView::default();
+            view.edit(&script, 0, false);
+            let buffer = view.editing.as_ref().unwrap().buffer.clone();
+            assert!(!buffer.contains("<br>") && !buffer.contains("*("), "{buffer}");
+            assert_eq!(ScriptView::typed_block(&buffer), Some(block));
+        }
+    }
+
     #[test]
     fn bare_text_typed_into_the_editor_is_a_stage_direction() {
         assert_eq!(ScriptView::typed_block("Licht aus."), Some(Block::Stage("Licht aus.".into())));
@@ -2412,7 +2448,7 @@ mod tests {
         assert_eq!(ScriptView::typed_block("****\nHallo."), Some(Block::Stage("Hallo.".into())), "emptied role names leave no fragment");
         assert_eq!(ScriptView::typed_block("  \n\t\n "), None, "nothing but space is nothing");
         assert_eq!(ScriptView::typed_block("  Licht aus.  \n\n   \n"), Some(Block::Stage("Licht aus.".into())));
-        assert_eq!(ScriptView::typed_block("**Anna**\n\n  Hallo.  \n \nNoch was.\n"), Some(Block::Role { names: vec!["Anna".into()], text: "Hallo.\nNoch was.".into() }));
+        assert_eq!(ScriptView::typed_block("**Anna**\n\n  Hallo.  \n \nNoch was.\n"), Some(Block::Role { names: vec!["Anna".into()], text: "Hallo. <br>\nNoch was.".into() }));
         // What is typed comes back the same from the file.
         for typed in ["Licht aus.", "Zwei\nZeilen", "x"] {
             let block = ScriptView::typed_block(typed).unwrap();

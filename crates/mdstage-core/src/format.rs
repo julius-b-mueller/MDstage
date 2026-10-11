@@ -170,6 +170,58 @@ fn split_br(line: &str) -> Vec<&str> {
     parts
 }
 
+/// A block's text as it is read: the line ends the formatter puts after every sentence
+/// flow on (as in any Markdown reader), and each `<br>` begins a new line.
+pub fn shown(text: &str) -> String {
+    let mut lines: Vec<String> = split_br(text).into_iter().map(|part| part.split_whitespace().collect::<Vec<_>>().join(" ")).collect();
+    // A `<br>` at the very end breaks nothing.
+    while lines.len() > 1 && lines.last().is_some_and(|line| line.is_empty()) {
+        lines.pop();
+    }
+    lines.join("\n")
+}
+
+/// The other way round: text as it was typed, line by line, as it is written into the
+/// file — every line break a `<br>`, every sentence on a line of its own.
+pub fn stored(text: &str) -> String {
+    text.lines().map(str::trim).filter(|line| !line.is_empty()).map(wrap_sentences).collect::<Vec<_>>().join(" <br>\n")
+}
+
+/// Dialogue as it is typed: a stage direction inside it is simply put in brackets.
+pub fn unstarred(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find("*(") {
+        let Some(close) = rest[open..].find(")*") else { break };
+        out.push_str(&rest[..open]);
+        out.push_str(&rest[open + 1..open + close + 1]);
+        rest = &rest[open + close + 2..];
+    }
+    out + rest
+}
+
+/// Dialogue as it is written into the file: what stands in brackets is a stage direction
+/// and gets its asterisks, `(quietly)` becomes `*(quietly)*`.
+pub fn starred(text: &str) -> String {
+    let plain = unstarred(text);
+    let mut out = String::with_capacity(plain.len() + 8);
+    let mut rest = plain.as_str();
+    while let Some(open) = rest.find('(') {
+        // Brackets that are never closed, or closed only on a later line, stay as they are.
+        let Some(close) = rest[open..].find(')').filter(|close| !rest[open..open + close].contains('\n') && *close > 1) else {
+            out.push_str(&rest[..=open]);
+            rest = &rest[open + 1..];
+            continue;
+        };
+        out.push_str(&rest[..open]);
+        out.push('*');
+        out.push_str(&rest[open..=open + close]);
+        out.push('*');
+        rest = &rest[open + close + 1..];
+    }
+    out + rest
+}
+
 pub fn needs_formatting(text: &str) -> bool {
     format_script(text) != text
 }
@@ -234,5 +286,28 @@ Text<br>
     fn the_demo_show_is_already_formatted() {
         let text = include_str!("../testdata/demo.md");
         assert!(!needs_formatting(text));
+    }
+
+    #[test]
+    fn text_is_shown_flowing_and_stored_with_breaks() {
+        let file = "Satz eins.\nSatz zwei. <br>\nNeue Zeile";
+        assert_eq!(shown(file), "Satz eins. Satz zwei.\nNeue Zeile");
+        assert_eq!(stored(&shown(file)), file, "a formatted block comes back as it was");
+        assert_eq!(shown("Eins<BR>Zwei <br>\n"), "Eins\nZwei");
+        assert_eq!(stored("Zeile eins\n\n  Zeile zwei  "), "Zeile eins <br>\nZeile zwei");
+        assert_eq!(shown(""), "");
+    }
+
+    #[test]
+    fn brackets_in_dialogue_are_stage_directions() {
+        assert_eq!(starred("Ja. (leise) Nein (ab)"), "Ja. *(leise)* Nein *(ab)*");
+        assert_eq!(starred("Schon *(leise)* da (neu)"), "Schon *(leise)* da *(neu)*", "nothing is starred twice");
+        assert_eq!(unstarred("Ja. *(leise)* Nein"), "Ja. (leise) Nein");
+        assert_eq!(starred("offen ( und zu\n) später"), "offen ( und zu\n) später");
+        assert_eq!(starred("leer () bleibt"), "leer () bleibt");
+        // As the formatter leaves it: no sentence break is put before a starred direction.
+        let line = stored(&starred("Halt. (leise) Weiter. Ende"));
+        assert_eq!(line, "Halt. *(leise)* Weiter.\nEnde");
+        assert_eq!(format_script(&format!("**A**\n{line}\n")), format!("**A**\n{line}\n"));
     }
 }

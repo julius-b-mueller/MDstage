@@ -92,7 +92,7 @@ impl Script {
                     };
                     let names = names.iter().map(|n| (n.clone(), colour(n))).collect();
                     // Hard breaks become real line ends.
-                    let dialogue = text.replace("<br>", "\n").replace("<BR>", "\n").lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("\n");
+                    let dialogue = crate::format::shown(text);
                     items.push(Item::Role { names, dialogue });
                 }
                 Block::Text(text) => items.push(Item::Text(text.clone())),
