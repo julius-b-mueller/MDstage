@@ -2049,11 +2049,15 @@ impl ScriptView {
         // The connections: a click sets one up (then click the other cue), Shift+click
         // on one that exists removes it.
         let mut link_button = |row: &mut Ui, link: Link, text: &str, exists: bool, enabled: bool, hint: &str| {
-            // In the colour of its kind once it exists, bright while its other end is being picked.
+            // In the colour of its kind once it exists, and it keeps that colour whatever
+            // is clicked: only Shift+click takes the connection (and the colour) away.
+            // While its other end is being picked the button has a bright outline.
             let kind = if link == Link::AutoCue { ORANGE } else { GREEN };
-            let colour = if self.picking == Some((link, block)) { BRIGHT } else if exists { kind } else { TEXT };
-            let hint = if exists { format!("{hint}\n{}", t("Shift+Klick löscht.", "Shift+click removes it.")) } else { hint.to_string() };
-            if row.add_enabled(enabled, small(text, colour)).on_hover_text(hint).clicked() {
+            let picking = self.picking == Some((link, block));
+            let colour = if exists { kind } else if picking { BRIGHT } else { TEXT };
+            let hint = if exists { format!("{hint}\n{}", t("Klick stellt neu ein, Shift+Klick löscht.", "Click sets it up anew, Shift+click removes it.")) } else { hint.to_string() };
+            let button = if picking { small(text, colour).stroke(Stroke::new(1.0_f32, BRIGHT)) } else { small(text, colour) };
+            if row.add_enabled(enabled, button).on_hover_text(hint).clicked() {
                 match exists && shift {
                     true => actions.push(Action::Unlink { link, block }),
                     false if self.picking == Some((link, block)) => self.picking = None,
@@ -2078,7 +2082,9 @@ impl ScriptView {
             None => "S/L/F",
         };
         let linked = cue.chain_end().is_some() || cue.loop_outro().is_some();
-        let label = RichText::new(slf).size(13.0).color(if matches!(self.picking, Some((Link::Chain | Link::LoopOutro, b)) if b == block) { BRIGHT } else if slf != "S/L/F" { PURPLE } else { TEXT });
+        // (Purple once the cue has a place in such a structure; that stays while a cue is being picked.)
+        let picking_slf = matches!(self.picking, Some((Link::Chain | Link::LoopOutro, b)) if b == block);
+        let label = RichText::new(if picking_slf { format!("{slf} …") } else { slf.to_string() }).size(13.0).color(if slf != "S/L/F" { PURPLE } else if picking_slf { BRIGHT } else { TEXT });
         row.add_enabled_ui(has_audio, |row| {
             row.menu_button(label, |ui| {
                 if ui.button(t("Start: am Ende nahtlos weiter mit … (Cue anklicken)", "Start: at the end carry straight on with … (click a cue)")).clicked() {
@@ -2099,8 +2105,9 @@ impl ScriptView {
         });
 
         let auto_mic = cue.auto_mic();
-        let hint = if auto_mic { t("Auto-Mic ist an: Mikrofone kommen aus dem folgenden Text. Klick schaltet es aus.", "Auto mic is on: the microphones come from the text that follows. Click to switch it off.") } else { t("Auto-Mic: Mikrofone aus dem folgenden Rollentext bestimmen", "Auto mic: work out the microphones from the text that follows") };
-        if row.add(small("Auto-Mic", if auto_mic { GREEN } else { TEXT })).on_hover_text(hint).clicked() {
+        let hint = if auto_mic { t("Auto-Mic ist an: Mikrofone kommen aus dem folgenden Text. Shift+Klick schaltet es aus.", "Auto mic is on: the microphones come from the text that follows. Shift+click switches it off.") } else { t("Auto-Mic: Mikrofone aus dem folgenden Rollentext bestimmen", "Auto mic: work out the microphones from the text that follows") };
+        // On by a click; off only by Shift+click, like the connections.
+        if row.add(small("Auto-Mic", if auto_mic { GREEN } else { TEXT })).on_hover_text(hint).clicked() && (!auto_mic || shift) {
             actions.push(Action::AutoMic { block, on: !auto_mic });
         }
     }

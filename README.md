@@ -264,7 +264,9 @@ The **Auto-Mic** button in the cue's button row enables automatic microphone ass
 ### How it works
 
 - Click **Auto-Mic** on a cue to make it an Auto-Mic cue (`auto_mic: true` is saved in the YAML block).
-- Clicking it again removes the Auto-Mic flag.
+- **Shift+Click** removes the Auto-Mic flag.
+
+The buttons of a card that stand for something the cue has (Auto-Mic, Auto-Cue, Adjust, S/L/F) are coloured, and stay coloured when clicked: a click sets the connection up anew (the button gets a bright outline while the other cue is being picked), only **Shift+Click** removes it.
 - When an Auto-Mic cue fires, the app looks at all role blocks with dialogue between that cue and the **next** Auto-Mic cue in the script. All matching microphone channels are opened; everything else is muted.
 - The **last** Auto-Mic cue (no further Auto-Mic cue after it) mutes all channels.
 - The computed microphone list is shown in the cue header.
