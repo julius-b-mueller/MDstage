@@ -600,7 +600,9 @@ impl LiveView {
         // A cue that is waiting to fire by itself shows how far its wait has got: for its
         // loop's end, its predecessor's end, its delay or its place in the audio. The bar
         // always starts at nothing when the wait begins.
-        let waiting = snapshot.waits.iter().find(|wait| wait.cue == cue).map(|wait| (wait.fraction as f32, YELLOW));
+        // (Orange for an auto-cue, purple for a start/loop/finish handover.)
+        let wait_colour = if c.auto_trigger().is_some() { crate::script_view::AUTO_CUE } else { crate::script_view::SLF };
+        let waiting = snapshot.waits.iter().find(|wait| wait.cue == cue).map(|wait| (wait.fraction as f32, wait_colour));
         if let Some((fraction, colour)) = waiting {
             let track = Rect::from_min_size(pos2(left, rect.bottom() - 9.0), vec2(rect.right() - 16.0 - left, 4.0));
             painter.rect_filled(track, 2.0, tint(AUDIO));

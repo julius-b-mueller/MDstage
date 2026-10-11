@@ -262,6 +262,8 @@ const PURPLE: Color32 = Color32::from_rgb(0xc6, 0x78, 0xdd);
 const ORANGE: Color32 = Color32::from_rgb(0xd1, 0x9a, 0x66);
 /// The same, for the live view's dots.
 pub(crate) const AUTO_CUE: Color32 = ORANGE;
+/// The colour of start/loop/finish, for the live view.
+pub(crate) const SLF: Color32 = PURPLE;
 /// The colour of the named markers set by hand on a waveform.
 const MARKER: Color32 = Color32::from_rgb(0x56, 0xb6, 0xc2);
 /// Height of the line above a waveform that names its markers.
@@ -1739,12 +1741,15 @@ impl ScriptView {
             painter.rect_stroke(panel, 4.0, Stroke::new(2.0_f32, BRIGHT.gamma_multiply(strength)), egui::StrokeKind::Outside);
             ui.ctx().request_repaint();
         }
+        // In the colour of what the cue waits by: orange for an auto-cue, purple for a
+        // start/loop/finish handover.
+        let wait_colour = if cue.auto_trigger().is_some() { ORANGE } else { PURPLE };
         if let Some(fraction) = waiting {
             // A bar along the card's bottom edge shows how far the wait has got, from
             // nothing when it began to the full width when the cue fires.
             let track = Rect::from_min_max(pos2(panel.left(), panel.bottom() - 4.0), panel.max);
             painter.rect_filled(track, 2.0, INSET);
-            painter.rect_filled(Rect::from_min_size(track.min, vec2(track.width() * fraction.clamp(0.0, 1.0) as f32, 4.0)), 2.0, YELLOW);
+            painter.rect_filled(Rect::from_min_size(track.min, vec2(track.width() * fraction.clamp(0.0, 1.0) as f32, 4.0)), 2.0, wait_colour);
             ui.ctx().request_repaint();
         }
 
@@ -1765,9 +1770,9 @@ impl ScriptView {
             badge(t("ausgelöst", "fired"), GREEN);
         }
         if waits {
-            badge(t("wartet auf Loop-Ende", "waiting for loop end"), YELLOW);
+            badge(t("wartet auf Loop-Ende", "waiting for loop end"), wait_colour);
         } else if waiting.is_some() {
-            badge(t("kommt von selbst", "coming by itself"), YELLOW);
+            badge(t("kommt von selbst", "coming by itself"), wait_colour);
         } else if is_next {
             badge(t("nächster", "next"), YELLOW);
         }
