@@ -271,6 +271,10 @@ const AUTO_NAMES: f32 = 14.0;
 /// From a cue's left edge to the first lane: room for an arrowhead and a straight piece
 /// of line before the corner.
 const FIRST_LANE: f32 = 18.0;
+/// Room for the seconds at the start of a delayed auto-cue's line, and how far apart
+/// line ends stand on a cue that has such seconds.
+const LABEL_ROOM: f32 = 38.0;
+const LABELLED_APART: f32 = 14.0;
 /// Height of the strip under a waveform that one position auto-cue's line runs out in.
 const AUTO_STRIP: f32 = 5.0;
 /// Distance between two lanes of connection lines in the margin.
@@ -590,9 +594,29 @@ impl ScriptView {
         if self.lanes == 0 {
             return 0.0;
         }
-        // Seconds written at a line's start need some room to the left of the cards.
-        let labelled = if self.relations.iter().any(|relation| relation.delay.is_some()) { 30.0 } else { 0.0 };
-        ((self.lanes - 1) as f32 * LANE + FIRST_LANE + 4.0).max(labelled)
+        (self.lanes - 1) as f32 * LANE + FIRST_LANE + 4.0 + self.label_room()
+    }
+
+    /// Room between the cards and the first lane for the seconds written at the start of
+    /// a delayed auto-cue's line: the lanes lie to the left of it, so that no line runs
+    /// through the numbers.
+    fn label_room(&self) -> f32 {
+        if self.relations.iter().any(|relation| relation.delay.is_some()) { LABEL_ROOM } else { 0.0 }
+    }
+
+    /// How many lines end on a cue's block, and whether any of them carries seconds.
+    fn line_ends(&self, block: usize) -> (usize, bool) {
+        let ends = self.relations.iter().filter(|r| r.from == block).count() + self.relations.iter().filter(|r| r.to == block).count();
+        (ends, self.relations.iter().any(|r| r.from == block && r.delay.is_some()))
+    }
+
+    /// The least height a cue's block needs for its line ends: with seconds written at
+    /// them they stand a full line of small type apart.
+    fn height_for_lines(&self, block: usize) -> f32 {
+        match self.line_ends(block) {
+            (ends, true) if ends > 1 => 34.0 + (ends - 1) as f32 * LABELLED_APART,
+            _ => 0.0,
+        }
     }
 
     /// The connections between cues, in the margin left of them: a line from the cue
@@ -605,7 +629,8 @@ impl ScriptView {
             // The ends on one cue are spread down its edge, closer together if there are many.
             let at = |block: usize, (place, count): (usize, usize)| {
                 let height = self.heights.get(block).copied().unwrap_or(0.0);
-                let apart = if count > 1 { ((height - 34.0) / (count - 1) as f32).clamp(4.0, 11.0) } else { 0.0 };
+                let widest = if self.line_ends(block).1 { LABELLED_APART } else { 11.0 };
+                let apart = if count > 1 { ((height - 34.0) / (count - 1) as f32).clamp(4.0, widest) } else { 0.0 };
                 origin.y + self.offsets.get(block).copied().unwrap_or(0.0) + 4.0 + 14.0 + place as f32 * apart
             };
             // An auto-cue at a place in its source's audio begins right there: at the foot
@@ -621,7 +646,7 @@ impl ScriptView {
             // arrowhead lie on each other they must not add up to something darker.
             let strong = self.hovered_before.is_some_and(|h| h == relation.from || h == relation.to);
             let colour = if strong { relation.tie.colour() } else { BACKGROUND.lerp_to_gamma(relation.tie.colour(), 0.5) };
-            let x = origin.x - FIRST_LANE - relation.lane as f32 * LANE;
+            let x = origin.x - FIRST_LANE - self.label_room() - relation.lane as f32 * LANE;
             // Out of the cue, round the corner, along the lane, round the corner, into the
             // other. The line is straight where it leaves the dot and where it enters the
             // arrowhead; the corners lie between.
@@ -647,12 +672,10 @@ impl ScriptView {
             }
         }
         // The seconds of a delayed auto-cue, where its line leaves the source: just above
-        // the line, on a patch of background so that other lines do not run through it.
+        // the line, in the room kept free between the cards and the lanes.
         for (start, text, colour) in labels {
             let text = painter.layout_no_wrap(text, FontId::proportional(10.0), colour);
-            let place = pos2(start.x - 4.0 - text.size().x, start.y - 2.0 - text.size().y);
-            painter.rect_filled(Rect::from_min_size(place, text.size()).expand2(vec2(2.0, 0.0)), 2.0, BACKGROUND);
-            painter.galley(place, text, colour);
+            painter.galley(pos2(start.x - 5.0 - text.size().x, start.y - 1.0 - text.size().y), text, colour);
         }
     }
 
@@ -1047,7 +1070,8 @@ impl ScriptView {
                 Block::Cue(cue) => {
                     let rows = Self::cue_rows(cx, i, self.cue_of_block[i].unwrap_or(0), cue, &self.durations);
                     let autos = Self::position_autos(&Cues::new(cx.script), cue.note()).len();
-                    Self::cue_height(Self::cue_lines(ui, &rows, width), cue.audio().is_some(), autos, autos > 0 || !cue.markers().is_empty())
+                    // (And tall enough for the lines that end on it, where they carry seconds.)
+                    Self::cue_height(Self::cue_lines(ui, &rows, width), cue.audio().is_some(), autos, autos > 0 || !cue.markers().is_empty()).max(self.height_for_lines(i))
                 }
                 block => {
                     let job = Self::job(cx.cast, block, width, self.numbers.get(i).copied().flatten()).unwrap_or_default();
@@ -2516,6 +2540,11 @@ mod tests {
         let mut leaving: Vec<(usize, f64)> = view.relations.iter().map(|r| (r.from_place.0, r.delay.unwrap())).collect();
         leaving.sort_by_key(|(place, _)| *place);
         assert_eq!(leaving, [(0, 2.5), (1, 5.0), (2, 9.0)], "the shortest delay at the top");
+        // The source is made tall enough for three lines of seconds, and the lanes keep clear of them.
+        let source = view.relations[0].from;
+        assert_eq!(view.height_for_lines(source), 34.0 + 2.0 * LABELLED_APART);
+        assert_eq!(view.label_room(), LABEL_ROOM);
+        assert!(view.rail() > LABEL_ROOM + FIRST_LANE);
     }
 
     /// Ties get lanes so that no two lines lie on each other; a chain running down the
