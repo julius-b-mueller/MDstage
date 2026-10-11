@@ -241,6 +241,20 @@ impl Show {
         waits
     }
 
+    /// Whether Go is held back because the next cue has variants and the operator has
+    /// not chosen one yet. There is no falling back on the first: which variant is
+    /// taken is decided live, every time. (A cue armed by hand is a choice.)
+    pub fn needs_variant(&self) -> bool {
+        if self.armed.is_some() {
+            return false;
+        }
+        let cues = Cues::new(&self.script);
+        match self.history.next(&cues) {
+            Some(next) if cues.in_group(next) => !self.selected_variant.is_some_and(|chosen| cues.group(next).contains(&chosen)),
+            _ => false,
+        }
+    }
+
     /// Whether Go is held back because a cue is on its way by itself: a delay is running,
     /// an outro waits for its loop's end, a chained cue for its predecessor's, or an
     /// auto-cue for a place in audio that plays once. (An auto-cue in a loop comes round
@@ -405,7 +419,7 @@ impl Show {
     pub fn go(&mut self) -> Result<()> {
         // While a cue is on its way by itself, Go does nothing: what is coming comes,
         // and nothing is fired over it by accident.
-        if self.go_blocked() {
+        if self.go_blocked() || self.needs_variant() {
             return Ok(());
         }
         let cue = self.next();
@@ -1494,8 +1508,14 @@ mod tests {
         rig.run(120);
         assert_eq!(rig.fired(), [0], "neither the chain nor the auto-cue fired a variant");
         assert!(!rig.show.go_blocked());
+        // Nor does Go take one before the operator has chosen.
+        assert!(rig.show.needs_variant());
         rig.show.go().unwrap();
-        assert_eq!(rig.fired(), [0, 1]);
+        assert_eq!(rig.fired(), [0], "no falling back on the first variant");
+        rig.show.select_variant(Some(2));
+        assert!(!rig.show.needs_variant());
+        rig.show.go().unwrap();
+        assert_eq!(rig.fired(), [0, 2]);
     }
 
     /// A wait is shown from 0, wherever the audio it hangs on stands when it begins.

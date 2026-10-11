@@ -1811,12 +1811,17 @@ impl ScriptView {
         let is_current = snapshot.current == Some(cue_index);
         // The cue that fired last, if it did so by itself (the operator's own is "current").
         let just_fired = snapshot.latest == Some(cue_index) && !is_current;
-        // Of a group of variants the next Go takes the one chosen, or else the first.
-        let is_next = {
+        // Of a group of variants the next Go takes the one the operator has chosen. Until
+        // one is chosen none of them is the next, and Go waits.
+        let (is_next, to_choose) = {
             let cues = Cues::new(cx.script);
             match snapshot.next.filter(|next| cues.group(*next).contains(&cue_index)) {
-                Some(next) => snapshot.selected_variant.filter(|chosen| cues.group(next).contains(chosen)).unwrap_or(next) == cue_index,
-                None => false,
+                Some(next) if cues.in_group(next) => match snapshot.selected_variant.filter(|chosen| cues.group(next).contains(chosen)) {
+                    Some(chosen) => (chosen == cue_index, false),
+                    None => (false, snapshot.needs_variant),
+                },
+                Some(_) => (true, false),
+                None => (false, false),
             }
         };
         let waits = snapshot.pending_outros.iter().any(|&(_, outro)| outro == cue_index);
@@ -1891,6 +1896,8 @@ impl ScriptView {
             badge(t("kommt von selbst", "coming by itself"), wait_colour);
         } else if is_next {
             badge(t("nächster", "next"), YELLOW);
+        } else if to_choose {
+            badge(t("Variante wählen", "choose a variant"), YELLOW);
         }
         if sounding {
             badge(t("♪ läuft", "♪ playing"), BLUE);

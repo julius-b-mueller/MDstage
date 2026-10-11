@@ -107,6 +107,8 @@ pub struct Snapshot {
     pub waits: Vec<crate::show::Wait>,
     /// Go is held back while a cue is on its way by itself.
     pub go_blocked: bool,
+    /// Go is held back until the operator has chosen one of the next cue's variants.
+    pub needs_variant: bool,
     pub display_clients: Vec<Client>,
     pub display_address: Option<SocketAddr>,
     /// `None` if no audio device could be opened (the show still runs, silently).
@@ -500,6 +502,7 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
             delays: show.delay_progress(),
             waits: show.waits(),
             go_blocked: show.go_blocked(),
+            needs_variant: show.needs_variant(),
             display_clients: display.as_ref().map(|d| d.clients()).unwrap_or_default(),
             display_address: display.as_ref().map(|d| d.address()),
             output: output.clone(),

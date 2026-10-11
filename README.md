@@ -248,7 +248,7 @@ Every cue's card has an edit button (a pencil) in its bottom right corner that o
 
 - **Each variant is a cue of its own**, with its own name, audio, timings, microphones and messages. In the main window the variants stand one below the other inside a common frame; in the live view they stand side by side.
 - **They stay together:** nothing can be put between a cue and its variants, and moving one of them moves the whole group.
-- **Choosing:** in the live view a variant is chosen before Go; if none is chosen, the first one fires. Clicking a variant in the main window fires that one.
+- **Choosing is required:** when the next cue has variants, Go is held back until the operator has chosen one — the button is greyed out, and the space bar and a remote Go do nothing. There is no falling back on the first variant. In the live view the variants blink until one is clicked; the others then dim. In the main window clicking a variant fires that one directly. The choice holds for one Go.
 - **What a variant does itself belongs to that variant:** its own transition, its own adjust, its own messages. Its lines begin at its card.
 - **What points at a variant means the group:** a loop whose outro is a variant hands over to whichever variant is chosen, and an adjust aimed at a variant acts on the one that is sounding. Such lines end at the group's frame.
 - **Variants never fire by themselves**, because the operator has to choose which one is taken: no cue of a group can be an auto-cue, and nothing can carry straight on (`chain_end`) into a group. (As a loop's outro a group works: the operator chooses, then presses Go.) A show file that breaks this is reported as an error; the auto-cue or transition then has no effect.

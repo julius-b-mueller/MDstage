@@ -290,14 +290,21 @@ impl LiveView {
                 }
                 // While a cue is on its way by itself (an outro waiting for its loop's end,
                 // a delay running, a chained cue coming) there is nothing for Go to do.
-                let ready = snapshot.next.is_some() && pending.is_none() && !snapshot.go_blocked;
+                // And none before a variant of the next cue has been chosen.
+                let ready = snapshot.next.is_some() && pending.is_none() && !snapshot.go_blocked && !snapshot.needs_variant;
                 let ink = if ready { Color32::from_rgb(0x1e, 0x21, 0x27) } else { MUTED };
                 let go = egui::Button::image_and_text(Icon::Play.image(16.0, ink), RichText::new("Go").size(21.0).strong().color(ink))
                     .fill(if ready { GREEN } else { TRACK })
                     .stroke(Stroke::NONE)
                     .corner_radius(CornerRadius::same(8))
                     .min_size(vec2(ui.available_width(), height));
-                let hint = if snapshot.go_blocked { t("Ein Cue wird gerade von selbst ausgelöst – Go wartet, bis er da ist.", "A cue is about to fire by itself – Go waits until it has.") } else { t("Leertaste", "Space") };
+                let hint = if snapshot.go_blocked {
+                    t("Ein Cue wird gerade von selbst ausgelöst – Go wartet, bis er da ist.", "A cue is about to fire by itself – Go waits until it has.")
+                } else if snapshot.needs_variant {
+                    t("Erst eine Variante wählen: auf ihre Karte klicken.", "Choose a variant first: click its card.")
+                } else {
+                    t("Leertaste", "Space")
+                };
                 if ui.add_enabled(ready, go).on_hover_text(hint).on_disabled_hover_text(hint).clicked() {
                     requests.push(Request::Go);
                 }

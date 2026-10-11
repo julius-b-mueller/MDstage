@@ -999,8 +999,14 @@ impl App {
                 .fill(GREEN)
                 .stroke(egui::Stroke::new(1.0_f32, Color32::BLACK))
                 .min_size(egui::vec2(96.0, theme::TOOL));
-            let blocked = self.snapshot.go_blocked;
-            let hint = if blocked { lang::t("Ein Cue wird gerade von selbst ausgelöst – Go wartet, bis er da ist.", "A cue is about to fire by itself – Go waits until it has.") } else { lang::t("Leertaste (bei gesperrter Show)", "Space (while the show is locked)") };
+            let blocked = self.snapshot.go_blocked || self.snapshot.needs_variant;
+            let hint = if self.snapshot.go_blocked {
+                lang::t("Ein Cue wird gerade von selbst ausgelöst – Go wartet, bis er da ist.", "A cue is about to fire by itself – Go waits until it has.")
+            } else if self.snapshot.needs_variant {
+                lang::t("Der nächste Cue hat Varianten: erst eine wählen (in der Live-Ansicht anklicken, oder hier die Variante direkt auslösen).", "The next cue has variants: choose one first (click it in the live view, or fire the variant here directly).")
+            } else {
+                lang::t("Leertaste (bei gesperrter Show)", "Space (while the show is locked)")
+            };
             if ui.add_enabled(has_show && self.snapshot.next.is_some() && !blocked, go).on_hover_text(hint).on_disabled_hover_text(hint).clicked() {
                 self.request(Request::Go);
             }
