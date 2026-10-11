@@ -1,8 +1,8 @@
-<img src="dist/assets/icon.png" width="120" alt="MDstage Icon">
+<img src="crates/mdstage-app/assets/icon.png" width="120" alt="MDstage Icon">
 
 # MDstage
 
-Electron-based stage manager app for live shows and theatre productions. The script is stored as a Markdown file; cues are embedded directly as YAML blocks. The app provides audio playback, MIDI control, timecode output, OSC output, and a live view — all from a single file.
+Stage manager app for live shows and theatre productions — a native app written in Rust, for macOS (Apple Silicon), Windows and Linux (x64 and ARM64 each). The script is stored as a Markdown file; cues are embedded directly as YAML blocks. The app provides audio playback, MIDI control, timecode output, OSC output, and a live view — all from a single file.
 
 However, there is no need to open a text editor. Roletext, stage directions, cues and everything else can be added and edited via the graphical user interface.
 
@@ -31,6 +31,9 @@ However, there is no need to open a text editor. Roletext, stage directions, cue
 19. [Scene Sidebar & Search](#scene-sidebar--search)
 20. [Script Formatting](#script-formatting)
 21. [Keyboard Shortcuts](#keyboard-shortcuts)
+22. [Development & Build](#development--build)
+
+To turn the PDF of a play into a show file, see [docs/pdf-zu-skript-prompt.md](docs/pdf-zu-skript-prompt.md) (a prompt for Claude, in German).
 
 ---
 
@@ -95,11 +98,18 @@ The script can be edited directly inside the app — no external editor required
 - **Tab** accepts the suggested role name (autocomplete)
 - **Shift+Enter** inserts a line break inside a role block
 - **Arrow up / down** moves to the previous / next block
-- **Escape** closes the editor without saving
+- **Escape** closes the editor without saving (with Vim keys: back to normal mode)
 - **▲ / ▼** buttons move the block up or down
 - **✕** button deletes the block
+- **+** at the left edge between two blocks (shown when the pointer is there): a click adds a text block, **Shift+Click** adds an empty cue without opening its dialog. With a cue on the clipboard there is a paste button beside it.
 
-Right-clicking a block (if an editor is configured) opens the corresponding line in the external editor (VS Code, Zed, or a custom command).
+**What you type is sorted for you:** text without any marking becomes a stage direction (the asterisks around it belong to the file and are not shown), text under a line of role names becomes that role's dialogue. A block that is left empty — or whose text is deleted — is removed.
+
+**Role names** complete as you type, in the first line and in the lines below it (to add further roles). A role's name can only be removed or replaced as a whole, so that no stray `**` is left behind.
+
+**Vim keys** (Settings → *Vim keys in the text editor*): normal and insert mode in the inline editor. Movements (`h j k l w b e 0 ^ $ f F t T gg G`, with counts), operators with movements (`dfx`, `ct,`, `ye` …), lines (`dd`, `yy`, `p`, `o`, `O`, `J`, `u`), new blocks (`go`, `gO`, Enter) and whole blocks (`gK`/`gJ` move, `yab`/`dab` copy/cut, `gp`/`gP` paste). `j`/`k` leave a block at its last/first line into the next/previous one. Escape only returns to normal mode; the editor is left with `:w`, `:q` or a click outside. The **Info** button beside the setting lists every supported key.
+
+Right-clicking a block (if an editor command is set in the settings) offers to open the corresponding line of the show file in that editor.
 
 ### Multiple Roles per Line (Chor / Ensemble)
 
@@ -207,28 +217,44 @@ music:
 
 ### Editing a Cue
 
-Every trigger has an **✎ Edit** button that opens a dialog. New cues are added via the **+** button between two blocks.
+Every cue's card has an edit button (a pencil) in its bottom right corner that opens the cue dialog. Everything a cue can do is set there — the YAML never has to be touched. The other buttons of a card (Auto-Cue, Adjust, S/L/F, Auto-Mic, variant, Live) appear while the pointer is on it.
 
-**Copy / paste (⧉):** The **⧉ Copy** button on a trigger copies the whole cue (all of its fields) to an in-app clipboard. A **📋 paste** button then appears next to every **+** insert zone, so the cue can be dropped in anywhere; the pasted copy is standalone (it gets a fresh trigger note and is never a variant). The clipboard is session-only.
+**New cues:** **Shift+Click** on the **+** between two blocks adds an empty cue at once; *Insert cue before/after…* in a block's context menu opens the dialog first. **Dragging audio files from the file manager** into the script copies them into `audio/` and makes a cue for each at the place where they are dropped; while dragging, a green line shows where that is (macOS and Windows).
 
-**◉ Live (arm in live view):** Opens the live view with this cue armed as the next Go — handy for jumping straight to a specific point during a rehearsal or top-of-scene. While the show is locked the button is hidden.
+**What a card shows:** microphones as labels, the note, audio files, timecode, what the cue sends — one line per device with the message itself (MIDI in words such as `Ch 1 · CC 7 = 100`, OSC address and values, HTTP method and path, announcement text, the first line of display content) — and its connections to other cues.
+
+**The bar at a card's left edge** says where the cue stands in the show, in the colour of the word beside its name:
+
+| Colour | Meaning |
+|---|---|
+| Green | the current cue, or a cue that has just fired by itself ("fired") |
+| Yellow | the next Go, or an outro waiting for its loop to end |
+| Blue | its audio is playing |
+| Faint | done in this pass through the script |
+| Grey | still to come |
+
+**Connections between cues** are drawn as lines in the left margin, from the cue that acts (a dot) to the cue it leads to or changes (an arrow): purple for Start/Loop/Finish, orange for auto-cues, green for Adjust. An auto-cue at an audio position starts at its marker on the source's waveform. The lines are faint until the pointer is on one of their two cues. In a card, every reference to another cue ("Cue 1.47") is underlined; a click goes there.
+
+**Copy / paste:** *Copy* in a cue's context menu puts the whole cue (all of its fields) on an in-app clipboard. A paste button then appears next to every **+** insert zone, so the cue can be dropped in anywhere; the pasted copy is standalone (it gets a fresh trigger note and is never a variant). The clipboard is session-only.
+
+**Live (arm in live view):** Opens the live view with this cue armed as the next Go — handy for jumping straight to a specific point during a rehearsal or top-of-scene. While the show is locked the button is hidden.
 
 **Show lock:** With the lock on, the script takes one interaction only: a click on a cue. With the live view closed it fires the cue, with the live view open it arms it as the next Go. Waveforms cannot be scrolled, zoomed or dragged, the transport row and the cue buttons are off, and nothing can be edited.
 
 ### Variants
 
-**⊕ Variant** duplicates a cue as a `sibling`. Variants are shown as a group. In live operation, a variant can be selected before Go; if none is selected, the first variant always fires.
+**⊕** duplicates a cue as a `sibling`. Variants are shown as a group. In live operation, a variant can be selected before Go; if none is selected, the first variant always fires.
 
 ---
 
 ## Auto-Mic
 
-The **🎙 Auto-Mic** button in the cue action row enables automatic microphone assignment. Instead of selecting microphone channels manually, the app scans the script text and opens exactly the microphones whose roles have dialogue in the section that follows.
+The **Auto-Mic** button in the cue's button row enables automatic microphone assignment. Instead of selecting microphone channels manually, the app scans the script text and opens exactly the microphones whose roles have dialogue in the section that follows.
 
 ### How it works
 
-- Click **🎙 Auto-Mic** on a cue to make it an Auto-Mic cue (`auto_mic: true` is saved in the YAML block).
-- **Shift+Click** removes the Auto-Mic flag.
+- Click **Auto-Mic** on a cue to make it an Auto-Mic cue (`auto_mic: true` is saved in the YAML block).
+- Clicking it again removes the Auto-Mic flag.
 - When an Auto-Mic cue fires, the app looks at all role blocks with dialogue between that cue and the **next** Auto-Mic cue in the script. All matching microphone channels are opened; everything else is muted.
 - The **last** Auto-Mic cue (no further Auto-Mic cue after it) mutes all channels.
 - The computed microphone list is shown in the cue header.
@@ -247,7 +273,9 @@ The computed microphone list is derived at runtime from the script text — edit
 
 ## Audio Playback
 
-Audio files (MP3 or WAV) are located in the `audio/` subfolder next to the `.md` file.
+Audio files (WAV, AIFF, FLAC, MP3, AAC/M4A, OGG) are located in the `audio/` subfolder next to the `.md` file.
+
+Audio is streamed from disk, never loaded whole: a show with hours of audio needs only a few megabytes of memory, and opening it is immediate. If the audio device disappears (unplugged interface), the show carries on and the device is taken up again by itself when it is back.
 
 ### Renaming an Audio File
 
@@ -325,7 +353,7 @@ MP3 and AAC files contain encoder padding (silent frames at the beginning/end) t
 
 ## S/L/F – Start / Loop / Finish
 
-Seamless transitions between audio clips without silence or clicks, using `AudioBufferSourceNode` (sample-accurate).
+Seamless, sample-accurate transitions between audio clips without silence or clicks.
 
 In musical theatre terms: the **Loop** is the **Vamp**, and the **Finish** (Outro) is the **Devamp**.
 
@@ -432,13 +460,15 @@ A cue can be triggered automatically by another cue (the *source*), either when 
 audio reaches a position, or after a delay once the source fires.
 
 **Setup:**
-1. Click **⏱ Auto-Cue** on the target cue
+1. Click **Auto-Cue** on the target cue
 2. Click the source cue (pick mode — any cue with a trigger note can be picked)
 3. **If the source audio is paused at a position**, that position is used (audio-position
    auto-cue). **Otherwise** a dialog asks for a delay in seconds (delay auto-cue).
 
-For audio-position auto-cues the marker appears on the source cue's waveform; **Shift+Drag**
-repositions it. For delay auto-cues, a progress bar fills on the target's Auto-Cue button while
+For audio-position auto-cues the marker appears on the source cue's waveform, with the
+auto-cue's name (`1.47`) above it; **Shift+Drag** repositions it. A line runs from the marker
+to the auto-cue's card. When an auto-cue fires, the view goes to it and its card is marked
+"fired"; the operator's own cue stays the current one, and Go carries on from there. For delay auto-cues, a progress bar fills on the target's Auto-Cue button while
 counting down. **Shift+Click** on the Auto-Cue button deletes the auto-cue.
 
 A delay auto-cue fires its target the configured number of seconds after the source cue is
@@ -645,6 +675,8 @@ The app generates MIDI Timecode (25 fps) synchronised to audio playback.
 - Scrubbing on the waveform updates the TC via a Full Frame message
 - The current TC is shown in the app header
 - Derived timecodes for follow-on cues in an S/L/F chain are calculated and displayed automatically
+- A cue further down a chain that is fired on its own (the loop without its start having run) counts from its derived timecode
+- Timecode is held back like every other output while outputs are blocked or the show file is not trusted
 
 ---
 
@@ -659,9 +691,11 @@ A separate window (`Cmd/Ctrl+L`) for the stage or operator monitor.
 - Timecode display
 - Progress indicator for running audio and auto-cues
 - Variant selection: the next cue can be switched to a variant before Go
-- Per-cue Stop button for immediate stop
+- Per-cue Stop button: fades that cue's audio out over 0.5 s
+- The open microphones as labels, and those an Auto-Mic cue is about to switch off, running out
+- The three emergency buttons
 
-The live view communicates bidirectionally with the main window. Go/Back in the live window works exactly like in the main window.
+Go/Back in the live view works exactly like in the main window. The script scrolls smoothly so that the next cue always sits a little below the middle.
 
 ---
 
@@ -691,6 +725,10 @@ Three emergency buttons in the header:
 | Show current cue | Scrolls to current position |
 
 Double-clicking a playing cue **stops** it immediately (undo function).
+
+The view glides to where it is sent (a fired cue, a scene, a search hit, a referenced cue) instead of jumping; scrolling by hand takes over at once.
+
+**Go after jumping back:** Go fires the next cue after the operator's position that has not fired *in the current pass*. After clicking an earlier cue, every cue from there on is due again — nothing is skipped because it had fired before the jump. Cues that fired by themselves in the current pass (a loop its start chained into, an auto-cue) are still stepped over.
 
 ### Cue History (Back)
 
@@ -756,7 +794,7 @@ mic: Ensemble          # opens all channels of the group
 mic: [Ensemble, Clara] # group + additional individual role
 ```
 
-When a cue fires, the group is expanded to all its member roles for MIDI/OSC routing. In the cue panel and live view, the group is shown as a labelled box containing the individual role chips.
+When a cue fires, the group is expanded to all its member roles for MIDI/OSC routing. In the cue panel and live view, the group is shown as one outlined label with its name in the group's colour; roles that are open on their own follow as filled labels. A role that is open as part of a group is not listed again.
 
 The built-in group **Alle** (German) / **All** (English) always refers to all defined roles and cannot be created manually.
 
@@ -826,11 +864,15 @@ The microphone muting method can be configured independently of the MIDI trigger
 |---|---|
 | Emergency Light note | MIDI note for the emergency light button (channel + note number) |
 | Language | App interface language (German / English) |
-| Open in editor (right-click) | VS Code, Zed, or disabled |
-| Mic group display | When enabled, mic chips in the cue panel and live view are bundled into labelled group boxes. Disable for a flat chip list. |
+| Open in editor (right-click) | A command that opens a line of the show file in a text editor (`{file}` and `{line}` are filled in); empty: off |
+| Markdown line numbers | Shows, left of every block, the line of the show file it begins on |
+| Vim keys in the text editor | Normal and insert mode in the inline editor (see [Inline Editor](#inline-editor)) |
+| Auto mic: switch microphones off after | Seconds an Auto-Mic cue leaves a microphone on that it switches off (default 7; 0 = at once) |
+| Block output to devices | Nothing is sent to MIDI, OSC, HTTP, displays or timecode |
+| Mic group display | When enabled, groups are shown as one outlined label each (groups first, then single roles). Disable for a flat list of roles. |
 | Open locked | When enabled, the script editing lock is activated automatically on startup. |
 
-Settings are stored **per hostname** in the config block of the script file, so the same file can use different devices on multiple computers.
+Settings belong to the machine, not to the show: they are stored in `settings.json` in the app's settings folder (macOS: `~/Library/Application Support/MDstage`), so the same show file can use different devices on different computers. The show file only declares which devices and virtual channels the show needs.
 
 ---
 
@@ -859,6 +901,8 @@ Each S/L/F group receives a label (`Start`, `Loop`, `Finish`, `Bridge`).
 - **`Cmd/Ctrl+B`** or the sidebar button opens/closes the sidebar
 - Lists all `#`, `##`, and `###` headings
 - Clicking scrolls to the scene; the active scene is highlighted while scrolling
+- First-level headings are numbered as scenes (a title heading that opens the file is not counted). **Typing a number** outside any text field goes to that scene: `2` for scene 2, `1` then `7` for scene 17.
+- The current scene is also shown in a line above the script.
 
 ### Full-Text Search
 
@@ -900,24 +944,33 @@ A file that was last saved on another machine is not touched by opening it: it i
 | `Shift+Click` | Edit block |
 | `Tab` | Accept role name autocomplete |
 | `Shift+Enter` | Line break inside a role block |
-| `Escape` | Close editor / search / sidebar |
+| `Escape` | Close editor / search |
+| digits | Go to the scene with that number |
 
 ---
 
 ## Development & Build
 
+MDstage is a Rust workspace:
+
+| Crate | Contents |
+|---|---|
+| `crates/mdstage-core` | Reading and writing the show file, cue logic, checks — no I/O |
+| `crates/mdstage-engine` | Audio, MIDI, timecode, OSC, HTTP, display server, the running show |
+| `crates/mdstage-app` | The user interface (egui) and the export |
+
 ```bash
-# Install dependencies
-npm install
+cargo test --workspace                          # all tests
+cargo run --release -p mdstage-app -- SHOW.md   # run the app
 
-# Start Webpack in watch mode
-npm run develop
-
-# Start Electron
-npm start
-
-# Production build (macOS .dmg / Windows .exe)
-npm run build
+scripts/bundle-macos.sh --dmg                   # target/bundle/MDstage.app and .dmg
+scripts/bundle-appimage.sh                      # AppImage (on Linux)
 ```
+
+Linux needs the development packages of ALSA, X11/Wayland and GTK 3 (on Debian/Ubuntu:
+`libasound2-dev libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev libgtk-3-dev`).
+
+Packages for all targets are built by GitHub Actions (`.github/workflows/build.yml`); a tag
+(`2.0.0`, without `v`) makes a release.
 
 Audio files go in the `audio/` subfolder next to the `.md` file. Use WAV format for seamless S/L/F transitions.
