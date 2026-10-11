@@ -28,14 +28,10 @@ nav{position:sticky;top:0;z-index:100;background:var(--bg2);border-bottom:1px so
 .nav-right{display:flex;align-items:center;gap:.5rem}
 .nav-cta{background:var(--blue);color:#1e2127;text-decoration:none;padding:.38rem .95rem;border-radius:6px;font-size:.86rem;font-weight:600;transition:background .15s;white-space:nowrap}
 .nav-cta:hover{background:#71bfff}
-.nav-try{background:var(--bg3);color:var(--green);border:1px solid #98c37944;text-decoration:none;padding:.38rem .8rem;border-radius:6px;font-size:.86rem;font-weight:600;transition:background .15s;white-space:nowrap;display:inline-flex;align-items:center;gap:.35rem}
-.nav-try:hover{background:#1e3a2a}
 
 /* ── Buttons ─────────────────────────────── */
 .btn-primary{background:var(--blue);color:#1e2127;padding:.7rem 1.6rem;border-radius:var(--r);text-decoration:none;font-weight:700;font-size:.98rem;display:inline-flex;align-items:center;gap:.45rem;transition:background .15s,transform .1s}
 .btn-primary:hover{background:#71bfff;transform:translateY(-1px)}
-.btn-preview{background:#1e3a2a;color:var(--green);border:1.5px solid #98c37966;padding:.7rem 1.6rem;border-radius:var(--r);text-decoration:none;font-weight:700;font-size:.98rem;display:inline-flex;align-items:center;gap:.45rem;transition:background .15s,border-color .15s,transform .1s}
-.btn-preview:hover{background:#243e2e;border-color:#98c379aa;transform:translateY(-1px)}
 
 /* ── Tags ────────────────────────────────── */
 .tag{display:inline-block;font-size:.72rem;font-weight:600;padding:.2rem .6rem;border-radius:4px;letter-spacing:.03em}
@@ -75,7 +71,6 @@ pre code{background:none;border:none;padding:0;color:inherit;font-size:1em}
 .article li{margin-bottom:.45rem}
 .article a{color:var(--blue)}
 .article a.btn-primary{color:#1e2127}
-.article a.btn-preview{color:var(--green)}
 .article strong{color:#cdd3de}
 
 .cta-box{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:1.8rem;margin:2.8rem 0 1.5rem;text-align:center}
@@ -98,7 +93,6 @@ footer a:hover{text-decoration:underline}
 @media(max-width:640px){
   nav{padding:0 1rem;gap:.8rem}
   .nav-links{display:none}
-  .nav-try{display:none}
   .nav-right{gap:.35rem}
   .blog-head{padding:3.5rem 1.5rem 1rem}
   .article{padding:2rem 1.5rem 2.5rem}

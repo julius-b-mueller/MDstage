@@ -37,7 +37,7 @@
   "url": "https://mdstage.org/",
   "applicationCategory": "MultimediaApplication",
   "operatingSystem": "macOS, Windows, Linux",
-  "softwareVersion": "1.16.0",
+  "softwareVersion": "2.0.0",
   "offers": {
     "@type": "Offer",
     "price": "0",
@@ -157,6 +157,13 @@ html{scroll-behavior:smooth}
 body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;font-size:16px;line-height:1.6}
 
 /* ── Nav ─────────────────────────────────── */
+/* ── Release banner ─────────────────────── */
+.release-banner{display:flex;align-items:center;justify-content:center;gap:.7rem;flex-wrap:wrap;background:linear-gradient(90deg,#1e3a52,#1e3a2a);border-bottom:1px solid #61afef44;color:var(--text);padding:.55rem 1rem;font-size:.9rem;text-align:center;text-decoration:none}
+.release-banner:hover{filter:brightness(1.12)}
+.release-banner strong{color:#fff}
+.release-banner .release-tag{background:var(--green);color:#1e2127;font-weight:700;font-size:.72rem;letter-spacing:.05em;text-transform:uppercase;padding:.12rem .5rem;border-radius:20px}
+.release-banner .release-go{color:var(--blue);font-weight:600;white-space:nowrap}
+
 nav{position:sticky;top:0;z-index:100;background:var(--bg2);border-bottom:1px solid var(--border);padding:0 2rem;display:flex;align-items:center;gap:2rem;height:56px}
 .nav-logo{font-size:1.1rem;font-weight:700;color:#fff;text-decoration:none;letter-spacing:-.02em;display:flex;align-items:center;gap:.45rem}
 .nav-links{display:flex;gap:.2rem;flex:1}
@@ -168,8 +175,6 @@ nav{position:sticky;top:0;z-index:100;background:var(--bg2);border-bottom:1px so
 .nav-right{display:flex;align-items:center;gap:.5rem}
 .nav-cta{background:var(--blue);color:#1e2127;text-decoration:none;padding:.38rem .95rem;border-radius:6px;font-size:.86rem;font-weight:600;transition:background .15s;white-space:nowrap}
 .nav-cta:hover{background:#71bfff}
-.nav-try{background:var(--bg3);color:var(--green);border:1px solid #98c37944;text-decoration:none;padding:.38rem .8rem;border-radius:6px;font-size:.86rem;font-weight:600;transition:background .15s;white-space:nowrap;display:inline-flex;align-items:center;gap:.35rem}
-.nav-try:hover{background:#1e3a2a}
 
 /* ── Hero ────────────────────────────────── */
 .hero{padding:6rem 2rem 5rem;text-align:center;background:radial-gradient(ellipse 90% 55% at 50% -5%,#1a3a5c40 0%,transparent 70%)}
@@ -263,13 +268,6 @@ code{background:var(--bg3);border:1px solid var(--border);padding:1px 5px;border
 pre{background:var(--bg3);border:1px solid var(--border);padding:.65rem .9rem;border-radius:6px;margin:.45rem 0;font-family:'SF Mono','Fira Code',monospace;font-size:.82rem;color:var(--green);overflow-x:auto}
 .disclaimer{font-size:.78rem;color:var(--dim);margin-top:1.4rem;line-height:1.6;max-width:600px}
 .free-tag{display:inline-flex;align-items:center;gap:.4rem;background:#1e3a2a;border:1px solid #98c37944;color:var(--green);padding:.45rem .9rem;border-radius:20px;font-size:.82rem;font-weight:600;margin-bottom:1.4rem}
-.btn-preview{background:#1e3a2a;color:var(--green);border:1.5px solid #98c37966;padding:.7rem 1.6rem;border-radius:var(--r);text-decoration:none;font-weight:700;font-size:.98rem;display:inline-flex;align-items:center;gap:.45rem;transition:background .15s,border-color .15s,transform .1s}
-.btn-preview:hover{background:#243e2e;border-color:#98c379aa;transform:translateY(-1px)}
-.preview-card{background:var(--bg2);border:1.5px solid #98c37955;border-radius:var(--r);padding:1.2rem 1.4rem;margin-bottom:1.6rem;display:flex;align-items:center;gap:1.2rem;flex-wrap:wrap}
-.preview-card-icon{font-size:1.8rem;flex-shrink:0}
-.preview-card-text{flex:1;min-width:200px}
-.preview-card-text h3{font-size:.95rem;font-weight:700;color:#fff;margin-bottom:.25rem}
-.preview-card-text p{font-size:.82rem;color:var(--dim);line-height:1.6}
 
 /* ── YouTube Facade ─────────────────────────────────── */
 .yt-facade{position:relative;max-width:800px;border-radius:12px;overflow:hidden;cursor:pointer;background:#000;aspect-ratio:16/9}
@@ -289,7 +287,6 @@ footer a:hover{text-decoration:underline}
 @media(max-width:640px){
   nav{padding:0 1rem;gap:.8rem}
   .nav-links{display:none}
-  .nav-try{display:none}
   .nav-right{gap:.35rem}
   .hero{padding:3.5rem 1.5rem 3rem}
   .feat-section{padding:3rem 1.5rem}
@@ -325,6 +322,13 @@ footer a:hover{text-decoration:underline}
 </style>
 </head>
 <body>
+
+<!-- ── Release banner ───────────────────────────────────── -->
+<a class="release-banner" href="#download">
+  <span class="release-tag" data-de="Neu" data-en="New">Neu</span>
+  <span data-de="<strong>MDstage 2.0 ist da</strong> – komplett neu in Rust geschrieben und deutlich performanter." data-en="<strong>MDstage 2.0 is here</strong> – rewritten from scratch in Rust and considerably faster."><strong>MDstage 2.0 ist da</strong> – komplett neu in Rust geschrieben und deutlich performanter.</span>
+  <span class="release-go" data-de="Jetzt herunterladen →" data-en="Download now →">Jetzt herunterladen →</span>
+</a>
 
 <!-- ── Nav ──────────────────────────────────────────────── -->
 <nav>
