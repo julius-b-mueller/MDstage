@@ -90,6 +90,9 @@ pub enum Action {
     LiveVolume { cue: usize, volume: f64 },
     /// The volume slider was let go: the level to save.
     Volume { block: usize, volume: f64 },
+    /// The named markers on a cue's audio were added to, renamed, moved or removed:
+    /// all of them as they are now, `(seconds, name)`.
+    SetMarkers { block: usize, markers: Vec<(f64, String)> },
     /// Switch a cue's audio to looping or back.
     Loop { block: usize, on: bool },
     /// Make this cue the next Go.
@@ -254,7 +257,9 @@ struct Relation {
 const PURPLE: Color32 = Color32::from_rgb(0xc6, 0x78, 0xdd);
 /// The colour of auto-cues: their marker on the waveform, their row and their line.
 const ORANGE: Color32 = Color32::from_rgb(0xd1, 0x9a, 0x66);
-/// Height of the line above a waveform that names its auto-cue markers.
+/// The colour of the named markers set by hand on a waveform.
+const MARKER: Color32 = Color32::from_rgb(0x56, 0xb6, 0xc2);
+/// Height of the line above a waveform that names its markers.
 const AUTO_NAMES: f32 = 14.0;
 /// From a cue's left edge to the first lane: room for an arrowhead and a straight piece
 /// of line before the corner.
@@ -285,6 +290,11 @@ pub struct ScriptView {
     dragging: HashMap<usize, Marks>,
     /// Auto-cue markers being dragged: block of the auto-cue → seconds.
     auto_dragging: HashMap<usize, f64>,
+    /// Named markers being dragged: (block, which marker) → seconds.
+    marker_dragging: HashMap<(usize, usize), f64>,
+    /// The waveform menu that is open: its block, the place that was clicked (seconds),
+    /// the marker there if there is one, and the name being typed.
+    marker_menu: Option<(usize, f64, Option<usize>, String)>,
     /// Where audio files are being dragged over the window, if they would become cues.
     drop_at: Option<egui::Pos2>,
     /// Playheads being dragged along their waveform: block → seconds.
@@ -940,7 +950,7 @@ impl ScriptView {
 
     /// The position auto-cues that hang on a cue's audio, in the order of their places:
     /// `(cue, seconds)`.
-    fn position_autos(cues: &Cues, note: Option<Note>) -> Vec<(usize, f64)> {
+    pub(crate) fn position_autos(cues: &Cues, note: Option<Note>) -> Vec<(usize, f64)> {
         let Some(note) = note else { return Vec::new() };
         let mut autos: Vec<(usize, f64)> = (0..cues.len())
             .filter_map(|target| match cues.get(target)?.auto_trigger().filter(|a| a.source == note)?.when {
@@ -954,8 +964,10 @@ impl ScriptView {
 
     /// `autos`: how many position auto-cues hang on the cue's audio. Each gets a strip
     /// of its own under the waveform for its line to run out in.
-    fn cue_height(rows: usize, has_audio: bool, autos: usize) -> f32 {
-        let names = if autos > 0 { AUTO_NAMES } else { 0.0 };
+    /// `named`: something on the waveform has a name to be written above it (an auto-cue
+    /// marker or a named marker).
+    fn cue_height(rows: usize, has_audio: bool, autos: usize, named: bool) -> f32 {
+        let names = if named { AUTO_NAMES } else { 0.0 };
         let wave = if has_audio { names + WAVE_HEIGHT + 10.0 + autos as f32 * AUTO_STRIP + CONTROLS + 4.0 } else { 0.0 };
         8.0 + 10.0 + ROW + rows as f32 * ROW + wave + 10.0
     }
@@ -994,7 +1006,7 @@ impl ScriptView {
                 Block::Cue(cue) => {
                     let rows = Self::cue_rows(cx, i, self.cue_of_block[i].unwrap_or(0), cue, &self.durations);
                     let autos = Self::position_autos(&Cues::new(cx.script), cue.note()).len();
-                    Self::cue_height(Self::cue_lines(ui, &rows, width), cue.audio().is_some(), autos)
+                    Self::cue_height(Self::cue_lines(ui, &rows, width), cue.audio().is_some(), autos, autos > 0 || !cue.markers().is_empty())
                 }
                 block => {
                     let job = Self::job(cx.cast, block, width, self.numbers.get(i).copied().flatten()).unwrap_or_default();
@@ -1758,7 +1770,8 @@ impl ScriptView {
             let part = &audio.parts[0];
             // Auto-cue markers are named in a line of their own above the waveform.
             let autos = Self::position_autos(&Cues::new(cx.script), cue.note()).len();
-            let wave = Rect::from_min_size(pos2(left, y + 4.0 + if autos > 0 { AUTO_NAMES } else { 0.0 }), vec2(width, WAVE_HEIGHT));
+            let named = autos > 0 || !cue.markers().is_empty();
+            let wave = Rect::from_min_size(pos2(left, y + 4.0 + if named { AUTO_NAMES } else { 0.0 }), vec2(width, WAVE_HEIGHT));
             // The cursor only makes sense on the part whose waveform is shown.
             // A cue of several parts reports each part that sounds. On the waveform (which is
             // the first part's) the cursor runs while that part plays; once it has handed
@@ -2159,6 +2172,105 @@ impl ScriptView {
 
         if let Some(point) = part.fading_point.filter(|p| *p > marks.start && *p < marks.end) {
             painter.vline(x_of(point), rect.y_range(), Stroke::new(2.0_f32, PURPLE));
+        }
+
+        // Named markers set by hand: a line with its name above the waveform. A right click
+        // on the waveform sets one, a right click on one renames or removes it, and with
+        // Shift it is dragged.
+        let saved: Vec<(f64, String)> = match cx.script.blocks.get(block) {
+            Some(Block::Cue(cue)) => cue.markers().into_iter().map(|marker| (marker.at, marker.name)).collect(),
+            _ => Vec::new(),
+        };
+        let mut markers = saved.clone();
+        for (index, marker) in markers.iter_mut().enumerate() {
+            if let Some(at) = self.marker_dragging.get(&(block, index)) {
+                marker.0 = *at;
+            }
+            let mut let_go = !shift;
+            if shift {
+                let handle = Rect::from_center_size(pos2(x_of(marker.0), rect.center().y), vec2(8.0, rect.height()));
+                let response = ui.interact(handle, Id::new(("named-marker", block, index)), Sense::drag());
+                if response.hovered() || response.dragged() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                }
+                if response.dragged() {
+                    if let Some(pointer) = response.interact_pointer_pos() {
+                        marker.0 = t_of(pointer.x);
+                        self.marker_dragging.insert((block, index), marker.0);
+                    }
+                }
+                let_go = response.drag_stopped();
+            }
+            if let_go && self.marker_dragging.remove(&(block, index)).is_some() {
+                let mut moved = saved.clone();
+                moved[index].0 = marker.0;
+                actions.push(Action::SetMarkers { block, markers: moved });
+            }
+            if rect.x_range().contains(x_of(marker.0)) {
+                painter.vline(x_of(marker.0), rect.y_range(), Stroke::new(1.5_f32, MARKER));
+                let name = ui.painter().layout_no_wrap(if marker.1.is_empty() { "◆".to_string() } else { marker.1.clone() }, FontId::proportional(11.0), MARKER);
+                let x = (x_of(marker.0) - name.size().x / 2.0).clamp(rect.left(), (rect.right() - name.size().x).max(rect.left()));
+                ui.painter().galley(pos2(x, rect.top() - 1.0 - name.size().y), name, MARKER);
+            }
+        }
+        if !cx.locked {
+            if area.secondary_clicked() {
+                if let Some(pointer) = area.interact_pointer_pos() {
+                    // A click within a few pixels of a marker means that marker.
+                    let near = markers.iter().position(|marker| (x_of(marker.0) - pointer.x).abs() <= 6.0);
+                    let name = near.map_or(String::new(), |index| markers[index].1.clone());
+                    self.marker_menu = Some((block, t_of(pointer.x), near, name));
+                }
+            }
+            area.context_menu(|ui| {
+                let Some((_, at, near, mut name)) = self.marker_menu.clone().filter(|menu| menu.0 == block) else {
+                    ui.close_menu();
+                    return;
+                };
+                ui.label(RichText::new(match near {
+                    Some(_) => t("Marker", "Marker").to_string(),
+                    None => format!("{} {}:{:04.1}", t("Marker bei", "Marker at"), (at / 60.0) as u32, at % 60.0),
+                }).color(MARKER));
+                let field = ui.add(egui::TextEdit::singleline(&mut name).hint_text(t("Name", "Name")).desired_width(180.0));
+                if !field.has_focus() && !field.lost_focus() {
+                    field.request_focus();
+                }
+                let entered = field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                let mut result = None;
+                match near {
+                    Some(index) => {
+                        if ui.button(t("Umbenennen", "Rename")).clicked() || entered {
+                            let mut renamed = saved.clone();
+                            if let Some(marker) = renamed.get_mut(index) {
+                                marker.1 = name.trim().to_string();
+                            }
+                            result = Some(renamed);
+                        }
+                        if ui.button(t("Marker löschen", "Delete marker")).clicked() {
+                            let mut fewer = saved.clone();
+                            if index < fewer.len() {
+                                fewer.remove(index);
+                            }
+                            result = Some(fewer);
+                        }
+                    }
+                    None => {
+                        if ui.button(t("Marker setzen", "Set marker")).clicked() || entered {
+                            let mut more = saved.clone();
+                            more.push((at, name.trim().to_string()));
+                            result = Some(more);
+                        }
+                    }
+                }
+                match result {
+                    Some(markers) => {
+                        actions.push(Action::SetMarkers { block, markers });
+                        self.marker_menu = None;
+                        ui.close_menu();
+                    }
+                    None => self.marker_menu = Some((block, at, near, name)),
+                }
+            });
         }
 
         // Cues that fire by themselves at a place in this audio.

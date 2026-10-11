@@ -150,12 +150,37 @@ fn device_summary(state: &DeviceState, kind: DeviceKind) -> String {
     }
 }
 
-/// A flat progress bar.
-fn bar(ui: &mut Ui, width: f32, height: f32, fraction: f32, colour: Color32) {
+/// The bar of one audio: cut into pieces where the audio has named markers (as the show's
+/// bar is cut into scenes), with a yellow dot wherever an auto-cue fires. `gaps` and
+/// `dots` are places along the bar, from 0 to 1.
+fn marked_bar(ui: &mut Ui, width: f32, height: f32, fraction: f32, colour: Color32, gaps: &[f32], dots: &[f32]) {
+    const GAP: f32 = 3.0;
     let (rect, _) = ui.allocate_exact_size(vec2(width.max(8.0), height), Sense::hover());
-    ui.painter().rect_filled(rect, height / 2.0, TRACK);
-    let filled = Rect::from_min_size(rect.min, vec2(rect.width() * fraction.clamp(0.0, 1.0), height));
-    ui.painter().rect_filled(filled, height / 2.0, colour);
+    let fraction = fraction.clamp(0.0, 1.0);
+    let mut edges: Vec<f32> = gaps.iter().copied().filter(|gap| *gap > 0.0 && *gap < 1.0).collect();
+    edges.sort_by(f32::total_cmp);
+    edges.insert(0, 0.0);
+    edges.push(1.0);
+    for (index, pair) in edges.windows(2).enumerate() {
+        // Half a gap is taken off each piece on the side where it meets another.
+        let left = rect.left() + rect.width() * pair[0] + if index > 0 { GAP / 2.0 } else { 0.0 };
+        let right = rect.left() + rect.width() * pair[1] - if index + 2 < edges.len() { GAP / 2.0 } else { 0.0 };
+        if right - left < 1.0 {
+            continue;
+        }
+        let piece = Rect::from_min_max(pos2(left, rect.top()), pos2(right, rect.bottom()));
+        ui.painter().rect_filled(piece, height / 2.0, TRACK);
+        let reached = (rect.left() + rect.width() * fraction).min(right);
+        if reached > left {
+            ui.painter().rect_filled(Rect::from_min_max(piece.min, pos2(reached, rect.bottom())), height / 2.0, colour);
+        }
+    }
+    for dot in dots.iter().filter(|dot| (0.0..=1.0).contains(*dot)) {
+        let centre = pos2(rect.left() + rect.width() * dot, rect.center().y);
+        // A dark rim keeps the dot apart from the bar under it.
+        ui.painter().circle_filled(centre, height / 2.0 + 1.5, AUDIO);
+        ui.painter().circle_filled(centre, height / 2.0, YELLOW);
+    }
 }
 
 /// The live view's own state: the heights of the script's blocks at the width it was
@@ -364,7 +389,15 @@ impl LiveView {
                     });
                     let time = if tail { t("klingt aus", "ringing out").to_string() } else { format!("{:.1} / {:.1} s", status.seconds - from, to - from) };
                     let colour = if looped { PURPLE } else { GREEN };
-                    bar(ui, ui.available_width() - 150.0, 10.0, fraction as f32, if tail { colour.gamma_multiply(0.45) } else { colour });
+                    // Named markers cut the bar into pieces, auto-cues are dots on it. (Both
+                    // are places in the first part's file; not while a tail rings out.)
+                    let along = |at: f64| ((at - from) / (to - from)) as f32;
+                    let (mut gaps, mut dots) = (Vec::new(), Vec::new());
+                    if let Some(c) = cues.get(*cue).filter(|_| !tail && status.part == 0 && to > from) {
+                        gaps = c.markers().iter().map(|marker| along(marker.at)).collect();
+                        dots = ScriptView::position_autos(cues, c.note()).iter().map(|(_, at)| along(*at)).collect();
+                    }
+                    marked_bar(ui, ui.available_width() - 150.0, 10.0, fraction as f32, if tail { colour.gamma_multiply(0.45) } else { colour }, &gaps, &dots);
                     ui.label(RichText::new(time).size(14.0).monospace().color(MUTED));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.add(egui::Button::new(RichText::new("×").size(18.0).color(MUTED)).frame(false)).on_hover_text(t("Stoppen (blendet in einer halben Sekunde aus)", "Stop (fades out over half a second)")).clicked() {

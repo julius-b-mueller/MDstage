@@ -394,7 +394,8 @@ const CUE_KEYS: &[&str] = &[
 ];
 const NOTE_REF_KEYS: &[&str] = &["ch", "note"];
 const MUSIC_KEYS: &[&str] =
-    &["file", "volume", "start", "end", "fadein", "fadeout", "fading_point", "loop", "audios", "adjust"];
+    &["file", "volume", "start", "end", "fadein", "fadeout", "fading_point", "loop", "audios", "adjust", "markers"];
+const MARKER_KEYS: &[&str] = &["at", "name"];
 const MUSIC_SEQ_KEYS: &[&str] = &["file", "volume", "start", "end", "fadein", "fadeout", "fading_point", "audios"];
 const AUDIO_KEYS: &[&str] = &["file", "mono", "volume", "patch"];
 const ADJUST_KEYS: &[&str] = &["trigger_note", "fadeout", "fadetime", "volume"];
@@ -467,6 +468,7 @@ impl Finder {
                 self.check(adjust.get("trigger_note"), NOTE_REF_KEYS, &[key("music"), key("adjust"), key("trigger_note")]);
             }
             self.check_list(music.get("audios"), AUDIO_KEYS, &[key("music"), key("audios")], false);
+            self.check_list(music.get("markers"), MARKER_KEYS, &[key("music"), key("markers")], false);
         }
         self.check_list(cue.get("music_seq"), MUSIC_SEQ_KEYS, &[key("music_seq")], true);
         if let Some(auto) = cue.get("auto_trigger").filter(|a| a.is_mapping()) {

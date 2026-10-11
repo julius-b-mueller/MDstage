@@ -96,7 +96,8 @@ The script can be edited directly inside the app — no external editor required
 - **Shift+Click** on a text block opens it for editing
 - **Enter** closes the block and opens a new one below
 - **Tab** accepts the suggested role name (autocomplete)
-- **Shift+Enter** inserts a line break inside a role block
+- **Shift+Enter** begins a new line inside the block. In the file a line break is written as `<br>`, so that any Markdown reader breaks there too; the app itself never shows the `<br>`. Line ends without `<br>` (the formatter puts one after every sentence) flow on as in any Markdown reader.
+- A stage direction inside dialogue is typed in brackets: `(quietly)`. It is saved as `*(quietly)*` and shown in grey italics.
 - **Arrow up / down** moves to the previous / next block
 - **Escape** closes the editor without saving (with Vim keys: back to normal mode)
 - **▲ / ▼** buttons move the block up or down
@@ -305,6 +306,8 @@ Every cue with an audio file shows an interactive waveform:
 
 **Drag** along the waveform (press and move) to move the playhead; the audio follows when the
 button is released. A plain click does nothing, so the audio is not moved by accident.
+
+**Named markers:** a **right click** on the waveform sets a marker at that place and asks for its name (optional). A right click on a marker renames or deletes it; **Shift+Drag** moves it. Markers are saved with the cue (`music.markers`, each with `at` in seconds and `name`). In the live view they cut the audio's progress bar into pieces, the way the show's bar is cut into scenes; where an auto-cue fires at a place in that audio, the bar carries a yellow dot.
 
 **Shift+Drag** on the waveform markers:
 
@@ -848,6 +851,10 @@ fallback to a default device).
 | Input device (Go / Back) | Filter MIDI input to a specific device, or receive from all |
 | Go note / Back note | MIDI notes for Go and Back — can be assigned via **MIDI Learn** |
 
+### Switching single devices off
+
+The **Devices** menu lists every MIDI, OSC and HTTP output device with a tick. Without the tick nothing is sent to that device — so that, say, the lighting desk is left alone while its operator is programming during a rehearsal. A line above the script names the devices that are switched off. *Block all outputs* in the same menu holds everything back, timecode included. (The tick is the same one as in the device list of the settings.)
+
 ### Mixer Remote Control
 
 The microphone muting method can be configured independently of the MIDI trigger output:
@@ -901,7 +908,7 @@ Each S/L/F group receives a label (`Start`, `Loop`, `Finish`, `Bridge`).
 - **`Cmd/Ctrl+B`** or the sidebar button opens/closes the sidebar
 - Lists all `#`, `##`, and `###` headings
 - Clicking scrolls to the scene; the active scene is highlighted while scrolling
-- First-level headings are numbered as scenes (a title heading that opens the file is not counted). **Typing a number** outside any text field goes to that scene: `2` for scene 2, `1` then `7` for scene 17.
+- First-level headings are numbered as scenes (a title heading that opens the file is not counted). A heading that begins with a number of its own (`# 7 In the garden`, `# 12. Finale`) has that number, and the count goes on from it. **Typing a number** outside any text field goes to that scene: `2` for scene 2, `1` then `7` for scene 17.
 - The current scene is also shown in a line above the script.
 
 ### Full-Text Search

@@ -157,6 +157,14 @@ impl App {
         if self.english() { english } else { german }
     }
 
+    /// A device was switched on or off, or the outputs blocked: keep it and tell the show.
+    fn devices_changed(&mut self) {
+        self.save_settings();
+        if let Some(trusted) = self.show.as_ref().map(|s| s.trusted) {
+            self.request(Request::Configure(Box::new(self.settings.clone()), trusted));
+        }
+    }
+
     fn save_settings(&mut self) {
         if let Err(e) = self.settings.save(&store::settings_path()) {
             self.message = Some(format!("{}: {e}", lang::t("Einstellungen nicht gespeichert", "Settings not saved")));
@@ -525,6 +533,25 @@ impl App {
                         }
                     });
                 }
+                Action::SetMarkers { block, markers } => {
+                    let mut markers = markers.clone();
+                    markers.sort_by(|a, b| a.0.total_cmp(&b.0));
+                    let list: Vec<mdstage_core::yaml::Value> = markers
+                        .into_iter()
+                        .map(|(at, name)| {
+                            let mut entry = serde_yaml_mapping();
+                            entry.insert("at".into(), ((at * 1000.0).round() / 1000.0).into());
+                            if !name.is_empty() {
+                                entry.insert("name".into(), name.into());
+                            }
+                            entry.into()
+                        })
+                        .collect();
+                    self.edit_music(*block, |music| match list.is_empty() {
+                        true => drop(music.shift_remove("markers")),
+                        false => drop(music.insert("markers".into(), mdstage_core::yaml::Value::Sequence(list))),
+                    });
+                }
                 Action::Volume { block, volume } => {
                     let volume = (*volume * 100.0).round() / 100.0;
                     self.edit_music(*block, |music| drop(music.insert("volume".into(), volume.into())));
@@ -741,6 +768,27 @@ impl App {
                     }
                 }
             });
+            // Single devices can be switched off without opening the settings: so that,
+            // say, the lighting desk is left alone while its operator is programming.
+            ui.menu_button(self.t("Geräte", "Devices"), |ui| {
+                let mut changed = false;
+                let mut any = false;
+                for device in &mut self.settings.devices {
+                    let label = format!("{} ({})", device.name(), device.kind());
+                    if let Some(enabled) = device.enabled_mut() {
+                        any = true;
+                        changed |= ui.checkbox(enabled, label).on_hover_text(lang::t("Ohne Haken wird an dieses Gerät nichts gesendet.", "Without the tick nothing is sent to this device.")).changed();
+                    }
+                }
+                if !any {
+                    ui.label(RichText::new(lang::t("Keine MIDI-, OSC- oder HTTP-Geräte eingerichtet", "No MIDI, OSC or HTTP devices set up")).color(MUTED));
+                }
+                ui.separator();
+                changed |= ui.checkbox(&mut self.settings.outputs_blocked, lang::t("Alle Ausgänge blockieren", "Block all outputs")).changed();
+                if changed {
+                    self.devices_changed();
+                }
+            });
             ui.menu_button(self.t("Hilfe", "Help"), |ui| {
                 if ui.button(self.t("Über MDstage…", "About MDstage…")).clicked() {
                     ui.close_menu();
@@ -857,10 +905,31 @@ impl App {
             });
             if unblock {
                 self.settings.outputs_blocked = false;
-                self.save_settings();
-                if let Some(trusted) = self.show.as_ref().map(|s| s.trusted) {
-                    self.request(Request::Configure(Box::new(self.settings.clone()), trusted));
+                self.devices_changed();
+            }
+        }
+        // Devices that are switched off, so that it is not forgotten.
+        let mut off: Vec<String> = Vec::new();
+        for device in &mut self.settings.devices {
+            let name = device.name().to_string();
+            if device.enabled_mut().is_some_and(|enabled| !*enabled) {
+                off.push(name);
+            }
+        }
+        if !off.is_empty() && !self.settings.outputs_blocked {
+            let mut switch_on = false;
+            ui.horizontal_wrapped(|ui| {
+                let text = format!("{}: {}", lang::t("Ausgeschaltete Geräte – an sie wird nichts gesendet", "Devices switched off – nothing is sent to them"), off.join(", "));
+                ui.label(RichText::new(text).color(YELLOW));
+                switch_on = ui.small_button(lang::t("Alle einschalten", "Switch all on")).clicked();
+            });
+            if switch_on {
+                for device in &mut self.settings.devices {
+                    if let Some(enabled) = device.enabled_mut() {
+                        *enabled = true;
+                    }
                 }
+                self.devices_changed();
             }
         }
         let Some(show) = &self.show else { return };

@@ -106,7 +106,30 @@ fn part(value: &Value) -> Option<Part> {
     })
 }
 
+/// A named place in a cue's audio, set by hand on its waveform (`music.markers`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Marker {
+    /// Seconds into the file.
+    pub at: f64,
+    pub name: String,
+}
+
 impl Cue {
+    /// The markers on the cue's audio, in the order of their places.
+    pub fn markers(&self) -> Vec<Marker> {
+        let list = self.field("music").and_then(|music| music.get("markers")).and_then(Value::as_sequence);
+        let mut markers: Vec<Marker> = list
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| {
+                let at = entry.get("at").and_then(Value::as_f64).filter(|at| at.is_finite() && *at >= 0.0)?;
+                Some(Marker { at, name: entry.get("name").and_then(Value::as_str).unwrap_or_default().to_string() })
+            })
+            .collect();
+        markers.sort_by(|a, b| a.at.total_cmp(&b.at));
+        markers
+    }
+
     /// The cue's audio, or `None` if it has none that can be played.
     pub fn audio(&self) -> Option<CueAudio> {
         let music = self.field("music")?;
@@ -177,5 +200,17 @@ mod tests {
         assert_eq!(sanitize_path("sub/c:a.wav"), Some("sub/c:a.wav".into()), "only in front is it a drive");
         assert_eq!(audio("music: ../.."), None);
         assert_eq!(audio("light: Day"), None);
+    }
+
+    #[test]
+    fn reads_named_markers_in_the_order_of_their_places() {
+        let script = crate::Script::parse("```yaml\nmusic:\n    file: a.wav\n    markers:\n        - {at: 30.5, name: Refrain}\n        - {at: 4}\n        - {name: nirgends}\n```\n");
+        let crate::Block::Cue(cue) = &script.blocks[0] else { panic!("a cue") };
+        assert_eq!(cue.markers(), [Marker { at: 4.0, name: String::new() }, Marker { at: 30.5, name: "Refrain".into() }]);
+        // The key is known: nothing about it is reported or cleaned away.
+        assert!(script.validate().problems.is_empty(), "{:?}", script.validate().problems);
+        let none = crate::Script::parse("```yaml\nmusic: a.wav\n```\n");
+        let crate::Block::Cue(cue) = &none.blocks[0] else { panic!("a cue") };
+        assert!(cue.markers().is_empty());
     }
 }

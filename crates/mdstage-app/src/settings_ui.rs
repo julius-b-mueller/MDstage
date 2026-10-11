@@ -264,7 +264,7 @@ impl SettingsUi {
             for (i, device) in draft.devices.iter_mut().enumerate() {
                 ui.horizontal(|ui| match device {
                     DeviceSetting::Midi { name, port, enabled, trigger_notes, timecode } => {
-                        ui.checkbox(enabled, "");
+                        ui.checkbox(enabled, "").on_hover_text(t("Eingeschaltet: Ohne Haken wird an dieses Gerät nichts gesendet. Auch im Menü „Geräte“ umschaltbar.", "Switched on: without the tick nothing is sent to this device. Can also be switched in the Devices menu."));
                         ui.label(RichText::new("MIDI").color(BLUE));
                         let was = name.clone();
                         field(ui, name, "Name", 120.0);
@@ -279,7 +279,7 @@ impl SettingsUi {
                         }
                     }
                     DeviceSetting::Osc { name, host, port, enabled, trigger_notes } => {
-                        ui.checkbox(enabled, "");
+                        ui.checkbox(enabled, "").on_hover_text(t("Eingeschaltet: Ohne Haken wird an dieses Gerät nichts gesendet. Auch im Menü „Geräte“ umschaltbar.", "Switched on: without the tick nothing is sent to this device. Can also be switched in the Devices menu."));
                         ui.label(RichText::new("OSC").color(GREEN));
                         let was = name.clone();
                         field(ui, name, "Name", 120.0);
@@ -294,7 +294,7 @@ impl SettingsUi {
                         }
                     }
                     DeviceSetting::Http { name, url, enabled } => {
-                        ui.checkbox(enabled, "");
+                        ui.checkbox(enabled, "").on_hover_text(t("Eingeschaltet: Ohne Haken wird an dieses Gerät nichts gesendet. Auch im Menü „Geräte“ umschaltbar.", "Switched on: without the tick nothing is sent to this device. Can also be switched in the Devices menu."));
                         ui.label(RichText::new("HTTP").color(YELLOW));
                         let was = name.clone();
                         field(ui, name, "Name", 120.0);

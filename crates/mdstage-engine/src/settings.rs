@@ -29,6 +29,25 @@ impl From<NoteSetting> for Note {
 }
 
 impl DeviceSetting {
+    /// Whether anything is sent to the device, for the kinds that can be switched off
+    /// (MIDI, OSC, HTTP); `None` for a display.
+    pub fn enabled_mut(&mut self) -> Option<&mut bool> {
+        match self {
+            DeviceSetting::Midi { enabled, .. } | DeviceSetting::Osc { enabled, .. } | DeviceSetting::Http { enabled, .. } => Some(enabled),
+            DeviceSetting::Display { .. } => None,
+        }
+    }
+
+    /// "MIDI", "OSC", "HTTP" or "Display".
+    pub fn kind(&self) -> &'static str {
+        match self {
+            DeviceSetting::Midi { .. } => "MIDI",
+            DeviceSetting::Osc { .. } => "OSC",
+            DeviceSetting::Http { .. } => "HTTP",
+            DeviceSetting::Display { .. } => "Display",
+        }
+    }
+
     pub fn name(&self) -> &str {
         match self {
             DeviceSetting::Midi { name, .. } | DeviceSetting::Osc { name, .. } | DeviceSetting::Http { name, .. } | DeviceSetting::Display { name, .. } => name,
