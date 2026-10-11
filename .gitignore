@@ -1,14 +1,5 @@
-node_modules/
-dist/bundle.js
-dist/bundle.js.map
-dist/bundle.js.LICENSE.txt
-dist/version.json
-dist/audio/
-release/
+target/
 artifacts/
 BACKLOG.md
-public/
-website/app/
-target/
 **/.DS_Store
 SHELL_COMMANDS.md

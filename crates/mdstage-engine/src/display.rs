@@ -17,8 +17,8 @@ use std::time::Duration;
 use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 use serde_json::json;
 
-const PAGE: &str = include_str!("../../../dist/display/index.html");
-const SCRIPT: &str = include_str!("../../../dist/display/app.js");
+const PAGE: &str = include_str!("../display/index.html");
+const SCRIPT: &str = include_str!("../display/app.js");
 
 const BASE_STYLE: &str = "font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,sans-serif;}";
 const KEEP_ALIVE: Duration = Duration::from_secs(20);
