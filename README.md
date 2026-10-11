@@ -474,8 +474,8 @@ audio reaches a position, or after a delay once the source fires.
    - **Once, with a delay:** it counts from the firing of the source and fires exactly once.
 
    If the source has no audio, or the time lies past its end, it is always a delay auto-cue.
-   A delay auto-cue's line starts at the left edge of the source's card, and the source's
-   card names it with its seconds.
+   A delay auto-cue's line starts at the left edge of the source's card, with its seconds
+   written where it leaves. Several of them leave in the order of their delays.
 
 Seconds are shown with two decimals at most.
 

@@ -248,6 +248,9 @@ struct Relation {
     /// on that cue, and how many there are. Every end has a place of its own.
     from_place: (usize, usize),
     to_place: (usize, usize),
+    /// For an auto-cue that fires after a delay: the seconds, written where its line
+    /// leaves the source.
+    delay: Option<f64>,
 }
 
 /// Each kind of connection has one colour for everything about it — the row in the
@@ -515,10 +518,14 @@ impl ScriptView {
         let mut found = Vec::new();
         for cue in 0..cues.len() {
             let Some(c) = cues.get(cue) else { continue };
+            let delay = c.auto_trigger().and_then(|auto| match auto.when {
+                AutoWhen::Delay(seconds) => Some(seconds),
+                AutoWhen::At(_) => None,
+            });
             let mut tie = |from: Option<usize>, to: Option<usize>, tie: Tie| {
                 if let (Some(from), Some(to)) = (from.and_then(|c| cues.block_index(c)), to.and_then(|c| cues.block_index(c))) {
                     if from != to {
-                        found.push(Relation { from, to, tie, lane: 0, from_place: (0, 1), to_place: (0, 1) });
+                        found.push(Relation { from, to, tie, lane: 0, from_place: (0, 1), to_place: (0, 1), delay: delay.filter(|_| tie == Tie::Auto) });
                     }
                 }
             };
@@ -556,6 +563,14 @@ impl ScriptView {
         for (block, mut list) in ends {
             // Above: the nearest cue's line lowest. Below: the nearest cue's line highest.
             list.sort_by_key(|&(other, _, index)| (other > block, if other > block { other } else { usize::MAX - other }, index));
+            // The delayed auto-cues a cue sets off leave it in the order of their delays,
+            // the shortest at the top (in the places such lines have anyway).
+            let delayed: Vec<usize> = (0..list.len()).filter(|&i| list[i].1 && found[list[i].2].delay.is_some()).collect();
+            let mut by_delay: Vec<(usize, bool, usize)> = delayed.iter().map(|&i| list[i]).collect();
+            by_delay.sort_by(|a, b| found[a.2].delay.unwrap_or(0.0).total_cmp(&found[b.2].delay.unwrap_or(0.0)));
+            for (slot, entry) in delayed.into_iter().zip(by_delay) {
+                list[slot] = entry;
+            }
             let count = list.len();
             for (place, (_, leaves, index)) in list.into_iter().enumerate() {
                 match leaves {
@@ -570,7 +585,12 @@ impl ScriptView {
 
     /// Width of the part of the margin that holds the connection lines.
     fn rail(&self) -> f32 {
-        if self.lanes == 0 { 0.0 } else { (self.lanes - 1) as f32 * LANE + FIRST_LANE + 4.0 }
+        if self.lanes == 0 {
+            return 0.0;
+        }
+        // Seconds written at a line's start need some room to the left of the cards.
+        let labelled = if self.relations.iter().any(|relation| relation.delay.is_some()) { 30.0 } else { 0.0 };
+        ((self.lanes - 1) as f32 * LANE + FIRST_LANE + 4.0).max(labelled)
     }
 
     /// The connections between cues, in the margin left of them: a line from the cue
@@ -578,6 +598,7 @@ impl ScriptView {
     /// until the pointer is on one of their two cues.
     fn draw_relations(&self, ui: &Ui, origin: egui::Pos2, viewport: Rect) {
         let painter = ui.painter();
+        let mut labels: Vec<(egui::Pos2, String, Color32)> = Vec::new();
         for relation in &self.relations {
             // The ends on one cue are spread down its edge, closer together if there are many.
             let at = |block: usize, (place, count): (usize, usize)| {
@@ -619,6 +640,17 @@ impl ScriptView {
             painter.add(egui::epaint::PathShape::line(points, Stroke::new(if strong { 2.0_f32 } else { 1.5_f32 }, colour)));
             painter.circle_filled(start, 2.5, colour);
             painter.add(egui::Shape::convex_polygon(vec![pos2(tip, to), pos2(base, to - 3.5), pos2(base, to + 3.5)], colour, Stroke::NONE));
+            if let Some(seconds) = relation.delay.filter(|_| marker.is_none()) {
+                labels.push((start, format!("{} s", format::seconds(seconds)), colour));
+            }
+        }
+        // The seconds of a delayed auto-cue, where its line leaves the source: just above
+        // the line, on a patch of background so that other lines do not run through it.
+        for (start, text, colour) in labels {
+            let text = painter.layout_no_wrap(text, FontId::proportional(10.0), colour);
+            let place = pos2(start.x - 4.0 - text.size().x, start.y - 2.0 - text.size().y);
+            painter.rect_filled(Rect::from_min_size(place, text.size()).expand2(vec2(2.0, 0.0)), 2.0, BACKGROUND);
+            painter.galley(place, text, colour);
         }
     }
 
@@ -849,19 +881,6 @@ impl ScriptView {
                 (AutoWhen::Delay(delay), false) => format!("automatisch {} s nach", format::seconds(delay)),
             };
             rows.push(Row::linked("Auto", vec![word(&text, ORANGE), to(cues.find(auto.source))]));
-        }
-        // The auto-cues this cue sets off after a delay are named here too, with their
-        // seconds. (Those at a place in its audio have their marker on its waveform.)
-        if let Some(note) = cue.note() {
-            for target in 0..cues.len() {
-                let Some(auto) = cues.get(target).and_then(|c| c.auto_trigger()).filter(|a| a.source == note) else { continue };
-                let AutoWhen::Delay(delay) = auto.when else { continue };
-                let seconds = format::seconds(delay);
-                rows.push(Row::linked("Auto", match crate::lang::english() {
-                    true => vec![word("fires", ORANGE), to(Some(target)), word(&format!("after {seconds} s"), ORANGE)],
-                    false => vec![word("löst", ORANGE), to(Some(target)), word(&format!("nach {seconds} s aus"), ORANGE)],
-                }));
-            }
         }
         if let Some(adjust) = cue.adjust() {
             let target = to(cues.find(adjust.target));
@@ -2475,6 +2494,19 @@ mod tests {
         assert_eq!(view.lanes, 2);
     }
 
+    /// Several delayed auto-cues leave their source in the order of their delays.
+    #[test]
+    fn delayed_auto_cues_leave_in_the_order_of_their_delays() {
+        let cue = |n: usize, more: &str| format!("```yaml\ntrigger_note: {{ch: 1, note: {n}}}\n{more}\n```\n\n");
+        let auto = |delay: f64| format!("auto_trigger: {{trigger_note: {{ch: 1, note: 0}}, delay: {delay}}}");
+        let text = [cue(0, "note: Quelle"), cue(1, &auto(9.0)), cue(2, &auto(2.5)), cue(3, &auto(5.0))].concat();
+        let mut view = ScriptView::default();
+        view.relate(&Script::parse(&text));
+        let mut leaving: Vec<(usize, f64)> = view.relations.iter().map(|r| (r.from_place.0, r.delay.unwrap())).collect();
+        leaving.sort_by_key(|(place, _)| *place);
+        assert_eq!(leaving, [(0, 2.5), (1, 5.0), (2, 9.0)], "the shortest delay at the top");
+    }
+
     /// Ties get lanes so that no two lines lie on each other; a chain running down the
     /// page shares one.
     #[test]
@@ -2497,6 +2529,7 @@ mod tests {
         assert_eq!(lane_of(blocks[1], blocks[2]), Some(0), "the chain goes on in the same lane");
         assert_eq!(lane_of(blocks[0], blocks[3]), Some(1), "the long one goes around them");
         assert_eq!(view.lanes, 2);
+        assert_eq!(view.relations.iter().filter_map(|r| r.delay).collect::<Vec<_>>(), [2.0]);
         // No two line ends share a place on a cue's edge: every line has its own arrow.
         let mut places: Vec<(usize, usize)> = view.relations.iter().flat_map(|r| [(r.from, r.from_place.0), (r.to, r.to_place.0)]).collect();
         let all = places.len();
