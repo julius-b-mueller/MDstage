@@ -93,6 +93,10 @@ pub enum Action {
     /// The named markers on a cue's audio were added to, renamed, moved or removed:
     /// all of them as they are now, `(seconds, name)`.
     SetMarkers { block: usize, markers: Vec<(f64, String)> },
+    /// The volume slider of a variant group is being moved: `block` is the group's first cue.
+    LiveGroupVolume { block: usize, volume: f64 },
+    /// It was let go: the volume to save.
+    GroupVolume { block: usize, volume: f64 },
     /// Switch a cue's audio to looping or back.
     Loop { block: usize, on: bool },
     /// Make this cue the next Go.
@@ -244,6 +248,10 @@ struct Relation {
     to: usize,
     tie: Tie,
     lane: usize,
+    /// The line begins or ends at a variant group as a whole (at its frame) rather than
+    /// at one of its cues.
+    from_group: bool,
+    to_group: bool,
     /// Where on each cue's left edge the line ends: its place among all the line ends
     /// on that cue, and how many there are. Every end has a place of its own.
     from_place: (usize, usize),
@@ -271,6 +279,10 @@ const AUTO_NAMES: f32 = 14.0;
 /// From a cue's left edge to the first lane: room for an arrowhead and a straight piece
 /// of line before the corner.
 const FIRST_LANE: f32 = 18.0;
+/// Height of the strip above a variant group's first card: its name and volume.
+const GROUP_HEAD: f32 = 26.0;
+/// How far a variant group's frame stands out around its cards.
+const GROUP_FRAME: f32 = 6.0;
 /// Room for the seconds at the start of a delayed auto-cue's line, and how far apart
 /// line ends stand on a cue that has such seconds.
 const LABEL_ROOM: f32 = 38.0;
@@ -353,6 +365,10 @@ pub struct ScriptView {
     hovered_before: Option<usize>,
     /// The cue block whose buttons were shown last (they stay while a menu of theirs is open).
     buttons_of: Option<usize>,
+    /// The first block of every variant group (a cue with variants below it).
+    group_roots: std::collections::HashSet<usize>,
+    /// Group volume sliders being dragged, by the group's first block.
+    group_volumes: HashMap<usize, f64>,
     /// Blocks of auto-cues that stand in another order than they fire in.
     out_of_order: std::collections::HashSet<usize>,
     /// The cue whose microphones are running out, as last seen.
@@ -530,17 +546,24 @@ impl ScriptView {
                 AutoWhen::Delay(seconds) => Some(seconds),
                 AutoWhen::At(_) => None,
             });
-            let mut tie = |from: Option<usize>, to: Option<usize>, tie: Tie| {
-                if let (Some(from), Some(to)) = (from.and_then(|c| cues.block_index(c)), to.and_then(|c| cues.block_index(c))) {
+            // What points at a variant means its group: the line ends at the group's
+            // frame. What a variant does itself begins at that variant. A delayed
+            // auto-cue can hang on the group, and then begins at the frame.
+            let mut tie = |from: Option<usize>, to: Option<usize>, tie: Tie, from_group: bool| {
+                let to_group = tie != Tie::Auto && to.is_some_and(|to| cues.in_group(to));
+                let end = |cue: Option<usize>, group: bool| cue.and_then(|c| cues.block_index(if group { cues.group_root(c) } else { c }));
+                if let (Some(from), Some(to)) = (end(from, from_group), end(to, to_group)) {
                     if from != to {
-                        found.push(Relation { from, to, tie, lane: 0, from_place: (0, 1), to_place: (0, 1), delay: delay.filter(|_| tie == Tie::Auto) });
+                        found.push(Relation { from, to, tie, lane: 0, from_group, to_group, from_place: (0, 1), to_place: (0, 1), delay: delay.filter(|_| tie == Tie::Auto) });
                     }
                 }
             };
-            tie(Some(cue), c.chain_end().and_then(|n| cues.find(n)), Tie::Chain);
-            tie(Some(cue), c.loop_outro().and_then(|n| cues.find(n)), Tie::Chain);
-            tie(c.auto_trigger().and_then(|a| cues.find(a.source)), Some(cue), Tie::Auto);
-            tie(Some(cue), c.adjust().and_then(|a| cues.find(a.target)), Tie::Adjust);
+            tie(Some(cue), c.chain_end().and_then(|n| cues.find(n)), Tie::Chain, false);
+            tie(Some(cue), c.loop_outro().and_then(|n| cues.find(n)), Tie::Chain, false);
+            let auto = c.auto_trigger();
+            let source = auto.and_then(|a| cues.find(a.source));
+            tie(source, Some(cue), Tie::Auto, auto.is_some_and(|a| a.group && delay.is_some()) && source.is_some_and(|s| cues.in_group(s)));
+            tie(Some(cue), c.adjust().and_then(|a| cues.find(a.target)), Tie::Adjust, false);
         }
         found.sort_by_key(|r| r.from.abs_diff(r.to));
         // Per lane: the stretches taken, and whether each runs downwards. Two that run
@@ -587,6 +610,7 @@ impl ScriptView {
                 }
             }
         }
+        self.group_roots = (0..cues.len()).filter(|&cue| cues.in_group(cue) && cues.group_root(cue) == cue).filter_map(|cue| cues.block_index(cue)).collect();
         self.out_of_order = cues.auto_order_conflicts().into_iter().flat_map(|(first, second)| [first, second]).filter_map(|cue| cues.block_index(cue)).collect();
         self.lanes = lanes.len();
         self.relations = found;
@@ -630,18 +654,24 @@ impl ScriptView {
         let mut labels: Vec<(egui::Pos2, String, Color32)> = Vec::new();
         for relation in &self.relations {
             // The ends on one cue are spread down its edge, closer together if there are many.
+            let head = |block: usize| if self.group_roots.contains(&block) { GROUP_HEAD } else { 0.0 };
             let at = |block: usize, (place, count): (usize, usize)| {
-                let height = self.heights.get(block).copied().unwrap_or(0.0);
+                let height = self.heights.get(block).copied().unwrap_or(0.0) - head(block);
                 let widest = if self.line_ends(block).1 { LABELLED_APART } else { 11.0 };
                 let apart = if count > 1 { ((height - 34.0) / (count - 1) as f32).clamp(4.0, widest) } else { 0.0 };
-                origin.y + self.offsets.get(block).copied().unwrap_or(0.0) + 4.0 + 14.0 + place as f32 * apart
+                origin.y + self.offsets.get(block).copied().unwrap_or(0.0) + head(block) + 4.0 + 14.0 + place as f32 * apart
             };
+            // An end at a variant group as a whole sits at the group's frame, beside its name.
+            let at_frame = |block: usize| origin.y + self.offsets.get(block).copied().unwrap_or(0.0) + GROUP_HEAD / 2.0 + 2.0;
             // An auto-cue at a place in its source's audio begins right there: at the foot
             // of its marker, if that is on screen. Its line runs out of the card in a strip
             // of its own under the waveform.
             let marker = self.auto_anchors.get(&relation.to).filter(|_| relation.tie == Tie::Auto).copied();
-            let start = marker.unwrap_or(pos2(origin.x - 4.0, at(relation.from, relation.from_place)));
-            let (from, to) = (start.y, at(relation.to, relation.to_place));
+            let start = marker.unwrap_or(match relation.from_group {
+                true => pos2(origin.x - GROUP_FRAME - 4.0, at_frame(relation.from)),
+                false => pos2(origin.x - 4.0, at(relation.from, relation.from_place)),
+            });
+            let (from, to) = (start.y, if relation.to_group { at_frame(relation.to) } else { at(relation.to, relation.to_place) });
             if from.max(to) < origin.y + viewport.min.y || from.min(to) > origin.y + viewport.max.y {
                 continue;
             }
@@ -653,7 +683,8 @@ impl ScriptView {
             // Out of the cue, round the corner, along the lane, round the corner, into the
             // other. The line is straight where it leaves the dot and where it enters the
             // arrowhead; the corners lie between.
-            let (tip, base) = (origin.x - 1.0, origin.x - 8.0);
+            let out = if relation.to_group { GROUP_FRAME } else { 0.0 };
+            let (tip, base) = (origin.x - 1.0 - out, origin.x - 8.0 - out);
             let way = (to - from).signum();
             let radius = 6.0_f32.min((to - from).abs() / 2.0);
             let mut points = vec![start];
@@ -1074,7 +1105,8 @@ impl ScriptView {
                     let rows = Self::cue_rows(cx, i, self.cue_of_block[i].unwrap_or(0), cue, &self.durations);
                     let autos = Self::position_autos(&Cues::new(cx.script), cue.note()).len();
                     // (And tall enough for the lines that end on it, where they carry seconds.)
-                    Self::cue_height(Self::cue_lines(ui, &rows, width), cue.audio().is_some(), autos, autos > 0 || !cue.markers().is_empty()).max(self.height_for_lines(i))
+                    let head = if self.group_roots.contains(&i) { GROUP_HEAD } else { 0.0 };
+                    Self::cue_height(Self::cue_lines(ui, &rows, width), cue.audio().is_some(), autos, autos > 0 || !cue.markers().is_empty()).max(self.height_for_lines(i)) + head
                 }
                 block => {
                     let job = Self::job(cx.cast, block, width, self.numbers.get(i).copied().flatten()).unwrap_or_default();
@@ -1174,6 +1206,16 @@ impl ScriptView {
                     let top = top + Self::heading_room(&cx.script.blocks[i]).0;
                     ui.painter().text(pos2(rect.left() - 10.0 - rail, rect.top() + top), Align2::RIGHT_TOP, line.to_string(), FontId::monospace(11.0), WAVE_DIM);
                 }
+                // A cue with variants: a frame around the whole group, drawn before the
+                // first of its cards that is on screen so that it lies behind them.
+                if matches!(cx.script.blocks[i], Block::Cue(_)) {
+                    let (start, end) = cx.script.unit(i);
+                    if end - start > 1 && (i == start || i == first) {
+                        let frame = Rect::from_min_max(pos2(origin.x - GROUP_FRAME, origin.y + self.offsets[start] + 2.0), pos2(origin.x + width + GROUP_FRAME, origin.y + self.offsets[end] - 2.0));
+                        ui.painter().rect_filled(frame, 6.0, INSET);
+                        ui.painter().rect_stroke(frame, 6.0, Stroke::new(1.0_f32, BORDER), egui::StrokeKind::Inside);
+                    }
+                }
                 self.draw_block(ui, cx, i, rect, actions);
             }
             self.draw_relations(ui, origin, viewport);
@@ -1194,6 +1236,11 @@ impl ScriptView {
         }
         let block = &cx.script.blocks[index];
         if let Block::Cue(cue) = block {
+            let mut rect = rect;
+            if self.group_roots.contains(&index) {
+                self.group_head(ui, cx, index, Rect::from_min_size(rect.min, vec2(rect.width(), GROUP_HEAD)), actions);
+                rect.min.y += GROUP_HEAD;
+            }
             self.draw_cue(ui, cx, index, cue, rect, actions);
             return;
         }
@@ -1231,6 +1278,34 @@ impl ScriptView {
         }
     }
 
+    /// The strip above a variant group's first card: what the group is, and its volume,
+    /// by which each variant's own volume is multiplied.
+    fn group_head(&mut self, ui: &mut Ui, cx: &Context, block: usize, rect: Rect, actions: &mut Vec<Action>) {
+        let cues = Cues::new(cx.script);
+        let Some(cue) = self.cue_of_block.get(block).copied().flatten() else { return };
+        let members: Vec<usize> = cues.group(cue).collect();
+        let mut row = ui.new_child(UiBuilder::new().id_salt(("group-head", block)).max_rect(rect.shrink2(vec2(8.0, 3.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+        row.spacing_mut().slider_width = 110.0;
+        row.label(RichText::new(format!("{} {}", members.len(), t("Varianten – eine davon wird ausgelöst", "variants – one of them fires"))).size(12.0).color(MUTED));
+        row.add_space(12.0);
+        row.add(Icon::Speaker.image(14.0, MUTED));
+        let mut volume = self.group_volumes.get(&block).copied().unwrap_or(cues.group_volume(cue));
+        let slider = row.add_enabled(!cx.locked, egui::Slider::new(&mut volume, 0.0..=1.0).show_value(false)).on_hover_text(t(
+            "Gruppenlautstärke: Die Lautstärke jeder Variante zählt mal diesen Wert. Ein Bezug auf die Gruppe stellt ihn neu ein.",
+            "Group volume: each variant's own volume counts times this value. An adjust aimed at the group sets it anew.",
+        ));
+        if slider.changed() {
+            self.group_volumes.insert(block, volume);
+            actions.push(Action::LiveGroupVolume { block, volume });
+        }
+        if slider.drag_stopped() || (slider.changed() && !slider.dragged()) {
+            if let Some(volume) = self.group_volumes.remove(&block) {
+                actions.push(Action::GroupVolume { block, volume });
+            }
+        }
+        row.label(RichText::new(format!("{:.0} %", volume * 100.0)).size(12.0).color(MUTED));
+    }
+
     /// Between any two blocks, at the left edge: a "+" that shows when the pointer is
     /// there. A click adds a text block at that place, Shift+click a cue; with a cue on
     /// the clipboard there is a paste button beside it.
@@ -1240,6 +1315,10 @@ impl ScriptView {
         let first = if matches!(blocks.first(), Some(Block::Config(_))) { 1 } else { 0 };
         let shift = ui.input(|i| i.modifiers.shift);
         for at in first..=blocks.len() {
+            // Nothing is put between a cue and its variants.
+            if matches!(blocks.get(at), Some(Block::Cue(cue)) if cue.is_variant()) {
+                continue;
+            }
             let y = self.offsets.get(at).copied().unwrap_or(0.0);
             if y < viewport.min.y - 20.0 || y > viewport.max.y + 20.0 {
                 continue;
@@ -1732,7 +1811,14 @@ impl ScriptView {
         let is_current = snapshot.current == Some(cue_index);
         // The cue that fired last, if it did so by itself (the operator's own is "current").
         let just_fired = snapshot.latest == Some(cue_index) && !is_current;
-        let is_next = snapshot.next == Some(cue_index);
+        // Of a group of variants the next Go takes the one chosen, or else the first.
+        let is_next = {
+            let cues = Cues::new(cx.script);
+            match snapshot.next.filter(|next| cues.group(*next).contains(&cue_index)) {
+                Some(next) => snapshot.selected_variant.filter(|chosen| cues.group(next).contains(chosen)).unwrap_or(next) == cue_index,
+                None => false,
+            }
+        };
         let waits = snapshot.pending_outros.iter().any(|&(_, outro)| outro == cue_index);
         let status = snapshot.audio.iter().find(|(c, _)| *c == cue_index).map(|(_, s)| *s);
         let sounding = status.is_some_and(|s| matches!(s.state, mdstage_engine::clock::VoiceState::Playing | mdstage_engine::clock::VoiceState::Tail));
@@ -1969,7 +2055,12 @@ impl ScriptView {
             }
         };
         let has_audio = cue.audio().is_some();
-        link_button(&mut row, Link::AutoCue, "Auto-Cue", cue.auto_trigger().is_some(), true, t("Diesen Cue von selbst auslösen lassen: danach die Quelle anklicken.", "Let this cue fire by itself: then click its source."));
+        let in_group = Cues::new(cx.script).in_group(cue_index);
+        let auto_hint = match in_group {
+            true => t("Eine Variante wird nie von selbst ausgelöst: Welche genommen wird, wählt der Operator.", "A variant never fires by itself: the operator chooses which one is taken."),
+            false => t("Diesen Cue von selbst auslösen lassen: danach die Quelle anklicken.", "Let this cue fire by itself: then click its source."),
+        };
+        link_button(&mut row, Link::AutoCue, "Auto-Cue", cue.auto_trigger().is_some(), !in_group || cue.auto_trigger().is_some(), auto_hint);
         link_button(&mut row, Link::Adjust, t("⇢ Bezug", "⇢ Adjust"), cue.adjust().is_some(), has_audio, t("Beim Auslösen das Audio eines anderen Cues ausfaden oder leiser stellen: danach den anderen Cue anklicken.", "On firing, fade out or turn down another cue's audio: then click that cue."));
 
         let slf = match Cues::new(cx.script).slf(cue_index) {
@@ -2540,6 +2631,46 @@ mod tests {
         assert!(on_the_way >= 8, "only {on_the_way} frames between start and arrival");
         assert!(seen.windows(2).all(|pair| pair[1] >= pair[0] - 0.01), "never backwards");
         assert_eq!(view.lanes, 2);
+    }
+
+    /// A cue with variants is drawn as a group; lines that point at a variant end at the
+    /// group, lines a variant sends out begin at that variant.
+    #[test]
+    fn variants_are_drawn_as_a_group() {
+        let cue = |n: usize, more: &str| format!("```yaml\ntrigger_note: {{ch: 1, note: {n}}}\n{more}\n```\n\n");
+        let text = [
+            cue(0, "music: {file: loop.wav, loop: true}\nloop_outro: {ch: 1, note: 2}"),
+            cue(1, "note: A"),
+            cue(2, "sibling: true\nnote: B\nmusic:\n    file: b.wav\n    adjust: {trigger_note: {ch: 1, note: 0}, fadeout: true}"),
+            "**Anna**\nText.\n\n".to_string(),
+            cue(3, "auto_trigger: {trigger_note: {ch: 1, note: 2}, delay: 3, group: true}"),
+        ]
+        .concat();
+        let script = Script::parse(&text);
+        let blocks: Vec<usize> = script.blocks.iter().enumerate().filter(|(_, b)| matches!(b, Block::Cue(_))).map(|(i, _)| i).collect();
+        let mut view = ScriptView::default();
+        view.relate(&script);
+        assert_eq!(view.group_roots.iter().copied().collect::<Vec<_>>(), [blocks[1]]);
+        let find = |from: usize, to: usize| view.relations.iter().find(|r| (r.from, r.to) == (from, to)).map(|r| (r.from_group, r.to_group));
+        assert_eq!(find(blocks[0], blocks[1]), Some((false, true)), "the loop's outro is the group");
+        assert_eq!(find(blocks[2], blocks[0]), Some((false, false)), "the variant's own adjust begins at the variant");
+        assert_eq!(find(blocks[1], blocks[3]), Some((true, false)), "the delayed auto-cue hangs on the group");
+
+        // And it draws, with the group's frame and head.
+        let cast = Cast::from_script(&script, false);
+        let snapshot = Snapshot { next: Some(1), selected_variant: Some(2), ..Default::default() };
+        let cx = Context { script: &script, cast: &cast, snapshot: &snapshot, locked: false, line_numbers: false, group_mics: false, can_paste: false, has_editor: false, vim: false };
+        let ctx = egui::Context::default();
+        egui_extras::install_image_loaders(&ctx);
+        crate::theme::apply(&ctx);
+        view.dirty = true;
+        for _ in 0..3 {
+            let _ = ctx.run(egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 700.0))), ..Default::default() }, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| view.show(ui, &cx, &mut Vec::new()));
+            });
+        }
+        // The first card of the group carries the group's head on top.
+        assert!(view.heights[blocks[1]] >= GROUP_HEAD + 40.0, "{}", view.heights[blocks[1]]);
     }
 
     /// Several delayed auto-cues leave their source in the order of their delays.

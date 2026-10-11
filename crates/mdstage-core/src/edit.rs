@@ -327,16 +327,52 @@ impl Script {
     /// Swap a block with its neighbour above (`up`) or below. Returns its new index.
     /// The config block stays where it is.
     pub fn move_block(&mut self, index: usize, up: bool) -> usize {
-        let target = if up { index.checked_sub(1) } else { Some(index + 1).filter(|&t| t < self.blocks.len()) };
-        let is_config = |i: usize| matches!(self.blocks.get(i), Some(Block::Config(_)));
-        match target {
-            Some(target) if index < self.blocks.len() && !is_config(index) && !is_config(target) => {
-                self.blocks.swap(index, target);
-                self.repair_variants();
-                target
-            }
-            _ => index,
+        if index >= self.blocks.len() {
+            return index;
         }
+        // What moves is a block, or a cue together with all its variants; and it moves
+        // past a block or past such a group as a whole, never into the middle of one.
+        let (start, end) = self.unit(index);
+        let neighbour = match up {
+            true if start > 0 => self.unit(start - 1),
+            false if end < self.blocks.len() => self.unit(end),
+            _ => return index,
+        };
+        let is_config = |range: (usize, usize)| (range.0..range.1).any(|i| matches!(self.blocks.get(i), Some(Block::Config(_))));
+        if is_config((start, end)) || is_config(neighbour) {
+            return index;
+        }
+        let moved = match up {
+            true => {
+                self.blocks[neighbour.0..end].rotate_left(neighbour.1 - neighbour.0);
+                index - (neighbour.1 - neighbour.0)
+            }
+            false => {
+                self.blocks[start..neighbour.1].rotate_left(end - start);
+                index + (neighbour.1 - neighbour.0)
+            }
+        };
+        self.repair_variants();
+        moved
+    }
+
+    /// The blocks that belong together with the one at `index`: a cue with its variants
+    /// (from any of them), or the block alone. As `(start, end)`, the end not included.
+    pub fn unit(&self, index: usize) -> (usize, usize) {
+        let variant = |i: usize| matches!(self.blocks.get(i), Some(Block::Cue(cue)) if cue.is_variant());
+        let cue = |i: usize| matches!(self.blocks.get(i), Some(Block::Cue(_)));
+        if !cue(index) {
+            return (index, index + 1);
+        }
+        let mut start = index;
+        while start > 0 && variant(start) && cue(start - 1) {
+            start -= 1;
+        }
+        let mut end = index + 1;
+        while variant(end) {
+            end += 1;
+        }
+        (start, end)
     }
 
     /// A new cue built from YAML fields, with the lowest free trigger note.
@@ -1056,5 +1092,29 @@ config:
         assert!(declared[1].get("color").is_none());
         script.set_output_devices(&[]);
         assert!(script.config().unwrap().get("outputDevices").is_none());
+    }
+
+    #[test]
+    fn a_cue_moves_together_with_its_variants() {
+        let text = "Eins\n\n```yaml\nnote: A\n```\n\n```yaml\nsibling: true\nnote: B\n```\n\nZwei\n\n```yaml\nnote: C\n```\n";
+        let mut script = Script::parse(text);
+        let notes = |script: &Script| -> Vec<String> {
+            script.blocks.iter().map(|b| match b {
+                Block::Cue(c) => c.text("note").unwrap_or("?").to_string(),
+                Block::Text(t) | Block::Stage(t) => t.clone(),
+                _ => "-".to_string(),
+            }).collect()
+        };
+        assert_eq!(notes(&script), ["Eins", "A", "B", "Zwei", "C"]);
+        assert_eq!(script.unit(2), (1, 3));
+        // The variant is taken hold of: the whole group goes down past the text.
+        assert_eq!(script.move_block(2, false), 3);
+        assert_eq!(notes(&script), ["Eins", "Zwei", "A", "B", "C"]);
+        // A single cue jumps over the whole group, not into it.
+        assert_eq!(script.move_block(4, true), 2);
+        assert_eq!(notes(&script), ["Eins", "Zwei", "C", "A", "B"]);
+        assert_eq!(script.move_block(0, true), 0, "nothing above");
+        // The group is still a group.
+        assert!(matches!(&script.blocks[4], Block::Cue(c) if c.is_variant()));
     }
 }

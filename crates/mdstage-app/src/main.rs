@@ -275,6 +275,25 @@ impl App {
         let Some(show) = &self.show else { return };
         let cues = Cues::new(&show.script);
         let Some(note) = cues.get(other).and_then(|c| c.note()) else { return };
+        // A variant never fires by itself (the operator has to choose which one is
+        // taken): nothing carries straight on into one, and none is made an auto-cue.
+        let other_in_group = cues.in_group(other);
+        let block_in_group = (0..cues.len()).find(|&cue| cues.block_index(cue) == Some(block)).is_some_and(|cue| cues.in_group(cue));
+        let refused = match link {
+            Link::Chain if other_in_group => Some(lang::t(
+                "Nicht verbunden: In eine Variante geht nichts nahtlos über, denn welche genommen wird, wählt der Operator. Als Outro eines Loops geht es.",
+                "Not connected: nothing carries straight on into a variant, as the operator chooses which one is taken. As a loop's outro it works.",
+            )),
+            Link::AutoCue if block_in_group => Some(lang::t(
+                "Nicht gesetzt: Eine Variante wird nie von selbst ausgelöst, denn welche genommen wird, wählt der Operator.",
+                "Not set: a variant never fires by itself, as the operator chooses which one is taken.",
+            )),
+            _ => None,
+        };
+        if let Some(why) = refused {
+            self.message = Some(why.to_string());
+            return;
+        }
         match link {
             Link::Chain => self.edit_cue(block, |map| drop(map.insert("chain_end".into(), note_value(note)))),
             Link::LoopOutro => self.edit_cue(block, |map| drop(map.insert("loop_outro".into(), note_value(note)))),
@@ -304,7 +323,7 @@ impl App {
                         auto.insert("at".into(), ((at * 1000.0).round() / 1000.0).into());
                         map.insert("auto_trigger".into(), auto.into());
                     }),
-                    None => self.link_dialog = Some(LinkDialog::Delay { block, source: note, seconds: 5.0, at_place: true }),
+                    None => self.link_dialog = Some(LinkDialog::Delay { block, source: note, seconds: 5.0, at_place: true, in_group: other_in_group, whole_group: true }),
                 }
             }
             Link::Adjust => {
@@ -361,7 +380,7 @@ impl App {
         };
         egui::Window::new(title).open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
             match &mut dialog {
-                LinkDialog::Delay { seconds, at_place, .. } => {
+                LinkDialog::Delay { seconds, at_place, in_group, whole_group, .. } => {
                     ui.label(lang::t(
                         "Das Audio der Quelle steht an keiner Stelle. Nach welcher Zeit soll der Cue ausgelöst werden?",
                         "The source's audio is not standing anywhere. After what time is the cue to fire?",
@@ -397,6 +416,19 @@ impl App {
                     if place.is_none() {
                         ui.label(RichText::new(lang::t("Die Quelle hat kein Audio, das so lang ist: Der Cue wird einmal mit Verzögerung ausgelöst.", "The source has no audio that long: the cue fires once, with a delay.")).color(MUTED));
                     }
+                    // A delay on a source with variants: from whichever variant, or from this one.
+                    if *in_group {
+                        ui.add_space(4.0);
+                        ui.label(lang::t("Die Quelle hat Varianten.", "The source has variants."));
+                        let delayed = !(*at_place && place.is_some());
+                        ui.add_enabled_ui(delayed, |ui| {
+                            ui.radio_value(whole_group, true, lang::t("Verzögerung an der ganzen Gruppe: egal, welche Variante ausgelöst wird", "Delay on the whole group: whichever variant is fired"));
+                            ui.radio_value(whole_group, false, lang::t("Verzögerung nur an dieser Variante", "Delay on this variant only"));
+                        });
+                        if !delayed {
+                            ui.label(RichText::new(lang::t("Eine Stelle im Audio gehört immer zu der einen Variante, in deren Wellenform sie liegt.", "A place in the audio always belongs to the one variant whose waveform it lies in.")).color(MUTED));
+                        }
+                    }
                 }
                 LinkDialog::Adjust { fadeout, volume, fadetime, .. } => {
                     ui.radio_value(fadeout, true, lang::t("Ausfaden (stoppen)", "Fade out (stop)"));
@@ -421,7 +453,7 @@ impl App {
             });
         });
         match (result, dialog) {
-            (Some(true), LinkDialog::Delay { block, source, seconds, at_place }) => {
+            (Some(true), LinkDialog::Delay { block, source, seconds, at_place, in_group, whole_group }) => {
                 // At the place in the source's audio (with its marker on the waveform, as
                 // if it had been set from the playhead), or once after a delay.
                 let place = place.filter(|_| at_place);
@@ -433,6 +465,9 @@ impl App {
                         None => ("delay", seconds),
                     };
                     auto.insert(key.into(), ((value * 1000.0).round() / 1000.0).into());
+                    if in_group && whole_group && place.is_none() {
+                        auto.insert("group".into(), true.into());
+                    }
                     map.insert("auto_trigger".into(), auto.into());
                 });
             }
@@ -653,6 +688,31 @@ impl App {
                         true => drop(music.shift_remove("markers")),
                         false => drop(music.insert("markers".into(), mdstage_core::yaml::Value::Sequence(list))),
                     });
+                }
+                // A variant group's volume: each variant's own volume counts times it.
+                Action::LiveGroupVolume { block, volume } | Action::GroupVolume { block, volume } => {
+                    let (block, volume) = (*block, (*volume * 100.0).round() / 100.0);
+                    let mut sounding = Vec::new();
+                    if let Some(show) = &self.show {
+                        let cues = Cues::new(&show.script);
+                        if let Some(root) = (0..cues.len()).find(|&cue| cues.block_index(cue) == Some(block)) {
+                            for member in cues.group(root) {
+                                let own = cues.get(member).and_then(|c| c.audio()).and_then(|a| a.parts.first().map(|p| p.volume));
+                                if let Some(own) = own.filter(|_| self.snapshot.audio.iter().any(|(c, _)| *c == member)) {
+                                    sounding.push((member, own * volume));
+                                }
+                            }
+                        }
+                    }
+                    for (cue, volume) in sounding {
+                        self.request(Request::Volume(cue, volume));
+                    }
+                    if matches!(action, Action::GroupVolume { .. }) {
+                        self.edit_cue(block, |map| match volume >= 0.995 {
+                            true => drop(map.shift_remove("group_volume")),
+                            false => drop(map.insert("group_volume".into(), volume.into())),
+                        });
+                    }
                 }
                 Action::Volume { block, volume } => {
                     let volume = (*volume * 100.0).round() / 100.0;
@@ -1077,6 +1137,16 @@ impl App {
         lines.extend(show.report.problems.iter().map(|p| {
             let unknown = p.message.strip_prefix("Unbekannter Schlüssel: ").map(|key| (p.block, key.to_string()));
             (format!("{} {}: {}", lang::t("YAML-Block", "YAML block"), p.block, p.message), RED, unknown)
+        }));
+        lines.extend(show.report.variants.iter().map(|issue| {
+            use mdstage_core::validate::VariantIssue;
+            let text = match (issue, lang::english()) {
+                (VariantIssue::AutoCue(cue), false) => format!("{cue} ist eine Variante und zugleich ein Auto-Cue. Eine Variante wird nie von selbst ausgelöst (welche genommen wird, wählt der Operator); der Auto-Cue bleibt ohne Wirkung."),
+                (VariantIssue::AutoCue(cue), true) => format!("{cue} is a variant and an auto-cue at once. A variant never fires by itself (the operator chooses which one is taken); the auto-cue has no effect."),
+                (VariantIssue::ChainedInto { from, to }, false) => format!("{from} geht nahtlos in {to} über, das Varianten hat. In eine Variante geht nichts von selbst über; der Übergang bleibt ohne Wirkung."),
+                (VariantIssue::ChainedInto { from, to }, true) => format!("{from} carries straight on into {to}, which has variants. Nothing carries on into a variant by itself; the transition has no effect."),
+            };
+            (text, RED, None)
         }));
         lines.extend(show.report.auto_order.iter().map(|(first, second)| {
             let text = if lang::english() {
@@ -1752,7 +1822,9 @@ enum LinkDialog {
     /// Fire by itself this long after `source` fires.
     /// `at_place`: if the time lies within the source's audio, hang the auto-cue on that
     /// place in it (it then fires on every pass of a loop) instead of counting once.
-    Delay { block: usize, source: mdstage_core::cues::Note, seconds: f64, at_place: bool },
+    /// `in_group`: the source is one of several variants; `whole_group`: a delay then
+    /// counts from whichever of them is fired, not only from the one that was clicked.
+    Delay { block: usize, source: mdstage_core::cues::Note, seconds: f64, at_place: bool, in_group: bool, whole_group: bool },
     /// Change the audio of `target` when the cue fires.
     Adjust { block: usize, target: mdstage_core::cues::Note, fadeout: bool, volume: f64, fadetime: f64 },
 }

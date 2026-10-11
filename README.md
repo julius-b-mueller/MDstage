@@ -244,7 +244,16 @@ Every cue's card has an edit button (a pencil) in its bottom right corner that o
 
 ### Variants
 
-**⊕** duplicates a cue as a `sibling`. Variants are shown as a group. In live operation, a variant can be selected before Go; if none is selected, the first variant always fires.
+**⊕** duplicates a cue as a variant (`sibling: true`). Variants are alternatives for one place in the show — another key for another cast, a shorter version of a song. Only one of them fires.
+
+- **Each variant is a cue of its own**, with its own name, audio, timings, microphones and messages. In the main window the variants stand one below the other inside a common frame; in the live view they stand side by side.
+- **They stay together:** nothing can be put between a cue and its variants, and moving one of them moves the whole group.
+- **Choosing:** in the live view a variant is chosen before Go; if none is chosen, the first one fires. Clicking a variant in the main window fires that one.
+- **What a variant does itself belongs to that variant:** its own transition, its own adjust, its own messages. Its lines begin at its card.
+- **What points at a variant means the group:** a loop whose outro is a variant hands over to whichever variant is chosen, and an adjust aimed at a variant acts on the one that is sounding. Such lines end at the group's frame.
+- **Variants never fire by themselves**, because the operator has to choose which one is taken: no cue of a group can be an auto-cue, and nothing can carry straight on (`chain_end`) into a group. (As a loop's outro a group works: the operator chooses, then presses Go.) A show file that breaks this is reported as an error; the auto-cue or transition then has no effect.
+- **Auto-cues that hang on a group:** one with a delay can hang on the whole group (`auto_trigger.group: true` — it counts from whichever variant is fired, and its line begins at the frame) or on one variant only; the dialog asks. One at a place in the audio always belongs to the variant whose waveform it lies in.
+- **Group volume:** the slider in the group's head (`group_volume` on the first cue). Each variant's own volume counts times it, so variants of different loudness keep their balance. An adjust with a volume aimed at the group sets this share anew: "to 50 %" means half of each variant's own volume.
 
 ---
 
