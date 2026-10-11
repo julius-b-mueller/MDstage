@@ -384,6 +384,11 @@ impl ScriptView {
         self.dirty = true;
     }
 
+    /// The length of an audio file in seconds, if its waveform has been read.
+    pub fn duration(&self, file: &str) -> Option<f64> {
+        self.durations.get(file).copied()
+    }
+
     /// Open the search bar (or put the cursor back into it).
     pub fn open_search(&mut self) {
         self.search.get_or_insert_with(Search::default).focus = true;
@@ -836,16 +841,29 @@ impl ScriptView {
         }
         if let Some(auto) = cue.auto_trigger() {
             let text = match (auto.when, crate::lang::english()) {
-                (AutoWhen::At(at), true) => format!("automatically at {at} s into"),
-                (AutoWhen::At(at), false) => format!("automatisch bei {at} s in"),
-                (AutoWhen::Delay(delay), true) => format!("automatically {delay} s after"),
-                (AutoWhen::Delay(delay), false) => format!("automatisch {delay} s nach"),
+                (AutoWhen::At(at), true) => format!("automatically at {} s into", format::seconds(at)),
+                (AutoWhen::At(at), false) => format!("automatisch bei {} s in", format::seconds(at)),
+                (AutoWhen::Delay(delay), true) => format!("automatically {} s after", format::seconds(delay)),
+                (AutoWhen::Delay(delay), false) => format!("automatisch {} s nach", format::seconds(delay)),
             };
             rows.push(Row::linked("Auto", vec![word(&text, ORANGE), to(cues.find(auto.source))]));
         }
+        // The auto-cues this cue sets off after a delay are named here too, with their
+        // seconds. (Those at a place in its audio have their marker on its waveform.)
+        if let Some(note) = cue.note() {
+            for target in 0..cues.len() {
+                let Some(auto) = cues.get(target).and_then(|c| c.auto_trigger()).filter(|a| a.source == note) else { continue };
+                let AutoWhen::Delay(delay) = auto.when else { continue };
+                let seconds = format::seconds(delay);
+                rows.push(Row::linked("Auto", match crate::lang::english() {
+                    true => vec![word("fires", ORANGE), to(Some(target)), word(&format!("after {seconds} s"), ORANGE)],
+                    false => vec![word("löst", ORANGE), to(Some(target)), word(&format!("nach {seconds} s aus"), ORANGE)],
+                }));
+            }
+        }
         if let Some(adjust) = cue.adjust() {
             let target = to(cues.find(adjust.target));
-            let seconds = adjust.fadetime.map_or(String::new(), |s| format!(" ({s} s)"));
+            let seconds = adjust.fadetime.map_or(String::new(), |s| format!(" ({} s)", format::seconds(s)));
             rows.push(Row::linked("⇢", match (adjust.fadeout, adjust.volume) {
                 (true, _) if crate::lang::english() => vec![word("fade out", GREEN), target, word(seconds.trim(), MUTED)],
                 (true, _) => vec![target, word(&format!("ausfaden{seconds}"), GREEN)],

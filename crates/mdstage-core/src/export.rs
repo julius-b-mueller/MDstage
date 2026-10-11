@@ -137,10 +137,10 @@ impl Script {
                         let part = &audio.parts[0];
                         let mut text = audio.parts.iter().map(|p| p.audios.iter().map(|a| a.file.as_str()).collect::<Vec<_>>().join(" + ")).collect::<Vec<_>>().join(" → ");
                         let mut details = vec![format!("Vol {}", percent(part.volume))];
-                        details.extend(part.start.map(|s| format!("Start {s} s")));
-                        details.extend(part.end.map(|e| format!("Ende {e} s")));
-                        details.extend(part.fadein.filter(|f| *f > 0.0).map(|f| format!("Fade-in {f} s")));
-                        details.extend(part.fadeout.filter(|f| *f > 0.0).map(|f| format!("Fade-out {f} s")));
+                        details.extend(part.start.map(|s| format!("Start {} s", crate::format::seconds(s))));
+                        details.extend(part.end.map(|e| format!("Ende {} s", crate::format::seconds(e))));
+                        details.extend(part.fadein.filter(|f| *f > 0.0).map(|f| format!("Fade-in {} s", crate::format::seconds(f))));
+                        details.extend(part.fadeout.filter(|f| *f > 0.0).map(|f| format!("Fade-out {} s", crate::format::seconds(f))));
                         if audio.looped {
                             details.push("Loop".into());
                         }
@@ -168,8 +168,8 @@ impl Script {
                         rows.push((
                             "Auto".into(),
                             match auto.when {
-                                AutoWhen::At(at) => format!("bei {at} s in {source}"),
-                                AutoWhen::Delay(delay) => format!("{delay} s nach {source}"),
+                                AutoWhen::At(at) => format!("bei {} s in {source}", crate::format::seconds(at)),
+                                AutoWhen::Delay(delay) => format!("{} s nach {source}", crate::format::seconds(delay)),
                             },
                         ));
                     }

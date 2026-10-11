@@ -466,7 +466,13 @@ audio reaches a position, or after a delay once the source fires.
 1. Click **Auto-Cue** on the target cue
 2. Click the source cue (pick mode — any cue with a trigger note can be picked)
 3. **If the source audio is paused at a position**, that position is used (audio-position
-   auto-cue). **Otherwise** a dialog asks for a delay in seconds (delay auto-cue).
+   auto-cue). **Otherwise** a dialog asks for a time in seconds. If that time lies within the
+   source's audio, the auto-cue is put at that place in it and gets its marker on the
+   waveform, exactly as if it had been set from the playhead. If the source has no audio, or
+   the time lies past its end, it becomes a delay auto-cue: its line starts at the left edge
+   of the source's card, and the source's card names it with its seconds.
+
+Seconds are shown with two decimals at most.
 
 For audio-position auto-cues the marker appears on the source cue's waveform, with the
 auto-cue's name (`1.47`) above it; **Shift+Drag** repositions it. A line runs from the marker

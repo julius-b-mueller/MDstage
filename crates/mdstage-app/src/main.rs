@@ -316,8 +316,8 @@ impl App {
             match &mut dialog {
                 LinkDialog::Delay { seconds, .. } => {
                     ui.label(lang::t(
-                        "Das Audio der Quelle steht an keiner Stelle. Der Cue wird nach der eingegebenen Zeit ausgelöst, sobald die Quelle startet.",
-                        "The source's audio is not standing anywhere. The cue fires the given time after the source starts.",
+                        "Das Audio der Quelle steht an keiner Stelle. Der Cue wird nach der eingegebenen Zeit ausgelöst, sobald die Quelle startet. Liegt die Zeit innerhalb des Audios der Quelle, entsteht dort eine Marke in der Wellenform.",
+                        "The source's audio is not standing anywhere. The cue fires the given time after the source starts. If that time lies within the source's audio, a marker is put there on its waveform.",
                     ));
                     ui.add(egui::DragValue::new(seconds).speed(0.1).range(0.0..=36000.0).suffix(" s"));
                 }
@@ -344,12 +344,30 @@ impl App {
             });
         });
         match (result, dialog) {
-            (Some(true), LinkDialog::Delay { block, source, seconds }) => self.edit_cue(block, |map| {
-                let mut auto = serde_yaml_mapping();
-                auto.insert("trigger_note".into(), note_value(source));
-                auto.insert("delay".into(), ((seconds * 1000.0).round() / 1000.0).into());
-                map.insert("auto_trigger".into(), auto.into());
-            }),
+            (Some(true), LinkDialog::Delay { block, source, seconds }) => {
+                // Within the source's audio the delay is a place in it: the auto-cue gets
+                // its marker on the waveform, as if it had been set from the playhead.
+                // Past the end of the audio, or with a source that has none, it stays a delay.
+                let place = self.show.as_ref().and_then(|show| {
+                    let cues = Cues::new(&show.script);
+                    let audio = cues.get(cues.find(source)?)?.audio()?;
+                    let part = audio.parts.first()?;
+                    let length = self.view.duration(&part.audios.first()?.file)?;
+                    let start = part.start.unwrap_or(0.0);
+                    let end = part.end.unwrap_or(length).min(length);
+                    (start + seconds < end).then_some(start + seconds)
+                });
+                self.edit_cue(block, |map| {
+                    let mut auto = serde_yaml_mapping();
+                    auto.insert("trigger_note".into(), note_value(source));
+                    let (key, value) = match place {
+                        Some(at) => ("at", at),
+                        None => ("delay", seconds),
+                    };
+                    auto.insert(key.into(), ((value * 1000.0).round() / 1000.0).into());
+                    map.insert("auto_trigger".into(), auto.into());
+                });
+            }
             (Some(true), LinkDialog::Adjust { block, target, fadeout, volume, fadetime }) => self.edit_music(block, |music| {
                 let mut adjust = serde_yaml_mapping();
                 adjust.insert("trigger_note".into(), note_value(target));

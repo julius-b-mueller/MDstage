@@ -222,6 +222,12 @@ pub fn starred(text: &str) -> String {
     out + rest
 }
 
+/// Seconds as they are shown: at most two decimals, none that say nothing ("6.43", "4").
+pub fn seconds(value: f64) -> String {
+    let text = format!("{:.2}", value);
+    text.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
 pub fn needs_formatting(text: &str) -> bool {
     format_script(text) != text
 }
@@ -296,6 +302,16 @@ Text<br>
         assert_eq!(shown("Eins<BR>Zwei <br>\n"), "Eins\nZwei");
         assert_eq!(stored("Zeile eins\n\n  Zeile zwei  "), "Zeile eins <br>\nZeile zwei");
         assert_eq!(shown(""), "");
+    }
+
+    #[test]
+    fn seconds_are_shown_with_two_decimals_at_most() {
+        assert_eq!(seconds(6.425), "6.42");
+        assert_eq!(seconds(34.986), "34.99");
+        assert_eq!(seconds(4.0), "4");
+        assert_eq!(seconds(0.5), "0.5");
+        assert_eq!(seconds(10.0), "10");
+        assert_eq!(seconds(0.0), "0");
     }
 
     #[test]
