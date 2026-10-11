@@ -353,6 +353,8 @@ pub struct ScriptView {
     hovered_before: Option<usize>,
     /// The cue block whose buttons were shown last (they stay while a menu of theirs is open).
     buttons_of: Option<usize>,
+    /// Blocks of auto-cues that stand in another order than they fire in.
+    out_of_order: std::collections::HashSet<usize>,
     /// The cue whose microphones are running out, as last seen.
     holding: Option<usize>,
     /// A cue block that was gone to, and when: it is outlined for a moment.
@@ -585,6 +587,7 @@ impl ScriptView {
                 }
             }
         }
+        self.out_of_order = cues.auto_order_conflicts().into_iter().flat_map(|(first, second)| [first, second]).filter_map(|cue| cues.block_index(cue)).collect();
         self.lanes = lanes.len();
         self.relations = found;
     }
@@ -1787,6 +1790,9 @@ impl ScriptView {
         if cue.is_variant() {
             badge(t("Variante", "Variant"), MUTED);
         }
+        if self.out_of_order.contains(&block) {
+            badge(t("⚠ Reihenfolge", "⚠ order"), RED);
+        }
         if is_current {
             badge(t("aktuell", "current"), GREEN);
         }
@@ -2363,7 +2369,14 @@ impl ScriptView {
                     }
                     if response.dragged() {
                         if let Some(pointer) = response.interact_pointer_pos() {
+                            // The marker stops at its neighbours: this source's auto-cues
+                            // fire in the order they stand in the script.
+                            let (from, to) = cues.auto_range(target, cue_index, true);
+                            let (from, to) = (from.unwrap_or(0.0), to.unwrap_or(duration));
                             at = t_of(pointer.x);
+                            if from <= to {
+                                at = at.clamp(from, to);
+                            }
                             self.auto_dragging.insert(target_block, at);
                         }
                     }

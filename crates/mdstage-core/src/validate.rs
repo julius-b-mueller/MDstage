@@ -26,11 +26,14 @@ pub struct NoteConflict {
 pub struct Report {
     pub problems: Vec<Problem>,
     pub note_conflicts: Vec<NoteConflict>,
+    /// Auto-cues of one source that stand in another order than they fire in: the names
+    /// of the cue that stands first and of the one that fires before it.
+    pub auto_order: Vec<(String, String)>,
 }
 
 impl Report {
     pub fn is_clean(&self) -> bool {
-        self.problems.is_empty() && self.note_conflicts.is_empty()
+        self.problems.is_empty() && self.note_conflicts.is_empty() && self.auto_order.is_empty()
     }
 }
 
@@ -230,6 +233,8 @@ impl Script {
             }
         }
         report.problems.sort_by_key(|p| p.block);
+        let cues = crate::cues::Cues::new(self);
+        report.auto_order = cues.auto_order_conflicts().into_iter().map(|(first, second)| (cues.name(first), cues.name(second))).collect();
         report
     }
 }

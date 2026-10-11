@@ -477,6 +477,15 @@ audio reaches a position, or after a delay once the source fires.
    A delay auto-cue's line starts at the left edge of the source's card, with its seconds
    written where it leaves. Several of them leave in the order of their delays.
 
+**Auto-cues stand in the order they fire in.** The auto-cues of one source have to fire in the order they stand in the script, so that what is read along is what happens:
+
+- A marker on the waveform can only be dragged between its neighbours: not before the auto-cue that stands before it in the script, not after the one that stands after it.
+- The dialog only takes a time in that range and says what the range is; a place taken from the playhead that lies outside it is refused.
+- Moving a block (▲ / ▼) is refused if it would break the order. To swap two auto-cues, change the time first, then move the cue.
+- A show file that breaks the rule (edited by hand) is not rearranged: it is reported as an error when it is opened, and the cards concerned are marked "⚠ order".
+
+Compared are places with places and delays with delays; a place with a delay only where the source's audio plays once (in a loop the place comes round on every pass, the delay only once). Auto-cues of different sources are not compared.
+
 Seconds are shown with two decimals at most.
 
 For audio-position auto-cues the marker appears on the source cue's waveform, with the

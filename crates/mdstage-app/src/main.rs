@@ -282,6 +282,21 @@ impl App {
                 // Where the source's audio stands, paused or playing, is where the cue fires.
                 let paused = self.snapshot.paused.iter().find(|(c, _)| *c == other).map(|(_, seconds)| *seconds);
                 let playing = self.snapshot.audio.iter().find(|(c, s)| *c == other && s.part == 0).map(|(_, s)| s.seconds);
+                // A place that would put this source's auto-cues out of the order they stand
+                // in is not taken.
+                let cues = Cues::new(&show.script);
+                let target = (0..cues.len()).find(|&cue| cues.block_index(cue) == Some(block));
+                let range = target.map_or((None, None), |target| cues.auto_range(target, other, true));
+                let out_of_order = paused.or(playing).is_some_and(|at| range.0.is_some_and(|from| at < from) || range.1.is_some_and(|to| at > to));
+                if out_of_order {
+                    let seconds = |value: Option<f64>| value.map_or("…".to_string(), mdstage_core::format::seconds);
+                    self.message = Some(if lang::english() {
+                        format!("Not set: this source's auto-cues fire in the order they stand in the script. The place has to lie between {} and {} s.", seconds(range.0), seconds(range.1))
+                    } else {
+                        format!("Nicht gesetzt: Die Auto-Cues dieser Quelle lösen in der Reihenfolge aus, in der sie im Skript stehen. Die Stelle muss zwischen {} und {} s liegen.", seconds(range.0), seconds(range.1))
+                    });
+                    return;
+                }
                 match paused.or(playing) {
                     Some(at) => self.edit_cue(block, |map| {
                         let mut auto = serde_yaml_mapping();
@@ -324,6 +339,20 @@ impl App {
             }),
             LinkDialog::Adjust { .. } => None,
         };
+        // The auto-cues of one source fire in the order they stand in the script: the
+        // seconds that keep it so, as a delay and as a place in the source's audio.
+        let between = |range: (Option<f64>, Option<f64>), start: f64| ((range.0.unwrap_or(start) - start).max(0.0), range.1.map_or(36000.0, |to| to - start));
+        let (delay_range, place_range) = match &dialog {
+            LinkDialog::Delay { block, source, .. } => self.show.as_ref().and_then(|show| {
+                let cues = Cues::new(&show.script);
+                let target = (0..cues.len()).find(|&cue| cues.block_index(cue) == Some(*block))?;
+                let from = cues.find(*source)?;
+                let start = cues.get(from)?.audio().and_then(|audio| audio.parts.first()?.start).unwrap_or(0.0);
+                Some((between(cues.auto_range(target, from, false), 0.0), between(cues.auto_range(target, from, true), start)))
+            }),
+            LinkDialog::Adjust { .. } => None,
+        }
+        .unwrap_or(((0.0, 36000.0), (0.0, 36000.0)));
         let mut open = true;
         let mut result = None;
         let title = match dialog {
@@ -337,7 +366,26 @@ impl App {
                         "Das Audio der Quelle steht an keiner Stelle. Nach welcher Zeit soll der Cue ausgelöst werden?",
                         "The source's audio is not standing anywhere. After what time is the cue to fire?",
                     ));
-                    ui.add(egui::DragValue::new(seconds).speed(0.1).range(0.0..=36000.0).suffix(" s"));
+                    // What the time may be depends on which of the two kinds below it is.
+                    let (from, to) = if *at_place && place.is_some() { place_range } else { delay_range };
+                    if from <= to {
+                        *seconds = seconds.clamp(from, to);
+                        ui.add(egui::DragValue::new(seconds).speed(0.1).range(from..=to).suffix(" s"));
+                        if from > 0.0 || to < 36000.0 {
+                            let seconds = mdstage_core::format::seconds;
+                            let text = match (from > 0.0, to < 36000.0, lang::english()) {
+                                (true, true, false) => format!("Zwischen {} und {} s: Die Auto-Cues dieser Quelle lösen in der Reihenfolge aus, in der sie im Skript stehen.", seconds(from), seconds(to)),
+                                (true, false, false) => format!("Mindestens {} s: Die Auto-Cues dieser Quelle lösen in der Reihenfolge aus, in der sie im Skript stehen.", seconds(from)),
+                                (false, _, false) => format!("Höchstens {} s: Die Auto-Cues dieser Quelle lösen in der Reihenfolge aus, in der sie im Skript stehen.", seconds(to)),
+                                (true, true, true) => format!("Between {} and {} s: this source's auto-cues fire in the order they stand in the script.", seconds(from), seconds(to)),
+                                (true, false, true) => format!("At least {} s: this source's auto-cues fire in the order they stand in the script.", seconds(from)),
+                                (false, _, true) => format!("At most {} s: this source's auto-cues fire in the order they stand in the script.", seconds(to)),
+                            };
+                            ui.label(RichText::new(text).color(MUTED));
+                        }
+                    } else {
+                        ui.add(egui::DragValue::new(seconds).speed(0.1).range(0.0..=36000.0).suffix(" s"));
+                    }
                     ui.add_space(4.0);
                     // The choice only exists while the time lies within the source's audio.
                     ui.add_enabled_ui(place.is_some(), |ui| {
@@ -521,10 +569,22 @@ impl App {
                     }
                 }
                 Action::Move { block, up } => {
+                    let mut refused = false;
                     if let Some(show) = &mut self.show {
+                        // A move that would put auto-cues out of the order they fire in
+                        // is not made.
+                        let before = show.script.clone();
+                        let conflicts = Cues::new(&before).auto_order_conflicts().len();
                         show.script.move_block(*block, *up);
+                        if Cues::new(&show.script).auto_order_conflicts().len() > conflicts {
+                            show.script = before;
+                            refused = true;
+                        }
                     }
-                    self.after_edit();
+                    match refused {
+                        true => self.message = Some(lang::t("Nicht verschoben: Die Auto-Cues einer Quelle stehen in der Reihenfolge, in der sie auslösen. Erst die Zeit des Auto-Cues ändern, dann verschieben.", "Not moved: a source's auto-cues stand in the order they fire in. Change the auto-cue's time first, then move it.").to_string()),
+                        false => self.after_edit(),
+                    }
                 }
                 Action::Delete(block) => {
                     if let Some(show) = &mut self.show {
@@ -1017,6 +1077,14 @@ impl App {
         lines.extend(show.report.problems.iter().map(|p| {
             let unknown = p.message.strip_prefix("Unbekannter Schlüssel: ").map(|key| (p.block, key.to_string()));
             (format!("{} {}: {}", lang::t("YAML-Block", "YAML block"), p.block, p.message), RED, unknown)
+        }));
+        lines.extend(show.report.auto_order.iter().map(|(first, second)| {
+            let text = if lang::english() {
+                format!("{second} fires before {first}, but stands after it in the script. A source's auto-cues have to stand in the order they fire in: change a time or move a cue.")
+            } else {
+                format!("{second} löst vor {first} aus, steht im Skript aber danach. Die Auto-Cues einer Quelle müssen in der Reihenfolge stehen, in der sie auslösen: eine Zeit ändern oder einen Cue verschieben.")
+            };
+            (text, RED, None)
         }));
         lines.extend(show.report.note_conflicts.iter().map(|c| (if lang::english() { format!("Trigger note {} is used by two cues (YAML blocks {} and {}). Every cue needs a note of its own; only variants share one.", c.note, c.first, c.second) } else { format!("Trigger-Note {} haben zwei Cues (YAML-Blöcke {} und {}). Jeder Cue braucht eine eigene Note; nur Varianten teilen sich eine.", c.note, c.first, c.second) }, RED, None)));
         // Devices the cues send to that this machine has no address for.

@@ -190,6 +190,81 @@ impl<'a> Cues<'a> {
         }
     }
 
+    /// The auto-cues that hang on `source` (or on a variant of it), in the order they
+    /// stand in the script, each with when it fires.
+    pub fn autos_of(&self, source: usize) -> Vec<(usize, AutoWhen)> {
+        let root = self.group_root(source);
+        (0..self.len())
+            .filter_map(|cue| {
+                let auto = self.get(cue)?.auto_trigger()?;
+                (self.find(auto.source).map(|s| self.group_root(s)) == Some(root)).then_some((cue, auto.when))
+            })
+            .collect()
+    }
+
+    /// Whether a cue's audio plays through once (no loop of any kind) and where in its
+    /// file it begins. Without audio: once, from 0.
+    fn plays_once_from(&self, cue: usize) -> (bool, f64) {
+        let Some(c) = self.get(cue) else { return (true, 0.0) };
+        match c.audio() {
+            Some(audio) => (!(audio.looped || audio.parts.len() > 1 || c.loop_outro().is_some()), audio.parts.first().and_then(|part| part.start).unwrap_or(0.0)),
+            None => (true, 0.0),
+        }
+    }
+
+    /// When an auto-cue fires, as seconds after its source began, if that can be set
+    /// beside one of the kind `as_place` (a place in the audio, or a delay). In audio
+    /// that plays once a place is a time like a delay is. In a loop a place comes round
+    /// on every pass and a delay only once: there the two kinds are not compared.
+    fn auto_time(once: bool, start: f64, when: AutoWhen, as_place: bool) -> Option<f64> {
+        match when {
+            AutoWhen::At(at) if once || as_place => Some(at - start),
+            AutoWhen::Delay(delay) if once || !as_place => Some(delay),
+            _ => None,
+        }
+    }
+
+    /// The values an auto-cue may have so that the auto-cues of its source fire in the
+    /// order they stand in the script: not before the one before it, not after the one
+    /// after it. For a place in the audio (`as_place`) these are seconds into the file,
+    /// for a delay seconds after the source fires. `None` at an end that is open.
+    pub fn auto_range(&self, target: usize, source: usize, as_place: bool) -> (Option<f64>, Option<f64>) {
+        let (once, start) = self.plays_once_from(self.group_root(source));
+        let others: Vec<(usize, f64)> =
+            self.autos_of(source).into_iter().filter(|(cue, _)| *cue != target).filter_map(|(cue, when)| Some((cue, Self::auto_time(once, start, when, as_place)?))).collect();
+        let unit = |time: f64| if as_place { time + start } else { time };
+        let before = others.iter().rev().find(|(cue, _)| *cue < target).map(|(_, time)| unit(*time));
+        let after = others.iter().find(|(cue, _)| *cue > target).map(|(_, time)| unit(*time));
+        (before, after)
+    }
+
+    /// Pairs of auto-cues of one source that stand in the script in another order than
+    /// they fire in: `(the earlier in the script, the later)`.
+    pub fn auto_order_conflicts(&self) -> Vec<(usize, usize)> {
+        let mut conflicts = Vec::new();
+        let mut seen: Vec<usize> = Vec::new();
+        for cue in 0..self.len() {
+            let Some(source) = self.get(cue).and_then(Cue::auto_trigger).and_then(|auto| self.find(auto.source)).map(|s| self.group_root(s)) else { continue };
+            if seen.contains(&source) {
+                continue;
+            }
+            seen.push(source);
+            let (once, start) = self.plays_once_from(source);
+            let autos = self.autos_of(source);
+            // In audio that plays once there is one order; in a loop one for the places
+            // and one for the delays.
+            for as_place in [true, false] {
+                let times: Vec<(usize, f64)> = autos.iter().filter_map(|&(cue, when)| Some((cue, Self::auto_time(once, start, when, as_place)?))).collect();
+                for pair in times.windows(2) {
+                    if pair[1].1 < pair[0].1 - 1e-9 && !conflicts.contains(&(pair[0].0, pair[1].0)) {
+                        conflicts.push((pair[0].0, pair[1].0));
+                    }
+                }
+            }
+        }
+        conflicts
+    }
+
     /// The first cue carrying this trigger note.
     pub fn find(&self, note: Note) -> Option<usize> {
         (0..self.len()).find(|&i| self.get(i).and_then(Cue::note) == Some(note))
@@ -680,5 +755,37 @@ mod tests {
         // Back takes the jump away again.
         history.back(&cues);
         assert_eq!(history.next(&cues), Some(6));
+    }
+
+    #[test]
+    fn auto_cues_of_one_source_fire_in_script_order() {
+        let cue = |n: usize, more: &str| format!("```yaml\ntrigger_note: {{ch: 1, note: {n}}}\n{more}\n```\n\n");
+        let auto = |what: &str| format!("auto_trigger: {{trigger_note: {{ch: 1, note: 0}}, {what}}}");
+        // Audio that plays once, beginning 2 s into its file: a place at 7 s is 5 s in.
+        let once = [cue(0, "music: {file: a.wav, start: 2}"), cue(1, &auto("at: 7")), cue(2, &auto("delay: 8")), cue(3, &auto("at: 14"))].concat();
+        let script = Script::parse(&once);
+        let cues = Cues::new(&script);
+        assert!(cues.auto_order_conflicts().is_empty());
+        // Cue 2 as a delay: between 5 s (cue 1's place) and 12 s (cue 3's).
+        assert_eq!(cues.auto_range(2, 0, false), (Some(5.0), Some(12.0)));
+        // As a place in the file: between 7 and 14.
+        assert_eq!(cues.auto_range(2, 0, true), (Some(7.0), Some(14.0)));
+        assert_eq!(cues.auto_range(1, 0, true), (None, Some(10.0)));
+        assert_eq!(cues.auto_range(3, 0, true), (Some(10.0), None));
+
+        let wrong = [cue(0, "music: a.wav"), cue(1, &auto("delay: 9")), cue(2, &auto("at: 4")), cue(3, &auto("delay: 12"))].concat();
+        let script = Script::parse(&wrong);
+        assert_eq!(Cues::new(&script).auto_order_conflicts(), [(1, 2)]);
+
+        // In a loop places and delays are each in order among themselves, not with each other.
+        let looped = [cue(0, "music: {file: a.wav, loop: true}"), cue(1, &auto("delay: 9")), cue(2, &auto("at: 4")), cue(3, &auto("at: 6")), cue(4, &auto("delay: 20"))].concat();
+        let script = Script::parse(&looped);
+        let cues = Cues::new(&script);
+        assert!(cues.auto_order_conflicts().is_empty());
+        assert_eq!(cues.auto_range(2, 0, true), (None, Some(6.0)));
+        assert_eq!(cues.auto_range(4, 0, false), (Some(9.0), None));
+        // A cue that has no auto-cue yet gets the range of the place it stands in.
+        let script = Script::parse(&[looped, cue(5, "note: neu")].concat());
+        assert_eq!(Cues::new(&script).auto_range(5, 0, false), (Some(20.0), None));
     }
 }
