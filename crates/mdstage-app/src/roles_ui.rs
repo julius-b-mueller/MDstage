@@ -6,6 +6,14 @@ use mdstage_core::mic::{Cast, Group, Role};
 use crate::lang::t;
 use crate::theme::*;
 
+/// The colour a new role or group gets: the one used least so far, the first of those in
+/// the order of the list. So new roles go through the colours one after the other.
+fn next_colour<'a>(used: impl Iterator<Item = &'a str>) -> String {
+    let used: Vec<&str> = used.collect();
+    let count = |colour: &str| used.iter().filter(|u| **u == colour).count();
+    COLOURS.iter().min_by_key(|colour| count(colour)).unwrap_or(&COLOURS[0]).to_string()
+}
+
 const COLOURS: [&str; 12] =
     ["red", "green", "yellow", "blue", "purple", "cyan", "darkred", "darkgreen", "darkyellow", "darkblue", "darkpurple", "darkcyan"];
 
@@ -98,7 +106,8 @@ impl RolesUi {
                 }
             }
             if ui.button(t("+ Rolle", "+ Role")).clicked() {
-                self.roles.push((None, Role { name: String::new(), color: Some("blue".into()), channel: None, mixer: 0 }));
+                let colour = next_colour(self.roles.iter().filter_map(|(_, role)| role.color.as_deref()));
+                self.roles.push((None, Role { name: String::new(), color: Some(colour), channel: None, mixer: 0 }));
             }
 
             ui.add_space(14.0);
@@ -132,7 +141,8 @@ impl RolesUi {
                 self.groups.remove(i);
             }
             if ui.button(t("+ Gruppe", "+ Group")).clicked() {
-                self.groups.push(Group { name: String::new(), color: Some("purple".into()), roles: Vec::new() });
+                let colour = next_colour(self.groups.iter().filter_map(|group| group.color.as_deref()));
+                self.groups.push(Group { name: String::new(), color: Some(colour), roles: Vec::new() });
             }
         });
 
@@ -150,5 +160,22 @@ impl RolesUi {
             }
         });
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_roles_go_through_the_colours() {
+        assert_eq!(next_colour([].into_iter()), "red");
+        assert_eq!(next_colour(["red", "green"].into_iter()), "yellow");
+        assert_eq!(next_colour(["blue", "blue"].into_iter()), "red");
+        // Once every colour is taken, the round begins again.
+        let mut all: Vec<&str> = COLOURS.to_vec();
+        assert_eq!(next_colour(all.iter().copied()), "red");
+        all.push("red");
+        assert_eq!(next_colour(all.iter().copied()), "green");
     }
 }

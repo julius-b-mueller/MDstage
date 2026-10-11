@@ -979,7 +979,11 @@ mod tests {
         let mut vim = Vim::default();
         vim.begin(Mode::Normal);
         let (mut text, mut at) = ("Hallo Welt-raum, da".to_string(), 0);
-        let mut keys = |vim: &mut Vim, keys: &str, text: &mut String, at: &mut usize| keys.chars().for_each(|c| drop(vim.key(Key::Char(c), text, at)));
+        let keys = |vim: &mut Vim, keys: &str, text: &mut String, at: &mut usize| {
+            for c in keys.chars() {
+                vim.key(Key::Char(c), text, at);
+            }
+        };
         keys(&mut vim, "rJ", &mut text, &mut at);
         assert_eq!((text.as_str(), at), ("Jallo Welt-raum, da", 0));
         keys(&mut vim, "3rx", &mut text, &mut at);

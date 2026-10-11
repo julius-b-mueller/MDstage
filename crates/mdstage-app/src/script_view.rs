@@ -391,7 +391,8 @@ impl ScriptView {
     fn jump_to_typed_scene(&mut self, ui: &Ui) {
         const WAIT: f64 = 0.8;
         let Some((number, at)) = self.typed_scene else { return };
-        let scenes = self.numbers.iter().flatten().count();
+        // The highest scene number there is (numbers written into headings can leave gaps).
+        let scenes = self.numbers.iter().flatten().copied().max().unwrap_or(0);
         let now = ui.input(|i| i.time);
         if number * 10 <= scenes && now - at < WAIT {
             // Show what has been typed while waiting for a possible second digit.
@@ -618,6 +619,9 @@ impl ScriptView {
     /// The number of each scene, by block: the first-level headings are counted from 1,
     /// headings below them have none. A first-level heading that opens the file and is
     /// followed directly by another one is the show's title and is not counted.
+    ///
+    /// A heading that begins with a number of its own ("7 Im Garten", "12. Finale") has
+    /// that number, and the count goes on from it.
     pub(crate) fn scene_numbers(script: &Script) -> Vec<Option<usize>> {
         let is_scene = |block: &Block| matches!(block, Block::Heading { level: 1, .. });
         let first = script.blocks.iter().position(|b| !matches!(b, Block::Config(_)));
@@ -629,12 +633,27 @@ impl ScriptView {
             .iter()
             .enumerate()
             .map(|(index, block)| {
-                (is_scene(block) && Some(index) != title).then(|| {
-                    number += 1;
-                    number
-                })
+                let Block::Heading { level: 1, text } = block else { return None };
+                if Some(index) == title {
+                    return None;
+                }
+                number = Self::own_number(text).map_or(number + 1, |(own, _)| own);
+                Some(number)
             })
             .collect()
+    }
+
+    /// The number a heading begins with, and the heading without it: "12. Finale" is
+    /// 12 and "Finale". A number that is the whole heading, or runs straight on into a
+    /// word ("3D"), is no scene number.
+    pub(crate) fn own_number(heading: &str) -> Option<(usize, &str)> {
+        let heading = heading.trim_start();
+        let digits = heading.chars().take_while(char::is_ascii_digit).count();
+        let rest = &heading[digits..];
+        let after = rest.strip_prefix(['.', ')', ':']).unwrap_or(rest);
+        let separated = after.starts_with(char::is_whitespace);
+        let number = heading[..digits].parse::<usize>().ok().filter(|n| (1..=9999).contains(n) && separated)?;
+        Some((number, after.trim_start()))
     }
 
     /// A text block laid out for a given width; `scale` enlarges the type (the live view
@@ -653,10 +672,15 @@ impl ScriptView {
                     2 => 21.0,
                     _ => 17.0,
                 };
+                // A number the heading carries itself is the scene's number: shown once.
+                let title = match number.and(Self::own_number(text)) {
+                    Some((_, title)) => title,
+                    None => text.as_str(),
+                };
                 if let Some(number) = number {
                     job.append(&format!("{number}  "), 0.0, plain(size, MUTED));
                 }
-                job.append(text, 0.0, plain(size, BRIGHT));
+                job.append(title, 0.0, plain(size, BRIGHT));
             }
             Block::Stage(text) => job.append(&format::shown(text), 0.0, TextFormat { italics: true, ..body(16.0, MUTED) }),
             Block::Role { names, text } => {
@@ -987,7 +1011,7 @@ impl ScriptView {
             .filter_map(|(i, block)| match block {
                 // A scene's number goes with its title wherever the title is shown.
                 Block::Heading { level, text } if *level <= 3 => Some((i, *level, match self.numbers.get(i).copied().flatten() {
-                    Some(number) => format!("{number}  {text}"),
+                    Some(number) => format!("{number}  {}", Self::own_number(text).map_or(text.as_str(), |(_, title)| title)),
                     None => text.clone(),
                 })),
                 _ => None,
@@ -2374,6 +2398,18 @@ mod tests {
         assert_eq!(ScriptView::complete("**Ben**\nA", "Anna"), ("**Ben/Anna**\n".to_string(), 13));
         // What comes of it is the role block one expects.
         assert_eq!(ScriptView::typed_block("**Ben/Anna**\n\nHallo."), Some(Block::Role { names: vec!["Ben".into(), "Anna".into()], text: "Hallo.".into() }));
+    }
+
+    #[test]
+    fn a_number_written_into_a_heading_is_the_scene_number() {
+        let script = Script::parse("# Stück\n\n# Vorspiel\n\n# 5 Im Garten\n\n# Danach\n\n# 12. Finale\n\n# 2024\n\n# 3D-Brille\n");
+        let numbers: Vec<usize> = ScriptView::scene_numbers(&script).into_iter().flatten().collect();
+        assert_eq!(numbers, [1, 5, 6, 12, 13, 14], "the count goes on from a number written in");
+        assert_eq!(ScriptView::own_number("12. Finale"), Some((12, "Finale")));
+        assert_eq!(ScriptView::own_number("7) Schluss"), Some((7, "Schluss")));
+        assert_eq!(ScriptView::own_number("2024"), None);
+        assert_eq!(ScriptView::own_number("3D-Brille"), None);
+        assert_eq!(ScriptView::own_number("Im Garten 5"), None);
     }
 
     #[test]
