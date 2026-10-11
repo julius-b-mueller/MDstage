@@ -1354,7 +1354,8 @@ impl App {
         for file in files {
             let Some(name) = file.file_name().and_then(|n| n.to_str()).filter(|n| store::is_audio_name(n)) else { continue };
             let target = audio_dir.join(name);
-            if target.exists() {
+            // A link that points nowhere counts as there: copying would follow it.
+            if store::occupied(&target) {
                 present += 1;
             } else if std::fs::create_dir_all(&audio_dir).and_then(|()| std::fs::copy(&file, &target)).is_ok() {
                 copied += 1;
@@ -1431,7 +1432,7 @@ impl App {
                 let Some(show) = &mut self.show else { return };
                 let backup = show.path.with_file_name(format!("{}~uncleaned.md", show.path.file_stem().unwrap_or_default().to_string_lossy()));
                 // Without the copy nothing is removed.
-                if let Err(e) = std::fs::copy(&show.path, &backup) {
+                if let Err(e) = store::copy_plain(&show.path, &backup) {
                     self.message = Some(format!("{}: {e}", lang::t("Sicherungskopie nicht geschrieben, nichts aufgeräumt", "Backup not written, nothing cleaned up")));
                     return;
                 }

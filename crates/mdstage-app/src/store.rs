@@ -31,14 +31,67 @@ fn hash(text: &str) -> String {
     Sha256::digest(text.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Whether `path` is a symbolic link, wherever it points.
+pub fn is_link(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
+}
+
+/// Whether there is anything at `path` – a link that points nowhere included, which
+/// `Path::exists` does not see.
+pub fn occupied(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok()
+}
+
+/// A show folder from elsewhere may hold links in the places MDstage writes to; writing
+/// through one would put the show's text into whatever file the link names.
+fn refuse_link(path: &Path) -> std::io::Result<()> {
+    if is_link(path) {
+        return Err(std::io::Error::other(format!(
+            "{} {}",
+            path.file_name().unwrap_or_default().to_string_lossy(),
+            t("ist eine symbolische Verknüpfung; dorthin wird nichts geschrieben", "is a symbolic link; nothing is written there")
+        )));
+    }
+    Ok(())
+}
+
+/// Write a file next to the show file, never through a symbolic link.
+fn write_plain(path: &Path, text: &str) -> std::io::Result<()> {
+    refuse_link(path)?;
+    std::fs::write(path, text)
+}
+
+/// Copy a file to a place next to the show file, never through a symbolic link.
+pub fn copy_plain(from: &Path, to: &Path) -> std::io::Result<()> {
+    refuse_link(to)?;
+    std::fs::copy(from, to).map(|_| ())
+}
+
+fn beside(path: &Path, suffix: &str) -> PathBuf {
+    path.with_file_name(format!("{}{suffix}", path.file_stem().unwrap_or_default().to_string_lossy()))
+}
+
 /// Keep a copy of a show file as it was before this version of MDstage first changed it
 /// (`name~vor-mdstage2.md`). Made once; an existing copy is never overwritten.
 fn backup_once(path: &Path) -> std::io::Result<()> {
-    let backup = path.with_file_name(format!("{}~vor-mdstage2.md", path.file_stem().unwrap_or_default().to_string_lossy()));
-    if !backup.exists() && path.exists() {
+    let backup = beside(path, "~vor-mdstage2.md");
+    refuse_link(&backup)?;
+    if !occupied(&backup) && path.exists() {
         std::fs::copy(path, backup)?;
     }
     Ok(())
+}
+
+/// Keep the file on disk as it is (`name~unformatted.md`) if it is not formatted to the
+/// standard, before the formatted script replaces it. Returns the copy's name.
+fn keep_unformatted(path: &Path) -> std::io::Result<Option<String>> {
+    let Ok(original) = std::fs::read_to_string(path) else { return Ok(None) };
+    if !format::needs_formatting(&original) {
+        return Ok(None);
+    }
+    let backup = beside(path, "~unformatted.md");
+    write_plain(&backup, &original)?;
+    Ok(Some(backup.file_name().unwrap_or_default().to_string_lossy().into_owned()))
 }
 
 /// Keep a copy of a show file as an earlier version of MDstage left it
@@ -47,7 +100,8 @@ pub fn backup_version(path: &Path, version: &str) -> std::io::Result<String> {
     let clean: String = version.chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-')).collect();
     let name = format!("{}~v{clean}.md", path.file_stem().unwrap_or_default().to_string_lossy());
     let backup = path.with_file_name(&name);
-    if !backup.exists() {
+    refuse_link(&backup)?;
+    if !occupied(&backup) {
         std::fs::copy(path, backup)?;
     }
     Ok(name)
@@ -64,8 +118,10 @@ pub struct Loaded {
 }
 
 /// Read a show file. Formatting it to the standard and giving cues without one a
-/// trigger note are done right away and written back (with a backup of the unformatted
-/// file), as they always were.
+/// trigger note are done right away. A file this machine wrote gets that written back
+/// (with a backup of the unformatted file). A file from elsewhere is left exactly as it
+/// is: opening it writes nothing into its folder; the tidied script is written with the
+/// operator's first change.
 pub fn load(path: &Path, settings: &mut Settings) -> std::io::Result<Loaded> {
     let original = std::fs::read_to_string(path)?;
     let key = path.to_string_lossy().into_owned();
@@ -75,22 +131,23 @@ pub fn load(path: &Path, settings: &mut Settings) -> std::io::Result<Loaded> {
     let mut notes = Vec::new();
     let mut text = original.clone();
     if format::needs_formatting(&text) {
-        let backup = path.with_file_name(format!("{}~unformatted.md", path.file_stem().unwrap_or_default().to_string_lossy()));
-        std::fs::write(&backup, &original)?;
         text = format::format_script(&text);
-        notes.push(format!("{} {})", t("Skript formatiert (Sicherung:", "Script formatted (backup:"), backup.file_name().unwrap_or_default().to_string_lossy()));
+        if trusted {
+            let backup = keep_unformatted(path)?.unwrap_or_default();
+            notes.push(format!("{} {backup})", t("Skript formatiert (Sicherung:", "Script formatted (backup:")));
+        } else {
+            notes.push(t("Skript formatiert (noch nicht gespeichert)", "Script formatted (not saved yet)").into());
+        }
     }
     let mut script = Script::parse(&text);
     if script.assign_trigger_notes() {
         notes.push(t("Trigger-Noten vergeben", "Trigger notes assigned").into());
     }
     let written = script.to_markdown();
-    if written != original {
+    if written != original && trusted {
         backup_once(path)?;
         std::fs::write(path, &written)?;
-        if trusted {
-            settings.trusted.insert(key, hash(&written));
-        }
+        settings.trusted.insert(key, hash(&written));
     }
     Ok(Loaded { script, trusted, notes })
 }
@@ -98,6 +155,11 @@ pub fn load(path: &Path, settings: &mut Settings) -> std::io::Result<Loaded> {
 /// Write the show file. `trusted` records it as written by this machine.
 pub fn save(path: &Path, script: &Script, settings: &mut Settings, trusted: bool) -> std::io::Result<()> {
     let text = script.to_markdown();
+    if !trusted {
+        // A file from elsewhere that is itself a link would be written to wherever it points.
+        refuse_link(path)?;
+    }
+    keep_unformatted(path)?;
     backup_once(path)?;
     std::fs::write(path, &text)?;
     if trusted {
@@ -176,7 +238,8 @@ pub fn unused_audio(audio_dir: &Path, used: &[String]) -> Vec<String> {
 /// a name taken there already gets a number. Returns what was moved and what could not be.
 pub fn move_unused_audio(audio_dir: &Path, names: &[String]) -> (Vec<String>, Vec<String>) {
     let target = audio_dir.join(UNUSED_AUDIO_DIR);
-    if std::fs::create_dir_all(&target).is_err() {
+    // A link there would take the files out of the show folder.
+    if is_link(&target) || std::fs::create_dir_all(&target).is_err() {
         return (Vec::new(), names.to_vec());
     }
     let (mut moved, mut failed) = (Vec::new(), Vec::new());
@@ -308,5 +371,93 @@ mod tests {
         assert_eq!(rename_audio_file(&dir, "Intro.wav", "opening.wav"), Ok(()));
         assert_eq!(audio_files(&dir), ["opening.wav", "song.mp3"]);
         assert_eq!(std::fs::read_to_string(dir.join("opening.wav")).unwrap(), "intro.wav");
+    }
+
+    const UNTIDY: &str = "# Show\n\n**Anna:** Erster Satz. Zweiter Satz.\n";
+
+    #[test]
+    fn opening_a_file_from_elsewhere_writes_nothing() {
+        let dir = folder("foreign", &[]);
+        let path = dir.join("show.md");
+        std::fs::write(&path, UNTIDY).unwrap();
+        let mut settings = Settings::default();
+
+        let loaded = load(&path, &mut settings).unwrap();
+        assert!(!loaded.trusted);
+        assert_ne!(loaded.script.to_markdown(), UNTIDY, "the script in the window is formatted");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), UNTIDY);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1, "no backups either");
+
+        // The first change writes it, with both copies of what was there.
+        save(&path, &loaded.script, &mut settings, false).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), loaded.script.to_markdown());
+        assert_eq!(std::fs::read_to_string(dir.join("show~unformatted.md")).unwrap(), UNTIDY);
+        assert_eq!(std::fs::read_to_string(dir.join("show~vor-mdstage2.md")).unwrap(), UNTIDY);
+        assert!(!load(&path, &mut settings).unwrap().trusted, "saving does not make it trusted");
+    }
+
+    #[test]
+    fn a_trusted_file_is_tidied_on_opening() {
+        let dir = folder("own", &[]);
+        let path = dir.join("show.md");
+        std::fs::write(&path, UNTIDY).unwrap();
+        let mut settings = Settings::default();
+        trust(&path, &mut settings);
+
+        let loaded = load(&path, &mut settings).unwrap();
+        assert!(loaded.trusted);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), loaded.script.to_markdown());
+        assert_eq!(std::fs::read_to_string(dir.join("show~unformatted.md")).unwrap(), UNTIDY);
+        assert!(load(&path, &mut settings).unwrap().trusted, "and stays trusted");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nothing_is_written_through_links_in_the_show_folder() {
+        use std::os::unix::fs::symlink;
+        let outside = folder("links-outside", &["victim.txt"]);
+        let dir = folder("links", &[]);
+        let path = dir.join("show.md");
+        std::fs::write(&path, UNTIDY).unwrap();
+        // One link onto a file that exists, one to a file that does not exist yet.
+        symlink(outside.join("victim.txt"), dir.join("show~unformatted.md")).unwrap();
+        symlink(outside.join("planted.txt"), dir.join("show~vor-mdstage2.md")).unwrap();
+        symlink(outside.join("planted.txt"), dir.join("show~v1.0.md")).unwrap();
+        symlink(outside.join("planted.txt"), dir.join("show~uncleaned.md")).unwrap();
+        let untouched = || std::fs::read_to_string(outside.join("victim.txt")).unwrap() == "victim.txt" && !outside.join("planted.txt").exists();
+
+        for trusted in [false, true] {
+            let mut settings = Settings::default();
+            if trusted {
+                trust(&path, &mut settings);
+            }
+            // Untrusted, opening writes nothing; trusted, it stops at the link.
+            assert_eq!(load(&path, &mut settings).is_ok(), !trusted);
+            let script = Script::parse(&format::format_script(UNTIDY));
+            assert!(save(&path, &script, &mut settings, trusted).is_err());
+            assert!(backup_version(&path, "1.0").is_err());
+            assert!(copy_plain(&path, &dir.join("show~uncleaned.md")).is_err());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), UNTIDY, "the show file is not half-written either");
+            assert!(untouched());
+        }
+
+        // With the formatting backup out of the way, the next link stops the save.
+        std::fs::remove_file(dir.join("show~unformatted.md")).unwrap();
+        assert!(save(&path, &Script::parse(UNTIDY), &mut Settings::default(), false).is_err());
+        assert!(untouched());
+
+        // The show file itself as a link: read, but not written while it is not trusted.
+        let linked = dir.join("linked.md");
+        symlink(outside.join("victim.txt"), &linked).unwrap();
+        let mut settings = Settings::default();
+        let loaded = load(&linked, &mut settings).unwrap();
+        assert!(save(&linked, &loaded.script, &mut settings, false).is_err());
+        assert!(untouched());
+
+        // Parking unused audio does not follow a linked `_unused` out of the folder.
+        let audio = folder("links-audio", &["a.wav"]);
+        symlink(&outside, audio.join(UNUSED_AUDIO_DIR)).unwrap();
+        assert_eq!(move_unused_audio(&audio, &["a.wav".to_string()]), (vec![], vec!["a.wav".to_string()]));
+        assert!(occupied(&audio.join(UNUSED_AUDIO_DIR)) && !outside.join("a.wav").exists());
     }
 }

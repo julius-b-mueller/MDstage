@@ -44,8 +44,11 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - run: |
-          tag="${{ github.ref_name }}"
+      - env:
+          # Through the environment, not pasted into the script: a tag name is free text.
+          TAG: ${{ github.ref_name }}
+        run: |
+          tag="$TAG"
           cargo=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           site=$(sed -n 's/.*"softwareVersion": "\(.*\)".*/\1/p' website/index.html | head -1)
           echo "tag $tag · Cargo.toml $cargo · website $site"
@@ -79,7 +82,7 @@ jobs:
           sudo apt-get install -y libasound2-dev libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev libgtk-3-dev
       - run: cargo build --release -p mdstage-app
       - run: |
-          cargo install cargo-deb cargo-generate-rpm --locked
+          cargo install cargo-deb@3.8.0 cargo-generate-rpm@0.21.0 --locked
           cargo deb -p mdstage-app --no-build
           # rpm takes no "-" in a version: 2.0.0-alpha.1 becomes 2.0.0~alpha.1.
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1 | tr - '~')
@@ -118,7 +121,7 @@ jobs:
           Remove-Item artifacts/MDstage.exe
           # The installer. NSIS comes with most runner images; fetch it where it does not.
           if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
-            choco install nsis -y --no-progress
+            choco install nsis --version 3.13.0 -y --no-progress
             $env:PATH += ";${env:ProgramFiles(x86)}\NSIS"
           }
           $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
@@ -187,11 +190,12 @@ jobs:
           # A tag like 2.0.0-beta.1 is a pre-release: the website's download links
           # (releases/latest) go on pointing at the last full release.
           prerelease=""
-          case "${{ github.ref_name }}" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "${{ github.ref_name }}" \
+          case "$TAG" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$TAG" \
             release-assets/* \
-            --repo "${{ github.repository }}" \
-            --title "${{ github.ref_name }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
             --generate-notes $prerelease
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}

@@ -232,7 +232,7 @@ Text<br>
 
     #[test]
     fn the_demo_show_is_already_formatted() {
-        let text = include_str!("../../../website/preview/script.md");
+        let text = include_str!("../testdata/demo.md");
         assert!(!needs_formatting(text));
     }
 }

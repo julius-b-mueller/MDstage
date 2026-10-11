@@ -463,7 +463,9 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
                 }
             }
         }
-        *feed.lock().unwrap() = show.timecode_seconds().map(|seconds| (seconds, Instant::now()));
+        // Timecode drives devices like any other output: none while outputs are blocked
+        // or the show file is not trusted.
+        *feed.lock().unwrap() = show.timecode_seconds().filter(|_| !outputs.blocked).map(|seconds| (seconds, Instant::now()));
 
         // Note when cues fired; Back takes the entries of undone cues with it.
         let fired: Vec<usize> = show.history().cues().collect();

@@ -207,6 +207,13 @@ impl Outputs {
                     }
                 }
                 Effect::Http { device, method, path, body, content_type } => {
+                    // The show file supplies method, path and content type: only real
+                    // methods, and nothing that could break out of its line of the request.
+                    let known = matches!(method.as_str(), "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE");
+                    let clean = |text: &str| !text.chars().any(char::is_control);
+                    if !known || !clean(path) || !content_type.as_deref().is_none_or(clean) {
+                        continue;
+                    }
                     if let Some(Address::Http { url }) = self.device(device).map(|d| &d.address) {
                         let separator = if path.is_empty() || path.starts_with('/') { "" } else { "/" };
                         wires.push(Wire::Http {
@@ -510,6 +517,9 @@ mod tests {
                 Wire::Http { url: "http://10.0.0.9:8080/status".into(), method: "GET".into(), body: None, content_type: None },
             ]
         );
+        // What a show file must not smuggle into a request: made-up methods, line breaks.
+        let odd_type = Effect::Http { device: "Pult".into(), method: "POST".into(), path: "/a".into(), body: Some("x".into()), content_type: Some("text/plain\r\nX-Evil: 1".into()) };
+        assert!(outputs.wire(&[http("GET\r\nX-Evil: 1", "/a", None), http("TRACE", "/a", None), http("GET", "/a\r\nX-Evil: 1", None), odd_type], &cast()).is_empty());
         outputs.blocked = true;
         assert!(outputs.wire(&effects, &cast()).is_empty(), "blocked outputs send nothing at all");
     }

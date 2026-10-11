@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -26,6 +26,8 @@ const KEEP_ALIVE: Duration = Duration::from_secs(20);
 const MAX_CLIENTS: usize = 200;
 const MAX_FIELD: usize = 80;
 const MAX_REQUEST: usize = 8192;
+/// Each connection has a thread; more than this at once are turned away.
+const MAX_CONNECTIONS: usize = 256;
 
 /// A display device as configured on this machine.
 #[derive(Clone, Debug, PartialEq)]
@@ -446,15 +448,30 @@ impl DisplayServer {
         let state = Arc::new(Mutex::new(State::default()));
         let running = Arc::new(AtomicBool::new(true));
         let (shared, flag) = (state.clone(), running.clone());
+        let open = Arc::new(AtomicUsize::new(0));
         thread::Builder::new().name("mdstage-display".into()).spawn(move || {
             for socket in listener.incoming() {
                 if !flag.load(SeqCst) {
                     break;
                 }
                 let Ok(socket) = socket else { continue };
-                let (state, running) = (shared.clone(), flag.clone());
+                // Someone on the network opening connections without end gets no more threads.
+                if open.fetch_add(1, SeqCst) >= MAX_CONNECTIONS {
+                    open.fetch_sub(1, SeqCst);
+                    continue;
+                }
+                let (state, running, open) = (shared.clone(), flag.clone(), open.clone());
                 // One thread per connection: a handful of displays, each holding one stream.
-                let _ = thread::Builder::new().name("mdstage-display-client".into()).spawn(move || handle(socket, &state, &running));
+                let spawned = thread::Builder::new().name("mdstage-display-client".into()).spawn({
+                    let open = open.clone();
+                    move || {
+                        handle(socket, &state, &running);
+                        open.fetch_sub(1, SeqCst);
+                    }
+                });
+                if spawned.is_err() {
+                    open.fetch_sub(1, SeqCst);
+                }
             }
         })?;
         Ok(DisplayServer { state, running, address })

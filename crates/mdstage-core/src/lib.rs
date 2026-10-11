@@ -334,7 +334,7 @@ music: drumroll.mp3
 
     #[test]
     fn demo_show_survives_a_round_trip_unchanged() {
-        let text = include_str!("../../../website/preview/script.md");
+        let text = include_str!("../testdata/demo.md");
         assert_eq!(Script::parse(text).to_markdown(), text);
     }
 
@@ -349,7 +349,7 @@ music: drumroll.mp3
 
     #[test]
     fn parses_the_demo_show() {
-        let text = include_str!("../../../website/preview/script.md");
+        let text = include_str!("../testdata/demo.md");
         let script = Script::parse(text);
         let cues = script.blocks.iter().filter(|b| matches!(b, Block::Cue(_))).count();
         let invalid = script.blocks.iter().filter(|b| matches!(b, Block::Cue(c) if c.invalid)).count();

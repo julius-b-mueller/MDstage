@@ -42,8 +42,14 @@ pub struct CueAudio {
 }
 
 /// Keep a file name from the show file inside the audio folder: drop `..`, `.` and
-/// empty path segments. Sub-folders stay possible.
+/// empty path segments, and a Windows drive (`C:`) in front – joined to the audio folder,
+/// a path with a drive would replace it. Sub-folders stay possible.
 pub fn sanitize_path(name: &str) -> Option<String> {
+    let drive = |s: &str| s.len() >= 2 && s.as_bytes()[0].is_ascii_alphabetic() && s.as_bytes()[1] == b':';
+    let mut name = name.trim_start_matches(['/', '\\']);
+    while drive(name) {
+        name = name[2..].trim_start_matches(['/', '\\']);
+    }
     let clean: Vec<&str> = name.split(['/', '\\']).filter(|s| !matches!(*s, "" | "." | "..")).collect();
     let path = clean.join("/").replace('\0', "");
     (!path.is_empty()).then_some(path)
@@ -165,6 +171,10 @@ mod tests {
         assert_eq!(sanitize_path("sub\\..\\a.wav"), Some("sub/a.wav".into()));
         assert_eq!(sanitize_path("/abs/./a.wav"), Some("abs/a.wav".into()));
         assert_eq!(sanitize_path("../.."), None);
+        assert_eq!(sanitize_path("C:\\Windows\\a.wav"), Some("Windows/a.wav".into()));
+        assert_eq!(sanitize_path("\\c:d:a.wav"), Some("a.wav".into()));
+        assert_eq!(sanitize_path("C:"), None);
+        assert_eq!(sanitize_path("sub/c:a.wav"), Some("sub/c:a.wav".into()), "only in front is it a drive");
         assert_eq!(audio("music: ../.."), None);
         assert_eq!(audio("light: Day"), None);
     }

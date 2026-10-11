@@ -880,6 +880,8 @@ When a file is opened, the app checks whether the script meets the formatting st
 
 If formatting is needed, a backup copy (`*~unformatted.md`) is created before the file is reformatted.
 
+A file that was last saved on another machine is not touched by opening it: it is shown formatted, but nothing is written into its folder until you change something. MDstage never writes through symbolic links in a show folder.
+
 ---
 
 ## Keyboard Shortcuts
