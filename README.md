@@ -2,7 +2,7 @@
 
 # MDstage
 
-Stage manager app for live shows and theatre productions — a native app written in Rust, for macOS (Apple Silicon), Windows and Linux (x64 and ARM64 each). The script is stored as a Markdown file; cues are embedded directly as YAML blocks. The app provides audio playback, MIDI control, timecode output, OSC output, and a live view — all from a single file.
+Stage manager app for live shows and theatre productions — a native app written in Rust, for macOS (Apple Silicon and Intel), Windows and Linux (x64 and ARM64 each). The script is stored as a Markdown file; cues are embedded directly as YAML blocks. The app provides audio playback, MIDI control, timecode output, OSC output, and a live view — all from a single file.
 
 However, there is no need to open a text editor. Roletext, stage directions, cues and everything else can be added and edited via the graphical user interface.
 
@@ -1008,6 +1008,7 @@ cargo test --workspace                          # all tests
 cargo run --release -p mdstage-app -- SHOW.md   # run the app
 
 scripts/bundle-macos.sh --dmg                   # target/bundle/MDstage.app and .dmg
+scripts/bundle-macos.sh --dmg --x64             # the same for Intel Macs (built on any Mac)
 scripts/bundle-appimage.sh                      # AppImage (on Linux)
 ```
 

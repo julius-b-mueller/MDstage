@@ -1,20 +1,41 @@
 #!/bin/sh
 # Builds target/bundle/MDstage.app from the native (Rust) app.
 #
-#   scripts/bundle-macos.sh [--dmg]
+#   scripts/bundle-macos.sh [--dmg] [--x64]
 #
 # With --dmg, also writes target/bundle/MDstage-macos-arm64.dmg.
+# With --x64, the app is built for Intel Macs instead (on any Mac: the Rust target
+# x86_64-apple-darwin is added if it is missing): target/bundle/x64/MDstage.app and
+# target/bundle/MDstage-macos-x64.dmg.
 set -eu
 
 cd "$(dirname "$0")/.."
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-app=target/bundle/MDstage.app
 
-cargo build --release -p mdstage-app
+dmg_wanted=no
+arch=arm64
+for option in "$@"; do
+    case "$option" in
+        --dmg) dmg_wanted=yes ;;
+        --x64) arch=x64 ;;
+        *) echo "unknown option: $option" >&2; exit 2 ;;
+    esac
+done
+
+if [ "$arch" = x64 ]; then
+    rustup target add x86_64-apple-darwin
+    cargo build --release -p mdstage-app --target x86_64-apple-darwin
+    binary=target/x86_64-apple-darwin/release/mdstage
+    app=target/bundle/x64/MDstage.app
+else
+    cargo build --release -p mdstage-app
+    binary=target/release/mdstage
+    app=target/bundle/MDstage.app
+fi
 
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp target/release/mdstage "$app/Contents/MacOS/MDstage"
+cp "$binary" "$app/Contents/MacOS/MDstage"
 
 # App icon from the PNG, in the sizes macOS asks for.
 iconset=target/bundle/MDstage.iconset
@@ -63,10 +84,10 @@ EOF
 codesign --force --deep --sign - "$app"
 codesign --verify --deep --strict "$app"
 
-echo "Built $app (version $version)"
+echo "Built $app (version $version, $(lipo -archs "$app/Contents/MacOS/MDstage"))"
 
-if [ "${1:-}" = "--dmg" ]; then
-    dmg=target/bundle/MDstage-macos-arm64.dmg
+if [ "$dmg_wanted" = yes ]; then
+    dmg=target/bundle/MDstage-macos-$arch.dmg
     rm -f "$dmg"
     hdiutil create -quiet -volname MDstage -srcfolder "$app" -ov -format UDZO "$dmg"
     echo "Built $dmg"

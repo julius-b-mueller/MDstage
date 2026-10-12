@@ -140,18 +140,25 @@ jobs:
           path: artifacts/
           retention-days: 14
 
-  # ── macOS (Apple Silicon) ─────────────────────────────────────────────────
+  # ── macOS (Apple Silicon and Intel) ───────────────────────────────────────
+  # Both on the Apple Silicon runner: the Intel app is cross-compiled there.
   macos:
     if: github.ref_type == 'tag' || github.ref_name == 'native-rewrite' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: arm64, option: "" }
+          - { arch: x64, option: "--x64" }
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - run: rustup toolchain install stable --profile minimal
-      - run: scripts/bundle-macos.sh --dmg
+      - run: scripts/bundle-macos.sh --dmg ${{ matrix.option }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: macos-arm64
-          path: target/bundle/MDstage-macos-arm64.dmg
+          name: macos-${{ matrix.arch }}
+          path: target/bundle/MDstage-macos-${{ matrix.arch }}.dmg
           retention-days: 14
 
   # ── GitHub Pages (main only) ──────────────────────────────────────────────

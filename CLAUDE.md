@@ -42,7 +42,8 @@ Ordner unverändert auf GitHub Pages. Eine Browser-Vorschau der App gibt es nich
 - Tag: Tests, Pakete, GitHub-Release.
 
 Pakete und ihre Namen im Release (die Website verlinkt sie über `releases/latest`):
-`MDstage-macos-arm64.dmg`, `MDstage-windows-{x64,arm64}.exe` (Installer,
+`MDstage-macos-{arm64,x64}.dmg` (x64 = Intel, auf dem Apple-Silicon-Runner
+quer übersetzt: `scripts/bundle-macos.sh --dmg --x64`), `MDstage-windows-{x64,arm64}.exe` (Installer,
 `scripts/windows-installer.nsi`), `MDstage-windows-{x64,arm64}-portable.zip`,
 `MDstage-linux-{x64,arm64}.{AppImage,deb,rpm,tar.gz}`. Wer einen Namen ändert, muss die
 Download-Links in `website/index.html` mitändern.
