@@ -1971,7 +1971,7 @@ impl ScriptView {
             let row = Rect::from_min_size(pos2(left, wave.bottom() + 4.0 + strips), vec2(width - EDIT_BUTTON, CONTROLS));
             // While a later part plays, the row says so instead of a position in this one.
             let later = snapshot.audio.iter().find(|(c, s)| *c == cue_index && s.part > 0 && s.state == VoiceState::Playing).map(|(_, s)| (s.part, s.seconds));
-            self.draw_transport(ui, cx, (block, cue_index), part, audio.looped, sounding, (position, later), duration, row, actions);
+            self.draw_transport(ui, cx, (block, cue_index), part, sounding, (position, later), duration, row, actions);
         }
         // The edit button has a place of its own, in the card's bottom right corner.
         if !cx.locked && !cue.invalid {
@@ -2116,6 +2116,39 @@ impl ScriptView {
             .on_hover_text(t("Loop-Struktur einrichten (Start, Loop, Finish …)", "Set up a loop structure (start, loop, finish …)"));
         });
 
+        // The loop: a click asks which kind it is to be (and again, to change the kind);
+        // off only by Shift+click, like the connections.
+        let audio = cue.audio();
+        let looped = audio.as_ref().is_some_and(|audio| audio.looped);
+        let crossfade = audio.as_ref().is_some_and(|audio| audio.crossfade().is_some());
+        let hint = match (looped, crossfade) {
+            (false, _) => t("Das Audio in einer Schleife spielen", "Play the audio in a loop").to_string(),
+            (true, false) => format!("{}\n{}", t("Loop: spielt bis zum Ende und beginnt von vorn.", "Loop: plays to the end and starts over."), t("Klick stellt neu ein, Shift+Klick schaltet aus.", "Click sets it up anew, Shift+click switches it off.")),
+            (true, true) => format!("{}\n{}", t("Nahtloser Loop: Ende und Anfang blenden ineinander über.", "Seamless loop: the end crossfades into the start."), t("Klick stellt neu ein, Shift+Klick schaltet aus.", "Click sets it up anew, Shift+click switches it off.")),
+        };
+        // (Just the sign for a plain loop: "Loop" is what the S/L/F button beside it may say.)
+        let label = if crossfade { "⟳ Crossfade" } else { "⟳" };
+        let button = row.add_enabled(has_audio, small(label, if looped { PURPLE } else { TEXT })).on_hover_text(hint);
+        let kinds = Id::new(("loop-kind", block));
+        if button.clicked() {
+            match looped && shift {
+                true => actions.push(Action::Loop { block, on: false, crossfade: false }),
+                false => row.memory_mut(|m| m.toggle_popup(kinds)),
+            }
+        }
+        egui::popup::popup_below_widget(&row, kinds, &button, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+            ui.set_min_width(300.0);
+            ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                if ui.button(t("⟳  Normaler Loop", "⟳  Plain loop")).on_hover_text(t("Spielt bis zum Ende und beginnt dann von vorn.", "Plays to the end and then starts over.")).clicked() {
+                    actions.push(Action::Loop { block, on: true, crossfade: false });
+                }
+                let seamless = ui.button(t("⟳  Nahtloser Loop mit Crossfade", "⟳  Seamless loop with a crossfade"));
+                if seamless.on_hover_text(t("Für Hintergrundgeräusche: Das Ende blendet aus, während der Anfang schon wieder einblendet. Ohne Timecode.", "For background sound: the end fades out while the start already fades in again. Without timecode.")).clicked() {
+                    actions.push(Action::Loop { block, on: true, crossfade: true });
+                }
+            });
+        });
+
         let auto_mic = cue.auto_mic();
         let hint = if auto_mic { t("Auto-Mic ist an: Mikrofone kommen aus dem folgenden Text. Shift+Klick schaltet es aus.", "Auto mic is on: the microphones come from the text that follows. Shift+click switches it off.") } else { t("Auto-Mic: Mikrofone aus dem folgenden Rollentext bestimmen", "Auto mic: work out the microphones from the text that follows") };
         // On by a click; off only by Shift+click, like the connections.
@@ -2124,7 +2157,7 @@ impl ScriptView {
         }
     }
 
-    /// The row under a waveform: play/pause, stop, zoom, loop and volume.
+    /// The row under a waveform: play/pause, stop, zoom and volume.
     #[allow(clippy::too_many_arguments)]
     fn draw_transport(
         &mut self,
@@ -2132,7 +2165,6 @@ impl ScriptView {
         cx: &Context,
         (block, cue): (usize, usize),
         part: &Part,
-        looped: bool,
         sounding: bool,
         (position, later): (Option<f64>, Option<(usize, f64)>),
         duration: Option<f64>,
@@ -2173,31 +2205,6 @@ impl ScriptView {
             }
         }
 
-        row.add_space(6.0);
-        // Switching the loop on asks which kind it is to be.
-        let crossfade = looped && part.crossfade.is_some();
-        let (label, hint) = match crossfade {
-            true => ("⟳ Crossfade", t("Nahtloser Loop: Ende und Anfang blenden ineinander über", "Seamless loop: the end crossfades into the start")),
-            false => ("⟳", "Loop"),
-        };
-        let button = row.add_enabled(!cx.locked, egui::SelectableLabel::new(looped, label)).on_hover_text(hint);
-        let kinds = Id::new(("loop-kind", block));
-        if button.clicked() {
-            match looped {
-                true => actions.push(Action::Loop { block, on: false, crossfade: false }),
-                false => row.memory_mut(|m| m.toggle_popup(kinds)),
-            }
-        }
-        egui::popup::popup_below_widget(&row, kinds, &button, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-            ui.set_min_width(300.0);
-            if ui.button(t("⟳  Normaler Loop", "⟳  Plain loop")).on_hover_text(t("Spielt bis zum Ende und beginnt dann von vorn.", "Plays to the end and then starts over.")).clicked() {
-                actions.push(Action::Loop { block, on: true, crossfade: false });
-            }
-            let seamless = ui.button(t("⟳  Nahtloser Loop mit Crossfade", "⟳  Seamless loop with a crossfade"));
-            if seamless.on_hover_text(t("Für Hintergrundgeräusche: Das Ende blendet aus, während der Anfang schon wieder einblendet. Ohne Timecode.", "For background sound: the end fades out while the start already fades in again. Without timecode.")).clicked() {
-                actions.push(Action::Loop { block, on: true, crossfade: true });
-            }
-        });
         row.add_space(6.0);
         row.add(Icon::Speaker.image(15.0, MUTED));
         let mut volume = self.volumes.get(&block).copied().unwrap_or(part.volume);

@@ -752,15 +752,16 @@ impl App {
                             true => drop(music.insert("loop".into(), true.into())),
                             false => drop(music.shift_remove("loop")),
                         }
-                        music.shift_remove("crossfade");
+                        let before = music.shift_remove("crossfade");
                         if on && crossfade {
                             // The fades at the ends become the crossfade, and the loop
                             // wraps where it begins: a loop point of its own is no more.
+                            // (Chosen again on a loop that already crossfades, it stays as it is.)
                             let fade = ["fadein", "fadeout"].iter().find_map(|key| music.get(*key).and_then(|v| v.as_f64())).filter(|fade| *fade > 0.0);
                             for key in ["fadein", "fadeout", "fading_point"] {
                                 music.shift_remove(key);
                             }
-                            music.insert("crossfade".into(), fade.unwrap_or(mdstage_core::audio::DEFAULT_CROSSFADE).into());
+                            music.insert("crossfade".into(), before.unwrap_or(fade.unwrap_or(mdstage_core::audio::DEFAULT_CROSSFADE).into()));
                         }
                     });
                 }
