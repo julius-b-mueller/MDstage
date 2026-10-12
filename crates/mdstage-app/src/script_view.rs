@@ -367,8 +367,6 @@ pub struct ScriptView {
     /// The cue block under the pointer in this frame and in the one before.
     hovered: Option<usize>,
     hovered_before: Option<usize>,
-    /// The cue block whose buttons were shown last (they stay while a menu of theirs is open).
-    buttons_of: Option<usize>,
     /// The first block of every variant group (a cue with variants below it).
     group_roots: std::collections::HashSet<usize>,
     /// Group volume sliders being dragged, by the group's first block.
@@ -911,12 +909,6 @@ impl ScriptView {
                     spans.push(("→".to_string(), MUTED));
                 }
                 spans.push((part.audios.iter().map(|a| a.file.as_str()).collect::<Vec<_>>().join(" + "), TEXT));
-            }
-            if audio.looped || audio.parts.len() > 1 || cue.loop_outro().is_some() {
-                spans.push(("⟳".to_string(), PURPLE));
-            }
-            if let Some(fade) = audio.crossfade() {
-                spans.push((format!("Crossfade {} s", mdstage_core::format::seconds(fade)), GREEN));
             }
             rows.push(Row::plain("♬", spans));
         }
@@ -1916,12 +1908,9 @@ impl ScriptView {
         if done && !is_current && !just_fired && !is_next && !waits {
             badge(t("erledigt", "done"), MUTED);
         }
-        // The buttons show while the pointer is on the cue (or a connection is being set
-        // up from it, or one of its menus is open); otherwise only the trigger note.
-        let full = !cx.locked && (under_pointer || matches!(self.picking, Some((_, from)) if from == block) || (self.buttons_of == Some(block) && ui.memory(|m| m.any_popup_open())));
-        if full {
-            self.buttons_of = Some(block);
-        }
+        // The buttons are always there, so that what is switched on at a cue shows at a
+        // glance — except under the show lock, where nothing can be set.
+        let full = !cx.locked;
         let top = panel.top() + 6.0;
         self.cue_buttons(ui, cx, block, cue_index, cue, full, Rect::from_min_max(pos2(x, top), pos2(panel.right() - 10.0, top + ROW + 4.0)), actions);
         self.learn_durations(cx, cue_index);
@@ -2413,10 +2402,27 @@ impl ScriptView {
                 let (left, right) = if rising { (rect.bottom(), rect.top() + 1.0) } else { (rect.top() + 1.0, rect.bottom()) };
                 painter.extend(egui::Shape::dashed_line(&[pos2(zone.left(), left), pos2(zone.right(), right)], other, 4.0, 3.0));
             }
-            if x_of(fade_in_end) - x_of(marks.start) > 70.0 {
-                for zone_start in [marks.start, fade_out_start] {
-                    painter.text(pos2(x_of(zone_start) + 4.0, rect.bottom() - 2.0), Align2::LEFT_BOTTOM, "Crossfade", FontId::proportional(10.0), GREEN);
-                }
+        }
+        // Each fade says how long it is, at the foot of its stretch — with its name if
+        // there is room for that, down to the bare number, or nothing at all.
+        let names = match marks.crossfade {
+            true => ["Crossfade", "Crossfade"],
+            false => ["Fade-In", "Fade-Out"],
+        };
+        for ((from, to), name) in [(marks.start, fade_in_end), (fade_out_start, marks.end)].into_iter().zip(names) {
+            let (length, room) = (to - from, x_of(to) - x_of(from) - 6.0);
+            if length <= 0.0 {
+                continue;
+            }
+            let font = FontId::proportional(10.0);
+            let fits = [format!("{name} {length:.1} s"), format!("{length:.1} s"), format!("{length:.1}")]
+                .into_iter()
+                .map(|text| painter.layout_no_wrap(text, font.clone(), GREEN))
+                .find(|galley| galley.size().x <= room);
+            if let Some(galley) = fits {
+                let place = Rect::from_center_size(pos2((x_of(from) + x_of(to)) / 2.0, rect.bottom() - 2.0 - galley.size().y / 2.0), galley.size());
+                painter.rect_filled(place.expand2(vec2(2.0, 0.0)), 2.0, BACKGROUND.gamma_multiply(0.75));
+                painter.galley(place.min, galley, GREEN);
             }
         }
         for at in [fade_in_end, fade_out_start] {
