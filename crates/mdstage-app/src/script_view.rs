@@ -2391,14 +2391,19 @@ impl ScriptView {
         if marks.fadeout > 0.0 {
             painter.line_segment([pos2(x_of(fade_out_start), rect.top() + 1.0), pos2(x_of(marks.end), rect.bottom())], fade);
         }
+        // Every fade lies on a tinted ground.
+        for (from, to) in [(marks.start, fade_in_end), (fade_out_start, marks.end)] {
+            if to > from {
+                painter.rect_filled(Rect::from_x_y_ranges(x_of(from)..=x_of(to), rect.y_range()), 0.0, GREEN.gamma_multiply(0.12));
+            }
+        }
         // A crossfade is two passes at once: each slope is crossed by the other pass's,
-        // dashed, over a tinted ground — at the start the end of the pass before goes
-        // out, at the end the start of the pass after comes in.
+        // dashed — at the start the end of the pass before goes out, at the end the
+        // start of the pass after comes in.
         if marks.crossfade && marks.fadein > 0.0 {
             let other = Stroke::new(1.5_f32, GREEN.gamma_multiply(0.75));
             for (from, to, rising) in [(marks.start, fade_in_end, false), (fade_out_start, marks.end, true)] {
                 let zone = Rect::from_x_y_ranges(x_of(from)..=x_of(to), rect.y_range());
-                painter.rect_filled(zone, 0.0, GREEN.gamma_multiply(0.12));
                 let (left, right) = if rising { (rect.bottom(), rect.top() + 1.0) } else { (rect.top() + 1.0, rect.bottom()) };
                 painter.extend(egui::Shape::dashed_line(&[pos2(zone.left(), left), pos2(zone.right(), right)], other, 4.0, 3.0));
             }
