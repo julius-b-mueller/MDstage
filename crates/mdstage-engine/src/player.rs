@@ -475,7 +475,9 @@ impl Player {
             let region_start = part.start.map_or(0, |s| self.frames(s)).min(end);
             // A crossfading loop wraps where its fade out begins; the fade has to be over
             // before the next pass gets there, so it takes half the stretch at most.
-            let crossfade = audio.crossfade().map(|s| self.frames(s).min((end - region_start) / 2));
+            // (And what the mixer counts fades in: a file's absurd `end` must not make
+            // the fade and the place it begins at disagree.)
+            let crossfade = audio.crossfade().map(|s| self.frames(s).min((end - region_start) / 2).min(u32::MAX as usize));
             let transition = match crossfade {
                 Some(fade) => end - fade,
                 None => part.fading_point.map_or(end, |s| self.frames(s)).clamp(region_start, end),

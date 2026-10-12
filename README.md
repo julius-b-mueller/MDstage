@@ -439,7 +439,8 @@ music:
 
 - `crossfade` replaces `fadein`, `fadeout` and `fading_point` on such a loop: the fade at the start and the fade at the end are the same crossfade and always the same length. On the waveform, dragging either fade grip (Shift) moves both; the two zones are tinted and crossed by a dashed slope.
 - The crossfade is at most half the stretch between `start` and `end`. The two curves keep the loudness even (equal power).
-- Switching the loop on — with the loop button under the waveform or in the cue dialog — asks whether it is a plain loop or a seamless one.
+- Switching the loop on — with the ⟳ button in the cue's button row or in the cue dialog — asks whether it is a plain loop or a seamless one. A click on the button of a loop that is on asks again (to change the kind); only Shift+click switches the loop off.
+- Every fade on the waveform lies on a green ground and says how long it is, as far as there is room: `Crossfade 2.4 s`, `2.4 s` or `2.4` (plain fades: `Fade-In` / `Fade-Out`).
 - A crossfading loop has no timecode: two passes sound at once, so `start_tc` is not possible on it, and no timecode runs on from it.
 - Only a loop of a single file crossfades (no `music_seq`).
 
