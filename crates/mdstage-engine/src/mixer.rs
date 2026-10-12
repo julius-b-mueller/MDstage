@@ -122,6 +122,10 @@ pub struct VoiceSpec {
     pub fade_in: u32,
     /// Fade-out length in frames, applied when the voice plays out to `end`.
     pub fade_out: u32,
+    /// A loop that runs on without a gap: every pass fades in over `fade_in`, and its
+    /// tail fades out over `fade_out` while the next pass comes in. The two curves keep
+    /// the loudness even (equal power) instead of dipping in the middle.
+    pub crossfade: bool,
     pub routes: Vec<Route>,
     /// Armed voices stay silent until another voice hands off to them.
     pub armed: bool,
@@ -153,6 +157,7 @@ impl VoiceSpec {
             gain: 1.0,
             fade_in: 0,
             fade_out: 0,
+            crossfade: false,
             armed: false,
             rearm: false,
             shared: Arc::new(VoiceShared::default()),
@@ -308,7 +313,7 @@ impl Voice {
     /// Mix `n` frames of the ringing tail from clip frame `at`, at the voice's level as
     /// it stands and under its fade-out.
     fn mix_echo(&self, out: &mut [f32], out_channels: usize, offset: usize, at: usize, n: usize) {
-        let (end, fade_out) = (self.spec.end, self.spec.fade_out as usize);
+        let (end, fade_out, crossfade) = (self.spec.end, self.spec.fade_out as usize, self.spec.crossfade);
         let mut done = 0;
         while done < n {
             let (chunk, reach) = self.spec.source.chunk(at + done);
@@ -324,6 +329,7 @@ impl Voice {
                     for (f, sample) in clip.channel(r.src as usize)[from..from + audible].iter().enumerate() {
                         let left = end - (at + done + f);
                         let fade = if fade_out > 0 && left < fade_out { left as f32 / fade_out as f32 } else { 1.0 };
+                        let fade = if crossfade { fade.sqrt() } else { fade };
                         out[(offset + done + f) * out_channels + out_ch] += sample * gain * fade;
                     }
                 }
@@ -342,17 +348,19 @@ impl Voice {
     /// (the fade-out applies).
     fn mix(&mut self, out: &mut [f32], out_channels: usize, offset: usize, n: usize, to_end: bool) {
         let Voice { spec, gain, gain_step, ramp_target, ramp_left, stop_after_ramp, state, first_pass, pos, .. } = self;
-        let (start, end, fade_in, fade_out, first_pass) = (spec.start, spec.end, spec.fade_in as usize, spec.fade_out as usize, *first_pass);
+        let (start, end, fade_in, fade_out, crossfade) = (spec.start, spec.end, spec.fade_in as usize, spec.fade_out as usize, spec.crossfade);
+        // A crossfading loop comes in anew on every pass, not only on the first.
+        let fades_in = *first_pass || crossfade;
         // Fade-in/out factor at clip frame `at`.
         let envelope = |at: usize| {
             let mut env = 1.0f32;
-            if first_pass && fade_in > 0 {
+            if fades_in && fade_in > 0 {
                 env = env.min((at - start) as f32 / fade_in as f32);
             }
             if to_end && fade_out > 0 {
                 env = env.min((end - at) as f32 / fade_out as f32);
             }
-            env
+            if crossfade { env.sqrt() } else { env }
         };
         // A streamed file comes in pages, so the stretch may span several chunks.
         let mut done = 0;
@@ -361,7 +369,7 @@ impl Voice {
             let (chunk, reach) = spec.source.chunk(at);
             let len = reach.min(n - done);
             let audible = chunk.map_or(0, |(clip, from)| clip.frames().saturating_sub(from).min(len));
-            let in_fade_in = first_pass && at < start + fade_in;
+            let in_fade_in = fades_in && at < start + fade_in;
             let in_fade_out = to_end && fade_out > 0 && at + len + fade_out > end;
             if *ramp_left == 0 && !in_fade_in && !in_fade_out {
                 if let Some((clip, from)) = chunk.filter(|_| *gain != 0.0 && audible > 0) {
@@ -885,6 +893,33 @@ mod tests {
         let out = render(&mut mixer, 160, 32, 1);
         assert!(out[5] < 1.0, "fades in on the first pass");
         assert!(out[10..].iter().all(|&s| s == 1.0), "no fades at the loop point");
+    }
+
+    #[test]
+    fn a_crossfading_loop_overlaps_its_passes() {
+        // The loop cycles 0..80 of a 100-frame clip; the last 20 frames of each pass fade
+        // out while the next one fades in from the start.
+        let (mut mixer, mut handle) = Mixer::new();
+        let clip = Arc::new(Clip::from_planar(SR, vec![vec![1.0; 100]]));
+        let mut s = spec(1, clip, AtTransition::Wrap, false);
+        s.transition = 80;
+        s.fade_in = 20;
+        s.fade_out = 20;
+        s.crossfade = true;
+        handle.send(Command::Add(s)).ok().unwrap();
+        let out = render(&mut mixer, 400, 64, 1);
+        // The first pass fades in as well.
+        assert_eq!(out[0], 0.0);
+        assert!((out[5] - 0.5).abs() < 1e-6, "square root of a quarter: {}", out[5]);
+        assert!(out[20..80].iter().all(|&s| s == 1.0));
+        // In the overlap the two passes together keep their power: in² + out² = 1.
+        for wrap in [80, 160, 240, 320] {
+            for f in 0..20 {
+                let (rising, falling) = ((f as f32 / 20.0).sqrt(), ((20 - f) as f32 / 20.0).sqrt());
+                assert!((out[wrap + f] - (rising + falling)).abs() < 1e-5, "frame {}: {}", wrap + f, out[wrap + f]);
+            }
+            assert!(out[wrap + 20..wrap + 80].iter().all(|&s| s == 1.0), "between the overlaps the level is plain");
+        }
     }
 
     #[test]

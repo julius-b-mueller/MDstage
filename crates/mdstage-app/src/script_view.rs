@@ -38,6 +38,9 @@ pub struct Marks {
     pub end: f64,
     pub fadein: f64,
     pub fadeout: f64,
+    /// A loop that crossfades: the two fades are one and the same length, the overlap
+    /// of one pass with the next.
+    pub crossfade: bool,
 }
 
 /// A connection from one cue to another, set up by clicking the other cue.
@@ -98,7 +101,8 @@ pub enum Action {
     /// It was let go: the volume to save.
     GroupVolume { block: usize, volume: f64 },
     /// Switch a cue's audio to looping or back.
-    Loop { block: usize, on: bool },
+    /// `crossfade`: a loop whose passes overlap instead of following one another.
+    Loop { block: usize, on: bool, crossfade: bool },
     /// Make this cue the next Go.
     Arm(usize),
     /// Open the cue dialog for an existing cue.
@@ -833,6 +837,10 @@ impl ScriptView {
     fn derived_timecode(cues: &Cues, cue: usize, durations: &HashMap<String, f64>, depth: usize) -> Option<Option<f64>> {
         let before = Self::predecessor(cues, cue).filter(|_| depth < 8)?;
         let earlier = cues.get(before)?;
+        // A crossfading loop has no timecode, so none runs on from it.
+        if earlier.audio().is_some_and(|audio| audio.crossfade().is_some()) {
+            return None;
+        }
         let base = match earlier.text("start_tc").and_then(Timecode::parse) {
             Some(timecode) => Some(timecode.to_frames() as f64 / mdstage_engine::mtc::FPS as f64),
             None => Self::derived_timecode(cues, before, durations, depth + 1)?,
@@ -906,6 +914,9 @@ impl ScriptView {
             }
             if audio.looped || audio.parts.len() > 1 || cue.loop_outro().is_some() {
                 spans.push(("⟳".to_string(), PURPLE));
+            }
+            if let Some(fade) = audio.crossfade() {
+                spans.push((format!("Crossfade {} s", mdstage_core::format::seconds(fade)), GREEN));
             }
             rows.push(Row::plain("♬", spans));
         }
@@ -1940,7 +1951,8 @@ impl ScriptView {
         }
         if let Some(audio) = cue.audio() {
             let width = panel.right() - 12.0 - left;
-            let part = &audio.parts[0];
+            // The crossfade counts only where it is played: on a loop of a single part.
+            let part = &Part { crossfade: audio.crossfade(), ..audio.parts[0].clone() };
             // Auto-cue markers are named in a line of their own above the waveform.
             let autos = Self::position_autos(&Cues::new(cx.script), cue.note()).len();
             let named = autos > 0 || !cue.markers().is_empty();
@@ -2162,9 +2174,30 @@ impl ScriptView {
         }
 
         row.add_space(6.0);
-        if row.add_enabled(!cx.locked, egui::SelectableLabel::new(looped, "⟳")).on_hover_text("Loop").clicked() {
-            actions.push(Action::Loop { block, on: !looped });
+        // Switching the loop on asks which kind it is to be.
+        let crossfade = looped && part.crossfade.is_some();
+        let (label, hint) = match crossfade {
+            true => ("⟳ Crossfade", t("Nahtloser Loop: Ende und Anfang blenden ineinander über", "Seamless loop: the end crossfades into the start")),
+            false => ("⟳", "Loop"),
+        };
+        let button = row.add_enabled(!cx.locked, egui::SelectableLabel::new(looped, label)).on_hover_text(hint);
+        let kinds = Id::new(("loop-kind", block));
+        if button.clicked() {
+            match looped {
+                true => actions.push(Action::Loop { block, on: false, crossfade: false }),
+                false => row.memory_mut(|m| m.toggle_popup(kinds)),
+            }
         }
+        egui::popup::popup_below_widget(&row, kinds, &button, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+            ui.set_min_width(300.0);
+            if ui.button(t("⟳  Normaler Loop", "⟳  Plain loop")).on_hover_text(t("Spielt bis zum Ende und beginnt dann von vorn.", "Plays to the end and then starts over.")).clicked() {
+                actions.push(Action::Loop { block, on: true, crossfade: false });
+            }
+            let seamless = ui.button(t("⟳  Nahtloser Loop mit Crossfade", "⟳  Seamless loop with a crossfade"));
+            if seamless.on_hover_text(t("Für Hintergrundgeräusche: Das Ende blendet aus, während der Anfang schon wieder einblendet. Ohne Timecode.", "For background sound: the end fades out while the start already fades in again. Without timecode.")).clicked() {
+                actions.push(Action::Loop { block, on: true, crossfade: true });
+            }
+        });
         row.add_space(6.0);
         row.add(Icon::Speaker.image(15.0, MUTED));
         let mut volume = self.volumes.get(&block).copied().unwrap_or(part.volume);
@@ -2228,7 +2261,16 @@ impl ScriptView {
             ui.ctx().request_repaint();
         }
         let end = part.end.unwrap_or(duration).min(duration);
-        let saved = Marks { start: part.start.unwrap_or(0.0).min(end), end, fadein: part.fadein.unwrap_or(0.0), fadeout: part.fadeout.unwrap_or(0.0) };
+        let start = part.start.unwrap_or(0.0).min(end);
+        let saved = match part.crossfade {
+            // One length for both fades, and no longer than half the loop: the fade out
+            // of one pass has to be over before the next one gets there.
+            Some(fade) => {
+                let fade = fade.min(mdstage_core::audio::longest_crossfade(start, end));
+                Marks { start, end, fadein: fade, fadeout: fade, crossfade: true }
+            }
+            None => Marks { start, end, fadein: part.fadein.unwrap_or(0.0), fadeout: part.fadeout.unwrap_or(0.0), crossfade: false },
+        };
         let mut marks = self.dragging.get(&block).copied().unwrap_or(saved);
 
         // The stretch of the file in view: all of it, unless zoomed in.
@@ -2310,6 +2352,11 @@ impl ScriptView {
                     }
                     // The fades have to fit between start and end.
                     let length = marks.end - marks.start;
+                    if marks.crossfade {
+                        // Whichever of the two was moved, the other follows.
+                        let fade = if which == 3 { marks.fadeout } else { marks.fadein }.min(length / 2.0);
+                        (marks.fadein, marks.fadeout) = (fade, fade);
+                    }
                     marks.fadein = marks.fadein.min(length);
                     marks.fadeout = marks.fadeout.min(length - marks.fadein);
                     self.dragging.insert(block, marks);
@@ -2348,6 +2395,23 @@ impl ScriptView {
         if marks.fadeout > 0.0 {
             painter.line_segment([pos2(x_of(fade_out_start), rect.top() + 1.0), pos2(x_of(marks.end), rect.bottom())], fade);
         }
+        // A crossfade is two passes at once: each slope is crossed by the other pass's,
+        // dashed, over a tinted ground — at the start the end of the pass before goes
+        // out, at the end the start of the pass after comes in.
+        if marks.crossfade && marks.fadein > 0.0 {
+            let other = Stroke::new(1.5_f32, GREEN.gamma_multiply(0.75));
+            for (from, to, rising) in [(marks.start, fade_in_end, false), (fade_out_start, marks.end, true)] {
+                let zone = Rect::from_x_y_ranges(x_of(from)..=x_of(to), rect.y_range());
+                painter.rect_filled(zone, 0.0, GREEN.gamma_multiply(0.12));
+                let (left, right) = if rising { (rect.bottom(), rect.top() + 1.0) } else { (rect.top() + 1.0, rect.bottom()) };
+                painter.extend(egui::Shape::dashed_line(&[pos2(zone.left(), left), pos2(zone.right(), right)], other, 4.0, 3.0));
+            }
+            if x_of(fade_in_end) - x_of(marks.start) > 70.0 {
+                for zone_start in [marks.start, fade_out_start] {
+                    painter.text(pos2(x_of(zone_start) + 4.0, rect.bottom() - 2.0), Align2::LEFT_BOTTOM, "Crossfade", FontId::proportional(10.0), GREEN);
+                }
+            }
+        }
         for at in [fade_in_end, fade_out_start] {
             painter.rect_filled(Rect::from_center_size(pos2(x_of(at), rect.top() + 4.0), vec2(8.0, 8.0)), 2.0, GREEN);
         }
@@ -2355,7 +2419,7 @@ impl ScriptView {
             painter.rect_filled(Rect::from_center_size(pos2(x_of(at), rect.bottom() - 4.0), vec2(8.0, 8.0)), 2.0, YELLOW);
         }
 
-        if let Some(point) = part.fading_point.filter(|p| *p > marks.start && *p < marks.end) {
+        if let Some(point) = part.fading_point.filter(|p| !marks.crossfade && *p > marks.start && *p < marks.end) {
             painter.vline(x_of(point), rect.y_range(), Stroke::new(2.0_f32, PURPLE));
         }
 

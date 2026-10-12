@@ -683,6 +683,12 @@ impl App {
                     self.edit_music(*block, |music| {
                         music.insert("start".into(), milliseconds(marks.start).into());
                         music.insert("end".into(), milliseconds(marks.end).into());
+                        if marks.crossfade {
+                            // One length for both ends; it stays even at 0, which is
+                            // what says that the loop is of this kind.
+                            music.insert("crossfade".into(), milliseconds(marks.fadein).into());
+                            return;
+                        }
                         for (key, seconds) in [("fadein", marks.fadein), ("fadeout", marks.fadeout)] {
                             match seconds >= 0.001 {
                                 true => drop(music.insert(key.into(), milliseconds(seconds).into())),
@@ -739,11 +745,23 @@ impl App {
                     let volume = (*volume * 100.0).round() / 100.0;
                     self.edit_music(*block, |music| drop(music.insert("volume".into(), volume.into())));
                 }
-                Action::Loop { block, on } => {
-                    let on = *on;
-                    self.edit_music(*block, |music| match on {
-                        true => drop(music.insert("loop".into(), true.into())),
-                        false => drop(music.shift_remove("loop")),
+                Action::Loop { block, on, crossfade } => {
+                    let (on, crossfade) = (*on, *crossfade);
+                    self.edit_music(*block, |music| {
+                        match on {
+                            true => drop(music.insert("loop".into(), true.into())),
+                            false => drop(music.shift_remove("loop")),
+                        }
+                        music.shift_remove("crossfade");
+                        if on && crossfade {
+                            // The fades at the ends become the crossfade, and the loop
+                            // wraps where it begins: a loop point of its own is no more.
+                            let fade = ["fadein", "fadeout"].iter().find_map(|key| music.get(*key).and_then(|v| v.as_f64())).filter(|fade| *fade > 0.0);
+                            for key in ["fadein", "fadeout", "fading_point"] {
+                                music.shift_remove(key);
+                            }
+                            music.insert("crossfade".into(), fade.unwrap_or(mdstage_core::audio::DEFAULT_CROSSFADE).into());
+                        }
                     });
                 }
                 Action::AutoCueAt { block, at } => {

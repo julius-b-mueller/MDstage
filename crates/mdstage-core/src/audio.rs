@@ -30,6 +30,9 @@ pub struct Part {
     pub fadeout: Option<f64>,
     /// Where a loop wraps or hands off; the rest up to `end` rings out as a tail.
     pub fading_point: Option<f64>,
+    /// `music.crossfade`: the loop runs on without a gap. Its last seconds fade out
+    /// while the next pass already fades in from the start, over this many seconds.
+    pub crossfade: Option<f64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -39,6 +42,23 @@ pub struct CueAudio {
     pub parts: Vec<Part>,
     /// `music.loop: true`.
     pub looped: bool,
+}
+
+impl CueAudio {
+    /// The crossfade of a loop that runs on without a gap, in seconds; `None` for any
+    /// other audio. Only a loop of a single part crossfades.
+    pub fn crossfade(&self) -> Option<f64> {
+        self.parts.first().filter(|_| self.looped && self.parts.len() == 1).and_then(|part| part.crossfade)
+    }
+}
+
+/// The crossfade a loop gets when it is made one that runs on without a gap, in seconds.
+pub const DEFAULT_CROSSFADE: f64 = 2.0;
+
+/// The longest crossfade a loop from `start` to `end` has room for: the fade out of one
+/// pass has to be over before the next one begins.
+pub fn longest_crossfade(start: f64, end: f64) -> f64 {
+    ((end - start) / 2.0).max(0.0)
 }
 
 /// Keep a file name from the show file inside the audio folder: drop `..`, `.` and
@@ -103,6 +123,7 @@ fn part(value: &Value) -> Option<Part> {
         fadeout: number("fadeout"),
         // 0 means "not set", as in files written by earlier versions.
         fading_point: number("fading_point").filter(|&p| p > 0.0),
+        crossfade: number("crossfade").filter(|x| x.is_finite()).map(|x| x.max(0.0)),
     })
 }
 
@@ -167,6 +188,12 @@ mod tests {
         assert_eq!((part.volume, part.start, part.end), (0.75, Some(2.5), Some(120.0)));
         assert_eq!((part.fadein, part.fadeout, part.fading_point), (Some(1.0), Some(2.0), Some(96.0)));
         assert_eq!(audio("music:\n    file: a.wav\n    fading_point: 0").unwrap().parts[0].fading_point, None);
+        assert_eq!(full.crossfade(), None);
+        assert_eq!(audio("music: {file: a.wav, loop: true, crossfade: 2.5}").unwrap().crossfade(), Some(2.5));
+        // Only a loop crossfades, and only one of a single part.
+        assert_eq!(audio("music: {file: a.wav, crossfade: 2.5}").unwrap().crossfade(), None);
+        assert_eq!(audio("music: {file: a.wav, loop: true, crossfade: 2}\nmusic_seq:\n    - file: b.wav").unwrap().crossfade(), None);
+        assert_eq!(longest_crossfade(2.0, 10.0), 4.0);
     }
 
     #[test]

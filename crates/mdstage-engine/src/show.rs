@@ -519,7 +519,10 @@ impl Show {
 
         // Timecode: a cue with `start_tc` takes it over (and ends the audio that drove it);
         // a cue that continues another's audio continues its timecode.
-        let start_tc = c.text("start_tc").and_then(Timecode::parse);
+        // A loop that crossfades has none: two passes sound at once, so there is no one
+        // place in the audio a timecode could stand for.
+        let crossfaded = c.audio().is_some_and(|audio| audio.crossfade().is_some());
+        let start_tc = c.text("start_tc").and_then(Timecode::parse).filter(|_| !crossfaded);
         // A handoff happens at the end of the source's stretch, so that is where the
         // count carries on — the source itself may already be gone.
         let hands_off_here = |from: usize| cues.get(from).and_then(|source| source.loop_outro().or(source.chain_end())).is_some_and(|note| cues.refers_to(note, cue));
@@ -570,7 +573,7 @@ impl Show {
             // Fired on its own, a cue further down a chain still counts from where its
             // timecode would stand had the chain run up to it.
             let base = start_tc.map(|tc| tc.to_frames() as f64 / crate::mtc::FPS as f64).or(continued).or_else(|| self.derived_timecode(cue, 0));
-            if let Some(base) = base {
+            if let Some(base) = base.filter(|_| !crossfaded) {
                 self.timecode = Some(TimecodeSource { cue, base, spans });
             }
         }
@@ -770,7 +773,7 @@ impl Show {
         }
         let tc = Cues::new(&self.script).get(cue).and_then(|c| c.text("start_tc")).and_then(Timecode::parse);
         let base = tc.map(|tc| tc.to_frames() as f64 / crate::mtc::FPS as f64).or_else(|| self.derived_timecode(cue, 0));
-        if let Some(base) = base {
+        if let Some(base) = base.filter(|_| audio.crossfade().is_none()) {
             let spans = self.player.spans(&audio)?;
             self.timecode = Some(TimecodeSource { cue, base, spans });
         }
@@ -789,6 +792,10 @@ impl Show {
         let note = cues.get(cue)?.note()?;
         let _ = note;
         let before = (0..cues.len()).find(|&p| p != cue && cues.get(p).is_some_and(|c| c.chain_end().or(c.loop_outro()).is_some_and(|n| cues.refers_to(n, cue))))?;
+        // Nothing runs on from a crossfading loop: it has no timecode itself.
+        if cues.get(before)?.audio().is_some_and(|audio| audio.crossfade().is_some()) {
+            return None;
+        }
         let base = match cues.get(before)?.text("start_tc").and_then(Timecode::parse) {
             Some(tc) => tc.to_frames() as f64 / crate::mtc::FPS as f64,
             None => self.derived_timecode(before, depth + 1)?,
@@ -1431,6 +1438,20 @@ mod tests {
         rig.show.stop_all().unwrap();
         rig.run(640);
         assert_eq!(rig.show.timecode_seconds(), None);
+    }
+
+    #[test]
+    fn a_crossfading_loop_has_no_timecode() {
+        let mut rig = rig(&["music: {file: noise.wav, loop: true, crossfade: 0.05}\nstart_tc: '01:00:00:00'"], &[("noise.wav", 1.0, 400)]);
+        rig.show.go().unwrap();
+        rig.run(240);
+        assert_eq!(rig.show.timecode_seconds(), None);
+        // … and it goes round: 400 ms of audio, wrapping 50 ms before the end.
+        rig.run(240);
+        assert_eq!(rig.show.audio_status().iter().filter(|(cue, _)| *cue == 0).count(), 1);
+        let status = rig.show.audio_status()[0].1;
+        assert_eq!((status.start, status.transition, status.end), (0.0, 0.35, 0.4));
+        assert!(status.seconds < 0.35, "{}", status.seconds);
     }
 
     /// A loop fired on its own, without its start having run, counts from where the

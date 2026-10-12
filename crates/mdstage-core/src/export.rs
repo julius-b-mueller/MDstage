@@ -142,7 +142,7 @@ impl Script {
                         details.extend(part.fadein.filter(|f| *f > 0.0).map(|f| format!("Fade-in {} s", crate::format::seconds(f))));
                         details.extend(part.fadeout.filter(|f| *f > 0.0).map(|f| format!("Fade-out {} s", crate::format::seconds(f))));
                         if audio.looped {
-                            details.push("Loop".into());
+                            details.push(audio.crossfade().map_or("Loop".to_string(), |fade| format!("Loop mit Crossfade {} s", crate::format::seconds(fade))));
                         }
                         text.push_str(&format!(" ({})", details.join(", ")));
                         if let Some(adjust) = cue.adjust() {

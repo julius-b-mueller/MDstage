@@ -162,6 +162,13 @@ impl Checker<'_> {
 
         if let Some(music) = cue.get("music").filter(|m| m.is_mapping()) {
             self.transport(music, "music", true);
+            if let Some(value) = present(music, "crossfade").filter(|v| !is_amount(v, None)) {
+                self.report(format!("music.crossfade ungültig: {} (nicht-negative Zahl erwartet)", show(value)));
+            }
+            let crossfaded = music.get("loop").and_then(Value::as_bool) == Some(true) && music.get("crossfade").is_some() && cue.get("music_seq").is_none();
+            if crossfaded && present(cue, "start_tc").is_some() {
+                self.report("Ein Loop mit Crossfade kann keinen Timecode haben (start_tc)".to_string());
+            }
             self.audios(music, "music");
         }
         match present(cue, "music_seq") {
@@ -238,7 +245,7 @@ impl Script {
         for removal in self.cleanup_preview() {
             // Unknown keys only; loop remnants and stale audios are cleanup matters.
             let unknown_key = !removal.key.ends_with(']')
-                && !matches!(removal.key.as_str(), "music.fading_point" | "music.loop");
+                && !matches!(removal.key.as_str(), "music.fading_point" | "music.loop" | "music.crossfade");
             if unknown_key {
                 report.problems.push(Problem { block: removal.block, message: format!("Unbekannter Schlüssel: {}", removal.key) });
             }

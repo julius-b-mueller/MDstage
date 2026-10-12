@@ -424,6 +424,25 @@ loop_outro: {ch: 1, note: 7}
 
 The waveform editor shows an orange marker at `fading_point`. The progress bar in the live view cycles between `start` and `fading_point`.
 
+### Seamless Loop with a Crossfade (`crossfade`)
+
+For background sound that has to run on endlessly without a gap — rain, a crowd, room tone. Instead of playing to the end and starting over, the loop overlaps itself: the last seconds of each pass fade out while the next pass already fades in from the start.
+
+```yaml
+music:
+    file: rain.wav
+    loop: true
+    start: 2.0
+    end: 62.0
+    crossfade: 4.0   # seconds of overlap; one pass is 56 s long
+```
+
+- `crossfade` replaces `fadein`, `fadeout` and `fading_point` on such a loop: the fade at the start and the fade at the end are the same crossfade and always the same length. On the waveform, dragging either fade grip (Shift) moves both; the two zones are tinted and crossed by a dashed slope.
+- The crossfade is at most half the stretch between `start` and `end`. The two curves keep the loudness even (equal power).
+- Switching the loop on — with the loop button under the waveform or in the cue dialog — asks whether it is a plain loop or a seamless one.
+- A crossfading loop has no timecode: two passes sound at once, so `start_tc` is not possible on it, and no timecode runs on from it.
+- Only a loop of a single file crossfades (no `music_seq`).
+
 ### Multi-File Loop / Multi-Part Vamp (`music_seq`)
 
 A loop (Vamp) can span multiple audio files that play in sequence. The primary file is defined in `music:`, additional files in `music_seq:`. Each file transitions seamlessly to the next at its `fading_point` (or `end`), and the sequence loops back to the first file. This allows a long, varied Vamp that still devamps quickly — the Devamp fires at the next `fading_point` in the currently active file, not at the end of the full sequence.

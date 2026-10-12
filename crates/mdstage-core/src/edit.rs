@@ -430,7 +430,7 @@ const CUE_KEYS: &[&str] = &[
 ];
 const NOTE_REF_KEYS: &[&str] = &["ch", "note"];
 const MUSIC_KEYS: &[&str] =
-    &["file", "volume", "start", "end", "fadein", "fadeout", "fading_point", "loop", "audios", "adjust", "markers"];
+    &["file", "volume", "start", "end", "fadein", "fadeout", "fading_point", "loop", "crossfade", "audios", "adjust", "markers"];
 const MARKER_KEYS: &[&str] = &["at", "name"];
 const MUSIC_SEQ_KEYS: &[&str] = &["file", "volume", "start", "end", "fadein", "fadeout", "fading_point", "audios"];
 const AUDIO_KEYS: &[&str] = &["file", "mono", "volume", "patch"];
@@ -571,6 +571,9 @@ fn block_removals(yaml: &Value, is_config: bool, channels: &[String]) -> Vec<Vec
     if let Some(music) = music.filter(|_| !is_loop) {
         if music.get("fading_point").is_some() {
             paths.push(vec![key("music"), key("fading_point")]);
+        }
+        if music.get("crossfade").is_some() {
+            paths.push(vec![key("music"), key("crossfade")]);
         }
         if music.get("loop").and_then(Value::as_bool) == Some(false) {
             paths.push(vec![key("music"), key("loop")]);

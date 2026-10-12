@@ -473,7 +473,13 @@ impl Player {
             let longest = infos.iter().map(|i| i.frames).max().unwrap_or(0);
             let end = part.end.map_or(longest, |s| self.frames(s));
             let region_start = part.start.map_or(0, |s| self.frames(s)).min(end);
-            let transition = part.fading_point.map_or(end, |s| self.frames(s)).clamp(region_start, end);
+            // A crossfading loop wraps where its fade out begins; the fade has to be over
+            // before the next pass gets there, so it takes half the stretch at most.
+            let crossfade = audio.crossfade().map(|s| self.frames(s).min((end - region_start) / 2));
+            let transition = match crossfade {
+                Some(fade) => end - fade,
+                None => part.fading_point.map_or(end, |s| self.frames(s)).clamp(region_start, end),
+            };
             let initial = resume_at.filter(|_| index == resume_part).map(|s| self.frames(s));
             for file in &part.audios {
                 self.cache.ensure(&file.file, region_start)?;
@@ -481,7 +487,7 @@ impl Player {
                     self.cache.ensure(&file.file, initial.clamp(region_start, end))?;
                 }
             }
-            regions.push((region_start, transition, end, initial, infos));
+            regions.push((region_start, transition, end, crossfade, initial, infos));
         }
         if self.active.contains_key(&cue) {
             self.stop(cue, 0.005)?;
@@ -489,7 +495,7 @@ impl Player {
         self.flush();
 
         let mut active = ActiveCue { parts: Vec::with_capacity(count), then: start.then, outro_queued: false };
-        for (index, (part, (region_start, transition, end, initial, infos))) in audio.parts.iter().zip(regions).enumerate() {
+        for (index, (part, (region_start, transition, end, crossfade, initial, infos))) in audio.parts.iter().zip(regions).enumerate() {
             let id = voice_id(cue, index);
             let (at_transition, rearm) = match start.then {
                 _ if count > 1 => (AtTransition::Handoff(voice_id(cue, (index + 1) % count)), true),
@@ -508,8 +514,9 @@ impl Player {
                     initial,
                     at_transition,
                     gain: if resume_at.is_some() { 0.0 } else { part.volume as f32 },
-                    fade_in: part.fadein.map_or(0, |s| self.frames(s) as u32),
-                    fade_out: part.fadeout.map_or(0, |s| self.frames(s) as u32),
+                    fade_in: crossfade.map_or(part.fadein.map_or(0, |s| self.frames(s) as u32), |fade| fade as u32),
+                    fade_out: crossfade.map_or(part.fadeout.map_or(0, |s| self.frames(s) as u32), |fade| fade as u32),
+                    crossfade: crossfade.is_some(),
                     routes: self.routes(file, info.channels),
                     armed: start.armed || index != resume_part,
                     rearm,
@@ -550,7 +557,11 @@ impl Player {
             }
             let end = part.end.unwrap_or(longest);
             let start = part.start.unwrap_or(0.0).min(end);
-            spans.push((start, part.fading_point.unwrap_or(end).clamp(start, end)));
+            let transition = match audio.crossfade() {
+                Some(fade) => end - fade.min(mdstage_core::audio::longest_crossfade(start, end)),
+                None => part.fading_point.unwrap_or(end).clamp(start, end),
+            };
+            spans.push((start, transition));
         }
         Ok(spans)
     }
@@ -765,7 +776,7 @@ mod tests {
     }
 
     fn part(audios: Vec<AudioFile>) -> Part {
-        Part { audios, volume: 1.0, start: None, end: None, fadein: None, fadeout: None, fading_point: None }
+        Part { audios, volume: 1.0, start: None, end: None, fadein: None, fadeout: None, fading_point: None, crossfade: None }
     }
 
     fn one(name: &str) -> CueAudio {
@@ -895,6 +906,27 @@ mod tests {
         assert!(out[22..32].iter().all(|&s| s == 2.0));
         assert!(out[32..62].iter().all(|&s| s == 3.0));
         assert!(out[62..].iter().all(|&s| s == 1.0));
+    }
+
+    #[test]
+    fn a_crossfading_loop_wraps_where_its_fade_out_begins() {
+        let (mut mixer, mut player) = setup(&[("noise.wav", 1.0, 480)], &["L"]);
+        // 10 ms to 90 ms with a 20 ms crossfade: the loop is 60 ms long.
+        let noise = CueAudio { parts: vec![Part { start: Some(0.010), end: Some(0.090), crossfade: Some(0.020), ..part(vec![file("noise.wav")]) }], looped: true };
+        let wraps_at = |player: &mut Player, audio: &CueAudio| (player.spans(audio).unwrap()[0].1 * 1000.0).round();
+        assert_eq!(wraps_at(&mut player, &noise), 70.0);
+        player.start(0, &noise, Start::now(Then::Loop)).unwrap();
+        let out = render(&mut mixer, 68, 1);
+        // Fading in from the start, then plain; at frame 60 the first pass begins to fade
+        // out and the second comes in under it.
+        assert_eq!(out[0], 0.0);
+        assert!(out[20..60].iter().all(|&s| s == 1.0));
+        assert!((out[65] - (0.25f32.sqrt() + 0.75f32.sqrt())).abs() < 1e-5, "{}", out[65]);
+        let status = player.status(0, None).unwrap();
+        assert_eq!((status.start, status.transition, status.end), (0.010, 0.070, 0.090));
+        // A crossfade longer than half the loop is cut down to half of it.
+        let long = CueAudio { parts: vec![Part { crossfade: Some(9.0), ..noise.parts[0].clone() }], looped: true };
+        assert_eq!(wraps_at(&mut player, &long), 50.0);
     }
 
     #[test]

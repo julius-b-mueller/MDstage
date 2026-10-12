@@ -93,6 +93,12 @@ impl CueDialog {
         CueDialog { block, is_new, yaml, audio_files, auto_mic_in_use, taken: Vec::new(), cues, channels: vec!["L".into(), "R".into()], devices: Default::default(), audio_dir: audio_dir.to_path_buf(), info: Default::default(), tempo: (120.0, 4.0), renaming: None, rename_focus: false, rename_error: None, rename_request: None }
     }
 
+    /// The cue as it stands is a loop whose passes crossfade.
+    fn crossfaded(&self) -> bool {
+        let music = self.yaml.get("music");
+        music.is_some_and(|m| m.get("loop").and_then(Value::as_bool) == Some(true) && m.get("crossfade").is_some()) && !self.yaml.contains_key("music_seq")
+    }
+
     /// An audio file got a new name: follow it in the file list and in the cue as it
     /// stands in this dialog.
     pub fn audio_renamed(&mut self, from: &str, to: &str) {
@@ -383,32 +389,65 @@ impl CueDialog {
                         changed = true;
                         music.insert("volume".into(), ((volume * 100.0).round() / 100.0).into());
                     }
-                    let mut looped = music.get("loop").and_then(Value::as_bool) == Some(true);
-                    if ui.checkbox(&mut looped, "Loop").changed() {
+                    // 0 no loop, 1 a plain one, 2 one whose passes crossfade.
+                    let looped = music.get("loop").and_then(Value::as_bool) == Some(true);
+                    let before = if !looped { 0 } else if music.contains_key("crossfade") { 2 } else { 1 };
+                    let names = [t("Kein Loop", "No loop"), t("Loop", "Loop"), t("Nahtloser Loop (Crossfade)", "Seamless loop (crossfade)")];
+                    let mut kind = before;
+                    egui::ComboBox::from_id_salt("cue-loop-kind").selected_text(names[kind]).show_ui(ui, |ui| {
+                        for (index, name) in names.iter().enumerate() {
+                            ui.selectable_value(&mut kind, index, *name);
+                        }
+                    });
+                    if kind != before {
                         changed = true;
-                        if looped {
-                            music.insert("loop".into(), true.into());
-                        } else {
-                            music.shift_remove("loop");
+                        match kind {
+                            0 => drop(music.shift_remove("loop")),
+                            _ => drop(music.insert("loop".into(), true.into())),
+                        }
+                        music.shift_remove("crossfade");
+                        if kind == 2 {
+                            // The fades at the ends become the crossfade.
+                            let fade = ["fadein", "fadeout"].iter().find_map(|key| number(music, key)).filter(|fade| *fade > 0.0);
+                            for key in ["fadein", "fadeout", "fading_point"] {
+                                music.shift_remove(key);
+                            }
+                            music.insert("crossfade".into(), fade.unwrap_or(mdstage_core::audio::DEFAULT_CROSSFADE).into());
                         }
                     }
                 });
+                let crossfaded = music.contains_key("crossfade") && music.get("loop").and_then(Value::as_bool) == Some(true);
                 ui.horizontal(|ui| {
                     changed |= seconds(ui, music, "start", "Start");
                     changed |= seconds(ui, music, "end", t("Ende", "End"));
-                    changed |= seconds(ui, music, "fadein", t("Einblenden", "Fade in"));
-                    changed |= seconds(ui, music, "fadeout", t("Ausblenden", "Fade out"));
-                    changed |= seconds(ui, music, "fading_point", t("Loop-Punkt", "Loop point"));
+                    if crossfaded {
+                        // Kept even at 0: the key is what makes the loop one of this kind.
+                        let mut fade = number(music, "crossfade").unwrap_or(0.0);
+                        ui.label("Crossfade");
+                        if ui.add(egui::DragValue::new(&mut fade).speed(0.05).range(0.0..=36000.0).suffix(" s")).changed() {
+                            changed = true;
+                            music.insert("crossfade".into(), ((fade * 1000.0).round() / 1000.0).into());
+                        }
+                    } else {
+                        changed |= seconds(ui, music, "fadein", t("Einblenden", "Fade in"));
+                        changed |= seconds(ui, music, "fadeout", t("Ausblenden", "Fade out"));
+                        changed |= seconds(ui, music, "fading_point", t("Loop-Punkt", "Loop point"));
+                    }
                 });
+                if crossfaded {
+                    ui.label(RichText::new(t("Das Ende blendet aus, während der Anfang schon wieder einblendet – höchstens über die halbe Länge des Loops.", "The end fades out while the start already fades in again – over half the loop's length at most.")).color(MUTED));
+                }
                 ui.label(RichText::new(t("Ende 0 = bis zum Dateiende. Alle Zeiten lassen sich auch an der Wellenform mit Shift ziehen.", "End 0 = up to the end of the file. All times can also be dragged on the waveform with Shift.")).color(MUTED));
             }
             if changed && !before {
                 self.yaml.insert("music".into(), Value::Mapping(copy));
             }
             // The loop point from the music's tempo: so many beats before the end.
+            let crossfaded = self.crossfaded();
             let first_file = self.yaml.get("music").and_then(|m| m.get("file").or_else(|| m.get("audios")?.get(0)?.get("file"))).and_then(Value::as_str).map(str::to_string);
             let mut loop_point = None;
-            ui.horizontal(|ui| {
+            // (A crossfading loop wraps where its fade begins and has no loop point.)
+            ui.add_enabled_ui(!crossfaded, |ui| ui.horizontal(|ui| {
                 ui.label(RichText::new(t("Loop-Punkt aus dem Tempo:", "Loop point from the tempo:")).color(MUTED));
                 ui.add(egui::DragValue::new(&mut self.tempo.0).speed(0.5).range(20.0..=400.0).suffix(" BPM"));
                 ui.add(egui::DragValue::new(&mut self.tempo.1).speed(0.1).range(0.0..=1024.0).suffix(t(" Schläge vor dem Ende", " beats before the end")));
@@ -418,7 +457,7 @@ impl CueDialog {
                     let end = self.yaml.get("music").and_then(|m| m.get("end")).and_then(Value::as_f64).or(length);
                     loop_point = end.map(|end| end - self.tempo.1 / self.tempo.0 * 60.0).filter(|point| *point > 0.0);
                 }
-            });
+            }));
             if let Some(point) = loop_point {
                 if let Some(music) = self.music() {
                     changed = true;
@@ -440,10 +479,18 @@ impl CueDialog {
         });
 
         ui.add_space(6.0);
+        // A loop that crossfades has no timecode: two of its passes sound at once.
+        let crossfaded = self.crossfaded();
+        if crossfaded && self.yaml.shift_remove("start_tc").is_some() {
+            changed = true;
+        }
         ui.horizontal(|ui| {
             ui.label(t("Start-Timecode", "Start timecode"));
             let mut tc = self.yaml.get("start_tc").and_then(Value::as_str).unwrap_or_default().to_string();
-            if ui.add(egui::TextEdit::singleline(&mut tc).hint_text("HH:MM:SS:FF").desired_width(110.0)).changed() {
+            if crossfaded {
+                ui.add_enabled(false, egui::TextEdit::singleline(&mut tc).hint_text("HH:MM:SS:FF").desired_width(110.0));
+                ui.label(RichText::new(t("nicht bei einem Loop mit Crossfade", "not with a crossfading loop")).color(MUTED));
+            } else if ui.add(egui::TextEdit::singleline(&mut tc).hint_text("HH:MM:SS:FF").desired_width(110.0)).changed() {
                 changed = true;
                 if tc.is_empty() {
                     self.yaml.shift_remove("start_tc");
