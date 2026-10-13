@@ -35,6 +35,10 @@ const FALLBACK_RATE: u32 = 48_000;
 const MAX_CHANNELS: usize = 64;
 /// How often a missing audio device is looked for.
 const DEVICE_RETRY: Duration = Duration::from_secs(3);
+/// How often to look whether a MIDI device was plugged in or pulled out.
+const MIDI_RESCAN: Duration = Duration::from_secs(2);
+/// Holding the Back note this long stops everything (as the red music button does).
+const BACK_HOLD: Duration = Duration::from_millis(1000);
 /// A device whose clock has not moved for this long counts as gone.
 const DEVICE_STALL: Duration = Duration::from_secs(2);
 /// What problems with the audio device start with (they are withdrawn when it is back).
@@ -299,6 +303,8 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
         }
     };
     let mut inputs = open_inputs(&settings, &mut problems);
+    let mut rescan_midi = Instant::now() + MIDI_RESCAN;
+    let mut back_held: Option<Instant> = None;
 
     // Timecode: the show publishes its position with a timestamp; the MTC thread
     // extrapolates from there, so its pacing does not depend on this loop's.
@@ -391,12 +397,30 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
         while let Ok(input) = inputs_incoming.try_recv() {
             let result = match input {
                 Input::Go => show.go(),
-                Input::Back => show.back(),
+                Input::Back => {
+                    back_held = Some(Instant::now());
+                    show.back()
+                }
+                Input::BackReleased => Ok(back_held = None),
                 Input::Cue(note) => show.fire_note(note),
                 Input::Heard(note) => Ok(heard = Some(note)),
             };
             if let Err(e) = result {
                 report(&mut problems, e.to_string());
+            }
+        }
+        if back_held.is_some_and(|since| since.elapsed() >= BACK_HOLD) {
+            back_held = None;
+            if let Err(e) = show.stop_all() {
+                report(&mut problems, e.to_string());
+            }
+        }
+        // A MIDI device that was plugged in after the start is listened to as well.
+        if Instant::now() >= rescan_midi {
+            rescan_midi = Instant::now() + MIDI_RESCAN;
+            if inputs.as_ref().is_some_and(|open| open.ports_changed()) {
+                drop(inputs.take());
+                inputs = open_inputs(&settings, &mut problems);
             }
         }
 

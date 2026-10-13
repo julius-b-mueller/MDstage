@@ -16,6 +16,8 @@ use crate::outputs::osc_cue_trigger;
 pub enum Input {
     Go,
     Back,
+    /// The Back note was let go of. Held for a while instead, it stops everything.
+    BackReleased,
     /// Fire the cue with this trigger note, whatever the position.
     Cue(Note),
     /// Any note that came in, for "MIDI learn" in the settings.
@@ -42,6 +44,16 @@ pub struct InputSettings {
     pub cue_trigger: CueTrigger,
 }
 
+/// The note of a note-off message (or a note-on with velocity zero), with a 1-based channel.
+fn note_off(bytes: &[u8]) -> Option<Note> {
+    match bytes {
+        [status, note, velocity, ..] if status & 0xF0 == 0x80 || (status & 0xF0 == 0x90 && *velocity == 0) => {
+            Some(Note { ch: (status & 0x0F) as u64 + 1, note: *note as u64 })
+        }
+        _ => None,
+    }
+}
+
 /// The note of a note-on message (velocity above zero), with a 1-based channel.
 fn note_on(bytes: &[u8]) -> Option<Note> {
     match bytes {
@@ -55,6 +67,10 @@ fn note_on(bytes: &[u8]) -> Option<Note> {
 impl InputSettings {
     /// What a MIDI message arriving on `port` means.
     pub fn midi(&self, port: &str, bytes: &[u8]) -> Vec<Input> {
+        let from_control = self.control_port.as_deref().is_none_or(|p| p == port);
+        if note_off(bytes).is_some_and(|note| from_control && self.back == Some(note)) {
+            return vec![Input::BackReleased];
+        }
         let Some(note) = note_on(bytes) else { return Vec::new() };
         let mut inputs = vec![Input::Heard(note)];
         if self.control_port.as_deref().is_none_or(|p| p == port) {
@@ -74,6 +90,8 @@ impl InputSettings {
 /// Open inputs. Dropping this closes them.
 pub struct Inputs {
     _midi: Vec<midir::MidiInputConnection<()>>,
+    /// The MIDI input ports that were there when these inputs were opened.
+    ports: Vec<String>,
     running: Arc<AtomicBool>,
 }
 
@@ -88,7 +106,8 @@ impl Inputs {
     /// opened are skipped; an OSC port that cannot be bound is reported as an error.
     pub fn open(settings: &InputSettings, events: Sender<Input>) -> std::io::Result<Inputs> {
         let mut connections = Vec::new();
-        for name in Self::port_names() {
+        let ports = Self::port_names();
+        for name in ports.clone() {
             let Ok(mut midi) = midir::MidiInput::new("MDstage") else { continue };
             midi.ignore(midir::Ignore::All);
             let Some(port) = midi.ports().into_iter().find(|p| midi.port_name(p).is_ok_and(|n| n == name)) else { continue };
@@ -122,7 +141,13 @@ impl Inputs {
                 }
             })?;
         }
-        Ok(Inputs { _midi: connections, running })
+        Ok(Inputs { _midi: connections, ports, running })
+    }
+
+    /// A MIDI device was plugged in or pulled out since these inputs were opened: they
+    /// have to be opened again to hear the new one.
+    pub fn ports_changed(&self) -> bool {
+        Self::port_names() != self.ports
     }
 }
 
@@ -155,6 +180,9 @@ mod tests {
         assert_eq!(settings.midi("Pedal", &[0x91, 36, 100]), [Input::Heard(note(2, 36))], "other channel");
         assert!(settings.midi("Pedal", &[0x90, 36, 0]).is_empty(), "velocity 0 is a note off");
         assert!(settings.midi("Pedal", &[0x80, 36, 64]).is_empty());
+        // Letting go of Back is told apart, so that holding it can be noticed.
+        assert_eq!(settings.midi("Pedal", &[0x80, 37, 0]), [Input::BackReleased]);
+        assert_eq!(settings.midi("Pedal", &[0x90, 37, 0]), [Input::BackReleased]);
         assert!(settings.midi("Pedal", &[0xB0, 36, 127]).is_empty());
         // On the cue-trigger port a note fires its cue — and still works as Go if it is the Go note.
         assert_eq!(settings.midi("Pult", &[0x93, 42, 90]), [Input::Heard(note(4, 42)), Input::Cue(note(4, 42))]);

@@ -113,6 +113,10 @@ impl App {
         theme::apply(&cc.egui_ctx);
         egui_extras::install_image_loaders(&cc.egui_ctx);
         let settings = Settings::load(&store::settings_path());
+        // The first look at the MIDI ports is taken here, on the main thread: on macOS
+        // the system only tells of devices plugged in later to a program whose first
+        // MIDI client was made on a thread with a run loop.
+        let _ = mdstage_engine::inputs::Inputs::port_names();
         lang::set_english(settings.language == "en");
         let settings_open_locked = settings.open_locked;
         let last = settings.recent_files.first().map(PathBuf::from).filter(|p| p.exists());

@@ -23,6 +23,9 @@ pub struct SettingsUi {
     audio_devices: Vec<String>,
     midi_outputs: Vec<String>,
     midi_inputs: Vec<String>,
+    /// When the MIDI ports were last looked up: devices plugged in while the settings
+    /// are open turn up in the lists.
+    midi_scanned: std::time::Instant,
     learning: Option<(Learning, Option<Note>)>,
     /// The show's virtual channels as edited: the name each had when the window opened
     /// (`None` for a new one) and its name now.
@@ -115,6 +118,7 @@ impl SettingsUi {
             audio_devices: mdstage_engine::device::list_outputs().map(|l| l.into_iter().map(|d| d.name).collect()).unwrap_or_default(),
             midi_outputs: SystemMidi::port_names(),
             midi_inputs: Inputs::port_names(),
+            midi_scanned: std::time::Instant::now(),
             learning: None,
             channels: Vec::new(),
             test_output: None,
@@ -167,6 +171,12 @@ impl SettingsUi {
     /// MIDI note that came in. Returns `Some(true)` on Save, `Some(false)` on Cancel.
     pub fn show(&mut self, ui: &mut Ui, has_show: bool, heard: Option<Note>) -> Option<bool> {
         let mut result = None;
+        if self.midi_scanned.elapsed() >= std::time::Duration::from_secs(1) {
+            self.midi_scanned = std::time::Instant::now();
+            self.midi_outputs = SystemMidi::port_names();
+            self.midi_inputs = Inputs::port_names();
+        }
+        ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
         let problem = self.channel_problem();
         let channels = &mut self.channels;
         let mut test_output = None;
