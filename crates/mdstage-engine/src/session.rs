@@ -37,7 +37,8 @@ const MAX_CHANNELS: usize = 64;
 const DEVICE_RETRY: Duration = Duration::from_secs(3);
 /// How often to look whether a MIDI device was plugged in or pulled out.
 const MIDI_RESCAN: Duration = Duration::from_secs(2);
-/// Holding the Back note this long stops everything (as the red music button does).
+/// Holding the Back note this long stops everything (as the red music button does)
+/// instead of going back; let go of sooner, it is a Back.
 const BACK_HOLD: Duration = Duration::from_millis(1000);
 /// A device whose clock has not moved for this long counts as gone.
 const DEVICE_STALL: Duration = Duration::from_secs(2);
@@ -402,11 +403,12 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
         while let Ok(input) = inputs_incoming.try_recv() {
             let result = match input {
                 Input::Go => show.go(),
-                Input::Back => {
-                    back_held = Some(Instant::now());
-                    show.back()
-                }
-                Input::BackReleased => Ok(back_held = None),
+                Input::BackPressed => Ok(back_held = Some(Instant::now())),
+                // (Not after a hold that has already stopped everything.)
+                Input::BackReleased => match back_held.take() {
+                    Some(_) => show.back(),
+                    None => Ok(()),
+                },
                 Input::Cue(note) => show.fire_note(note),
                 Input::Heard(note) => Ok(heard = Some(note)),
             };

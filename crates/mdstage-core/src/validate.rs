@@ -269,6 +269,24 @@ impl Script {
 mod tests {
     use super::*;
 
+    /// Backwards compatibility: a show file written by 2.0.0, with every key that
+    /// version knew, opens without a complaint, is written back as it was and plays.
+    #[test]
+    fn a_show_file_of_version_2_0_0_is_still_good() {
+        let text = include_str!("../testdata/format-2.0.0.md");
+        let script = Script::parse(text);
+        assert_eq!(script.to_markdown(), text, "written back unchanged");
+        let report = script.validate();
+        assert_eq!(report.problems.iter().map(|p| p.message.clone()).collect::<Vec<_>>(), Vec::<String>::new());
+        assert!(report.note_conflicts.is_empty() && report.auto_order.is_empty() && report.variants.is_empty());
+        assert!(script.cleanup_preview().is_empty(), "no key of 2.0.0 is taken for unknown");
+        let cues = crate::cues::Cues::new(&script);
+        assert_eq!(cues.len(), 6);
+        assert_eq!((0..cues.len()).filter(|&cue| cues.get(cue).is_some_and(|c| c.audio().is_some())).count(), 6);
+        assert_eq!(cues.get(1).and_then(|c| c.audio()).map(|a| (a.parts.len(), a.looped)), Some((3, true)));
+        assert!(cues.get(4).is_some_and(|c| c.adjust().is_some() && c.auto_trigger().is_some()));
+    }
+
     const CONFIG: &str = "```yaml\nconfig:\n    roles: {}\n```\n";
 
     fn messages(cue: &str) -> Vec<String> {

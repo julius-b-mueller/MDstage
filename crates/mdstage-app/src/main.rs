@@ -1098,6 +1098,12 @@ impl App {
                         self.view.scroll_to_cue(cue);
                     }
                 }
+                let folded = self.settings.cues_only;
+                let hint = self.t("Nur Szenen und Cues zeigen, den Text ausblenden", "Show only scenes and cues, fold the text away");
+                if ui.add_enabled(has_show, theme::tool_icon(theme::Icon::List, folded)).on_hover_text(hint).clicked() {
+                    self.settings.cues_only = !folded;
+                    self.save_settings();
+                }
                 let recent = theme::tool_icon(theme::Icon::Recent, false);
                 if ui.add_enabled(has_show, recent).on_hover_text(self.t("Zum zuletzt ausgelösten Cue springen", "Jump to the cue that fired last")).clicked() {
                     if let Some(cue) = self.snapshot.latest.or(self.snapshot.current) {
@@ -2025,6 +2031,16 @@ impl eframe::App for App {
             }
         });
         egui::TopBottomPanel::bottom("status").frame(bar(PANEL, 10, 3)).show(ctx, |ui| self.status_bar(ui));
+        // Above it, as in the live view: every audio that sounds, each with a button
+        // that stops it — so that one that runs on by mistake is caught from here too.
+        if let Some(show) = &self.show {
+            let cx = Context { script: &show.script, cast: &show.cast, snapshot: &self.snapshot, locked: self.locked, line_numbers: self.settings.line_numbers, group_mics: self.settings.group_mics, has_editor: !self.settings.editor_command.trim().is_empty(), vim: self.settings.vim_keys, can_paste: self.copied.is_some() };
+            let mut requests = Vec::new();
+            live::audio_panel(ctx, "main-audio", &cx, &Cues::new(&show.script), &mut requests);
+            for request in requests {
+                show.session.send(request);
+            }
+        }
 
         let mut actions = Vec::new();
         if self.show.is_some() && !self.settings.sidebar_hidden {
@@ -2038,6 +2054,7 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ctx, |ui| match &self.show {
             Some(show) => {
                 let cx = Context { script: &show.script, cast: &show.cast, snapshot: &self.snapshot, locked: self.locked, line_numbers: self.settings.line_numbers, group_mics: self.settings.group_mics, has_editor: !self.settings.editor_command.trim().is_empty(), vim: self.settings.vim_keys, can_paste: self.copied.is_some() };
+                self.view.set_cues_only(self.settings.cues_only);
                 self.view.show(ui, &cx, &mut actions);
             }
             None => {

@@ -15,8 +15,9 @@ use crate::outputs::osc_cue_trigger;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Input {
     Go,
-    Back,
-    /// The Back note was let go of. Held for a while instead, it stops everything.
+    /// The Back note was pressed. Nothing happens yet: Back is what letting go of it
+    /// does, and held for a while instead it stops everything.
+    BackPressed,
     BackReleased,
     /// Fire the cue with this trigger note, whatever the position.
     Cue(Note),
@@ -77,7 +78,7 @@ impl InputSettings {
             if self.go == Some(note) {
                 inputs.push(Input::Go);
             } else if self.back == Some(note) {
-                inputs.push(Input::Back);
+                inputs.push(Input::BackPressed);
             }
         }
         if matches!(&self.cue_trigger, CueTrigger::Midi { port: p } if p == port) {
@@ -176,7 +177,7 @@ mod tests {
             cue_trigger: CueTrigger::Midi { port: "Pult".into() },
         };
         assert_eq!(settings.midi("Pedal", &[0x90, 36, 100]), [Input::Heard(note(1, 36)), Input::Go]);
-        assert_eq!(settings.midi("Pedal", &[0x90, 37, 1]), [Input::Heard(note(1, 37)), Input::Back]);
+        assert_eq!(settings.midi("Pedal", &[0x90, 37, 1]), [Input::Heard(note(1, 37)), Input::BackPressed]);
         assert_eq!(settings.midi("Pedal", &[0x91, 36, 100]), [Input::Heard(note(2, 36))], "other channel");
         assert!(settings.midi("Pedal", &[0x90, 36, 0]).is_empty(), "velocity 0 is a note off");
         assert!(settings.midi("Pedal", &[0x80, 36, 64]).is_empty());

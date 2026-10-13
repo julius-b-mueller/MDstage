@@ -614,7 +614,7 @@ Each MIDI output device has a **Send MIDI Timecode** checkbox in Settings; MTC i
 
 ### MIDI Input
 
-Two configurable MIDI notes for **Go** and **Back** — received on all MIDI inputs. MIDI devices are looked for all the time: one plugged in after the program started turns up in the settings and is listened to. Holding the Back note for one second stops all audio. Notes can be assigned using **MIDI Learn** mode in the settings window.
+Two configurable MIDI notes for **Go** and **Back** — received on all MIDI inputs. MIDI devices are looked for all the time: one plugged in after the program started turns up in the settings and is listened to. Back acts when its note is let go of (the controller has to send a note-off, or a note-on with velocity 0); holding it for one second stops all audio instead, without going back. Notes can be assigned using **MIDI Learn** mode in the settings window.
 
 ---
 
@@ -777,7 +777,7 @@ Three emergency buttons in the header:
 | Click with live view open | Pre-select cue as next (arm) |
 | **Go** (Space in the live view; in the main window only while the show is locked) | Fire next cue |
 | **Back** (Backspace, when live view is open) | Undo last cue (fade-out + undo) |
-| MIDI Go/Back | Configurable MIDI notes. Holding the Back note for one second stops all audio (as the red music button does) |
+| MIDI Go/Back | Configurable MIDI notes. Back acts when its note is let go of; held for one second instead, it stops all audio (as the red music button does) and does not go back |
 | **Arm** button on a cue | Arms the cue as the next Go without firing it |
 | **▲ / ▼** buttons on a cue | Move the cue (with its variants) one place up or down |
 | Cross-hairs button | Scrolls to the next cue |
@@ -788,7 +788,11 @@ Three emergency buttons in the header:
 
 **The place is remembered:** the next cue is stored per show file (in the machine's settings) and armed again when the show is opened the next time.
 
-A cue that has fired says when: `fired – hh:mm:ss`.
+A cue that has fired says when: `fired – hh:mm:ss`. Neither that time nor the place the show has got to is written into the show file; the file is only written when the script is edited.
+
+**Only scenes and cues:** a button in the toolbar folds all text away, leaving the headings and the cues.
+
+**Audio that sounds:** as in the live view, the foot of the main window has a row for every audio that is playing, with its progress and a button that stops just that one.
 
 Double-clicking a playing cue **stops** it immediately (undo function).
 
@@ -975,7 +979,7 @@ Each S/L/F group receives a label (`Start`, `Loop`, `Finish`, `Bridge`).
 - **`Cmd/Ctrl+B`** or the sidebar button opens/closes the sidebar
 - Lists all `#`, `##`, and `###` headings
 - Clicking scrolls to the scene; the active scene is highlighted while scrolling
-- First-level headings are numbered as scenes (a title heading that opens the file is not counted). A heading that begins with a number of its own (`# 7 In the garden`, `# 12. Finale`) has that number, and the count goes on from it. **Typing a number** outside any text field goes to that scene: `2` for scene 2, `1` then `7` for scene 17.
+- First-level headings are numbered as scenes (a title heading that opens the file is not counted). A heading that begins with a number of its own (`# 7 In the garden`, `# 12. Finale`) has that number; where a script numbers scenes itself like this, a scene without a number written in gets none. **Typing a number** outside any text field goes to that scene: `2` for scene 2, `1` then `7` for scene 17.
 - The current scene is also shown in a line above the script.
 
 ### Full-Text Search

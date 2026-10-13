@@ -127,11 +127,13 @@ pub enum Icon {
     Target,
     /// A clock run backwards: bring the cue that fired last into view.
     Recent,
+    /// Two cards with the text between them folded away: show only headings and cues.
+    List,
 }
 
 impl Icon {
     #[cfg(test)]
-    pub const ALL: [Icon; 10] = [Icon::Lock, Icon::Paste, Icon::Speaker, Icon::Pencil, Icon::Play, Icon::Back, Icon::Pause, Icon::Stop, Icon::Target, Icon::Recent];
+    pub const ALL: [Icon; 11] = [Icon::List, Icon::Lock, Icon::Paste, Icon::Speaker, Icon::Pencil, Icon::Play, Icon::Back, Icon::Pause, Icon::Stop, Icon::Target, Icon::Recent];
 
     pub fn source(self) -> egui::ImageSource<'static> {
         match self {
@@ -145,6 +147,7 @@ impl Icon {
             Icon::Stop => egui::include_image!("../assets/stop.svg"),
             Icon::Target => egui::include_image!("../assets/target.svg"),
             Icon::Recent => egui::include_image!("../assets/recent.svg"),
+            Icon::List => egui::include_image!("../assets/list.svg"),
         }
     }
 

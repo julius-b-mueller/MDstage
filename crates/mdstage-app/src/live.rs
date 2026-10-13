@@ -385,6 +385,14 @@ impl LiveView {
 
     /// One row per audio that is playing: what it is, where it stands, a stop button.
     fn audio(&mut self, ctx: &egui::Context, cx: &Context, cues: &Cues, requests: &mut Vec<Request>) {
+        audio_panel(ctx, "live-audio", cx, cues, requests);
+    }
+}
+
+/// A row at the foot of a window for every audio that sounds: what it is, how far it has
+/// got, and a button that stops this one. Nothing while nothing sounds.
+pub fn audio_panel(ctx: &egui::Context, id: &'static str, cx: &Context, cues: &Cues, requests: &mut Vec<Request>) {
+    {
         // (A loop's tail ringing out over its own next pass gets no row of its own.)
         let audio = &cx.snapshot.audio;
         let own_tail = |cue: usize, s: &mdstage_engine::player::Status| s.state == VoiceState::Tail && audio.iter().any(|(c, o)| *c == cue && o.part == s.part && o.state == VoiceState::Playing);
@@ -392,7 +400,7 @@ impl LiveView {
         if sounding.is_empty() {
             return;
         }
-        egui::TopBottomPanel::bottom("live-audio").frame(egui::Frame::new().fill(AUDIO).inner_margin(egui::Margin::symmetric(18, 9))).show(ctx, |ui| {
+        egui::TopBottomPanel::bottom(id).frame(egui::Frame::new().fill(AUDIO).inner_margin(egui::Margin::symmetric(18, 9))).show(ctx, |ui| {
             for (cue, status) in sounding {
                 let looped = cues.get(*cue).is_some_and(|c| c.loop_outro().is_some() || c.audio().is_some_and(|a| a.looped || a.parts.len() > 1));
                 // A loop's bar cycles between its start and its loop point.
@@ -432,7 +440,9 @@ impl LiveView {
             }
         });
     }
+}
 
+impl LiveView {
     /// How many lines the cards of a cue and its variants need, side by side in `width`,
     /// at a type size: the most any of them needs.
     fn card_lines(ui: &Ui, cx: &Context, cues: &Cues, root: usize, size: f32, width: f32) -> usize {

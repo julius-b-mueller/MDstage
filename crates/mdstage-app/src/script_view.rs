@@ -363,6 +363,8 @@ pub struct ScriptView {
     /// Where the view is scrolling to (it glides there over a few frames).
     scroll_to: Option<f32>,
     scroll_y: f32,
+    /// Only the headings and the cues are shown; the text between them is folded away.
+    cues_only: bool,
     /// The connections between cues, and how many lanes they take in the margin.
     relations: Vec<Relation>,
     lanes: usize,
@@ -395,6 +397,19 @@ impl ScriptView {
     /// The script changed: measure again.
     pub fn invalidate(&mut self) {
         self.dirty = true;
+    }
+
+    /// Show only the headings and the cues, or everything again.
+    pub fn set_cues_only(&mut self, on: bool) {
+        if self.cues_only != on {
+            self.cues_only = on;
+            self.dirty = true;
+        }
+    }
+
+    /// A block that is folded away because only headings and cues are shown.
+    fn folded(&self, block: &Block) -> bool {
+        self.cues_only && !matches!(block, Block::Cue(_) | Block::Heading { .. })
     }
 
     pub fn is_editing(&self) -> bool {
@@ -748,12 +763,14 @@ impl ScriptView {
     /// followed directly by another one is the show's title and is not counted.
     ///
     /// A heading that begins with a number of its own ("7 Im Garten", "12. Finale") has
-    /// that number, and the count goes on from it.
+    /// that number. Where a script numbers scenes itself, that is the numbering: a scene
+    /// without a number written in gets none.
     pub(crate) fn scene_numbers(script: &Script) -> Vec<Option<usize>> {
         let is_scene = |block: &Block| matches!(block, Block::Heading { level: 1, .. });
         let first = script.blocks.iter().position(|b| !matches!(b, Block::Config(_)));
         let second = first.and_then(|f| script.blocks[f + 1..].iter().find(|b| !matches!(b, Block::Config(_))));
         let title = first.filter(|f| is_scene(&script.blocks[*f]) && second.is_some_and(is_scene));
+        let numbered = script.blocks.iter().enumerate().any(|(index, block)| matches!(block, Block::Heading { level: 1, text } if Some(index) != title && Self::own_number(text).is_some()));
         let mut number = 0;
         script
             .blocks
@@ -764,7 +781,10 @@ impl ScriptView {
                 if Some(index) == title {
                     return None;
                 }
-                number = Self::own_number(text).map_or(number + 1, |(own, _)| own);
+                if numbered {
+                    return Self::own_number(text).map(|(own, _)| own);
+                }
+                number += 1;
                 Some(number)
             })
             .collect()
@@ -1121,6 +1141,7 @@ impl ScriptView {
             }
             self.heights[i] = match block {
                 Block::Config(_) => 0.0,
+                block if self.folded(block) => 0.0,
                 Block::Cue(cue) => {
                     let rows = Self::cue_rows(cx, i, self.cue_of_block[i].unwrap_or(0), cue, &self.durations);
                     let autos = Self::position_autos(&Cues::new(cx.script), cue.note()).len();
@@ -1236,13 +1257,18 @@ impl ScriptView {
                         ui.painter().rect_stroke(frame, 6.0, Stroke::new(1.0_f32, BORDER), egui::StrokeKind::Inside);
                     }
                 }
+                if self.folded(&cx.script.blocks[i]) && self.editing.as_ref().is_none_or(|e| e.index != i) {
+                    continue;
+                }
                 self.draw_block(ui, cx, i, rect, actions);
             }
             self.draw_relations(ui, origin, viewport);
             self.drawn_at = Some((origin, ui.clip_rect()));
             self.drop_line(ui, cx, origin, width);
             self.jump_to_typed_scene(ui);
-            if !cx.locked && self.editing.is_none() && self.picking.is_none() {
+            // (With the text folded away there is no telling where between two cues
+            // something new would go.)
+            if !cx.locked && self.editing.is_none() && self.picking.is_none() && !self.cues_only {
                 self.insert_zones(ui, cx, origin, viewport, actions);
             }
         });
@@ -2888,7 +2914,7 @@ mod tests {
     fn a_number_written_into_a_heading_is_the_scene_number() {
         let script = Script::parse("# Stück\n\n# Vorspiel\n\n# 5 Im Garten\n\n# Danach\n\n# 12. Finale\n\n# 2024\n\n# 3D-Brille\n");
         let numbers: Vec<usize> = ScriptView::scene_numbers(&script).into_iter().flatten().collect();
-        assert_eq!(numbers, [1, 5, 6, 12, 13, 14], "the count goes on from a number written in");
+        assert_eq!(numbers, [5, 12], "only the scenes the script numbers itself");
         assert_eq!(ScriptView::own_number("12. Finale"), Some((12, "Finale")));
         assert_eq!(ScriptView::own_number("7) Schluss"), Some((7, "Schluss")));
         assert_eq!(ScriptView::own_number("2024"), None);

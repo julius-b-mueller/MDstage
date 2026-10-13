@@ -69,11 +69,13 @@ Tags immer **ohne** `v`-Präfix setzen: `1.11.6`, nicht `v1.11.6`.
 
 ## Abwärtskompatibilität
 
-Abwärtskompatibilität der Show-Datei ist **wichtig** (seit 2.2.0): Ein Skript, das mit
-einer älteren Version erstellt wurde, muss sich mit jeder neueren ohne Fehler öffnen und
+Abwärtskompatibilität der Show-Datei ist **wichtig**, zurück bis 2.0.0: Ein Skript, das mit
+einer älteren Version (ab 2.0.0) erstellt wurde, muss sich mit jeder neueren ohne Fehler öffnen und
 spielen lassen. Ein YAML-Schlüssel darf nicht ersatzlos wegfallen oder seine Bedeutung
 ändern; wird er abgelöst, liest die App den alten weiter (und schreibt den neuen). Für
-jede solche Änderung gibt es einen Test mit einer Datei im alten Format. Die
+jede solche Änderung gibt es einen Test mit einer Datei im alten Format
+(`crates/mdstage-core/testdata/format-2.0.0.md` deckt alle Schlüssel von 2.0.0 ab).
+Der Stand einer Vorstellung (nächster Cue, Auslösezeiten) gehört nie in die Show-Datei. Die
 Einstellungsdatei (`Settings`) bekommt neue Felder nur mit `#[serde(default)]`.
 
 ## Changelog
