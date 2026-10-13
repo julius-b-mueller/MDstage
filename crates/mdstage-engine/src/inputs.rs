@@ -94,6 +94,8 @@ pub struct Inputs {
     /// The MIDI input ports that were there when these inputs were opened.
     ports: Vec<String>,
     running: Arc<AtomicBool>,
+    /// The thread that listens for OSC, if cue triggers come in that way.
+    osc: Option<thread::JoinHandle<()>>,
 }
 
 impl Inputs {
@@ -106,6 +108,38 @@ impl Inputs {
     /// Listen as configured and send what comes in to `events`. Ports that cannot be
     /// opened are skipped; an OSC port that cannot be bound is reported as an error.
     pub fn open(settings: &InputSettings, events: Sender<Input>) -> std::io::Result<Inputs> {
+        let (connections, ports) = Self::connect_midi(settings, &events);
+
+        let running = Arc::new(AtomicBool::new(true));
+        let mut osc = None;
+        if let CueTrigger::Osc { port, network } = settings.cue_trigger {
+            let socket = UdpSocket::bind((if network { "0.0.0.0" } else { "127.0.0.1" }, port))?;
+            socket.set_read_timeout(Some(Duration::from_millis(50)))?;
+            let flag = running.clone();
+            osc = Some(thread::Builder::new().name("mdstage-osc-in".into()).spawn(move || {
+                let mut packet = [0u8; 1024];
+                while flag.load(SeqCst) {
+                    if let Ok((len, _)) = socket.recv_from(&mut packet) {
+                        if let Some(note) = osc_cue_trigger(&packet[..len]) {
+                            let _ = events.send(Input::Cue(note));
+                        }
+                    }
+                }
+            })?);
+        }
+        Ok(Inputs { _midi: connections, ports, running, osc })
+    }
+
+    /// A MIDI device was plugged in or pulled out: listen on the ports that are there
+    /// now. Only the MIDI side is opened again; the OSC port stays as it is.
+    pub fn rescan_midi(&mut self, settings: &InputSettings, events: &Sender<Input>) {
+        self._midi.clear(); // close the old ports before opening them again
+        (self._midi, self.ports) = Self::connect_midi(settings, events);
+    }
+
+    /// Open every MIDI input port that is there; returns the connections and the names
+    /// of the ports that were found.
+    fn connect_midi(settings: &InputSettings, events: &Sender<Input>) -> (Vec<midir::MidiInputConnection<()>>, Vec<String>) {
         let mut connections = Vec::new();
         let ports = Self::port_names();
         for name in ports.clone() {
@@ -125,28 +159,11 @@ impl Inputs {
             );
             connections.extend(connection.ok());
         }
-
-        let running = Arc::new(AtomicBool::new(true));
-        if let CueTrigger::Osc { port, network } = settings.cue_trigger {
-            let socket = UdpSocket::bind((if network { "0.0.0.0" } else { "127.0.0.1" }, port))?;
-            socket.set_read_timeout(Some(Duration::from_millis(200)))?;
-            let flag = running.clone();
-            thread::Builder::new().name("mdstage-osc-in".into()).spawn(move || {
-                let mut packet = [0u8; 1024];
-                while flag.load(SeqCst) {
-                    if let Ok((len, _)) = socket.recv_from(&mut packet) {
-                        if let Some(note) = osc_cue_trigger(&packet[..len]) {
-                            let _ = events.send(Input::Cue(note));
-                        }
-                    }
-                }
-            })?;
-        }
-        Ok(Inputs { _midi: connections, ports, running })
+        (connections, ports)
     }
 
-    /// A MIDI device was plugged in or pulled out since these inputs were opened: they
-    /// have to be opened again to hear the new one.
+    /// A MIDI device was plugged in or pulled out since these inputs were opened (see
+    /// [`Inputs::rescan_midi`]).
     pub fn ports_changed(&self) -> bool {
         Self::port_names() != self.ports
     }
@@ -155,6 +172,11 @@ impl Inputs {
 impl Drop for Inputs {
     fn drop(&mut self) {
         self.running.store(false, SeqCst);
+        // Wait for the OSC thread to let go of its port, so that inputs opened right
+        // after these can bind it again (it looks at the flag every 50 ms).
+        if let Some(thread) = self.osc.take() {
+            let _ = thread.join();
+        }
     }
 }
 

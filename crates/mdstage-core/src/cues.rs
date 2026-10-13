@@ -386,17 +386,38 @@ pub fn mapping(old: &Script, new: &Script) -> Vec<Option<usize>> {
     let (before, after) = (Cues::new(old), Cues::new(new));
     let mut map = vec![None; before.len()];
     let mut taken = vec![false; after.len()];
-    let once = |cues: &Cues, note: Note| (0..cues.len()).filter(|&c| cues.get(c).and_then(Cue::note) == Some(note)).count() == 1;
-    for cue in 0..before.len() {
-        let Some(note) = before.get(cue).and_then(Cue::note).filter(|&n| once(&before, n) && once(&after, n)) else { continue };
-        if let Some(there) = after.find(note).filter(|&t| after.get(t).and_then(Cue::note) == Some(note)) {
-            map[cue] = Some(there);
-            taken[there] = true;
+    // (In one pass each, whatever the size of the file: a script is edited while the
+    // show runs.)
+    let notes = |cues: &Cues| {
+        let mut places: BTreeMap<Note, Vec<usize>> = BTreeMap::new();
+        for cue in 0..cues.len() {
+            if let Some(note) = cues.get(cue).and_then(Cue::note) {
+                places.entry(note).or_default().push(cue);
+            }
+        }
+        places
+    };
+    let (noted_before, noted_after) = (notes(&before), notes(&after));
+    for (note, places) in &noted_before {
+        if let ([cue], Some([there])) = (places.as_slice(), noted_after.get(note).map(Vec::as_slice)) {
+            map[*cue] = Some(*there);
+            taken[*there] = true;
         }
     }
-    for cue in (0..before.len()).filter(|&c| map[c].is_none()).collect::<Vec<_>>() {
-        let same = (0..after.len()).find(|&t| !taken[t] && after.get(t).map(|c| &c.yaml) == before.get(cue).map(|c| &c.yaml));
-        if let Some(there) = same {
+    // Word for word the same: the first such cue that is still free, in order.
+    let wording = |cue: &Cue| format!("{:?}", cue.yaml);
+    let mut same: BTreeMap<String, std::collections::VecDeque<usize>> = BTreeMap::new();
+    for there in (0..after.len()).filter(|&t| !taken[t]) {
+        if let Some(cue) = after.get(there) {
+            same.entry(wording(cue)).or_default().push_back(there);
+        }
+    }
+    for cue in 0..before.len() {
+        if map[cue].is_some() {
+            continue;
+        }
+        let there = before.get(cue).and_then(|c| same.get_mut(&wording(c))).and_then(|free| free.pop_front());
+        if let Some(there) = there {
             map[cue] = Some(there);
             taken[there] = true;
         }

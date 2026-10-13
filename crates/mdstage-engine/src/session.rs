@@ -425,9 +425,12 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
         // A MIDI device that was plugged in after the start is listened to as well.
         if Instant::now() >= rescan_midi {
             rescan_midi = Instant::now() + MIDI_RESCAN;
-            if inputs.as_ref().is_some_and(|open| open.ports_changed()) {
-                drop(inputs.take());
-                inputs = open_inputs(&settings, &mut problems);
+            match &mut inputs {
+                Some(open) if open.ports_changed() => open.rescan_midi(&settings.inputs(), &input_events),
+                Some(_) => {}
+                // Inputs that could not be opened (an OSC port that was taken) are
+                // tried again as well.
+                None => inputs = open_inputs(&settings, &mut problems),
             }
         }
 
