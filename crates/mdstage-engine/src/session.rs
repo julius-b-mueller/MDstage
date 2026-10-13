@@ -364,7 +364,12 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
                 }
                 Request::SetScript(script) => {
                     cast = Cast::from_script(&script, settings.language == "en");
-                    show.replace_script(*script)
+                    // The cues may have new numbers: the times they fired at follow them.
+                    let map = mdstage_core::cues::mapping(show.script(), &script);
+                    fired_at = fired_at.iter().filter_map(|&(cue, at)| Some((map.get(cue).copied().flatten()?, at))).collect();
+                    let result = show.replace_script(*script);
+                    fired_count = show.history().cues().count();
+                    result
                 }
                 Request::Configure(new, now_trusted) => {
                     if new.audio_device != settings.audio_device {

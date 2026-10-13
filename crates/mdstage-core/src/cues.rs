@@ -380,7 +380,8 @@ impl<'a> Cues<'a> {
 /// Where the cues of a script are after it was edited: for every cue of `old`, its
 /// number in `new`, or `None` if it is gone. Cues are known again by their trigger note
 /// (where one note means one cue on both sides), else by having stayed word for word
-/// the same; and if no cue came or went, whatever is left over is the same cue, edited.
+/// the same; and if no cue came or went, a cue still standing in its place is the same
+/// cue, edited.
 pub fn mapping(old: &Script, new: &Script) -> Vec<Option<usize>> {
     let (before, after) = (Cues::new(old), Cues::new(new));
     let mut map = vec![None; before.len()];
@@ -400,10 +401,14 @@ pub fn mapping(old: &Script, new: &Script) -> Vec<Option<usize>> {
             taken[there] = true;
         }
     }
+    // Edited in its place (even its note may be another now): no cue came or went, and
+    // the one that stands where it stood is not known as any other.
     if before.len() == after.len() {
-        let left: Vec<usize> = (0..after.len()).filter(|&t| !taken[t]).collect();
-        for (cue, there) in (0..before.len()).filter(|&c| map[c].is_none()).collect::<Vec<_>>().into_iter().zip(left) {
-            map[cue] = Some(there);
+        for cue in 0..before.len() {
+            if map[cue].is_none() && !taken[cue] {
+                map[cue] = Some(cue);
+                taken[cue] = true;
+            }
         }
     }
     map
@@ -603,6 +608,22 @@ impl History {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cues_are_found_again_after_an_edit() {
+        let cue = |note: u32, body: &str| format!("```yaml\ntrigger_note: {{ch: 1, note: {note}}}\n{body}\n```\n\n");
+        let plain = |body: &str| format!("```yaml\n{body}\n```\n\n");
+        let old = Script::parse(&[cue(1, "note: a"), plain("note: no note"), cue(2, "note: b"), cue(3, "note: c")].concat());
+        // A cue put in at the top, one taken out, two swapped, and one edited.
+        let new = Script::parse(&[cue(9, "note: new"), cue(3, "note: c"), cue(1, "note: a, edited"), plain("note: no note")].concat());
+        assert_eq!(mapping(&old, &new), [Some(2), Some(3), None, Some(1)]);
+        // With as many cues as before, one without a note that was edited is still itself.
+        let edited = Script::parse(&[cue(1, "note: a"), plain("note: other words"), cue(2, "note: b"), cue(3, "note: c")].concat());
+        assert_eq!(mapping(&old, &edited), [Some(0), Some(1), Some(2), Some(3)]);
+        let mut history = History::of([0, 2, 3]);
+        history.remap(&mapping(&old, &new));
+        assert_eq!(history.cues().collect::<Vec<_>>(), [2, 1]);
+    }
 
     fn note(n: u64) -> Note {
         Note { ch: 1, note: n }

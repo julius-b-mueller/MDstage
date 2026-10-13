@@ -204,6 +204,9 @@ pub struct Settings {
     /// it off, so that whoever leaves the stage can finish speaking. 0: no delay.
     pub mic_off_delay: f64,
     pub recent_files: Vec<String>,
+    /// The cue the next Go fires, by show file: where the operator had got to. A show
+    /// that is opened again goes on from there.
+    pub next_cue: HashMap<String, usize>,
     /// SHA-256 of each show file as this machine last wrote it. A file that differs was
     /// changed elsewhere and must be confirmed before it may drive devices.
     pub trusted: HashMap<String, String>,
@@ -234,6 +237,7 @@ impl Default for Settings {
             group_mics: true,
             mic_off_delay: 7.0,
             recent_files: Vec::new(),
+            next_cue: HashMap::new(),
             trusted: HashMap::new(),
         }
     }

@@ -614,7 +614,7 @@ Each MIDI output device has a **Send MIDI Timecode** checkbox in Settings; MTC i
 
 ### MIDI Input
 
-Two configurable MIDI notes for **Go** and **Back** — received on all MIDI inputs. Notes can be assigned using **MIDI Learn** mode in the settings window.
+Two configurable MIDI notes for **Go** and **Back** — received on all MIDI inputs. MIDI devices are looked for all the time: one plugged in after the program started turns up in the settings and is listened to. Holding the Back note for one second stops all audio. Notes can be assigned using **MIDI Learn** mode in the settings window.
 
 ---
 
@@ -777,8 +777,18 @@ Three emergency buttons in the header:
 | Click with live view open | Pre-select cue as next (arm) |
 | **Go** (Space in the live view; in the main window only while the show is locked) | Fire next cue |
 | **Back** (Backspace, when live view is open) | Undo last cue (fade-out + undo) |
-| MIDI Go/Back | Configurable MIDI notes |
-| Show current cue | Scrolls to current position |
+| MIDI Go/Back | Configurable MIDI notes. Holding the Back note for one second stops all audio (as the red music button does) |
+| **Arm** button on a cue | Arms the cue as the next Go without firing it |
+| **▲ / ▼** buttons on a cue | Move the cue (with its variants) one place up or down |
+| Cross-hairs button | Scrolls to the next cue |
+| Clock button beside it | Scrolls to the cue that fired last |
+| `↑` / `↓` | Leaf to the cue before / after the place the view is scrolled to (whatever is armed). In the live view the two buttons ▲ ▼ beside Back do this and arm the cue they go to |
+
+**Editing while the show runs:** adding, deleting, moving or editing cues stops nothing. Audio that plays goes on, the cues that have fired stay fired and the armed cue stays armed (cues are known again by their trigger note); the live view shows every change at once. A change to audio that is playing — loop on or off, start, end, fades, crossfade, volume — takes effect on the spot. Only the audio of a cue that was deleted fades out.
+
+**The place is remembered:** the next cue is stored per show file (in the machine's settings) and armed again when the show is opened the next time.
+
+A cue that has fired says when: `fired – hh:mm:ss`.
 
 Double-clicking a playing cue **stops** it immediately (undo function).
 
@@ -970,8 +980,10 @@ Each S/L/F group receives a label (`Start`, `Loop`, `Finish`, `Bridge`).
 
 ### Full-Text Search
 
-- **`Cmd/Ctrl+F`** opens the search bar
-- All matches are highlighted; **Enter** / **Shift+Enter** navigates forwards/backwards
+- **`Cmd/Ctrl+F`** opens the search bar; pressed again it clears what was typed
+- The search forgives: case and punctuation do not count, words may be missing or stand in another order, and a word is known by its beginning — `du sollst nach hause gehen` finds "Geh nach Hause", `hallo schatz` finds "Hallo, mein Schatz"
+- The best hit comes first. Hits that are equally good follow the script from the cue that fired last, and only at the end of the script go round to its start
+- All matches are highlighted; **Enter** / **Shift+Enter** goes to the next-best / back
 - **Escape** closes the search
 
 ---
@@ -1002,7 +1014,8 @@ A file that was last saved on another machine is not touched by opening it: it i
 | `Cmd/Ctrl+L` | Open live view |
 | `Cmd/Ctrl+E` | Export |
 | `Cmd/Ctrl+B` | Toggle sidebar |
-| `Cmd/Ctrl+F` | Search |
+| `Cmd/Ctrl+F` | Search (clears the field if it is open already) |
+| `↑` / `↓` | Main window: go to the cue before / after the place scrolled to |
 | `Space` | Live view: Go. Main window: Go only while the show is locked; otherwise play/pause of the audio whose playhead was last moved on its waveform (nothing after a cue was fired by a click) |
 | `Backspace` | Back (when live view is open, no editor active) |
 | `Shift+Click` | Edit block |

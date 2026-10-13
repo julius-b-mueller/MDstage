@@ -216,6 +216,12 @@ impl App {
             saved_by_other,
         });
         self.version_notice = saved_by_other_shown;
+        // Where the operator had got to in this show the last time: go on from there.
+        if let (Some(&cue), Some(show)) = (self.settings.next_cue.get(path.to_string_lossy().as_ref()), &self.show) {
+            if cue > 0 && cue < Cues::new(&show.script).len() {
+                show.session.send(Request::Arm(Some(cue)));
+            }
+        }
         store::remember(path, &mut self.settings);
         self.save_settings();
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!("MDstage — {}", path.file_name().unwrap_or_default().to_string_lossy())));
@@ -892,6 +898,13 @@ impl App {
             if ctx.input(|i| i.key_pressed(Key::Backspace)) {
                 self.request(Request::Back);
             }
+            // The arrow keys leaf through the cues from where the view is, whatever
+            // the show is doing.
+            for (key, forward) in [(Key::ArrowDown, true), (Key::ArrowUp, false)] {
+                if ctx.input(|i| i.key_pressed(key) && i.modifiers.is_none()) {
+                    self.view.step_cue(forward);
+                }
+            }
             // A number typed here is a scene to jump to.
             let (digits, now) = ctx.input(|i| {
                 let typed: Vec<usize> = i.events.iter().filter_map(|e| match e {
@@ -1079,9 +1092,15 @@ impl App {
                     }
                 }
                 ui.add_space(6.0);
-                let current = theme::tool_icon(theme::Icon::Target, false);
-                if ui.add_enabled(has_show, current).on_hover_text(self.t("Zum aktuellen Cue springen", "Jump to the current cue")).clicked() {
-                    if let Some(cue) = self.snapshot.current.or(self.snapshot.next) {
+                let next = theme::tool_icon(theme::Icon::Target, false);
+                if ui.add_enabled(has_show, next).on_hover_text(self.t("Zum nächsten Cue springen", "Jump to the next cue")).clicked() {
+                    if let Some(cue) = self.snapshot.next.or(self.snapshot.current) {
+                        self.view.scroll_to_cue(cue);
+                    }
+                }
+                let recent = theme::tool_icon(theme::Icon::Recent, false);
+                if ui.add_enabled(has_show, recent).on_hover_text(self.t("Zum zuletzt ausgelösten Cue springen", "Jump to the cue that fired last")).clicked() {
+                    if let Some(cue) = self.snapshot.latest.or(self.snapshot.current) {
                         self.view.scroll_to_cue(cue);
                     }
                 }
@@ -1439,6 +1458,10 @@ impl App {
                 if !others.is_empty() {
                     self.swap_prompt = Some(others);
                 }
+            }
+            Some(false) if dialog.delete => {
+                show.script.delete_block(dialog.block);
+                self.after_edit();
             }
             Some(false) => {}
             None if open => {
@@ -2033,6 +2056,15 @@ impl eframe::App for App {
             }
         });
         self.apply(actions);
+
+        // Where the show has got to is remembered, for the next time it is opened.
+        if let (Some(next), Some(show)) = (self.snapshot.next, &self.show) {
+            let key = show.path.to_string_lossy().into_owned();
+            if self.settings.next_cue.get(&key) != Some(&next) {
+                self.settings.next_cue.insert(key, next);
+                self.save_settings();
+            }
+        }
 
         // Follow the show: bring the operator's cue into view when it changes.
         if self.snapshot.current != self.followed {

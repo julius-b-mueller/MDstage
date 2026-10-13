@@ -67,8 +67,18 @@ zeigen dann weiter auf das letzte volle Release, und `softwareVersion` bleibt un
 
 Tags immer **ohne** `v`-Präfix setzen: `1.11.6`, nicht `v1.11.6`.
 
-## Backward-Compatibility
+## Abwärtskompatibilität
 
-Backward-Compatibility ist **nicht** wichtig. Alte Datei-/Settings-Formate müssen nicht
-weiter gelesen werden; Migrationspfade sind nicht erforderlich. Im Zweifel das alte Modell
-sauber ersetzen statt parallel zu pflegen.
+Abwärtskompatibilität der Show-Datei ist **wichtig** (seit 2.2.0): Ein Skript, das mit
+einer älteren Version erstellt wurde, muss sich mit jeder neueren ohne Fehler öffnen und
+spielen lassen. Ein YAML-Schlüssel darf nicht ersatzlos wegfallen oder seine Bedeutung
+ändern; wird er abgelöst, liest die App den alten weiter (und schreibt den neuen). Für
+jede solche Änderung gibt es einen Test mit einer Datei im alten Format. Die
+Einstellungsdatei (`Settings`) bekommt neue Felder nur mit `#[serde(default)]`.
+
+## Changelog
+
+`CHANGELOG.md` wird mit jeder Änderung mitgeführt, unter „Unveröffentlicht"; beim Release
+wird daraus der Abschnitt der Version. Es stehen darin: neue Funktionen, Änderungen am
+Verhalten und – in einem eigenen Unterabschnitt „Show-Datei (YAML)" – welche Schlüssel
+neu sind, sich geändert haben oder wegfallen (auch „Keine Änderungen").

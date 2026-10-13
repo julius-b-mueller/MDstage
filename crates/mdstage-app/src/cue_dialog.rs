@@ -15,6 +15,8 @@ pub struct CueDialog {
     /// The block being edited, or where the new cue goes.
     pub block: usize,
     pub is_new: bool,
+    /// The delete button was pressed: the cue is to be taken out of the script.
+    pub delete: bool,
     yaml: Mapping,
     audio_files: Vec<String>,
     /// Other cues use Auto-Mic, so microphones cannot be chosen by hand.
@@ -90,7 +92,7 @@ impl CueDialog {
     pub fn new(block: usize, is_new: bool, cue: Option<&Value>, audio_dir: &Path, auto_mic_in_use: bool, cues: Vec<(Note, String)>) -> CueDialog {
         let yaml = cue.and_then(Value::as_mapping).cloned().unwrap_or_default();
         let audio_files = crate::store::audio_files(audio_dir);
-        CueDialog { block, is_new, yaml, audio_files, auto_mic_in_use, taken: Vec::new(), cues, channels: vec!["L".into(), "R".into()], devices: Default::default(), audio_dir: audio_dir.to_path_buf(), info: Default::default(), tempo: (120.0, 4.0), renaming: None, rename_focus: false, rename_error: None, rename_request: None }
+        CueDialog { block, is_new, delete: false, yaml, audio_files, auto_mic_in_use, taken: Vec::new(), cues, channels: vec!["L".into(), "R".into()], devices: Default::default(), audio_dir: audio_dir.to_path_buf(), info: Default::default(), tempo: (120.0, 4.0), renaming: None, rename_focus: false, rename_error: None, rename_request: None }
     }
 
     /// The cue as it stands is a loop whose passes crossfade.
@@ -629,6 +631,14 @@ impl CueDialog {
             }
             if ui.button(t("Abbrechen", "Cancel")).clicked() {
                 result = Some(false);
+            }
+            if !self.is_new {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(RichText::new(t("Cue löschen", "Delete cue")).color(RED)).on_hover_text(t("Diesen Cue aus dem Skript nehmen", "Take this cue out of the script")).clicked() {
+                        self.delete = true;
+                        result = Some(false);
+                    }
+                });
             }
             if taken {
                 ui.label(RichText::new(t("Diese Trigger-Note hat schon ein anderer Cue. Jeder Cue braucht eine eigene; nur Varianten teilen sich eine.", "Another cue has this trigger note already. Every cue needs one of its own; only variants share one.")).color(RED));

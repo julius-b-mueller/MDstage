@@ -288,6 +288,20 @@ impl LiveView {
                 if ui.add(back).on_hover_text(t("Rücktaste", "Backspace")).clicked() {
                     requests.push(Request::Back);
                 }
+                // One cue back or on, without firing anything: the cue gone to is armed
+                // as the next Go. (Buttons only, no keys, so that it does not happen by
+                // accident.) A group of variants counts as one cue.
+                let count = cues.len();
+                let (before, after) = match snapshot.next {
+                    Some(next) => (cues.group_root(next).checked_sub(1).map(|cue| cues.group_root(cue)), Some(cues.group(next).end).filter(|cue| *cue < count)),
+                    None => (count.checked_sub(1).map(|cue| cues.group_root(cue)), None),
+                };
+                for (label, to, hint) in [("▲", before, t("Den Cue davor als nächsten vormerken", "Arm the cue before as the next")), ("▼", after, t("Den Cue danach als nächsten vormerken", "Arm the cue after as the next"))] {
+                    let step = egui::Button::new(RichText::new(label).size(18.0).color(TEXT)).fill(TRACK).stroke(Stroke::NONE).corner_radius(CornerRadius::same(8)).min_size(vec2(height, height));
+                    if ui.add_enabled(to.is_some(), step).on_hover_text(hint).clicked() {
+                        requests.push(Request::Arm(to));
+                    }
+                }
                 // While a cue is on its way by itself (an outro waiting for its loop's end,
                 // a delay running, a chained cue coming) there is nothing for Go to do.
                 // And none before a variant of the next cue has been chosen.

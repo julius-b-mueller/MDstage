@@ -29,6 +29,8 @@ const CONTROLS: f32 = 26.0;
 const MAX_ZOOM: f32 = 32.0;
 /// Width of the column beside the inline editor that holds its move buttons.
 const ARROWS: f32 = 30.0;
+/// Width kept free beside them for the button that deletes the block.
+const REMOVE: f32 = 24.0;
 
 /// The markers on a waveform, in seconds: where the audio starts and ends, and how long
 /// it fades in and out.
@@ -526,6 +528,22 @@ impl ScriptView {
     pub fn scroll_to_cue(&mut self, cue: usize) {
         if let Some(&block) = self.block_of_cue.get(cue) {
             self.scroll_to = self.offsets.get(block).map(|y| (y - 120.0).max(0.0));
+        }
+    }
+
+    /// Go to the cue after (or before) the place the view is at, whatever the show is
+    /// doing: the arrow keys leaf through the cues.
+    pub fn step_cue(&mut self, forward: bool) {
+        // (Where a cue's top is put when the view goes to it; see `scroll_to_cue`.)
+        let at = self.scroll_to.unwrap_or(self.scroll_y);
+        let place = |cue: &usize| self.block_of_cue.get(*cue).and_then(|&block| self.offsets.get(block)).map(|y| (y - 120.0).max(0.0));
+        let cues = 0..self.block_of_cue.len();
+        let to = match forward {
+            true => cues.clone().find(|cue| place(cue).is_some_and(|y| y > at + 1.0)),
+            false => cues.clone().rev().find(|cue| place(cue).is_some_and(|y| y < at - 1.0)),
+        };
+        if let Some(cue) = to {
+            self.scroll_to_cue(cue);
         }
     }
 
@@ -1666,7 +1684,7 @@ impl ScriptView {
         }
 
         // With Vim keys the mode is shown to the right of the field, which is that much narrower.
-        let beside = ARROWS + if cx.vim { 70.0 } else { 0.0 };
+        let beside = ARROWS + REMOVE + if cx.vim { 70.0 } else { 0.0 };
         let field = Rect::from_min_size(rect.min + vec2(0.0, BLOCK_PAD), vec2(rect.width() - beside, 0.0));
         let mut child = ui.new_child(UiBuilder::new().max_rect(field));
         let before_typing = editing.buffer.clone();
@@ -1697,7 +1715,9 @@ impl ScriptView {
                 ui.ctx().request_repaint();
             }
         }
-        // Beside the field: move the block one place up or down.
+        // Beside the field: take the block out, or move it one place up or down.
+        let remove = Rect::from_min_size(pos2(rect.right() - 22.0 - REMOVE, rect.top() + BLOCK_PAD), vec2(20.0, 38.0));
+        let removed_here = ui.put(remove, egui::Button::new(egui::RichText::new("×").size(15.0).color(RED))).on_hover_text(t("Diesen Block löschen", "Delete this block")).clicked();
         for (up, y) in [(true, 0.0), (false, 20.0)] {
             let button = Rect::from_min_size(pos2(rect.right() - 22.0, rect.top() + BLOCK_PAD + y), vec2(22.0, 18.0));
             let response = ui.put(button, egui::Button::new(egui::RichText::new(if up { "▲" } else { "▼" }).size(10.0)).small());
@@ -1715,7 +1735,7 @@ impl ScriptView {
                 (true, pending) if pending.is_empty() => "NORMAL".to_string(),
                 (true, pending) => pending,
             };
-            ui.painter().text(pos2(rect.right() - ARROWS, rect.top() + BLOCK_PAD + 6.0), Align2::RIGHT_TOP, label, FontId::monospace(12.0), if normal { BLUE } else { GREEN });
+            ui.painter().text(pos2(rect.right() - ARROWS - REMOVE, rect.top() + BLOCK_PAD + 6.0), Align2::RIGHT_TOP, label, FontId::monospace(12.0), if normal { BLUE } else { GREEN });
             // Escape belongs to Vim here: without this the text field would give up the
             // keyboard on it. And a click anywhere else is how the editor is left.
             let filter = egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: true };
@@ -1749,7 +1769,10 @@ impl ScriptView {
             ui.ctx().request_repaint();
         }
 
-        if cancel {
+        if removed_here {
+            actions.push(Action::Delete(index));
+            self.dirty = true;
+        } else if cancel {
             if editing.fresh {
                 actions.push(Action::Delete(index));
             }
@@ -1889,8 +1912,14 @@ impl ScriptView {
         if is_current {
             badge(t("aktuell", "current"), GREEN);
         }
+        // When the cue fired, by the clock on the wall.
+        let fired_at = snapshot.fired_at.iter().find(|(fired, _)| *fired == cue_index).map(|(_, at)| crate::store::clock_time(*at));
+        let fired = match &fired_at {
+            Some(time) => format!("{} – {time}", t("ausgelöst", "fired")),
+            None => t("ausgelöst", "fired").to_string(),
+        };
         if just_fired {
-            badge(t("ausgelöst", "fired"), GREEN);
+            badge(&fired, GREEN);
         }
         if waits {
             badge(t("wartet auf Loop-Ende", "waiting for loop end"), wait_colour);
@@ -1905,7 +1934,7 @@ impl ScriptView {
             badge(t("♪ läuft", "♪ playing"), BLUE);
         }
         if done && !is_current && !just_fired && !is_next && !waits {
-            badge(t("erledigt", "done"), MUTED);
+            badge(&fired, MUTED);
         }
         // The buttons are always there, so that what is switched on at a cue shows at a
         // glance — except under the show lock, where nothing can be set.
@@ -2039,8 +2068,19 @@ impl ScriptView {
         if row.add(live).on_hover_text(t("Live-Ansicht öffnen und diesen Cue als nächsten scharf schalten", "Open the live view with this cue armed as the next")).clicked() {
             actions.push(Action::ArmLive(cue_index));
         }
+        // Arm: the next Go fires this cue (a click on the cue itself would fire it now).
+        let armed = cx.snapshot.next == Some(cue_index);
+        if row.add(small("Arm", if armed { YELLOW } else { TEXT })).on_hover_text(t("Als nächsten Cue vormerken: Das nächste Go löst ihn aus.", "Arm as the next cue: the next Go fires it.")).clicked() {
+            actions.push(Action::Arm(cue_index));
+        }
         if cx.locked || cue.invalid {
             return;
+        }
+        for up in [false, true] {
+            let hint = if up { t("Cue nach oben verschieben", "Move the cue up") } else { t("Cue nach unten verschieben", "Move the cue down") };
+            if row.add(small(if up { "▲" } else { "▼" }, TEXT)).on_hover_text(hint).clicked() {
+                actions.push(Action::Move { block, up });
+            }
         }
         if row.add(small("⊕", TEXT)).on_hover_text(t("Als Variante duplizieren", "Duplicate as a variant")).clicked() {
             actions.push(Action::Variant(block));

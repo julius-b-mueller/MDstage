@@ -190,6 +190,9 @@ pub fn remember(path: &Path, settings: &mut Settings) {
     settings.recent_files.retain(|f| *f != key);
     settings.recent_files.insert(0, key);
     settings.recent_files.truncate(5);
+    // (Places are only kept for the shows in that list.)
+    let recent = settings.recent_files.clone();
+    settings.next_cue.retain(|file, _| recent.contains(file));
 }
 
 /// Today's date as `DD.MM.YYYY`, local time.
