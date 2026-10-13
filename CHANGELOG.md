@@ -14,7 +14,7 @@ Nichts über den Stand einer Vorstellung steht in der Show-Datei: Welcher Cue de
 ist und wann ein Cue ausgelöst wurde, liegt nur im Programm bzw. in den Einstellungen
 des Rechners. Die Show-Datei wird nur geschrieben, wenn das Skript bearbeitet wird.
 
-## Unveröffentlicht
+## 2.3.0
 
 ### Neu
 
@@ -55,6 +55,8 @@ des Rechners. Die Show-Datei wird nur geschrieben, wenn das Skript bearbeitet wi
 - **Szenennummern:** Hat in einem Skript mindestens eine Szene eine eigene Nummer in der
   Überschrift, bekommen Szenen ohne Nummer keine mehr. Skripte ganz ohne eigene Nummern
   werden wie bisher durchgezählt.
+- Ein an- oder abgestecktes MIDI-Gerät unterbricht den Empfang von Cue-Triggern per OSC
+  nicht.
 - **MIDI-Geräte** werden laufend neu gesucht. Ein Gerät, das nach dem Programmstart
   angesteckt wird, erscheint in den Einstellungen und wird für Go/Back, „Alle" und
   „Learn" gehört.

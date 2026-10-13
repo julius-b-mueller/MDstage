@@ -1032,6 +1032,8 @@ A file that was last saved on another machine is not touched by opening it: it i
 
 ## Development & Build
 
+What changed from version to version — new features, changed behaviour and every change to the show file's YAML keys — is in [CHANGELOG.md](CHANGELOG.md). Show files written by any version from 2.0.0 on open and play in every later one.
+
 MDstage is a Rust workspace:
 
 | Crate | Contents |
