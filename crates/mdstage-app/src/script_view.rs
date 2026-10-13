@@ -154,7 +154,7 @@ struct Editing {
 #[derive(Default)]
 struct Search {
     query: String,
-    /// Blocks containing the query, and which of them is the current hit.
+    /// The blocks the query finds, best first, and which of them is the current hit.
     hits: Vec<usize>,
     current: usize,
     focus: bool,
@@ -420,9 +420,10 @@ impl ScriptView {
         self.durations.get(file).copied()
     }
 
-    /// Open the search bar (or put the cursor back into it).
+    /// Open the search bar for a new search: if it is open already, what was typed
+    /// before is cleared.
     pub fn open_search(&mut self) {
-        self.search.get_or_insert_with(Search::default).focus = true;
+        self.search = Some(Search { focus: true, ..Search::default() });
     }
 
     /// A digit was typed outside any text field: part of a scene number to jump to.
@@ -475,7 +476,9 @@ impl ScriptView {
     }
 
     /// The search bar, if open. Enter goes to the next hit, Shift+Enter back, Escape closes.
-    pub fn search_bar(&mut self, ui: &mut Ui, script: &Script) {
+    /// The hits come best first; equally good ones in the order of the script from the
+    /// block `from` on (where the show is), and round to the start at the end.
+    pub fn search_bar(&mut self, ui: &mut Ui, script: &Script, from: usize) {
         let Some(search) = &mut self.search else { return };
         let mut close = false;
         let mut step: i64 = 0;
@@ -486,13 +489,9 @@ impl ScriptView {
                 response.request_focus();
             }
             if response.changed() {
-                let needle = search.query.to_lowercase();
-                search.hits = if needle.is_empty() {
-                    Vec::new()
-                } else {
-                    let text = |b: &Block| Script { blocks: vec![b.clone()] }.to_markdown().to_lowercase();
-                    (0..script.blocks.len()).filter(|&i| !matches!(script.blocks[i], Block::Config(_)) && text(&script.blocks[i]).contains(&needle)).collect()
-                };
+                // (The settings block at the top is not searched.)
+                let texts: Vec<String> = script.blocks.iter().map(|b| if matches!(b, Block::Config(_)) { String::new() } else { Script { blocks: vec![b.clone()] }.to_markdown() }).collect();
+                search.hits = mdstage_core::search::rank(&texts, &search.query, from);
                 search.current = 0;
                 step = 0;
                 if !search.hits.is_empty() {

@@ -1996,7 +1996,9 @@ impl eframe::App for App {
                 });
             }
             if let Some(show) = &self.show {
-                self.view.search_bar(ui, &show.script);
+                // The search sets out from where the show is: the cue fired last.
+                let at = self.snapshot.latest.or(self.snapshot.current).and_then(|cue| Cues::new(&show.script).block_index(cue)).unwrap_or(0);
+                self.view.search_bar(ui, &show.script, at);
             }
         });
         egui::TopBottomPanel::bottom("status").frame(bar(PANEL, 10, 3)).show(ctx, |ui| self.status_bar(ui));

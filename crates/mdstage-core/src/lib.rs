@@ -10,6 +10,7 @@ pub mod effects;
 pub mod export;
 pub mod format;
 pub mod mic;
+pub mod search;
 pub mod validate;
 pub mod yaml;
 
