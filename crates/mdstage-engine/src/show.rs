@@ -168,24 +168,123 @@ impl Show {
         &self.script
     }
 
-    /// Swap in an edited script. The fired cues are kept if the cues are still the same
-    /// ones in the same order (text was edited, a cue's fields changed); otherwise the
-    /// show starts over, with all audio stopped.
+    /// Swap in an edited script while the show runs. Nothing stops: every cue is found
+    /// again under its new number (see [`mdstage_core::cues::mapping`]), with what was
+    /// fired, what is armed and what is playing. Only the audio of a cue that is gone
+    /// fades out. Audio that plays takes on what was changed about it on the spot.
     pub fn replace_script(&mut self, script: Script) -> Result<()> {
-        let notes = |s: &Script| Cues::new(s).len();
-        let same_cues = notes(&self.script) == notes(&script);
+        let map = mdstage_core::cues::mapping(&self.script, &script);
+        let to = |cue: usize| map.get(cue).copied().flatten();
+        // What the audio that is there was started as, to tell what the edit changed.
+        let before: Vec<(usize, Option<CueAudio>, Then)> = self.player.active_cues().into_iter().map(|cue| (cue, self.audio(cue), self.then(cue))).collect();
+
         self.cast = Cast::from_script(&script, self.cast.english);
         self.script = Arc::new(script);
-        if !same_cues {
-            self.history = History::default();
-            self.armed = None;
-            self.selected_variant = None;
-            self.loop_epochs.clear();
-            self.stopped_at.clear();
-            self.stop_all()?;
-            self.report_displays();
+        self.player.remap(to)?;
+        self.history.remap(&map);
+        self.armed = self.armed.and_then(to);
+        self.selected_variant = self.selected_variant.and_then(to);
+        let pairs = |list: &[(usize, usize)]| list.iter().filter_map(|&(a, b)| Some((to(a)?, to(b)?))).collect::<Vec<_>>();
+        self.pending_outros = pairs(&self.pending_outros);
+        self.chains = pairs(&self.chains);
+        self.delays = std::mem::take(&mut self.delays).into_iter().filter_map(|d| Some(Delay { target: to(d.target)?, source: to(d.source)?, ..d })).collect();
+        self.watches = std::mem::take(&mut self.watches).into_iter().filter_map(|w| Some(Watch { target: to(w.target)?, source: to(w.source)?, ..w })).collect();
+        if let Some(hold) = &mut self.mic_hold {
+            // (Its cue is only what the countdown is shown at.)
+            hold.cue = to(hold.cue).unwrap_or(hold.cue);
         }
+        fn rekey<T>(map: &mut HashMap<usize, T>, to: impl Fn(usize) -> Option<usize>) {
+            *map = std::mem::take(map).into_iter().filter_map(|(cue, value)| Some((to(cue)?, value))).collect();
+        }
+        rekey(&mut self.waits_from, to);
+        rekey(&mut self.loop_epochs, to);
+        rekey(&mut self.stopped_at, to);
+        rekey(&mut self.paused, to);
+        self.timecode = self.timecode.take().and_then(|t| Some(TimecodeSource { cue: to(t.cue)?, ..t }));
+
+        for (old, audio_before, then_before) in before {
+            let Some(cue) = to(old) else { continue };
+            let then_before = match then_before {
+                Then::Chain(next) => to(next).map_or(Then::End, Then::Chain),
+                other => other,
+            };
+            let (audio, then) = (self.audio(cue), self.then(cue));
+            if audio == audio_before && then == then_before {
+                continue;
+            }
+            let Some(status) = self.player.status(cue, self.clock.as_deref()) else { continue };
+            let Some(mut audio) = audio else {
+                self.player.stop(cue, 0.05)?;
+                self.forget_audio_of(&[cue]);
+                continue;
+            };
+            match status.state {
+                // Waiting for a handoff: it waits on, as it now is.
+                VoiceState::Armed => self.player.start(cue, &audio, Start::armed(then))?,
+                VoiceState::Playing => {
+                    // The level it plays at is what the fired cues have made of it (an
+                    // adjust may have turned it down), not simply what the file says.
+                    if self.history.fired(cue) {
+                        let level = self.history.audio_state(&Cues::new(&self.script), cue).1;
+                        for part in &mut audio.parts {
+                            part.volume = level;
+                        }
+                    }
+                    let level = audio.parts[status.part.min(audio.parts.len() - 1)].volume;
+                    let but_for_level = |audio: &CueAudio| audio.parts.iter().map(|part| mdstage_core::audio::Part { volume: 1.0, ..part.clone() }).collect::<Vec<_>>();
+                    let only_level = then == then_before && audio_before.as_ref().is_some_and(|b| b.looped == audio.looped && but_for_level(b) == but_for_level(&audio));
+                    if only_level {
+                        self.player.fade(cue, level, 0.05)?;
+                        continue;
+                    }
+                    // Anything else: the audio comes in anew at the place it is at.
+                    let part = status.part.min(audio.parts.len() - 1);
+                    self.player.start(cue, &audio, Start { armed: false, then, resume: Some((part, status.seconds)) })?;
+                    for (looped, outro) in self.pending_outros.clone() {
+                        if looped == cue {
+                            self.player.queue_outro(looped, outro)?;
+                        }
+                    }
+                    if let Then::Chain(next) = then {
+                        self.arm_chain(cue, next);
+                    }
+                    if then == Then::Loop {
+                        let spans = self.player.spans(&audio).unwrap_or_default();
+                        let into = spans[..part.min(spans.len())].iter().map(|(a, b)| b - a).sum::<f64>() + (status.seconds - spans.get(part).map_or(0.0, |s| s.0));
+                        self.loop_epochs.insert(cue, self.now - into);
+                    }
+                }
+                _ => {}
+            }
+        }
+        // The auto-cues that hang on audio that is there, as the script now has them.
+        let sources: Vec<(usize, f64)> = self
+            .player
+            .active_cues()
+            .into_iter()
+            .filter_map(|cue| Some((cue, self.player.status(cue, self.clock.as_deref()).filter(|s| s.part == 0 && s.state == VoiceState::Playing)?.seconds)))
+            .chain(self.paused.iter().filter(|(_, (part, _))| *part == 0).map(|(cue, (_, seconds))| (*cue, *seconds)))
+            .collect();
+        for (cue, seconds) in sources {
+            self.watches.retain(|w| w.source != cue);
+            self.watch(cue, Some(seconds));
+        }
+        self.report_displays();
         Ok(())
+    }
+
+    /// Load the audio of `next` to wait, silent, for `cue` to hand off to it at its end.
+    fn arm_chain(&mut self, cue: usize, next: usize) {
+        let Some(next_audio) = self.audio(next).filter(|_| !self.chains.contains(&(cue, next))) else { return };
+        match self.player.start(next, &next_audio, Start::armed(self.then(next))) {
+            Ok(()) => {
+                self.chains.push((cue, next));
+                if let Some(status) = self.player.status(cue, self.clock.as_deref()) {
+                    self.waits_from.insert(next, status.seconds);
+                }
+            }
+            Err(e) => self.problems.push(format!("{}: {e}", Cues::new(&self.script).name(next))),
+        }
     }
 
     pub fn history(&self) -> &History {
@@ -549,17 +648,7 @@ impl Show {
             }
         }
         if let (Some(_), Then::Chain(next)) = (&audio, then) {
-            if let Some(next_audio) = self.audio(next).filter(|_| !self.chains.contains(&(cue, next))) {
-                match self.player.start(next, &next_audio, Start::armed(self.then(next))) {
-                    Ok(()) => {
-                        self.chains.push((cue, next));
-                        if let Some(status) = self.player.status(cue, self.clock.as_deref()) {
-                            self.waits_from.insert(next, status.seconds);
-                        }
-                    }
-                    Err(e) => self.problems.push(format!("{}: {e}", cues.name(next))),
-                }
-            }
+            self.arm_chain(cue, next);
         }
         if let Some(audio) = &audio {
             let spans = self.player.spans(audio).unwrap_or_default();
@@ -1438,6 +1527,68 @@ mod tests {
         rig.show.stop_all().unwrap();
         rig.run(640);
         assert_eq!(rig.show.timecode_seconds(), None);
+    }
+
+    /// A script of cues given as `(note, body)`.
+    fn script_of(cues: &[(u32, &str)]) -> Script {
+        let mut text = String::from("```yaml\nconfig:\n    roles:\n        Anna: {}\n        Ben: {}\n```\n");
+        for (note, body) in cues {
+            text.push_str(&format!("\n```yaml\ntrigger_note: {{ch: 1, note: {note}}}\n{body}\n```\n"));
+        }
+        Script::parse(&text)
+    }
+
+    #[test]
+    fn editing_the_script_does_not_stop_the_show() {
+        let (long, next) = ("music: {file: long.wav, volume: 1}", "note: next");
+        let mut rig = rig(&[long, next], &[("long.wav", 1.0, 4000)]);
+        rig.show.go().unwrap();
+        rig.run(104);
+        // A cue is put in before the one that plays, and one after it.
+        rig.show.replace_script(script_of(&[(7, "note: new"), (0, long), (8, "note: newer"), (1, next)])).unwrap();
+        rig.run(104);
+        assert!(rig.out[8..].iter().all(|&s| s == 1.0), "the audio played on untouched");
+        assert_eq!(rig.fired(), [1]);
+        assert_eq!(rig.show.current(), Some(1));
+        assert_eq!(rig.show.next(), Some(2));
+        assert_eq!(rig.show.audio_status()[0].0, 1);
+        // Go carries on with the new cue; taking the playing cue out ends its audio.
+        rig.show.go().unwrap();
+        assert_eq!(rig.fired(), [1, 2]);
+        rig.show.replace_script(script_of(&[(7, "note: new"), (8, "note: newer"), (1, next)])).unwrap();
+        rig.run(104);
+        assert_eq!(rig.show.audio_status(), []);
+        assert_eq!(rig.fired(), [1]);
+        assert_eq!(rig.level(), 0.0);
+    }
+
+    #[test]
+    fn playing_audio_takes_on_what_is_changed_about_it() {
+        let mut rig = rig(&["music: {file: short.wav, volume: 1}"], &[("short.wav", 1.0, 400)]);
+        rig.show.go().unwrap();
+        rig.run(104);
+        // Made a loop while it plays: it does not end at the end of the file.
+        rig.show.replace_script(script_of(&[(0, "music: {file: short.wav, volume: 1, loop: true}")])).unwrap();
+        rig.run(600);
+        let status = rig.show.audio_status()[0].1;
+        assert_eq!(status.state, VoiceState::Playing);
+        assert_eq!(rig.level(), 1.0);
+        // The end moved in: the loop is shorter from now on.
+        rig.show.replace_script(script_of(&[(0, "music: {file: short.wav, volume: 1, loop: true, end: 0.1}")])).unwrap();
+        rig.run(304);
+        let status = rig.show.audio_status()[0].1;
+        assert_eq!((status.end, status.state), (0.1, VoiceState::Playing));
+        assert!(status.seconds <= 0.1);
+        // Only the level: no new start, the position runs on.
+        let at = status.seconds;
+        rig.show.replace_script(script_of(&[(0, "music: {file: short.wav, volume: 0.5, loop: true, end: 0.1}")])).unwrap();
+        rig.run(104);
+        assert_eq!(rig.level(), 0.5);
+        // And not a loop any more: it plays to its end and is over.
+        let _ = at;
+        rig.show.replace_script(script_of(&[(0, "music: {file: short.wav, volume: 0.5, end: 0.1}")])).unwrap();
+        rig.run(304);
+        assert_eq!(rig.show.audio_status(), []);
     }
 
     #[test]

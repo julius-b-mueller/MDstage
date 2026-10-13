@@ -388,10 +388,6 @@ impl ActiveCue {
     }
 }
 
-/// Mixer id of one part of a cue. Stable, so a cue can hand off to one loaded later.
-fn voice_id(cue: usize, part: usize) -> VoiceId {
-    ((cue as u32) << 6) | (part as u32 & 63)
-}
 
 pub struct Player {
     handle: MixerHandle,
@@ -401,12 +397,48 @@ pub struct Player {
     active: HashMap<usize, ActiveCue>,
     /// Voices of cues that were stopped and are still fading out: `(file, region start, voice)`.
     fading: Vec<(String, usize, Arc<VoiceShared>)>,
+    /// What each cue's voices are numbered after in the mixer. A cue keeps its token
+    /// when the script is edited and its own number changes, so that audio that plays
+    /// (and whatever is to hand off to it) is not lost.
+    tokens: HashMap<usize, u32>,
+    next_token: u32,
 }
 
 impl Player {
     pub fn new(handle: MixerHandle, cache: ClipCache, routing: Routing) -> Player {
         let sample_rate = cache.sample_rate;
-        Player { handle, cache, routing, sample_rate, active: HashMap::new(), fading: Vec::new() }
+        Player { handle, cache, routing, sample_rate, active: HashMap::new(), fading: Vec::new(), tokens: HashMap::new(), next_token: 0 }
+    }
+
+    /// Mixer id of one part of a cue. Stable, so a cue can hand off to one loaded later.
+    fn voice_id(&mut self, cue: usize, part: usize) -> VoiceId {
+        let next = &mut self.next_token;
+        let token = *self.tokens.entry(cue).or_insert_with(|| {
+            *next = (*next + 1) % (1 << 25);
+            *next
+        });
+        (token << 6) | (part as u32 & 63)
+    }
+
+    /// The script was edited and the cues have new numbers: `to` says which (or that a
+    /// cue is gone). Audio goes on playing under its cue's new number; the audio of a
+    /// cue that is gone fades out.
+    pub fn remap(&mut self, to: impl Fn(usize) -> Option<usize>) -> Result<()> {
+        let gone: Vec<usize> = self.active.keys().copied().filter(|&cue| to(cue).is_none()).collect();
+        for cue in gone {
+            self.stop(cue, 0.05)?;
+        }
+        self.active = std::mem::take(&mut self.active)
+            .into_iter()
+            .filter_map(|(cue, mut active)| {
+                if let Then::Chain(next) = active.then {
+                    active.then = to(next).map_or(Then::End, Then::Chain);
+                }
+                Some((to(cue)?, active))
+            })
+            .collect();
+        self.tokens = std::mem::take(&mut self.tokens).into_iter().filter_map(|(cue, token)| Some((to(cue)?, token))).collect();
+        Ok(())
     }
 
     pub fn cache(&mut self) -> &mut ClipCache {
@@ -498,11 +530,11 @@ impl Player {
 
         let mut active = ActiveCue { parts: Vec::with_capacity(count), then: start.then, outro_queued: false };
         for (index, (part, (region_start, transition, end, crossfade, initial, infos))) in audio.parts.iter().zip(regions).enumerate() {
-            let id = voice_id(cue, index);
+            let id = self.voice_id(cue, index);
             let (at_transition, rearm) = match start.then {
-                _ if count > 1 => (AtTransition::Handoff(voice_id(cue, (index + 1) % count)), true),
+                _ if count > 1 => (AtTransition::Handoff(self.voice_id(cue, (index + 1) % count)), true),
                 Then::Loop => (AtTransition::Wrap, false),
-                Then::Chain(next) => (AtTransition::Handoff(voice_id(next, 0)), false),
+                Then::Chain(next) => (AtTransition::Handoff(self.voice_id(next, 0)), false),
                 Then::End => (AtTransition::Continue, false),
             };
             let mut shared = Vec::with_capacity(infos.len());
@@ -575,8 +607,9 @@ impl Player {
     /// Let the loop `cue` hand off to `outro` (which must be loaded armed) the next time
     /// it reaches its loop end or fading point.
     pub fn queue_outro(&mut self, cue: usize, outro: usize) -> Result<()> {
+        let to = self.voice_id(outro, 0);
         for id in self.part_ids(cue) {
-            self.send(Command::SetTransition { id, at: AtTransition::Handoff(voice_id(outro, 0)) })?;
+            self.send(Command::SetTransition { id, at: AtTransition::Handoff(to) })?;
             self.send(Command::SetRearm { id, rearm: false })?;
         }
         if let Some(active) = self.active.get_mut(&cue) {
@@ -592,8 +625,8 @@ impl Player {
         let then = active.then;
         for (index, id) in self.part_ids(cue).into_iter().enumerate() {
             let (at, rearm) = match then {
-                _ if count > 1 => (AtTransition::Handoff(voice_id(cue, (index + 1) % count)), true),
-                Then::Chain(next) => (AtTransition::Handoff(voice_id(next, 0)), false),
+                _ if count > 1 => (AtTransition::Handoff(self.voice_id(cue, (index + 1) % count)), true),
+                Then::Chain(next) => (AtTransition::Handoff(self.voice_id(next, 0)), false),
                 Then::Loop => (AtTransition::Wrap, false),
                 Then::End => (AtTransition::Continue, false),
             };

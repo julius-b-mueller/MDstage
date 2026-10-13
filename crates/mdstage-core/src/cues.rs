@@ -377,6 +377,38 @@ impl<'a> Cues<'a> {
     }
 }
 
+/// Where the cues of a script are after it was edited: for every cue of `old`, its
+/// number in `new`, or `None` if it is gone. Cues are known again by their trigger note
+/// (where one note means one cue on both sides), else by having stayed word for word
+/// the same; and if no cue came or went, whatever is left over is the same cue, edited.
+pub fn mapping(old: &Script, new: &Script) -> Vec<Option<usize>> {
+    let (before, after) = (Cues::new(old), Cues::new(new));
+    let mut map = vec![None; before.len()];
+    let mut taken = vec![false; after.len()];
+    let once = |cues: &Cues, note: Note| (0..cues.len()).filter(|&c| cues.get(c).and_then(Cue::note) == Some(note)).count() == 1;
+    for cue in 0..before.len() {
+        let Some(note) = before.get(cue).and_then(Cue::note).filter(|&n| once(&before, n) && once(&after, n)) else { continue };
+        if let Some(there) = after.find(note).filter(|&t| after.get(t).and_then(Cue::note) == Some(note)) {
+            map[cue] = Some(there);
+            taken[there] = true;
+        }
+    }
+    for cue in (0..before.len()).filter(|&c| map[c].is_none()).collect::<Vec<_>>() {
+        let same = (0..after.len()).find(|&t| !taken[t] && after.get(t).map(|c| &c.yaml) == before.get(cue).map(|c| &c.yaml));
+        if let Some(there) = same {
+            map[cue] = Some(there);
+            taken[there] = true;
+        }
+    }
+    if before.len() == after.len() {
+        let left: Vec<usize> = (0..after.len()).filter(|&t| !taken[t]).collect();
+        for (cue, there) in (0..before.len()).filter(|&c| map[c].is_none()).collect::<Vec<_>>().into_iter().zip(left) {
+            map[cue] = Some(there);
+        }
+    }
+    map
+}
+
 /// The cues fired so far, oldest first. Each entry notes whether it fired automatically
 /// (auto-cue or chain transition) rather than by an operator action.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -401,6 +433,17 @@ pub struct Undone {
 impl History {
     pub fn cues(&self) -> impl Iterator<Item = usize> + '_ {
         self.entries.iter().map(|e| e.0)
+    }
+
+    /// The script was edited: follow the cues to their new numbers (see [`mapping`]).
+    /// Cues that are gone leave the history.
+    pub fn remap(&mut self, map: &[Option<usize>]) {
+        self.entries = self.entries.iter().filter_map(|&(cue, auto)| Some((map.get(cue).copied().flatten()?, auto))).collect();
+    }
+
+    /// Start a history from the cues as they were fired (all by the operator).
+    pub fn of(cues: impl IntoIterator<Item = usize>) -> History {
+        History { entries: cues.into_iter().map(|cue| (cue, false)).collect() }
     }
 
     pub fn is_empty(&self) -> bool {
