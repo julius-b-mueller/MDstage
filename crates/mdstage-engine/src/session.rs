@@ -20,7 +20,7 @@ use crate::device;
 use crate::display::{Client, DisplayServer};
 use crate::inputs::{Input, Inputs};
 use crate::mixer::Mixer;
-use crate::mtc::MtcSender;
+use crate::mtc::{TimecodeSender, TimecodeTarget};
 use crate::outputs::{MidiPorts, Sender as WireSender, SystemMidi};
 use crate::player::{ClipCache, Player, Status};
 use crate::settings::Settings;
@@ -52,6 +52,8 @@ pub enum Request {
     /// Fire a cue directly (a click on it).
     Fire(usize),
     Arm(Option<usize>),
+    /// Arm the cue before (`false`) or after (`true`) the next Go.
+    Step(bool),
     SelectVariant(Option<usize>),
     /// The transport on a cue's waveform: play the cue's audio by itself, or pause it.
     PlayPause(usize),
@@ -313,15 +315,24 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
     // Timecode: the show publishes its position with a timestamp; the MTC thread
     // extrapolates from there, so its pacing does not depend on this loop's.
     let feed: Arc<Mutex<Option<(f64, Instant)>>> = Arc::default();
-    let timecode_ports = Arc::new(Mutex::new(settings.timecode_ports()));
+    let timecode_targets = Arc::new(Mutex::new(settings.timecode_targets()));
     let mtc = {
-        let (feed, ports) = (feed.clone(), timecode_ports.clone());
+        let feed = feed.clone();
         let mut midi = SystemMidi::default();
-        MtcSender::spawn(
+        // One socket for all Art-Net timecode, broadcast addresses included.
+        let artnet = std::net::UdpSocket::bind("0.0.0.0:0").ok();
+        if let Some(socket) = &artnet {
+            let _ = socket.set_broadcast(true);
+        }
+        TimecodeSender::spawn(
             move || feed.lock().unwrap().map(|(seconds, at)| seconds + at.elapsed().as_secs_f64()),
-            move |bytes| {
-                for port in ports.lock().unwrap().iter() {
-                    midi.send(port, bytes);
+            timecode_targets.clone(),
+            move |target, bytes| match target {
+                TimecodeTarget::Midi { port, .. } => midi.send(port, bytes),
+                TimecodeTarget::Artnet { host, port, .. } => {
+                    if let Some(socket) = &artnet {
+                        let _ = socket.send_to(bytes, (host.as_str(), *port));
+                    }
                 }
             },
         )
@@ -352,6 +363,7 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
                 Request::Back => show.back(),
                 Request::Fire(cue) => show.fire(cue, false),
                 Request::Arm(cue) => Ok(show.arm(cue)),
+                Request::Step(forward) => Ok(show.step(forward)),
                 Request::SelectVariant(cue) => Ok(show.select_variant(cue)),
                 Request::PlayPause(cue) => show.play_pause(cue),
                 Request::Seek(cue, seconds) => show.seek(cue, seconds),
@@ -387,7 +399,7 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
                     settings = *new;
                     trusted = now_trusted;
                     outputs = settings.outputs(trusted);
-                    *timecode_ports.lock().unwrap() = settings.timecode_ports();
+                    *timecode_targets.lock().unwrap() = settings.timecode_targets();
                     let channels = show.script().virtual_channels();
                     show.player().set_routing(settings.routing(&channels));
                     show.set_mic_off_delay(settings.mic_off_delay);
@@ -413,6 +425,9 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
                     Some(_) => show.back(),
                     None => Ok(()),
                 },
+                Input::Back => show.back(),
+                Input::Up => Ok(show.step(false)),
+                Input::Down => Ok(show.step(true)),
                 Input::Cue(note) => show.fire_note(note),
                 Input::Heard(note) => Ok(heard = Some(note)),
             };

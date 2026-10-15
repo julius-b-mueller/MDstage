@@ -20,7 +20,7 @@ However, there is no need to open a text editor. Roletext, stage directions, cue
 8. [Adjust (Cross-Fade / Volume)](#adjust-cross-fade--volume)
 9. [MIDI](#midi)
 10. [OSC Output](#osc-output)
-11. [Timecode (MTC)](#timecode-mtc)
+11. [Timecode (MTC / Art-Net)](#timecode-mtc--art-net)
 12. [Live View](#live-view)
 13. [Emergency Controls](#emergency-controls)
 14. [Cue Navigation](#cue-navigation)
@@ -167,7 +167,7 @@ Every cue needs a trigger note of its own; only the variants of a cue share its 
 | `auto_mic: true` | Enables Auto-Mic for this cue (see [Auto-Mic](#auto-mic)). |
 | `music: file.wav` | Audio file from the `audio/` subfolder. Short form or object (see below). |
 | `note: "Note"` | Internal note displayed on the trigger panel. |
-| `start_tc: "01:00:00:00"` | Start timecode (HH:MM:SS:FF, 25 fps) sent as MTC when the cue fires. |
+| `start_tc: "01:00:00:00"` | Start timecode (HH:MM:SS:FF, frames counted at 25 fps) sent as MTC / Art-Net timecode when the cue fires. Each device gets it at its own frame rate. |
 | `osc: "/path/{ch}"` | OSC message path sent when the cue fires (legacy — see [OSC Output](#osc-output)). |
 | `cue_midi: [...]` | List of MIDI messages sent when the cue fires (see [MIDI](#midi)). |
 | `cue_osc: [...]` | List of OSC messages sent when the cue fires (see [OSC Output](#osc-output)). |
@@ -630,11 +630,11 @@ Microphone muting is configured separately under **Mixer Remote Control** in Set
 
 ### Timecode (MTC)
 
-Each MIDI output device has a **Send MIDI Timecode** checkbox in Settings; MTC is sent to every device with it enabled. See [Timecode (MTC)](#timecode-mtc).
+Each MIDI output device has a **Timecode (MTC)** checkbox in Settings, and beside it its frame rate; MTC is sent to every device with it enabled. See [Timecode (MTC / Art-Net)](#timecode-mtc--art-net).
 
 ### MIDI Input
 
-Two configurable MIDI notes for **Go** and **Back** — received on all MIDI inputs. MIDI devices are looked for all the time: one plugged in after the program started turns up in the settings and is listened to. Back acts when its note is let go of (the controller has to send a note-off, or a note-on with velocity 0); holding it for one second stops all audio instead, without going back. Notes can be assigned using **MIDI Learn** mode in the settings window.
+Configurable MIDI notes for **Go**, **Back**, **▲** and **▼** (the live view's buttons: arm the cue before / after the next Go, without firing anything) — received on all MIDI inputs, or on the one chosen. MIDI devices are looked for all the time: one plugged in after the program started turns up in the settings and is listened to. Back acts when its note is let go of (the controller has to send a note-off, or a note-on with velocity 0); holding it for one second stops all audio instead, without going back. Notes can be assigned using **MIDI Learn** mode in the settings window.
 
 ---
 
@@ -646,6 +646,10 @@ External software (lighting desks, QLab, Companion, …) can fire individual cue
 - **OSC** — listens on a UDP port for the path **`/cue/<ch>/<note>`** (no arguments). For example `/cue/1/42` fires the cue with `trigger_note: {ch: 1, note: 42}`.
 
 In both cases the cue is triggered exactly as if it were the next Go on that cue. Because every cue has a `trigger_note` (assigned automatically if not set), no extra per-cue configuration is needed.
+
+### Go / Back / ▲ / ▼ by OSC
+
+For hardware or software that sends OSC (Companion, TouchOSC, a button box …): **Settings → Remote control → Go/Back/▲/▼ by OSC**. MDstage listens on a UDP port (by default only from this computer; tick *accept from the network* for other machines) for four addresses, by default `/mdstage/go`, `/mdstage/back`, `/mdstage/up` and `/mdstage/down`; each can be changed or left empty. A message to one of them acts; a message whose first argument is the number 0 does nothing, so a button that sends 1 when pressed and 0 when let go of acts once. Back acts at once (holding is a MIDI matter). The port may be the same as that of the OSC cue trigger.
 
 ---
 
@@ -742,9 +746,11 @@ Each display device chooses a stylesheet: a built-in **dark** (default), **light
 
 ---
 
-## Timecode (MTC)
+## Timecode (MTC / Art-Net)
 
-The app generates MIDI Timecode (25 fps) synchronised to audio playback.
+The app generates timecode synchronised to audio playback, as MIDI Timecode (to MIDI output devices with *Timecode (MTC)* ticked) and as Art-Net timecode (ArtTimeCode, to **Art-Net** devices: `+ Art-Net` in the device list, with an address — a device or a broadcast address such as `2.255.255.255` — and port 6454). Every device has its own frame rate: **24, 25, 29.97 drop-frame or 30 fps**. Art-Net timecode is sent once a frame. Art-Net devices take no cue messages and do not appear in the show file.
+
+The times in the script (`start_tc`) count frames at 25 fps; a device at another rate gets the same moment in its own frames.
 
 - When a cue with `start_tc` fires, MTC starts from that offset
 - In S/L/F chains, timecode counts on without gaps
@@ -947,9 +953,10 @@ fallback to a default device).
 
 | Setting | Description |
 |---|---|
-| MIDI Timecode device | MIDI output for MTC (separate from output devices) |
-| Input device (Go / Back) | Filter MIDI input to a specific device, or receive from all |
-| Go note / Back note | MIDI notes for Go and Back — can be assigned via **MIDI Learn** |
+| Timecode | *Timecode (MTC)* and frame rate on a MIDI output device; Art-Net devices with address, port and frame rate |
+| Input device (Go / Back / ▲ / ▼) | Filter MIDI input to a specific device, or receive from all |
+| Go / Back / ▲ / ▼ note | MIDI notes — can be assigned via **MIDI Learn** |
+| Go/Back/▲/▼ by OSC | UDP port, network access and the four OSC addresses |
 
 ### Switching single devices off
 

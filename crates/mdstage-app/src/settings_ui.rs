@@ -1,10 +1,11 @@
 //! The settings window: this machine's audio device, routing, output devices, mixers,
 //! remote control and display server.
 
-use eframe::egui::{self, RichText, Ui};
+use eframe::egui::{self, Color32, RichText, Ui};
 use mdstage_core::cues::Note;
 use mdstage_engine::inputs::Inputs;
 use mdstage_engine::outputs::SystemMidi;
+use mdstage_engine::mtc::FrameRate;
 use mdstage_engine::settings::{ArgSetting, CueTriggerSetting, DeviceSetting, EmergencyLightSetting, MixerSetting, NoteSetting, Settings};
 
 use crate::lang::t;
@@ -15,6 +16,17 @@ use crate::theme::*;
 enum Learning {
     Go,
     Back,
+    Up,
+    Down,
+}
+
+/// The frame rate of a device's timecode.
+fn rate_choice(ui: &mut Ui, id: impl std::hash::Hash, rate: &mut FrameRate) {
+    egui::ComboBox::from_id_salt(id).selected_text(rate.label()).width(120.0).show_ui(ui, |ui| {
+        for choice in FrameRate::ALL {
+            ui.selectable_value(rate, choice, choice.label());
+        }
+    });
 }
 
 pub struct SettingsUi {
@@ -273,7 +285,7 @@ impl SettingsUi {
             let mut remove = None;
             for (i, device) in draft.devices.iter_mut().enumerate() {
                 ui.horizontal(|ui| match device {
-                    DeviceSetting::Midi { name, port, enabled, trigger_notes, timecode } => {
+                    DeviceSetting::Midi { name, port, enabled, trigger_notes, timecode, frame_rate } => {
                         ui.checkbox(enabled, "").on_hover_text(t("Eingeschaltet: Ohne Haken wird an dieses Gerät nichts gesendet. Auch im Menü „Geräte“ umschaltbar.", "Switched on: without the tick nothing is sent to this device. Can also be switched in the Devices menu."));
                         ui.label(RichText::new("MIDI").color(BLUE));
                         let was = name.clone();
@@ -283,7 +295,22 @@ impl SettingsUi {
                         }
                         port_picker(ui, ("midi-port", i), port, &self.midi_outputs);
                         ui.checkbox(trigger_notes, t("Trigger-Noten", "Trigger notes"));
-                        ui.checkbox(timecode, "Timecode");
+                        ui.checkbox(timecode, "Timecode (MTC)");
+                        if *timecode {
+                            rate_choice(ui, ("midi-rate", i), frame_rate);
+                        }
+                        if ui.small_button("×").clicked() {
+                            remove = Some(i);
+                        }
+                    }
+                    DeviceSetting::Artnet { name, host, port, enabled, frame_rate } => {
+                        ui.checkbox(enabled, "").on_hover_text(t("Eingeschaltet: Ohne Haken wird an dieses Gerät nichts gesendet. Auch im Menü „Geräte“ umschaltbar.", "Switched on: without the tick nothing is sent to this device. Can also be switched in the Devices menu."));
+                        ui.label(RichText::new("Art-Net").color(Color32::from_rgb(0xc6, 0x78, 0xdd)));
+                        field(ui, name, "Name", 120.0);
+                        field(ui, host, "2.255.255.255", 130.0);
+                        ui.add(egui::DragValue::new(port).range(1..=65535));
+                        ui.label(RichText::new("Timecode").color(MUTED));
+                        rate_choice(ui, ("artnet-rate", i), frame_rate);
                         if ui.small_button("×").clicked() {
                             remove = Some(i);
                         }
@@ -343,7 +370,7 @@ impl SettingsUi {
             }
             ui.horizontal(|ui| {
                 if ui.button("+ MIDI").clicked() {
-                    draft.devices.push(DeviceSetting::Midi { name: String::new(), port: String::new(), enabled: true, trigger_notes: false, timecode: false });
+                    draft.devices.push(DeviceSetting::Midi { name: String::new(), port: String::new(), enabled: true, trigger_notes: false, timecode: false, frame_rate: FrameRate::default() });
                 }
                 if ui.button("+ OSC").clicked() {
                     draft.devices.push(DeviceSetting::Osc { name: String::new(), host: "127.0.0.1".into(), port: 8000, enabled: true, trigger_notes: false });
@@ -354,7 +381,11 @@ impl SettingsUi {
                 if ui.button("+ Display").clicked() {
                     draft.devices.push(DeviceSetting::Display { name: String::new(), style: "dark".into(), scroll_seconds: 0, language: String::new(), repeat: false });
                 }
+                if ui.button("+ Art-Net").on_hover_text(t("Art-Net-Timecode an ein Gerät oder eine Broadcast-Adresse", "Art-Net timecode to a device or a broadcast address")).clicked() {
+                    draft.devices.push(DeviceSetting::Artnet { name: "Art-Net".into(), host: "2.255.255.255".into(), port: mdstage_engine::settings::artnet_port(), enabled: true, frame_rate: FrameRate::default() });
+                }
             });
+            ui.label(RichText::new(t("Timecode geht an MIDI-Geräte mit Haken bei „Timecode“ (als MTC) und an Art-Net-Geräte, jedes mit seiner Framerate. Die Zeiten im Skript (start_tc) zählen die Frames mit 25 fps.", "Timecode goes to MIDI devices with “Timecode” ticked (as MTC) and to Art-Net devices, each at its own frame rate. Times in the script (start_tc) count frames at 25 fps.")).color(MUTED));
 
             ui.add_space(12.0);
             ui.heading("Display-Server");
@@ -548,14 +579,21 @@ impl SettingsUi {
                     match target {
                         Learning::Go => draft.go_note = learned,
                         Learning::Back => draft.back_note = learned,
+                        Learning::Up => draft.up_note = learned,
+                        Learning::Down => draft.down_note = learned,
                     }
                     self.learning = None;
                 }
             }
-            for (label, target) in [(t("Go-Note", "Go note"), Learning::Go), (t("Back-Note", "Back note"), Learning::Back)] {
+            for (label, target) in [(t("Go-Note", "Go note"), Learning::Go), (t("Back-Note", "Back note"), Learning::Back), (t("▲-Note (Cue davor vormerken)", "▲ note (arm the cue before)"), Learning::Up), (t("▼-Note (Cue danach vormerken)", "▼ note (arm the cue after)"), Learning::Down)] {
                 ui.horizontal(|ui| {
                     ui.label(label);
-                    note_fields(ui, if target == Learning::Go { &mut draft.go_note } else { &mut draft.back_note });
+                    note_fields(ui, match target {
+                        Learning::Go => &mut draft.go_note,
+                        Learning::Back => &mut draft.back_note,
+                        Learning::Up => &mut draft.up_note,
+                        Learning::Down => &mut draft.down_note,
+                    });
                     let waiting = self.learning.is_some_and(|(t, _)| t == target);
                     if ui.selectable_label(waiting, if waiting { t("Note spielen …", "Play a note …") } else { t("Lernen", "Learn") }).clicked() {
                         self.learning = if waiting { None } else { Some((target, heard)) };
@@ -564,7 +602,7 @@ impl SettingsUi {
             }
             ui.label(RichText::new(t("„Lernen“ braucht eine geöffnete Show.", "“Learn” needs an open show.")).color(MUTED));
             ui.horizontal(|ui| {
-                ui.label(t("MIDI-Eingang für Go/Back", "MIDI input for Go/Back"));
+                ui.label(t("MIDI-Eingang für Go/Back/▲/▼", "MIDI input for Go/Back/▲/▼"));
                 let current = draft.control_port.clone().unwrap_or_else(|| t("alle", "all").into());
                 egui::ComboBox::from_id_salt("control-port").selected_text(current).width(220.0).show_ui(ui, |ui| {
                     ui.selectable_value(&mut draft.control_port, None, t("alle", "all"));
@@ -573,6 +611,25 @@ impl SettingsUi {
                     }
                 });
             });
+            // Go, Back, ▲ and ▼ by OSC, for hardware that sends OSC.
+            let control = &mut draft.osc_control;
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut control.enabled, t("Go/Back/▲/▼ per OSC", "Go/Back/▲/▼ by OSC"));
+                if control.enabled {
+                    ui.label(t("UDP-Port", "UDP port"));
+                    ui.add(egui::DragValue::new(&mut control.port).range(1..=65535));
+                    ui.checkbox(&mut control.network, t("aus dem Netzwerk annehmen", "accept from the network"));
+                }
+            });
+            if control.enabled {
+                ui.horizontal(|ui| {
+                    for (label, path) in [("Go", &mut control.go), ("Back", &mut control.back), ("▲", &mut control.up), ("▼", &mut control.down)] {
+                        ui.label(label);
+                        field(ui, path, "/…", 130.0);
+                    }
+                });
+                ui.label(RichText::new(t("Eine Nachricht an die Adresse löst aus; mit 0 als erstem Argument (Taste losgelassen) nichts. Back wirkt sofort. Derselbe Port wie für Trigger-Noten per OSC geht auch. Ein leeres Feld wird nicht angenommen.", "A message to the address acts; with 0 as its first argument (button let go of) nothing does. Back acts at once. The same port as for trigger notes by OSC works too. An empty field is not listened for.")).color(MUTED));
+            }
             ui.horizontal(|ui| {
                 ui.label(t("Cues per Trigger-Note auslösen", "Fire cues by trigger note"));
                 let kind = match draft.cue_trigger {

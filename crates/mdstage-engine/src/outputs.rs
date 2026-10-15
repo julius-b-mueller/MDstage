@@ -271,6 +271,21 @@ pub fn osc_address(packet: &[u8]) -> Option<&str> {
     address.chars().all(|c| (' '..='~').contains(&c)).then_some(address)
 }
 
+/// The first argument of an OSC message, if it is a number (`i` or `f`).
+pub fn osc_first_number(packet: &[u8]) -> Option<f64> {
+    let padded = |len: usize| (len + 4) & !3;
+    let address = padded(packet.iter().position(|&b| b == 0)?);
+    let tags_end = address + packet.get(address..)?.iter().position(|&b| b == 0)?;
+    let tags = packet.get(address..tags_end)?;
+    let data = padded(tags_end - address) + address;
+    let bytes: [u8; 4] = packet.get(data..data + 4)?.try_into().ok()?;
+    match tags.get(..2)? {
+        b",i" => Some(i32::from_be_bytes(bytes) as f64),
+        b",f" => Some(f32::from_be_bytes(bytes) as f64),
+        _ => None,
+    }
+}
+
 /// The cue a remote-trigger OSC packet asks for: `/cue/<ch>/<note>`.
 pub fn osc_cue_trigger(packet: &[u8]) -> Option<mdstage_core::cues::Note> {
     let mut parts = osc_address(packet)?.strip_prefix("/cue/")?.split('/');

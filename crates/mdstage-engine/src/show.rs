@@ -549,6 +549,24 @@ impl Show {
         self.armed = cue;
     }
 
+    /// One cue back or on from the next Go, without firing anything: the cue gone to is
+    /// armed (the ▲ ▼ buttons of the live view, and their remote commands). A group of
+    /// variants counts as one cue.
+    pub fn step(&mut self, forward: bool) {
+        let cues = Cues::new(&self.script);
+        let count = cues.len();
+        let to = match (self.next(), forward) {
+            (Some(next), false) => cues.group_root(next).checked_sub(1).map(|cue| cues.group_root(cue)),
+            (Some(next), true) => Some(cues.group(next).end).filter(|cue| *cue < count),
+            (None, false) => count.checked_sub(1).map(|cue| cues.group_root(cue)),
+            (None, true) => None,
+        };
+        if to.is_some() {
+            self.armed = to;
+            self.selected_variant = None;
+        }
+    }
+
     /// Choose which variant of the next cue Go fires.
     pub fn select_variant(&mut self, cue: Option<usize>) {
         self.selected_variant = cue;
@@ -2021,6 +2039,21 @@ mod tests {
         rig.show.take_effects();
         rig.show.back().unwrap();
         assert_eq!(rig.show.take_effects(), [Effect::Mic(Mic::MuteAll)]);
+    }
+
+    #[test]
+    fn stepping_arms_the_cue_before_or_after_the_next_go() {
+        let mut rig = rig(&["light: A", "light: B", "sibling: true", "light: C"], &[]);
+        rig.show.go().unwrap();
+        assert_eq!(rig.show.next(), Some(1));
+        rig.show.step(true);
+        assert_eq!(rig.show.next(), Some(3), "a group of variants is one cue");
+        rig.show.step(true);
+        assert_eq!(rig.show.next(), Some(3), "nothing after the last cue");
+        rig.show.step(false);
+        rig.show.step(false);
+        assert_eq!(rig.show.next(), Some(0));
+        assert_eq!(rig.fired(), [0], "nothing fired");
     }
 
     #[test]

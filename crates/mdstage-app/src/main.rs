@@ -674,6 +674,7 @@ impl App {
                             mdstage_engine::settings::DeviceSetting::Osc { name, .. } => devices.osc.push(name.clone()),
                             mdstage_engine::settings::DeviceSetting::Http { name, .. } => devices.http.push(name.clone()),
                             mdstage_engine::settings::DeviceSetting::Display { name, .. } => devices.display.push(name.clone()),
+                            mdstage_engine::settings::DeviceSetting::Artnet { .. } => {}
                         }
                     }
                     // The notes other cues have: this one must not take one of them. The
@@ -1411,14 +1412,16 @@ impl App {
                             .draft
                             .devices
                             .iter()
-                            .map(|device| {
+                            .filter_map(|device| {
                                 let kind = match device {
                                     mdstage_engine::settings::DeviceSetting::Midi { .. } => "midi",
                                     mdstage_engine::settings::DeviceSetting::Osc { .. } => "osc",
                                     mdstage_engine::settings::DeviceSetting::Http { .. } => "http",
                                     mdstage_engine::settings::DeviceSetting::Display { .. } => "display",
+                                    // (Timecode only: no cue sends to it, the show file need not know it.)
+                                    mdstage_engine::settings::DeviceSetting::Artnet { .. } => return None,
                                 };
-                                (device.name().to_string(), kind.to_string(), form.colours.get(device.name()).cloned())
+                                Some((device.name().to_string(), kind.to_string(), form.colours.get(device.name()).cloned()))
                             })
                             .collect();
                         show.script.set_output_devices(&devices);

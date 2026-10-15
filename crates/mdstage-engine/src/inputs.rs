@@ -1,5 +1,5 @@
-//! Remote control coming in: MIDI notes for Go and Back, and cues fired by their trigger
-//! note over MIDI or OSC (`/cue/<ch>/<note>`).
+//! Remote control coming in: MIDI notes and OSC messages for Go, Back and the live view's
+//! ▲ ▼, and cues fired by their trigger note over MIDI or OSC (`/cue/<ch>/<note>`).
 
 use std::net::UdpSocket;
 use std::sync::Arc;
@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use mdstage_core::cues::Note;
 
-use crate::outputs::osc_cue_trigger;
+use crate::outputs::{osc_address, osc_cue_trigger, osc_first_number};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Input {
@@ -19,6 +19,11 @@ pub enum Input {
     /// does, and held for a while instead it stops everything.
     BackPressed,
     BackReleased,
+    /// Back at once (an OSC command: it has no holding).
+    Back,
+    /// Arm the cue before or after the next Go (the live view's ▲ ▼).
+    Up,
+    Down,
     /// Fire the cue with this trigger note, whatever the position.
     Cue(Note),
     /// Any note that came in, for "MIDI learn" in the settings.
@@ -36,10 +41,42 @@ pub enum CueTrigger {
     Osc { port: u16, network: bool },
 }
 
+/// Go, Back, ▲ and ▼ over OSC: the UDP port to listen on and the address of each command
+/// (an empty one is not listened for).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct OscControl {
+    pub port: u16,
+    /// Listen on all interfaces instead of only on this computer.
+    pub network: bool,
+    pub go: String,
+    pub back: String,
+    pub up: String,
+    pub down: String,
+}
+
+impl OscControl {
+    /// What an OSC packet means. A command with a number of 0 as its first argument is
+    /// a button being let go of (as many controllers send it) and does nothing.
+    pub fn input(&self, packet: &[u8]) -> Option<Input> {
+        let address = osc_address(packet)?;
+        if osc_first_number(packet) == Some(0.0) {
+            return None;
+        }
+        [(&self.go, Input::Go), (&self.back, Input::Back), (&self.up, Input::Up), (&self.down, Input::Down)]
+            .into_iter()
+            .find(|(path, _)| !path.trim().is_empty() && path.trim() == address)
+            .map(|(_, input)| input)
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct InputSettings {
     pub go: Option<Note>,
     pub back: Option<Note>,
+    /// Notes for the live view's ▲ and ▼.
+    pub up: Option<Note>,
+    pub down: Option<Note>,
+    pub osc_control: Option<OscControl>,
     /// MIDI input port for Go/Back; `None` listens on all ports.
     pub control_port: Option<String>,
     pub cue_trigger: CueTrigger,
@@ -79,6 +116,10 @@ impl InputSettings {
                 inputs.push(Input::Go);
             } else if self.back == Some(note) {
                 inputs.push(Input::BackPressed);
+            } else if self.up == Some(note) {
+                inputs.push(Input::Up);
+            } else if self.down == Some(note) {
+                inputs.push(Input::Down);
             }
         }
         if matches!(&self.cue_trigger, CueTrigger::Midi { port: p } if p == port) {
@@ -94,8 +135,9 @@ pub struct Inputs {
     /// The MIDI input ports that were there when these inputs were opened.
     ports: Vec<String>,
     running: Arc<AtomicBool>,
-    /// The thread that listens for OSC, if cue triggers come in that way.
-    osc: Option<thread::JoinHandle<()>>,
+    /// The threads that listen for OSC: cue triggers and control commands (one, if they
+    /// share a port).
+    osc: Vec<thread::JoinHandle<()>>,
 }
 
 impl Inputs {
@@ -111,23 +153,40 @@ impl Inputs {
         let (connections, ports) = Self::connect_midi(settings, &events);
 
         let running = Arc::new(AtomicBool::new(true));
-        let mut osc = None;
+        let mut inputs = Inputs { _midi: connections, ports, running: running.clone(), osc: Vec::new() };
+        // The ports to listen on, and on each whether cue triggers and which commands
+        // come in there.
+        let mut listen: Vec<(u16, bool, bool, Option<OscControl>)> = Vec::new();
         if let CueTrigger::Osc { port, network } = settings.cue_trigger {
+            listen.push((port, network, true, None));
+        }
+        if let Some(control) = settings.osc_control.clone().filter(|c| c.port > 0) {
+            match listen.iter_mut().find(|(port, ..)| *port == control.port) {
+                Some(shared) => {
+                    shared.1 |= control.network;
+                    shared.3 = Some(control);
+                }
+                None => listen.push((control.port, control.network, false, Some(control))),
+            }
+        }
+        for (port, network, cues, control) in listen {
+            // (Should binding fail, the inputs opened so far close again when dropped.)
             let socket = UdpSocket::bind((if network { "0.0.0.0" } else { "127.0.0.1" }, port))?;
             socket.set_read_timeout(Some(Duration::from_millis(50)))?;
-            let flag = running.clone();
-            osc = Some(thread::Builder::new().name("mdstage-osc-in".into()).spawn(move || {
+            let (flag, events) = (running.clone(), events.clone());
+            inputs.osc.push(thread::Builder::new().name("mdstage-osc-in".into()).spawn(move || {
                 let mut packet = [0u8; 1024];
                 while flag.load(SeqCst) {
-                    if let Ok((len, _)) = socket.recv_from(&mut packet) {
-                        if let Some(note) = osc_cue_trigger(&packet[..len]) {
-                            let _ = events.send(Input::Cue(note));
-                        }
+                    let Ok((len, _)) = socket.recv_from(&mut packet) else { continue };
+                    let packet = &packet[..len];
+                    let input = control.as_ref().and_then(|c| c.input(packet)).or_else(|| osc_cue_trigger(packet).filter(|_| cues).map(Input::Cue));
+                    if let Some(input) = input {
+                        let _ = events.send(input);
                     }
                 }
             })?);
         }
-        Ok(Inputs { _midi: connections, ports, running, osc })
+        Ok(inputs)
     }
 
     /// A MIDI device was plugged in or pulled out: listen on the ports that are there
@@ -174,7 +233,7 @@ impl Drop for Inputs {
         self.running.store(false, SeqCst);
         // Wait for the OSC thread to let go of its port, so that inputs opened right
         // after these can bind it again (it looks at the flag every 50 ms).
-        if let Some(thread) = self.osc.take() {
+        for thread in self.osc.drain(..) {
             let _ = thread.join();
         }
     }
@@ -197,6 +256,7 @@ mod tests {
             back: Some(note(1, 37)),
             control_port: None,
             cue_trigger: CueTrigger::Midi { port: "Pult".into() },
+            ..Default::default()
         };
         assert_eq!(settings.midi("Pedal", &[0x90, 36, 100]), [Input::Heard(note(1, 36)), Input::Go]);
         assert_eq!(settings.midi("Pedal", &[0x90, 37, 1]), [Input::Heard(note(1, 37)), Input::BackPressed]);
@@ -213,6 +273,36 @@ mod tests {
 
         let filtered = InputSettings { control_port: Some("Pedal".into()), ..settings };
         assert_eq!(filtered.midi("Keyboard", &[0x90, 36, 100]), [Input::Heard(note(1, 36))], "Go only from the chosen port");
+    }
+
+    #[test]
+    fn go_back_up_and_down_over_midi_and_osc() {
+        let settings = InputSettings { up: Some(note(1, 40)), down: Some(note(1, 41)), ..Default::default() };
+        assert_eq!(settings.midi("Pedal", &[0x90, 40, 100]), [Input::Heard(note(1, 40)), Input::Up]);
+        assert_eq!(settings.midi("Pedal", &[0x90, 41, 100]), [Input::Heard(note(1, 41)), Input::Down]);
+
+        let control = OscControl { port: 1, network: false, go: "/go".into(), back: "/back".into(), up: "/up".into(), down: String::new() };
+        assert_eq!(control.input(&osc_packet("/go", &[])), Some(Input::Go));
+        assert_eq!(control.input(&osc_packet("/back", &[mdstage_core::effects::OscArg::Float(1.0)])), Some(Input::Back));
+        assert_eq!(control.input(&osc_packet("/up", &[mdstage_core::effects::OscArg::Int(1)])), Some(Input::Up));
+        assert_eq!(control.input(&osc_packet("/go", &[mdstage_core::effects::OscArg::Float(0.0)])), None, "a button let go of");
+        assert_eq!(control.input(&osc_packet("/go/more", &[])), None);
+        assert_eq!(control.input(&osc_packet("/", &[])), None, "an empty command is not listened for");
+    }
+
+    #[test]
+    fn control_commands_share_the_port_of_cue_triggers() {
+        let port = UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let (events, received) = channel();
+        let control = OscControl { port, network: false, go: "/mdstage/go".into(), ..Default::default() };
+        let settings = InputSettings { cue_trigger: CueTrigger::Osc { port, network: false }, osc_control: Some(control), ..Default::default() };
+        let inputs = Inputs::open(&settings, events).unwrap();
+        let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+        sender.send_to(&osc_packet("/mdstage/go", &[]), ("127.0.0.1", port)).unwrap();
+        sender.send_to(&osc_packet("/cue/1/5", &[]), ("127.0.0.1", port)).unwrap();
+        let got: Vec<Input> = std::iter::from_fn(|| received.recv_timeout(Duration::from_secs(2)).ok()).take(2).collect();
+        assert_eq!(got, [Input::Go, Input::Cue(note(1, 5))]);
+        drop(inputs);
     }
 
     #[test]

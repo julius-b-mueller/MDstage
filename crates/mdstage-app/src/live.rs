@@ -296,10 +296,11 @@ impl LiveView {
                     Some(next) => (cues.group_root(next).checked_sub(1).map(|cue| cues.group_root(cue)), Some(cues.group(next).end).filter(|cue| *cue < count)),
                     None => (count.checked_sub(1).map(|cue| cues.group_root(cue)), None),
                 };
-                for (label, to, hint) in [("▲", before, t("Den Cue davor als nächsten vormerken", "Arm the cue before as the next")), ("▼", after, t("Den Cue danach als nächsten vormerken", "Arm the cue after as the next"))] {
+                // (The show works out the same cue again: as the ▲ ▼ notes and OSC commands do.)
+                for (label, to, forward, hint) in [("▲", before, false, t("Den Cue davor als nächsten vormerken", "Arm the cue before as the next")), ("▼", after, true, t("Den Cue danach als nächsten vormerken", "Arm the cue after as the next"))] {
                     let step = egui::Button::new(RichText::new(label).size(18.0).color(TEXT)).fill(TRACK).stroke(Stroke::NONE).corner_radius(CornerRadius::same(8)).min_size(vec2(height, height));
                     if ui.add_enabled(to.is_some(), step).on_hover_text(hint).clicked() {
-                        requests.push(Request::Arm(to));
+                        requests.push(Request::Step(forward));
                     }
                 }
                 // While a cue is on its way by itself (an outro waiting for its loop's end,

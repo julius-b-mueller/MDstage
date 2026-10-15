@@ -12,7 +12,8 @@ use mdstage_core::effects::OscArg;
 use serde::{Deserialize, Serialize};
 
 use crate::display::DisplayDevice;
-use crate::inputs::{CueTrigger, InputSettings};
+use crate::inputs::{CueTrigger, InputSettings, OscControl};
+use crate::mtc::{FrameRate, TimecodeTarget};
 use crate::outputs::{Address, Device, MicMixer, MuteMethod, Outputs};
 use crate::player::Routing;
 
@@ -33,7 +34,7 @@ impl DeviceSetting {
     /// (MIDI, OSC, HTTP); `None` for a display.
     pub fn enabled_mut(&mut self) -> Option<&mut bool> {
         match self {
-            DeviceSetting::Midi { enabled, .. } | DeviceSetting::Osc { enabled, .. } | DeviceSetting::Http { enabled, .. } => Some(enabled),
+            DeviceSetting::Midi { enabled, .. } | DeviceSetting::Osc { enabled, .. } | DeviceSetting::Http { enabled, .. } | DeviceSetting::Artnet { enabled, .. } => Some(enabled),
             DeviceSetting::Display { .. } => None,
         }
     }
@@ -42,6 +43,7 @@ impl DeviceSetting {
     pub fn kind(&self) -> &'static str {
         match self {
             DeviceSetting::Midi { .. } => "MIDI",
+            DeviceSetting::Artnet { .. } => "Art-Net",
             DeviceSetting::Osc { .. } => "OSC",
             DeviceSetting::Http { .. } => "HTTP",
             DeviceSetting::Display { .. } => "Display",
@@ -50,7 +52,7 @@ impl DeviceSetting {
 
     pub fn name(&self) -> &str {
         match self {
-            DeviceSetting::Midi { name, .. } | DeviceSetting::Osc { name, .. } | DeviceSetting::Http { name, .. } | DeviceSetting::Display { name, .. } => name,
+            DeviceSetting::Midi { name, .. } | DeviceSetting::Osc { name, .. } | DeviceSetting::Http { name, .. } | DeviceSetting::Display { name, .. } | DeviceSetting::Artnet { name, .. } => name,
         }
     }
 }
@@ -67,6 +69,20 @@ pub enum DeviceSetting {
         trigger_notes: bool,
         #[serde(default)]
         timecode: bool,
+        /// The frame rate of the timecode sent to it.
+        #[serde(default)]
+        frame_rate: FrameRate,
+    },
+    /// Art-Net timecode, to a device or a broadcast address. It takes no cue messages.
+    Artnet {
+        name: String,
+        host: String,
+        #[serde(default = "artnet_port")]
+        port: u16,
+        #[serde(default = "yes")]
+        enabled: bool,
+        #[serde(default)]
+        frame_rate: FrameRate,
     },
     Osc {
         name: String,
@@ -98,6 +114,39 @@ pub enum DeviceSetting {
 
 fn yes() -> bool {
     true
+}
+
+/// The UDP port of Art-Net.
+pub fn artnet_port() -> u16 {
+    6454
+}
+
+/// Go, Back, ▲ and ▼ over OSC (see [`crate::inputs::OscControl`]).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OscControlSetting {
+    pub enabled: bool,
+    pub port: u16,
+    /// Accept from the network, not only from this computer.
+    pub network: bool,
+    pub go: String,
+    pub back: String,
+    pub up: String,
+    pub down: String,
+}
+
+impl Default for OscControlSetting {
+    fn default() -> Self {
+        OscControlSetting {
+            enabled: false,
+            port: 8002,
+            network: false,
+            go: "/mdstage/go".into(),
+            back: "/mdstage/back".into(),
+            up: "/mdstage/up".into(),
+            down: "/mdstage/down".into(),
+        }
+    }
 }
 
 /// An optional OSC argument as stored: its type and its text.
@@ -178,6 +227,10 @@ pub struct Settings {
     pub outputs_blocked: bool,
     pub go_note: Option<NoteSetting>,
     pub back_note: Option<NoteSetting>,
+    /// Notes for the live view's ▲ and ▼ (arm the cue before / after the next Go).
+    pub up_note: Option<NoteSetting>,
+    pub down_note: Option<NoteSetting>,
+    pub osc_control: OscControlSetting,
     /// MIDI input for Go/Back; `None` listens on all.
     pub control_port: Option<String>,
     pub cue_trigger: CueTriggerSetting,
@@ -225,6 +278,9 @@ impl Default for Settings {
             outputs_blocked: false,
             go_note: None,
             back_note: None,
+            up_note: None,
+            down_note: None,
+            osc_control: OscControlSetting::default(),
             control_port: None,
             cue_trigger: CueTriggerSetting::Off,
             emergency_light: None,
@@ -284,7 +340,7 @@ impl Settings {
                     DeviceSetting::Http { name, url, enabled } => {
                         Device { name: name.clone(), address: Address::Http { url: url.clone() }, enabled: *enabled, trigger_notes: false }
                     }
-                    DeviceSetting::Display { .. } => return None,
+                    DeviceSetting::Display { .. } | DeviceSetting::Artnet { .. } => return None,
                 })
             })
             .collect();
@@ -346,12 +402,13 @@ impl Settings {
         })
     }
 
-    /// MIDI ports that receive timecode.
-    pub fn timecode_ports(&self) -> Vec<String> {
+    /// The devices that receive timecode, each at its frame rate.
+    pub fn timecode_targets(&self) -> Vec<TimecodeTarget> {
         self.devices
             .iter()
             .filter_map(|d| match d {
-                DeviceSetting::Midi { port, enabled: true, timecode: true, .. } => Some(port.clone()),
+                DeviceSetting::Midi { port, enabled: true, timecode: true, frame_rate, .. } => Some(TimecodeTarget::Midi { port: port.clone(), rate: *frame_rate }),
+                DeviceSetting::Artnet { host, port, enabled: true, frame_rate, .. } if !host.trim().is_empty() => Some(TimecodeTarget::Artnet { host: host.trim().to_string(), port: *port, rate: *frame_rate }),
                 _ => None,
             })
             .collect()
@@ -361,6 +418,16 @@ impl Settings {
         InputSettings {
             go: self.go_note.map(Note::from),
             back: self.back_note.map(Note::from),
+            up: self.up_note.map(Note::from),
+            down: self.down_note.map(Note::from),
+            osc_control: self.osc_control.enabled.then(|| OscControl {
+                port: self.osc_control.port,
+                network: self.osc_control.network,
+                go: self.osc_control.go.clone(),
+                back: self.osc_control.back.clone(),
+                up: self.osc_control.up.clone(),
+                down: self.osc_control.down.clone(),
+            }),
             control_port: self.control_port.clone(),
             cue_trigger: match &self.cue_trigger {
                 CueTriggerSetting::Off => CueTrigger::Off,
@@ -436,7 +503,7 @@ mod tests {
         assert!(!outputs.devices[2].enabled);
         assert_eq!(outputs.mixers[0], MicMixer { address: Address::Midi { port: "X32".into() }, method: MuteMethod::X32 });
         assert!(matches!(&outputs.mixers[1].method, MuteMethod::Osc { on_arg: Some(OscArg::Int(1)), off_arg: Some(OscArg::Int(0)), .. }));
-        assert_eq!(settings.timecode_ports(), ["DMX Interface"]);
+        assert_eq!(settings.timecode_targets(), [TimecodeTarget::Midi { port: "DMX Interface".into(), rate: FrameRate::Fps25 }]);
         assert_eq!(settings.displays()[0].style, "subtitle");
         assert_eq!(settings.inputs().go, Some(Note { ch: 1, note: 36 }));
         assert_eq!(settings.inputs().cue_trigger, CueTrigger::Osc { port: 8001, network: false });
