@@ -892,16 +892,16 @@ impl ScriptView {
     /// The timecode a cue without `start_tc` starts at because the timecode of the cue
     /// before it in its chain runs on. `None`: there is none. `Some(None)`: there is,
     /// but an audio file's length is not known yet.
-    fn derived_timecode(cues: &Cues, cue: usize, durations: &HashMap<String, f64>, depth: usize) -> Option<Option<f64>> {
+    fn derived_timecode(cues: &Cues, cue: usize, durations: &HashMap<String, f64>, rate: mdstage_engine::mtc::FrameRate, depth: usize) -> Option<Option<f64>> {
         let before = Self::predecessor(cues, cue).filter(|_| depth < 8)?;
         let earlier = cues.get(before)?;
         // A crossfading loop has no timecode, so none runs on from it.
         if earlier.audio().is_some_and(|audio| audio.crossfade().is_some()) {
             return None;
         }
-        let base = match earlier.text("start_tc").and_then(Timecode::parse) {
-            Some(timecode) => Some(timecode.to_frames() as f64 / mdstage_engine::mtc::FPS as f64),
-            None => Self::derived_timecode(cues, before, durations, depth + 1)?,
+        let base = match earlier.text("start_tc").and_then(Timecode::parse).and_then(|timecode| rate.seconds(timecode)) {
+            Some(seconds) => Some(seconds),
+            None => Self::derived_timecode(cues, before, durations, rate, depth + 1)?,
         };
         // How long the earlier cue plays before it hands over: every part from its start
         // to its transition point.
@@ -974,8 +974,9 @@ impl ScriptView {
         }
         let cues = Cues::new(cx.script);
         if cue.text("start_tc").is_none() {
-            if let Some(derived) = Self::derived_timecode(&cues, cue_index, durations, 0) {
-                let timecode = derived.map_or("--:--:--:--".to_string(), |seconds| Timecode::from_frames((seconds * mdstage_engine::mtc::FPS as f64).round() as u64).to_string());
+            let rate = cx.snapshot.frame_rate;
+            if let Some(derived) = Self::derived_timecode(&cues, cue_index, durations, rate, 0) {
+                let timecode = derived.map_or("--:--:--:--".to_string(), |seconds| rate.show(seconds));
                 rows.push(Row::plain("TC", vec![(timecode, TEXT), (t("(abgeleitet)", "(derived)").to_string(), MUTED)]));
             }
         }

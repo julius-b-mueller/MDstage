@@ -11,7 +11,6 @@ use mdstage_core::mic::{Mic, MicChip};
 use mdstage_core::yaml::Value;
 use mdstage_core::{Block, Script};
 use mdstage_engine::clock::VoiceState;
-use mdstage_engine::mtc::Timecode;
 use mdstage_engine::session::Request;
 
 use crate::lang::t;
@@ -40,9 +39,6 @@ const GLOW_STRENGTH: f32 = 0.30;
 const GLOW_SOFTNESS: f32 = 8.0;
 const GLOW_REACH: usize = 20;
 
-fn timecode(seconds: f64) -> String {
-    Timecode::from_frames((seconds * 25.0).floor().max(0.0) as u64).to_string()
-}
 
 /// One line that tells a cue apart: its note, audio, or the text around it.
 fn summary(script: &Script, cue: usize) -> String {
@@ -212,7 +208,7 @@ impl LiveView {
                 ui.spacing_mut().item_spacing.x = 16.0;
                 readout(ui, &chrono::Local::now().format("%H:%M:%S").to_string(), 34.0, TEXT);
                 let running = snapshot.timecode.is_some();
-                readout(ui, &snapshot.timecode.map_or("--:--:--:--".to_string(), timecode), 22.0, if running { YELLOW } else { MUTED });
+                readout(ui, &snapshot.timecode.map_or("--:--:--:--".to_string(), |seconds| snapshot.frame_rate.show(seconds)), 22.0, if running { YELLOW } else { MUTED });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // The emergency buttons, in the corner as in the main window.
                     ui.spacing_mut().item_spacing.x = 10.0;

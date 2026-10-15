@@ -69,9 +69,9 @@ pub enum DeviceSetting {
         trigger_notes: bool,
         #[serde(default)]
         timecode: bool,
-        /// The frame rate of the timecode sent to it.
+        /// The frame rate of the timecode sent to it; `None`: the show's.
         #[serde(default)]
-        frame_rate: FrameRate,
+        frame_rate: Option<FrameRate>,
     },
     /// Art-Net timecode, to a device or a broadcast address. It takes no cue messages.
     Artnet {
@@ -81,8 +81,9 @@ pub enum DeviceSetting {
         port: u16,
         #[serde(default = "yes")]
         enabled: bool,
+        /// `None`: the show's.
         #[serde(default)]
-        frame_rate: FrameRate,
+        frame_rate: Option<FrameRate>,
     },
     Osc {
         name: String,
@@ -262,6 +263,10 @@ pub struct Settings {
     /// The cue the next Go fires, by show file: where the operator had got to. A show
     /// that is opened again goes on from there.
     pub next_cue: HashMap<String, usize>,
+    /// The frame rate of each show (by show file): what the frames of its `start_tc`
+    /// count, and what timecode devices get unless they are set to another. 25 fps for
+    /// a show that is not listed.
+    pub frame_rates: HashMap<String, FrameRate>,
     /// SHA-256 of each show file as this machine last wrote it. A file that differs was
     /// changed elsewhere and must be confirmed before it may drive devices.
     pub trusted: HashMap<String, String>,
@@ -297,6 +302,7 @@ impl Default for Settings {
             mic_off_delay: 7.0,
             recent_files: Vec::new(),
             next_cue: HashMap::new(),
+            frame_rates: HashMap::new(),
             trusted: HashMap::new(),
         }
     }
@@ -402,13 +408,19 @@ impl Settings {
         })
     }
 
-    /// The devices that receive timecode, each at its frame rate.
-    pub fn timecode_targets(&self) -> Vec<TimecodeTarget> {
+    /// The frame rate of the show in this file.
+    pub fn frame_rate(&self, show: &Path) -> FrameRate {
+        self.frame_rates.get(show.to_string_lossy().as_ref()).copied().unwrap_or_default()
+    }
+
+    /// The devices that receive timecode, each at its frame rate (the show's, `show`,
+    /// unless it has one of its own).
+    pub fn timecode_targets(&self, show: FrameRate) -> Vec<TimecodeTarget> {
         self.devices
             .iter()
             .filter_map(|d| match d {
-                DeviceSetting::Midi { port, enabled: true, timecode: true, frame_rate, .. } => Some(TimecodeTarget::Midi { port: port.clone(), rate: *frame_rate }),
-                DeviceSetting::Artnet { host, port, enabled: true, frame_rate, .. } if !host.trim().is_empty() => Some(TimecodeTarget::Artnet { host: host.trim().to_string(), port: *port, rate: *frame_rate }),
+                DeviceSetting::Midi { port, enabled: true, timecode: true, frame_rate, .. } => Some(TimecodeTarget::Midi { port: port.clone(), rate: frame_rate.unwrap_or(show) }),
+                DeviceSetting::Artnet { host, port, enabled: true, frame_rate, .. } if !host.trim().is_empty() => Some(TimecodeTarget::Artnet { host: host.trim().to_string(), port: *port, rate: frame_rate.unwrap_or(show) }),
                 _ => None,
             })
             .collect()
@@ -503,7 +515,7 @@ mod tests {
         assert!(!outputs.devices[2].enabled);
         assert_eq!(outputs.mixers[0], MicMixer { address: Address::Midi { port: "X32".into() }, method: MuteMethod::X32 });
         assert!(matches!(&outputs.mixers[1].method, MuteMethod::Osc { on_arg: Some(OscArg::Int(1)), off_arg: Some(OscArg::Int(0)), .. }));
-        assert_eq!(settings.timecode_targets(), [TimecodeTarget::Midi { port: "DMX Interface".into(), rate: FrameRate::Fps25 }]);
+        assert_eq!(settings.timecode_targets(FrameRate::Fps30), [TimecodeTarget::Midi { port: "DMX Interface".into(), rate: FrameRate::Fps30 }], "the show's rate");
         assert_eq!(settings.displays()[0].style, "subtitle");
         assert_eq!(settings.inputs().go, Some(Note { ch: 1, note: 36 }));
         assert_eq!(settings.inputs().cue_trigger, CueTrigger::Osc { port: 8001, network: false });

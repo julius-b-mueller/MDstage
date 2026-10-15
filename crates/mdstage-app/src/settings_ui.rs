@@ -20,11 +20,13 @@ enum Learning {
     Down,
 }
 
-/// The frame rate of a device's timecode.
-fn rate_choice(ui: &mut Ui, id: impl std::hash::Hash, rate: &mut FrameRate) {
-    egui::ComboBox::from_id_salt(id).selected_text(rate.label()).width(120.0).show_ui(ui, |ui| {
+/// The frame rate of a device's timecode: its own, or the show's (`None`).
+fn rate_choice(ui: &mut Ui, id: impl std::hash::Hash, rate: &mut Option<FrameRate>) {
+    let like_show = t("wie die Show", "as the show");
+    egui::ComboBox::from_id_salt(id).selected_text(rate.map_or(like_show, FrameRate::label)).width(120.0).show_ui(ui, |ui| {
+        ui.selectable_value(rate, None, like_show);
         for choice in FrameRate::ALL {
-            ui.selectable_value(rate, choice, choice.label());
+            ui.selectable_value(rate, Some(choice), choice.label());
         }
     });
 }
@@ -53,6 +55,8 @@ pub struct SettingsUi {
     css_files: Vec<String>,
     /// This machine's address in the local network, if it has one.
     lan_address: Option<String>,
+    /// The open show's file, as its settings are kept under (its frame rate).
+    show_file: Option<String>,
 }
 
 /// A text field that takes the remaining room up to `width`.
@@ -139,6 +143,7 @@ impl SettingsUi {
             css_files: Vec::new(),
             // Asking which local address a route to the outside would use sends nothing.
             lan_address: std::net::UdpSocket::bind("0.0.0.0:0").and_then(|s| s.connect("192.0.2.1:9").and_then(|()| s.local_addr())).ok().map(|a| a.ip().to_string()),
+            show_file: None,
         }
     }
 
@@ -149,6 +154,11 @@ impl SettingsUi {
     }
 
     /// List the stylesheets of the open show (`css/*.css` next to the show file).
+    pub fn with_show_file(mut self, file: Option<String>) -> SettingsUi {
+        self.show_file = file;
+        self
+    }
+
     pub fn with_show_dir(mut self, show_dir: Option<&std::path::Path>) -> SettingsUi {
         let entries = show_dir.and_then(|dir| std::fs::read_dir(dir.join("css")).ok());
         self.css_files = entries.into_iter().flatten().filter_map(|e| e.ok()?.file_name().into_string().ok()).filter(|n| n.to_lowercase().ends_with(".css")).collect();
@@ -370,7 +380,7 @@ impl SettingsUi {
             }
             ui.horizontal(|ui| {
                 if ui.button("+ MIDI").clicked() {
-                    draft.devices.push(DeviceSetting::Midi { name: String::new(), port: String::new(), enabled: true, trigger_notes: false, timecode: false, frame_rate: FrameRate::default() });
+                    draft.devices.push(DeviceSetting::Midi { name: String::new(), port: String::new(), enabled: true, trigger_notes: false, timecode: false, frame_rate: None });
                 }
                 if ui.button("+ OSC").clicked() {
                     draft.devices.push(DeviceSetting::Osc { name: String::new(), host: "127.0.0.1".into(), port: 8000, enabled: true, trigger_notes: false });
@@ -382,10 +392,27 @@ impl SettingsUi {
                     draft.devices.push(DeviceSetting::Display { name: String::new(), style: "dark".into(), scroll_seconds: 0, language: String::new(), repeat: false });
                 }
                 if ui.button("+ Art-Net").on_hover_text(t("Art-Net-Timecode an ein Gerät oder eine Broadcast-Adresse", "Art-Net timecode to a device or a broadcast address")).clicked() {
-                    draft.devices.push(DeviceSetting::Artnet { name: "Art-Net".into(), host: "2.255.255.255".into(), port: mdstage_engine::settings::artnet_port(), enabled: true, frame_rate: FrameRate::default() });
+                    draft.devices.push(DeviceSetting::Artnet { name: "Art-Net".into(), host: "2.255.255.255".into(), port: mdstage_engine::settings::artnet_port(), enabled: true, frame_rate: None });
                 }
             });
-            ui.label(RichText::new(t("Timecode geht an MIDI-Geräte mit Haken bei „Timecode“ (als MTC) und an Art-Net-Geräte, jedes mit seiner Framerate. Die Zeiten im Skript (start_tc) zählen die Frames mit 25 fps.", "Timecode goes to MIDI devices with “Timecode” ticked (as MTC) and to Art-Net devices, each at its own frame rate. Times in the script (start_tc) count frames at 25 fps.")).color(MUTED));
+            ui.label(RichText::new(t("Timecode geht an MIDI-Geräte mit Haken bei „Timecode“ (als MTC) und an Art-Net-Geräte – mit der Framerate der Show oder einer eigenen.", "Timecode goes to MIDI devices with “Timecode” ticked (as MTC) and to Art-Net devices – at the show's frame rate or one of their own.")).color(MUTED));
+            // The show's frame rate: kept on this computer, by show file.
+            if let Some(file) = &self.show_file {
+                ui.horizontal(|ui| {
+                    ui.label(t("Framerate dieser Show", "This show's frame rate"));
+                    let mut rate = draft.frame_rates.get(file).copied().unwrap_or_default();
+                    egui::ComboBox::from_id_salt("show-rate").selected_text(rate.label()).width(130.0).show_ui(ui, |ui| {
+                        for choice in FrameRate::ALL {
+                            ui.selectable_value(&mut rate, choice, choice.label());
+                        }
+                    });
+                    match rate == FrameRate::default() {
+                        true => drop(draft.frame_rates.remove(file)),
+                        false => drop(draft.frame_rates.insert(file.clone(), rate)),
+                    }
+                });
+                ui.label(RichText::new(t("Gilt für die Start-Timecodes im Skript (start_tc), die Anzeige und alle Geräte auf „wie die Show“. Sie wird auf diesem Rechner gespeichert, nicht in der Show-Datei.", "Applies to the start timecodes in the script (start_tc), the display and every device set to “as the show”. It is kept on this computer, not in the show file.")).color(MUTED));
+            }
 
             ui.add_space(12.0);
             ui.heading("Display-Server");

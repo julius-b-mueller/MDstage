@@ -29,7 +29,6 @@ use mdstage_core::cues::Cues;
 use mdstage_core::mic::Cast;
 use mdstage_core::validate::Report;
 use mdstage_core::{Block, Script};
-use mdstage_engine::mtc::Timecode;
 use mdstage_engine::session::{Request, Session, Snapshot};
 use mdstage_engine::settings::Settings;
 
@@ -56,6 +55,15 @@ struct OpenShow {
     /// (see `Snapshot::script_version`).
     sent: Script,
     sent_count: u64,
+}
+
+/// What is wrong with a show file, timecodes at the show's frame rate included (that rate
+/// is kept on this computer, not in the file).
+fn report(script: &Script, rate: mdstage_engine::mtc::FrameRate) -> Report {
+    let mut report = script.validate();
+    report.problems.extend(script.validate_frames(rate.nominal() as u32));
+    report.problems.sort_by_key(|problem| problem.block);
+    report
 }
 
 /// This version of MDstage, as it is noted in show files.
@@ -219,7 +227,7 @@ impl App {
         self.show = Some(OpenShow {
             path: path.to_path_buf(),
             cast: Cast::from_script(&loaded.script, self.english()),
-            report: loaded.script.validate(),
+            report: report(&loaded.script, self.settings.frame_rate(path)),
             sent: loaded.script.clone(),
             sent_count: 0,
             script: loaded.script,
@@ -229,6 +237,9 @@ impl App {
             saved_by_other,
         });
         self.version_notice = saved_by_other_shown;
+        if let Some(show) = &self.show {
+            show.session.send(Request::FrameRate(self.settings.frame_rate(path)));
+        }
         // Where the operator had got to in this show the last time: go on from there.
         if let (Some(&cue), Some(show)) = (self.settings.next_cue.get(path.to_string_lossy().as_ref()), &self.show) {
             if cue > 0 && cue < Cues::new(&show.script).len() {
@@ -263,9 +274,10 @@ impl App {
     /// The script was edited: check it, write the file and tell the running show.
     fn after_edit(&mut self) {
         let english = self.english();
+        let rate = self.show.as_ref().map(|show| self.settings.frame_rate(&show.path)).unwrap_or_default();
         let Some(show) = &mut self.show else { return };
         show.cast = Cast::from_script(&show.script, english);
-        show.report = show.script.validate();
+        show.report = report(&show.script, rate);
         if show.saved_by_other.is_some() {
             // Nothing is written into a file of another version before the operator
             // has agreed; until then the edit only exists in this window.
@@ -952,7 +964,7 @@ impl App {
             self.export.get_or_insert((EXPORT_DEFAULTS, false));
         }
         if pressed(ctx, Key::Comma) && self.settings_ui.is_none() {
-            self.settings_ui = Some(SettingsUi::new(&self.settings).with_channels(self.show.as_ref().map(|s| s.script.virtual_channels()).unwrap_or_default()).with_show_dir(self.show.as_ref().and_then(|s| s.path.parent())).with_colours(self.device_colours()));
+            self.settings_ui = Some(SettingsUi::new(&self.settings).with_channels(self.show.as_ref().map(|s| s.script.virtual_channels()).unwrap_or_default()).with_show_dir(self.show.as_ref().and_then(|s| s.path.parent())).with_show_file(self.show.as_ref().map(|s| s.path.to_string_lossy().into_owned())).with_colours(self.device_colours()));
         }
         // Go and Back only when nothing is being typed.
         if self.show.is_some() && !self.view.is_editing() && !ctx.wants_keyboard_input() {
@@ -1066,7 +1078,7 @@ impl App {
                 }
                 if ui.button(self.t("Einstellungen…", "Settings…")).clicked() {
                     ui.close_menu();
-                    self.settings_ui = Some(SettingsUi::new(&self.settings).with_channels(self.show.as_ref().map(|s| s.script.virtual_channels()).unwrap_or_default()).with_show_dir(self.show.as_ref().and_then(|s| s.path.parent())).with_colours(self.device_colours()));
+                    self.settings_ui = Some(SettingsUi::new(&self.settings).with_channels(self.show.as_ref().map(|s| s.script.virtual_channels()).unwrap_or_default()).with_show_dir(self.show.as_ref().and_then(|s| s.path.parent())).with_show_file(self.show.as_ref().map(|s| s.path.to_string_lossy().into_owned())).with_colours(self.device_colours()));
                 }
                 if ui.button(self.t("Beenden", "Quit")).clicked() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1208,7 +1220,7 @@ impl App {
                 }
                 ui.add_space(6.0);
                 let running = self.snapshot.timecode.is_some();
-                let tc = self.snapshot.timecode.map_or("--:--:--:--".to_string(), |s| Timecode::from_frames((s * 25.0).floor().max(0.0) as u64).to_string());
+                let tc = self.snapshot.timecode.map_or("--:--:--:--".to_string(), |s| self.snapshot.frame_rate.show(s));
                 theme::readout(ui, &tc, 20.0, if running { YELLOW } else { MUTED }).on_hover_text("Timecode");
                 theme::readout(ui, &chrono::Local::now().format("%H:%M:%S").to_string(), 26.0, TEXT).on_hover_text(self.t("Uhrzeit", "Time of day"));
             });
@@ -1438,11 +1450,15 @@ impl App {
                 match reopen {
                     // The display server is opened with the show.
                     Some((path, _)) if restart => self.open(&path, ctx),
-                    Some((_, trusted)) => {
+                    Some((path, trusted)) => {
                         self.request(Request::Configure(Box::new(self.settings.clone()), trusted));
+                        // The show's frame rate may have changed: timecode and its check.
+                        let rate = self.settings.frame_rate(&path);
+                        self.request(Request::FrameRate(rate));
                         let english = self.english();
                         if let Some(show) = &mut self.show {
                             show.cast = Cast::from_script(&show.script, english);
+                            show.report = report(&show.script, rate);
                         }
                     }
                     None => {}

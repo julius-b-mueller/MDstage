@@ -167,7 +167,7 @@ Every cue needs a trigger note of its own; only the variants of a cue share its 
 | `auto_mic: true` | Enables Auto-Mic for this cue (see [Auto-Mic](#auto-mic)). |
 | `music: file.wav` | Audio file from the `audio/` subfolder. Short form or object (see below). |
 | `note: "Note"` | Internal note displayed on the trigger panel. |
-| `start_tc: "01:00:00:00"` | Start timecode (HH:MM:SS:FF, frames counted at 25 fps) sent as MTC / Art-Net timecode when the cue fires. Each device gets it at its own frame rate. |
+| `start_tc: "01:00:00:00"` | Start timecode (HH:MM:SS:FF, or HH:MM:SS;FF for drop-frame; frames counted at the show's frame rate) sent as MTC / Art-Net timecode when the cue fires. |
 | `osc: "/path/{ch}"` | OSC message path sent when the cue fires (legacy — see [OSC Output](#osc-output)). |
 | `cue_midi: [...]` | List of MIDI messages sent when the cue fires (see [MIDI](#midi)). |
 | `cue_osc: [...]` | List of OSC messages sent when the cue fires (see [OSC Output](#osc-output)). |
@@ -748,9 +748,9 @@ Each display device chooses a stylesheet: a built-in **dark** (default), **light
 
 ## Timecode (MTC / Art-Net)
 
-The app generates timecode synchronised to audio playback, as MIDI Timecode (to MIDI output devices with *Timecode (MTC)* ticked) and as Art-Net timecode (ArtTimeCode, to **Art-Net** devices: `+ Art-Net` in the device list, with an address — a device or a broadcast address such as `2.255.255.255` — and port 6454). Every device has its own frame rate: **24, 25, 29.97 drop-frame or 30 fps**. Art-Net timecode is sent once a frame. Art-Net devices take no cue messages and do not appear in the show file.
+The app generates timecode synchronised to audio playback, as MIDI Timecode (to MIDI output devices with *Timecode (MTC)* ticked) and as Art-Net timecode (ArtTimeCode, to **Art-Net** devices: `+ Art-Net` in the device list, with an address — a device or a broadcast address such as `2.255.255.255` — and port 6454). Art-Net timecode is sent once a frame. Art-Net devices take no cue messages and do not appear in the show file.
 
-The times in the script (`start_tc`) count frames at 25 fps; a device at another rate gets the same moment in its own frames.
+**Frame rates:** every show has a frame rate — **24, 25, 29.97 drop-frame or 30 fps** — set under *Settings → This show's frame rate* while the show is open. It is kept on this computer (by show file), not in the show file; a show without one runs at 25 fps. The show's rate is what the frames of `start_tc` count, what the timecode in the header, the live view and the cards is shown in, and what every device set to *as the show* gets. A device can have a rate of its own instead; it then gets the same moment in its own frames. A `start_tc` with more frames than a second has at the show's rate (`:27` at 25 fps) is reported when the show is opened and sends no timecode.
 
 - When a cue with `start_tc` fires, MTC starts from that offset
 - In S/L/F chains, timecode counts on without gaps

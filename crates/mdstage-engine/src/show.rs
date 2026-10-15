@@ -19,7 +19,7 @@ use mdstage_core::{Block, Script};
 
 use crate::Result;
 use crate::clock::{EngineClock, VoiceState};
-use crate::mtc::Timecode;
+use crate::mtc::{FrameRate, Timecode};
 use crate::player::{Player, Start, Then};
 
 /// Fade used when Back stops what the undone cues started.
@@ -169,6 +169,8 @@ pub struct Show {
     /// `(part, seconds)`. Playing the cue's audio from the waveform starts there.
     paused: HashMap<usize, (usize, f64)>,
     timecode: Option<TimecodeSource>,
+    /// The rate `start_tc` is read at.
+    frame_rate: FrameRate,
     effects: Vec<Effect>,
     /// Things that went wrong and the operator should know about.
     problems: Vec<String>,
@@ -202,6 +204,7 @@ impl Show {
             stops: Vec::new(),
             paused: HashMap::new(),
             timecode: None,
+            frame_rate: FrameRate::default(),
             effects: Vec::new(),
             problems: Vec::new(),
             shown: HashMap::new(),
@@ -211,6 +214,20 @@ impl Show {
 
     pub fn script(&self) -> &Script {
         &self.script
+    }
+
+    /// The show's frame rate: what the frames of `start_tc` count.
+    pub fn set_frame_rate(&mut self, rate: FrameRate) {
+        self.frame_rate = rate;
+    }
+
+    pub fn frame_rate(&self) -> FrameRate {
+        self.frame_rate
+    }
+
+    /// The moment `start_tc` stands for, if it is a timecode at the show's rate.
+    fn start_tc(&self, text: Option<&str>) -> Option<f64> {
+        self.frame_rate.seconds(Timecode::parse(text?)?)
     }
 
     /// Swap in an edited script while the show runs. Nothing stops: every cue is found
@@ -741,7 +758,7 @@ impl Show {
         // A loop that crossfades has none: two passes sound at once, so there is no one
         // place in the audio a timecode could stand for.
         let crossfaded = c.audio().is_some_and(|audio| audio.crossfade().is_some());
-        let start_tc = c.text("start_tc").and_then(Timecode::parse).filter(|_| !crossfaded);
+        let start_tc = self.start_tc(c.text("start_tc")).filter(|_| !crossfaded);
         // A handoff happens at the end of the source's stretch, so that is where the
         // count carries on — the source itself may already be gone.
         let hands_off_here = |from: usize| cues.get(from).and_then(|source| source.loop_outro().or(source.chain_end())).is_some_and(|note| cues.refers_to(note, cue));
@@ -784,7 +801,7 @@ impl Show {
             }
             // Fired on its own, a cue further down a chain still counts from where its
             // timecode would stand had the chain run up to it.
-            let base = start_tc.map(|tc| tc.to_frames() as f64 / crate::mtc::FPS as f64).or(continued).or_else(|| self.derived_timecode(cue, 0));
+            let base = start_tc.or(continued).or_else(|| self.derived_timecode(cue, 0));
             if let Some(base) = base.filter(|_| !crossfaded) {
                 self.timecode = Some(TimecodeSource { cue, base, spans });
             }
@@ -998,8 +1015,9 @@ impl Show {
         if resume.0 == 0 {
             self.watch(cue, Some(resume.1));
         }
-        let tc = Cues::new(&self.script).get(cue).and_then(|c| c.text("start_tc")).and_then(Timecode::parse);
-        let base = tc.map(|tc| tc.to_frames() as f64 / crate::mtc::FPS as f64).or_else(|| self.derived_timecode(cue, 0));
+        let script = self.script.clone();
+        let tc = self.start_tc(Cues::new(&script).get(cue).and_then(|c| c.text("start_tc")));
+        let base = tc.or_else(|| self.derived_timecode(cue, 0));
         if let Some(base) = base.filter(|_| audio.crossfade().is_none()) {
             let spans = self.player.spans(&audio)?;
             self.timecode = Some(TimecodeSource { cue, base, spans });
@@ -1023,8 +1041,8 @@ impl Show {
         if cues.get(before)?.audio().is_some_and(|audio| audio.crossfade().is_some()) {
             return None;
         }
-        let base = match cues.get(before)?.text("start_tc").and_then(Timecode::parse) {
-            Some(tc) => tc.to_frames() as f64 / crate::mtc::FPS as f64,
+        let base = match self.start_tc(cues.get(before)?.text("start_tc")) {
+            Some(seconds) => seconds,
             None => self.derived_timecode(before, depth + 1)?,
         };
         let audio = self.audio(before)?;
@@ -1692,6 +1710,17 @@ mod tests {
 
         rig.show.mics_off();
         assert_eq!(rig.show.take_effects(), [Effect::Mic(Mic::MuteAll)]);
+    }
+
+    #[test]
+    fn start_tc_counts_frames_at_the_shows_rate() {
+        let mut first = rig(&["music: a.wav\nstart_tc: '00:00:10:15'"], &[("a.wav", 1.0, 400)]);
+        first.show.set_frame_rate(FrameRate::Fps30);
+        first.show.go().unwrap();
+        assert_eq!(first.show.timecode_seconds(), Some(10.5), "15 frames at 30 fps");
+        let mut other = rig(&["music: a.wav\nstart_tc: '00:00:10:27'"], &[("a.wav", 1.0, 400)]);
+        other.show.go().unwrap();
+        assert_eq!(other.show.timecode_seconds(), None, "no 27th frame at 25 fps: no timecode");
     }
 
     #[test]

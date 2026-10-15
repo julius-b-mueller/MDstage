@@ -54,6 +54,8 @@ pub enum Request {
     Arm(Option<usize>),
     /// Arm the cue before (`false`) or after (`true`) the next Go.
     Step(bool),
+    /// The show's frame rate (see `Settings::frame_rates`).
+    FrameRate(crate::mtc::FrameRate),
     SelectVariant(Option<usize>),
     /// The transport on a cue's waveform: play the cue's audio by itself, or pause it.
     PlayPause(usize),
@@ -133,6 +135,8 @@ pub struct Snapshot {
     /// How many edited scripts the show has taken over: the cue numbers above are those
     /// of that script.
     pub script_version: u64,
+    /// The show's frame rate, for showing timecode.
+    pub frame_rate: crate::mtc::FrameRate,
 }
 
 pub struct Session {
@@ -315,7 +319,8 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
     // Timecode: the show publishes its position with a timestamp; the MTC thread
     // extrapolates from there, so its pacing does not depend on this loop's.
     let feed: Arc<Mutex<Option<(f64, Instant)>>> = Arc::default();
-    let timecode_targets = Arc::new(Mutex::new(settings.timecode_targets()));
+    let mut frame_rate = crate::mtc::FrameRate::default();
+    let timecode_targets = Arc::new(Mutex::new(settings.timecode_targets(frame_rate)));
     let mtc = {
         let feed = feed.clone();
         let mut midi = SystemMidi::default();
@@ -364,6 +369,12 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
                 Request::Fire(cue) => show.fire(cue, false),
                 Request::Arm(cue) => Ok(show.arm(cue)),
                 Request::Step(forward) => Ok(show.step(forward)),
+                Request::FrameRate(rate) => {
+                    frame_rate = rate;
+                    show.set_frame_rate(rate);
+                    *timecode_targets.lock().unwrap() = settings.timecode_targets(rate);
+                    Ok(())
+                }
                 Request::SelectVariant(cue) => Ok(show.select_variant(cue)),
                 Request::PlayPause(cue) => show.play_pause(cue),
                 Request::Seek(cue, seconds) => show.seek(cue, seconds),
@@ -399,7 +410,7 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
                     settings = *new;
                     trusted = now_trusted;
                     outputs = settings.outputs(trusted);
-                    *timecode_targets.lock().unwrap() = settings.timecode_targets();
+                    *timecode_targets.lock().unwrap() = settings.timecode_targets(frame_rate);
                     let channels = show.script().virtual_channels();
                     show.player().set_routing(settings.routing(&channels));
                     show.set_mic_off_delay(settings.mic_off_delay);
@@ -562,6 +573,7 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
             emergency_light,
             fired_at,
             script_version,
+            frame_rate,
         };
         thread::sleep(TICK.saturating_sub(tick_started.elapsed()));
     }

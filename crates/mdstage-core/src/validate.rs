@@ -75,9 +75,11 @@ impl Checker<'_> {
     fn timecode(&mut self, cue: &Value) {
         let Some(tc) = present(cue, "start_tc") else { return };
         let text = tc.as_str().map(str::to_string).unwrap_or_else(|| show(tc));
-        let parts: Vec<&str> = text.split(':').collect();
+        // (How many frames a second has is the show's frame rate, set on the computer; the
+        // app checks that. Here: at most 29, `;` before them for drop-frame.)
+        let parts: Vec<&str> = text.split([':', ';']).collect();
         let fields: Vec<u32> = parts.iter().filter(|p| p.len() == 2).filter_map(|p| p.parse().ok()).collect();
-        let valid = parts.len() == 4 && fields.len() == 4 && fields[0] <= 23 && fields[1] <= 59 && fields[2] <= 59 && fields[3] <= 24;
+        let valid = parts.len() == 4 && fields.len() == 4 && fields[0] <= 23 && fields[1] <= 59 && fields[2] <= 59 && fields[3] <= 29;
         if !valid {
             self.report(format!("Ungültiger Timecode: \"{text}\" (Format HH:MM:SS:FF, Stunden 0–23)"));
         }
@@ -209,6 +211,31 @@ impl Checker<'_> {
 impl Script {
     /// Check every YAML block: unreadable YAML, keys outside the format, invalid field
     /// values, and trigger notes used by more than one variant group.
+    /// Timecodes (`start_tc`) with more frames than a second holds at the show's frame
+    /// rate, which is set on the computer rather than in the file (`frames`: frames a
+    /// second, 24, 25 or 30).
+    pub fn validate_frames(&self, frames: u32) -> Vec<Problem> {
+        let mut problems = Vec::new();
+        let mut number = 0;
+        for block in &self.blocks {
+            let cue = match block {
+                Block::Config(_) => {
+                    number += 1;
+                    continue;
+                }
+                Block::Cue(cue) => cue,
+                _ => continue,
+            };
+            number += 1;
+            let Some(text) = cue.yaml.get("start_tc").and_then(Value::as_str) else { continue };
+            let last = text.rsplit([':', ';']).next().and_then(|f| f.trim().parse::<u32>().ok());
+            if last.is_some_and(|f| f >= frames && f <= 29) {
+                problems.push(Problem { block: number, message: format!("Timecode \"{text}\": mehr Frames, als eine Sekunde bei {frames} fps hat (Framerate der Show in den Einstellungen)") });
+            }
+        }
+        problems
+    }
+
     pub fn validate(&self) -> Report {
         let channels = self.virtual_channels();
         let mut report = Report::default();
@@ -326,7 +353,12 @@ cue_display:
     fn reports_invalid_field_values() {
         assert_eq!(messages("start_tc: '24:00:00:00'"), ["Ungültiger Timecode: \"24:00:00:00\" (Format HH:MM:SS:FF, Stunden 0–23)"]);
         assert_eq!(messages("start_tc: '1:00:00:00'").len(), 1);
-        assert_eq!(messages("start_tc: '01:00:00:25'").len(), 1);
+        assert_eq!(messages("start_tc: '01:00:00:30'").len(), 1);
+        assert!(messages("start_tc: '01:00:00;29'").is_empty(), "drop-frame, and frames for 30 fps");
+        let script = Script::parse("```yaml\nconfig: {}\n```\n\n```yaml\nstart_tc: '01:00:00:27'\n```\n");
+        assert_eq!(script.validate_frames(30), []);
+        assert_eq!(script.validate_frames(25).len(), 1);
+        assert_eq!(script.validate_frames(25)[0].block, 2);
         assert_eq!(messages("osc: light/day"), ["Ungültiger OSC-Pfad: \"light/day\""]);
         assert_eq!(messages("osc: /bühne").len(), 1);
         assert_eq!(messages("trigger_note: {ch: 17, note: 3}"), ["trigger_note ungültig: ch=17 (1–16), note=3 (0–127)"]);

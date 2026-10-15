@@ -1,8 +1,9 @@
 //! Timecode out: MIDI timecode (MTC) and Art-Net timecode, each device at its own frame
 //! rate (24, 25, 29.97 drop-frame or 30 fps).
 //!
-//! The show counts timecode in seconds; `start_tc` in the show file is read at 25 fps
-//! (`FPS`). Each device gets that position at its own rate.
+//! The show counts timecode in seconds. `start_tc` in the show file is read at the show's
+//! frame rate (kept on this computer, not in the file; 25 fps unless set). Each device
+//! gets the position at its own rate, by default the show's.
 //!
 //! `MtcGenerator` is pure: given a timecode position it returns the messages that are due.
 //! `TimecodeSender` runs the generators on their own thread against a position source
@@ -16,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-/// The frame rate `start_tc` in the show file is counted in.
+/// Frames a second of `Timecode::from_frames`/`to_frames` (25).
 pub const FPS: u64 = 25;
 #[cfg(test)]
 const RATE_25: u8 = 0b01;
@@ -50,7 +51,7 @@ impl FrameRate {
     }
 
     /// Frames a second as the labels count them.
-    fn nominal(self) -> u64 {
+    pub fn nominal(self) -> u64 {
         match self {
             FrameRate::Fps24 => 24,
             FrameRate::Fps25 => 25,
@@ -95,6 +96,32 @@ impl FrameRate {
     pub fn frame_at(self, seconds: f64) -> u64 {
         (seconds.max(0.0) * self.real()).floor() as u64
     }
+
+    /// The moment (seconds) a timecode stands for at this rate; `None` if it has more
+    /// frames than a second holds here.
+    pub fn seconds(self, tc: Timecode) -> Option<f64> {
+        let nominal = self.nominal();
+        if tc.frames as u64 >= nominal {
+            return None;
+        }
+        let whole = tc.hours as u64 * 3600 + tc.minutes as u64 * 60 + tc.seconds as u64;
+        let mut n = whole * nominal + tc.frames as u64;
+        if self == FrameRate::Fps2997Drop {
+            let minutes = tc.hours as u64 * 60 + tc.minutes as u64;
+            n -= 2 * (minutes - minutes / 10);
+        }
+        Some(n as f64 / self.real())
+    }
+
+    /// A position (seconds) as the timecode shown at this rate; drop-frame with `;`
+    /// before the frames.
+    pub fn show(self, seconds: f64) -> String {
+        let text = self.timecode(self.frame_at(seconds + 1e-9)).to_string();
+        match self {
+            FrameRate::Fps2997Drop => format!("{};{}", &text[..8], &text[9..]),
+            _ => text,
+        }
+    }
 }
 
 /// Art-Net timecode (ArtTimeCode) for one frame.
@@ -136,9 +163,10 @@ impl Timecode {
         (self.hours as u64 * 3600 + self.minutes as u64 * 60 + self.seconds as u64) * FPS + self.frames as u64
     }
 
-    /// Parse `HH:MM:SS:FF`.
+    /// Parse `HH:MM:SS:FF` (or `HH:MM:SS;FF`, drop-frame), with up to 29 frames: whether
+    /// the frames fit a second is the frame rate's business ([`FrameRate::seconds`]).
     pub fn parse(s: &str) -> Option<Self> {
-        let mut parts = s.trim().split(':').map(|p| p.parse::<u8>().ok());
+        let mut parts = s.trim().split([':', ';']).map(|p| p.parse::<u8>().ok());
         let tc = Timecode {
             hours: parts.next()??,
             minutes: parts.next()??,
@@ -149,7 +177,7 @@ impl Timecode {
             && tc.hours < 24
             && tc.minutes < 60
             && tc.seconds < 60
-            && (tc.frames as u64) < FPS;
+            && tc.frames < 30;
         valid.then_some(tc)
     }
 
@@ -376,7 +404,8 @@ mod tests {
         assert_eq!(tc.to_frames(), (3600 + 120 + 3) * 25 + 4);
         assert_eq!(Timecode::from_frames(tc.to_frames()), tc);
         assert_eq!(tc.to_string(), "01:02:03:04");
-        for bad in ["", "01:02:03", "01:02:03:25", "24:00:00:00", "01:60:00:00", "a:b:c:d", "01:02:03:04:05"] {
+        assert_eq!(Timecode::parse("01:02:03;29"), Some(Timecode { hours: 1, minutes: 2, seconds: 3, frames: 29 }));
+        for bad in ["", "01:02:03", "01:02:03:30", "24:00:00:00", "01:60:00:00", "a:b:c:d", "01:02:03:04:05"] {
             assert_eq!(Timecode::parse(bad), None, "{bad:?}");
         }
     }
@@ -459,6 +488,19 @@ mod tests {
         assert_eq!(df.timecode(17982).to_string(), "00:10:00:00");
         assert_eq!(FrameRate::Fps30.timecode(29).to_string(), "00:00:00:29");
         assert_eq!(FrameRate::Fps24.timecode(24).to_string(), "00:00:01:00");
+
+        // A timecode is the moment it stands for at the rate, and back.
+        for rate in FrameRate::ALL {
+            for text in ["00:00:00:00", "01:00:00:00", "00:01:00:02", "00:09:59:23", "10:23:45:12"] {
+                let tc = Timecode::parse(text).unwrap();
+                let seconds = rate.seconds(tc).unwrap();
+                assert_eq!(rate.timecode(rate.frame_at(seconds + 1e-9)), tc, "{rate:?} {text}");
+            }
+        }
+        assert_eq!(FrameRate::Fps25.seconds(Timecode::parse("00:00:01:12").unwrap()), Some(1.48));
+        assert_eq!(FrameRate::Fps25.seconds(Timecode::parse("00:00:01:27").unwrap()), None, "no 27th frame at 25 fps");
+        assert_eq!(FrameRate::Fps2997Drop.show(3600.0), "01:00:00;00");
+        assert_eq!(FrameRate::Fps24.show(1.5), "00:00:01:12");
 
         // The rate goes into MTC (hours byte) and Art-Net (type byte).
         let tc = Timecode::parse("01:02:03:04").unwrap();

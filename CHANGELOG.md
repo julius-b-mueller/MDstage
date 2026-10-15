@@ -32,9 +32,11 @@ des Rechners. Die Show-Datei wird nur geschrieben, wenn das Skript bearbeitet wi
 - Mit offener Liveansicht ist die Hauptansicht gesperrt (von Hand entsperrbar); beim
   Schließen gilt wieder der vorige Zustand.
 - Leer gelassene Textzeilen werden entfernt.
-- Timecode: Jedes Gerät bekommt Timecode in seiner eigenen Framerate (24, 25, 29,97 drop
-  oder 30 fps). Neu ist Art-Net-Timecode (Geräteart „Art-Net“, Adresse und Port 6454,
-  einmal pro Frame). `start_tc` zählt die Frames weiter mit 25 fps.
+- Timecode: Jede Show hat eine Framerate (24, 25, 29,97 drop oder 30 fps), eingestellt
+  in den Einstellungen und auf dem Rechner gespeichert, nicht in der Show-Datei (ohne
+  Angabe 25 fps wie bisher). Nach ihr zählen die Frames von `start_tc`, die Anzeige und
+  alle Geräte auf „wie die Show“; ein Gerät kann eine eigene Rate haben. Neu ist
+  Art-Net-Timecode (Geräteart „Art-Net“, Adresse und Port 6454, einmal pro Frame).
 - Fernsteuerung: Go, Back, ▲ und ▼ (Cue davor/danach vormerken) per OSC, mit eigenem
   UDP-Port und frei wählbaren Adressen; ▲ und ▼ auch per MIDI-Note.
 - Cues: Cmd/Strg+C auf einem Cue kopiert ihn (auch als Text), Cmd/Strg+V fügt ihn danach
@@ -43,8 +45,12 @@ des Rechners. Die Show-Datei wird nur geschrieben, wenn das Skript bearbeitet wi
 
 ### Show-Datei (YAML)
 
-- Timecode und Fernsteuerung liegen in den Einstellungen des Rechners, nicht in der
-  Show-Datei; Art-Net-Geräte werden nicht in die Show-Datei geschrieben.
+- Geändert: `start_tc` darf bis zu 29 Frames haben und `;` vor den Frames (drop-frame);
+  wie viele Frames gültig sind, richtet sich nach der Framerate der Show. Bestehende
+  Dateien gelten weiter (25 fps, wenn keine Rate eingestellt ist).
+- Framerate, Timecode-Geräte und Fernsteuerung liegen in den Einstellungen des
+  Rechners, nicht in der Show-Datei; Art-Net-Geräte werden nicht in die Show-Datei
+  geschrieben.
 - Neu: `auto_trigger.at: end` – nach dem Ende des Audios der Quelle. „Mit dem Cue" wird als
   `delay: 0` gespeichert (kein neuer Schlüssel). Ältere Versionen ignorieren `at: end`.
 
