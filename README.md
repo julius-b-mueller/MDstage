@@ -236,11 +236,15 @@ Every cue's card has an edit button (a pencil) in its bottom right corner that o
 
 **Connections between cues** are drawn as lines in the left margin, from the cue that acts (a dot) to the cue it leads to or changes (an arrow): purple for Start/Loop/Finish, orange for auto-cues, green for Adjust. An auto-cue at an audio position starts at its marker on the source's waveform. The lines are faint until the pointer is on one of their two cues. In a card, every reference to another cue ("Cue 1.47") is underlined; a click goes there.
 
-**Copy / paste:** *Copy* in a cue's context menu puts the whole cue (all of its fields) on an in-app clipboard. A paste button then appears next to every **+** insert zone, so the cue can be dropped in anywhere; the pasted copy is standalone (it gets a fresh trigger note and is never a variant). The clipboard is session-only.
+In a card, a reference to another cue names the start of its audio file as well: "Cue 1.3 (Rain at nigh…)".
+
+**Copy / paste:** *Copy* in a cue's context menu — or **Cmd/Ctrl+C** with the pointer on a cue — puts the whole cue (all of its fields) on an in-app clipboard, and its YAML block on the system clipboard as text. A paste button then appears next to every **+** insert zone, and **Cmd/Ctrl+V** with the pointer on a cue pastes it after that cue; the pasted copy is standalone (it gets a fresh trigger note and is never a variant). The clipboard is session-only.
+
+**Copying messages:** The messages a cue sends (MIDI, OSC, HTTP, display) can be copied one by one (*Copy* beside each in the cue dialog) or all at once (*Copy all messages* in the dialog, *Copy messages* in the cue's context menu). *Paste N messages* — in the dialog of another cue or its context menu — adds them, each to the end of its list.
 
 **Live (arm in live view):** Opens the live view with this cue armed as the next Go — handy for jumping straight to a specific point during a rehearsal or top-of-scene. While the show is locked the button is hidden.
 
-**Show lock:** With the lock on, the script takes one interaction only: a click on a cue. With the live view closed it fires the cue, with the live view open it arms it as the next Go. Waveforms cannot be scrolled, zoomed or dragged, the transport row and the cue buttons are off, and nothing can be edited.
+**Show lock:** With the lock on, the script takes one interaction only: a click on a cue. With the live view closed it fires the cue, with the live view open it arms it as the next Go. Waveforms cannot be scrolled, zoomed or dragged, the transport row and the cue buttons are off, and nothing can be edited. While the live view is open the main view is locked by itself (it can be unlocked by hand); when the live view closes, the lock is as it was before.
 
 ### Variants
 
@@ -490,23 +494,33 @@ The **S/L/F** button on a trigger opens a menu to configure `chain_end` or `loop
 
 ## Auto-Cue
 
-A cue can be triggered automatically by another cue (the *source*), either when the source's
-audio reaches a position, or after a delay once the source fires.
+A cue can be triggered automatically by another cue (the *source*): together with it, when
+the source's audio reaches a position, after a delay once the source fires, or when the
+source's audio has played to its end.
 
 **Setup:**
 1. Click **Auto-Cue** on the target cue
 2. Click the source cue (pick mode — any cue with a trigger note can be picked)
-3. **If the source audio is paused at a position**, that position is used (audio-position
-   auto-cue). **Otherwise** a dialog asks for a time in seconds. If that time lies within the
-   source's audio, you choose:
-   - **At that place in the source's audio:** the auto-cue gets its marker on the waveform,
-     exactly as if it had been set from the playhead. It fires whenever the audio reaches the
-     place — on every pass of a loop, and after a jump on the waveform too.
-   - **Once, with a delay:** it counts from the firing of the source and fires exactly once.
+3. A dialog offers every kind:
+   - **With the cue:** fires together with the source (stored as `delay: 0`).
+   - **After the end of its audio:** fires when the source's audio has played to its end
+     position by itself. Audio that is stopped or faded out does not count; a loop ends once
+     its outro has taken over and it has rung out; a source without audio counts as ended at
+     once. The line leaves the source at the foot of its left edge.
+   - **At the playhead (x s):** offered when the source's audio is paused or playing
+     somewhere other than its very start or end — the auto-cue gets its marker there.
+   - **After a time:** a time in seconds. If that time lies within the source's audio, you
+     choose:
+     - **At that place in the source's audio:** the auto-cue gets its marker on the waveform.
+       It fires whenever the audio reaches the place — on every pass of a loop, and after a
+       jump on the waveform too.
+     - **Once, with a delay:** it counts from the firing of the source and fires exactly once.
 
-   If the source has no audio, or the time lies past its end, it is always a delay auto-cue.
-   A delay auto-cue's line starts at the left edge of the source's card, with its seconds
-   written where it leaves. Several of them leave in the order of their delays.
+     If the source has no audio, or the time lies past its end, it is always a delay
+     auto-cue. A delay auto-cue's line starts at the left edge of the source's card, with its
+     seconds written where it leaves. Several of them leave in the order of their delays.
+
+   The cue dialog offers the same kinds (except the playhead).
 
 **Auto-cues stand in the order they fire in.** The auto-cues of one source have to fire in the order they stand in the script, so that what is read along is what happens:
 
@@ -537,9 +551,15 @@ auto_trigger:                     # audio-position form
 ```
 
 ```yaml
-auto_trigger:                     # delay form (fires 8 s after the source cue)
+auto_trigger:                     # delay form (fires 8 s after the source cue; 0 = with it)
     trigger_note: {ch: 1, note: 3}
     delay: 8.0
+```
+
+```yaml
+auto_trigger:                     # after the end of the source's audio
+    trigger_note: {ch: 1, note: 3}
+    at: end
 ```
 
 ---
@@ -790,7 +810,7 @@ Three emergency buttons in the header:
 
 A cue that has fired says when: `fired – hh:mm:ss`. Neither that time nor the place the show has got to is written into the show file; the file is only written when the script is edited.
 
-**Only scenes and cues:** a button in the toolbar folds all text away, leaving the headings and the cues.
+**Only scenes and cues:** a button in the toolbar folds all text away, leaving the headings and the cues. The view stays at the place it shows when the button is pressed.
 
 **Audio that sounds:** as in the live view, the foot of the main window has a row for every audio that is playing, with its progress and a button that stops just that one.
 
@@ -804,13 +824,22 @@ The view glides to where it is sent (a fired cue, a scene, a search hit, a refer
 
 ### Cue History (Back)
 
-Back fades the last-fired audio out over 500 ms, restores the previous cue state, and undoes mic changes.
+Back puts everything as it was before the last Go, as if Go had never been pressed. It takes back, one press at a time:
 
-**Beat-accurate loop/vamp resume:** If the undone Go had ended a loop (Vamp) by handing it off to a Finish/outro (Devamp), Back doesn't just restart the loop from its beginning — it resumes it **exactly where it would be now had the Go never happened**. The app continuously captures the loop's playback position against the AudioContext clock (sample-accurate, free of timer jitter) and, on Back, computes how far the loop would have advanced in the meantime, wraps that into the loop region, and restarts the source on the audio clock at that precise sample. For a multi-part Vamp (`music_seq`) the elapsed time is wrapped across the full sequence length, so playback resumes in the correct part *and* at the correct phase within it. The result is in-beat: the Vamp comes back as if Go had never been pressed, with no audible jump in the groove.
+1. an outro that is waiting for its loop's end (the loop goes on, the outro stays armed);
+2. a cue that is armed, or a variant that was chosen;
+3. the operator's last step:
+   - **A second press that stopped audio** (firing a cue whose audio was playing): the audio comes back where it would be now.
+   - **A cue that fired**, with every auto-cue it set off: their audio fades out over 500 ms, pending auto-cues are cancelled, and what was armed before that Go is armed again — after a jump the jump target, so that Go repeats it; a second Back clears that and Go goes on in the script.
 
-To avoid a comb-filter/phaser artefact when the Devamp shares material with the loop (e.g. same drums plus an added melody), the handover is coordinated on the audio clock: the outgoing Devamp is faded out over a short window (~50 ms) while the resumed loop snaps in with a ~12 ms anti-click ramp, so the two similar signals never overlap at full level. Single-file loops, `loop_outro` (managed) loops, and multi-part `music_seq` Vamps are all resumed beat-accurately; the timecode (`start_tc`) follows the resumed position.
+What the undone cues did to other audio is undone too:
 
-**Behavior after a jump:** Back always follows the actual trigger history, not the script order. If a cue was reached by jumping (clicking it directly), Back returns to the cue that was active before the jump — not to the cue that precedes it in the script.
+- **A loop handed over to an outro (S/L/F finish or bridge)** comes back in beat: exactly where it would be now had it never stopped. The outgoing outro fades over ~50 ms so the two never overlap at full level.
+- **Audio faded out by an adjust, stopped because a cue took over the timecode, or stopped by an auto-cue** comes back: loops in beat, other audio where it would be now (if it would not have ended by now).
+- **Volume adjusts** fade back to the level the remaining cues set.
+- **Microphones** are set as the remaining cues left them; if none of them set any, the microphones the undone cues opened go off.
+- **Timecode** follows the audio that comes back.
+- **Fired times** ("fired – hh:mm:ss") go back to the time the cue fired before, or disappear.
 
 **Device state restoration (MIDI/OSC/HTTP):** When Back pops a cue, the app checks which output devices that cue addressed via `cue_midi` / `cue_osc` / `cue_http`. For each such device, it scans backwards through the remaining cue history and resends the message set from the most recent earlier cue that addressed the same device. If no earlier cue addressed that device, nothing is sent — the device is left in its current state.
 
