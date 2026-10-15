@@ -119,6 +119,8 @@ pub enum Action {
     Delete(usize),
     /// Remember this cue for pasting.
     Copy(usize),
+    /// Add copied messages to a cue (by block), each to its list.
+    PasteMessages { block: usize, messages: Vec<(String, mdstage_core::yaml::Value)> },
     /// Insert the remembered cue before this block index.
     Paste(usize),
     /// Add a variant of this cue right after it.
@@ -265,6 +267,9 @@ struct Relation {
     /// For an auto-cue that fires after a delay: the seconds, written where its line
     /// leaves the source.
     delay: Option<f64>,
+    /// An auto-cue that fires after its source's end: the line leaves the source at the
+    /// foot of its edge.
+    at_end: bool,
 }
 
 /// Each kind of connection has one colour for everything about it — the row in the
@@ -365,6 +370,9 @@ pub struct ScriptView {
     scroll_y: f32,
     /// Only the headings and the cues are shown; the text between them is folded away.
     cues_only: bool,
+    /// What stood at the top of the view when the text was folded or unfolded, and how
+    /// far into it: the view stays there, though everything above changed its height.
+    keep_at: Option<(usize, f32)>,
     /// The connections between cues, and how many lanes they take in the margin.
     relations: Vec<Relation>,
     lanes: usize,
@@ -402,6 +410,13 @@ impl ScriptView {
     /// Show only the headings and the cues, or everything again.
     pub fn set_cues_only(&mut self, on: bool) {
         if self.cues_only != on {
+            // The block at the top of the view (a text block that folds away leaves its
+            // place to what comes after it).
+            let top = self.offsets.partition_point(|&y| y <= self.scroll_y).saturating_sub(1);
+            if let Some(&height) = self.heights.get(top) {
+                let into = if height > 0.0 { ((self.scroll_y - self.offsets[top]) / height).clamp(0.0, 1.0) } else { 0.0 };
+                self.keep_at = Some((top, into));
+            }
             self.cues_only = on;
             self.dirty = true;
         }
@@ -410,6 +425,11 @@ impl ScriptView {
     /// A block that is folded away because only headings and cues are shown.
     fn folded(&self, block: &Block) -> bool {
         self.cues_only && !matches!(block, Block::Cue(_) | Block::Heading { .. })
+    }
+
+    /// The cue block the pointer is on.
+    pub fn hovered_block(&self) -> Option<usize> {
+        self.hovered_before
     }
 
     pub fn is_editing(&self) -> bool {
@@ -578,8 +598,9 @@ impl ScriptView {
             let Some(c) = cues.get(cue) else { continue };
             let delay = c.auto_trigger().and_then(|auto| match auto.when {
                 AutoWhen::Delay(seconds) => Some(seconds),
-                AutoWhen::At(_) => None,
+                AutoWhen::At(_) | AutoWhen::End => None,
             });
+            let at_end = c.auto_trigger().is_some_and(|auto| auto.when == AutoWhen::End);
             // What points at a variant means its group: the line ends at the group's
             // frame. What a variant does itself begins at that variant. A delayed
             // auto-cue can hang on the group, and then begins at the frame.
@@ -588,7 +609,7 @@ impl ScriptView {
                 let end = |cue: Option<usize>, group: bool| cue.and_then(|c| cues.block_index(if group { cues.group_root(c) } else { c }));
                 if let (Some(from), Some(to)) = (end(from, from_group), end(to, to_group)) {
                     if from != to {
-                        found.push(Relation { from, to, tie, lane: 0, from_group, to_group, from_place: (0, 1), to_place: (0, 1), delay: delay.filter(|_| tie == Tie::Auto) });
+                        found.push(Relation { from, to, tie, lane: 0, from_group, to_group, from_place: (0, 1), to_place: (0, 1), delay: delay.filter(|_| tie == Tie::Auto), at_end: at_end && tie == Tie::Auto });
                     }
                 }
             };
@@ -701,9 +722,11 @@ impl ScriptView {
             // of its marker, if that is on screen. Its line runs out of the card in a strip
             // of its own under the waveform.
             let marker = self.auto_anchors.get(&relation.to).filter(|_| relation.tie == Tie::Auto).copied();
-            let start = marker.unwrap_or(match relation.from_group {
-                true => pos2(origin.x - GROUP_FRAME - 4.0, at_frame(relation.from)),
-                false => pos2(origin.x - 4.0, at(relation.from, relation.from_place)),
+            let foot = |block: usize| origin.y + self.offsets.get(block).copied().unwrap_or(0.0) + self.heights.get(block).copied().unwrap_or(0.0) - 6.0;
+            let start = marker.unwrap_or(match (relation.at_end, relation.from_group) {
+                (true, _) => pos2(origin.x - 4.0, foot(relation.from)),
+                (false, true) => pos2(origin.x - GROUP_FRAME - 4.0, at_frame(relation.from)),
+                (false, false) => pos2(origin.x - 4.0, at(relation.from, relation.from_place)),
             });
             let (from, to) = (start.y, if relation.to_group { at_frame(relation.to) } else { at(relation.to, relation.to_place) });
             if from.max(to) < origin.y + viewport.min.y || from.min(to) > origin.y + viewport.max.y {
@@ -964,7 +987,7 @@ impl ScriptView {
         }
         // References to other cues: each "Cue N" is a span of its own that can be clicked.
         let word = |text: &str, colour: Color32| (text.to_string(), colour, None);
-        let to = |target: Option<usize>| (target.map_or(String::new(), |c| cues.name(c)), BRIGHT, Some(target));
+        let to = |target: Option<usize>| (target.map_or(String::new(), |c| Self::name_with_file(&cues, c)), BRIGHT, Some(target));
         match cues.slf(cue_index) {
             Some(Slf::Start { next }) => rows.push(Row::linked("S/L/F", vec![word("Start →", PURPLE), to(cues.find(next))])),
             Some(Slf::Loop { outro }) => rows.push(Row::linked("S/L/F", vec![word("Loop ↩", PURPLE), to(cues.find(outro))])),
@@ -976,8 +999,12 @@ impl ScriptView {
             let text = match (auto.when, crate::lang::english()) {
                 (AutoWhen::At(at), true) => format!("automatically at {} s into", format::seconds(at)),
                 (AutoWhen::At(at), false) => format!("automatisch bei {} s in", format::seconds(at)),
+                (AutoWhen::Delay(delay), true) if delay <= 0.0 => "automatically with".to_string(),
+                (AutoWhen::Delay(delay), false) if delay <= 0.0 => "automatisch mit".to_string(),
                 (AutoWhen::Delay(delay), true) => format!("automatically {} s after", format::seconds(delay)),
                 (AutoWhen::Delay(delay), false) => format!("automatisch {} s nach", format::seconds(delay)),
+                (AutoWhen::End, true) => "automatically after the end of".to_string(),
+                (AutoWhen::End, false) => "automatisch nach dem Ende von".to_string(),
             };
             rows.push(Row::linked("Auto", vec![word(&text, ORANGE), to(cues.find(auto.source))]));
         }
@@ -1086,6 +1113,20 @@ impl ScriptView {
         rows.iter().map(|row| Self::flow(ui, None, &row.spans, &row.chips, &font, 0.0, width - 16.0 - 56.0 - 12.0 - EDIT_BUTTON, 0.0, ROW, None)).sum()
     }
 
+    /// A cue's name with the start of its audio file's name, so that a reference says
+    /// which cue it is: "Cue 1.3 (Regen am…)".
+    pub(crate) fn name_with_file(cues: &Cues, cue: usize) -> String {
+        let file = cues.get(cue).and_then(|c| c.audio()).and_then(|audio| Some(audio.parts.first()?.audios.first()?.file.clone()));
+        let Some(file) = file else { return cues.name(cue) };
+        let stem = std::path::Path::new(&file).file_stem().map_or(file.clone(), |stem| stem.to_string_lossy().into_owned());
+        const SHOWN: usize = 14;
+        let short: String = match stem.chars().count() > SHOWN {
+            true => stem.chars().take(SHOWN).collect::<String>().trim_end().to_string() + "…",
+            false => stem,
+        };
+        format!("{} ({short})", cues.name(cue))
+    }
+
     /// The position auto-cues that hang on a cue's audio, in the order of their places:
     /// `(cue, seconds)`.
     pub(crate) fn position_autos(cues: &Cues, note: Option<Note>) -> Vec<(usize, f64)> {
@@ -1093,7 +1134,7 @@ impl ScriptView {
         let mut autos: Vec<(usize, f64)> = (0..cues.len())
             .filter_map(|target| match cues.get(target)?.auto_trigger().filter(|a| a.source == note)?.when {
                 AutoWhen::At(at) => Some((target, at)),
-                AutoWhen::Delay(_) => None,
+                AutoWhen::Delay(_) | AutoWhen::End => None,
             })
             .collect();
         autos.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
@@ -1210,6 +1251,12 @@ impl ScriptView {
         }
         let total = self.offsets.last().copied().unwrap_or(0.0);
         let mut area = egui::ScrollArea::vertical().auto_shrink([false, false]);
+        if let Some((block, into)) = self.keep_at.take() {
+            let y = self.offsets.get(block).copied().unwrap_or(0.0) + self.heights.get(block).copied().unwrap_or(0.0) * into;
+            area = area.vertical_scroll_offset(y);
+            self.scroll_y = y;
+            self.scroll_to = None;
+        }
         // The view glides to where it is sent instead of jumping, so that the eye can
         // follow. Scrolling by hand takes over at once.
         if let Some(target) = self.scroll_to {
@@ -2055,6 +2102,18 @@ impl ScriptView {
             if !cx.locked {
                 pick(ui, t("Bearbeiten…", "Edit…"), Action::EditCue(block));
                 pick(ui, t("Kopieren", "Copy"), Action::Copy(block));
+                // The messages it sends, to paste into another cue.
+                let own = cue.yaml.as_mapping().map(crate::cue_forms::messages_of).unwrap_or_default();
+                if !own.is_empty() && ui.button(t("Nachrichten kopieren", "Copy messages")).clicked() {
+                    crate::cue_forms::copy_messages(ui.ctx(), own);
+                    ui.close_menu();
+                }
+                let copied = crate::cue_forms::copied_messages(ui.ctx());
+                if !copied.is_empty() {
+                    let count = crate::cue_forms::count_messages(copied.len());
+                    let label = if crate::lang::english() { format!("Paste {count}") } else { format!("{count} einfügen") };
+                    pick(ui, &label, Action::PasteMessages { block, messages: copied });
+                }
                 pick(ui, t("Variante anlegen", "Create variant"), Action::Variant(block));
                 Self::block_menu(ui, cx, block, actions);
             }

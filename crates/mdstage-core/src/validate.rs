@@ -191,8 +191,10 @@ impl Checker<'_> {
 
         if let Some(auto) = cue.get("auto_trigger").filter(|a| a.is_mapping()) {
             for key in ["at", "delay"] {
-                if let Some(value) = present(auto, key).filter(|v| !is_amount(v, None)) {
-                    self.report(format!("auto_trigger.{key} ungültig: {} (nicht-negative Zahl erwartet)", show(value)));
+                // (`at: end`: when the source's audio has ended.)
+                if let Some(value) = present(auto, key).filter(|v| !is_amount(v, None) && !(key == "at" && v.as_str() == Some("end"))) {
+                    let expected = if key == "at" { "nicht-negative Zahl oder „end“" } else { "nicht-negative Zahl" };
+                    self.report(format!("auto_trigger.{key} ungültig: {} ({expected} erwartet)", show(value)));
                 }
             }
         }
@@ -354,7 +356,7 @@ cue_display:
         assert_eq!(messages("music_seq: a.wav"), ["music_seq muss eine Liste sein"]);
         assert_eq!(
             messages("auto_trigger: {trigger_note: {ch: 1, note: 1}, at: -1, delay: x}"),
-            ["auto_trigger.at ungültig: -1 (nicht-negative Zahl erwartet)", "auto_trigger.delay ungültig: x (nicht-negative Zahl erwartet)"]
+            ["auto_trigger.at ungültig: -1 (nicht-negative Zahl oder „end“ erwartet)", "auto_trigger.delay ungültig: x (nicht-negative Zahl erwartet)"]
         );
         assert_eq!(messages("cue_midi: {device: Licht}\ncue_osc: x"), ["cue_midi muss eine Liste sein", "cue_osc muss eine Liste sein"]);
     }

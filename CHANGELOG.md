@@ -14,6 +14,33 @@ Nichts über den Stand einer Vorstellung steht in der Show-Datei: Welcher Cue de
 ist und wann ein Cue ausgelöst wurde, liegt nur im Programm bzw. in den Einstellungen
 des Rechners. Die Show-Datei wird nur geschrieben, wenn das Skript bearbeitet wird.
 
+## Unveröffentlicht
+
+- Back: alles wie vor dem Go. Was vor dem Go gearmt war (z. B. ein Sprungziel), ist wieder
+  gearmt; ein zweites Back hebt das auf. Eine gewählte Variante wird wie ein Arm zuerst
+  zurückgenommen. Ein zweiter Druck, der Audio gestoppt hat, wird zurückgenommen (das Audio
+  läuft dort weiter, wo es jetzt wäre). Audio, das der Cue ausgeblendet oder per Timecode
+  übernommen hat, kommt zurück – Loops im Takt, anderes an der Stelle, an der es jetzt
+  wäre. Mikrofone, die nur der zurückgenommene Cue geöffnet hat, gehen aus. Die Anzeige
+  „ausgelöst – hh:mm:ss" zeigt nach Back wieder die frühere Zeit.
+- Auto-Cues: neu „Mit dem Cue" und „Nach dem Ende seines Audios" (Pfeil vom unteren Ende
+  des Cue-Rands). Beim Anlegen werden immer alle Möglichkeiten angeboten, dazu „Bei der
+  Abspielposition", wenn die Wiedergabe nicht am Anfang oder Ende steht.
+- Bezüge (Ausblenden, Auto-Cue, S/L/F) zeigen den Anfang des Dateinamens: „Cue 1.3 (Regen…)".
+- Nur-Cues-Ansicht: Beim Umschalten bleibt die Ansicht an derselben Stelle.
+- Ein Cue, der während der Show eingefügt wird, lässt die Ansicht nicht mehr wegspringen.
+- Mit offener Liveansicht ist die Hauptansicht gesperrt (von Hand entsperrbar); beim
+  Schließen gilt wieder der vorige Zustand.
+- Leer gelassene Textzeilen werden entfernt.
+- Cues: Cmd/Strg+C auf einem Cue kopiert ihn (auch als Text), Cmd/Strg+V fügt ihn danach
+  ein. Nachrichten (MIDI, OSC, HTTP, Display) lassen sich einzeln oder alle kopieren und in
+  einen anderen Cue einfügen – im Cue-Dialog und per Rechtsklick.
+
+### Show-Datei (YAML)
+
+- Neu: `auto_trigger.at: end` – nach dem Ende des Audios der Quelle. „Mit dem Cue" wird als
+  `delay: 0` gespeichert (kein neuer Schlüssel). Ältere Versionen ignorieren `at: end`.
+
 ## 2.3.0
 
 ### Neu

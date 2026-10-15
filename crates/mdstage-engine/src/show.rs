@@ -91,6 +91,41 @@ struct TimecodeSource {
     spans: Vec<(f64, f64)>,
 }
 
+/// Where audio stood when a cue (or a second press) stopped it, so that Back can bring
+/// it in again where it would be now.
+#[derive(Clone, Copy, Debug)]
+struct Stopped {
+    part: usize,
+    seconds: f64,
+    /// When it was stopped (show time).
+    at: f64,
+    /// Where the part ends: audio that would have got there by now stays off.
+    end: f64,
+}
+
+/// Something the operator did with Go (or by firing a cue by hand) that Back takes back.
+struct Step {
+    /// How many cues the history held before it.
+    entry: usize,
+    /// What was armed and which variant chosen before it: Back brings that back.
+    armed: Option<usize>,
+    variant: Option<usize>,
+    /// The cue whose playing audio it stopped (a second press on a playing cue), if
+    /// that is what it did.
+    stopped: Option<usize>,
+}
+
+/// What firing a cue came to.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Fired {
+    Nothing,
+    /// Its audio was playing and was stopped.
+    Stopped,
+    /// An outro now waits for its loop's end.
+    Queued,
+    Began,
+}
+
 /// Progress of a pending delay auto-cue, for the UI.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DelayProgress {
@@ -113,6 +148,8 @@ pub struct Show {
     chains: Vec<(usize, usize)>,
     delays: Vec<Delay>,
     watches: Vec<Watch>,
+    /// `(target, source)`: auto-cues waiting for their source's audio to end by itself.
+    ends: Vec<(usize, usize)>,
     /// Seconds an auto-mic cue leaves a microphone on that it switches off.
     mic_off_delay: f64,
     mic_hold: Option<Hold>,
@@ -121,8 +158,13 @@ pub struct Show {
     waits_from: HashMap<usize, f64>,
     /// When each running loop was (or would have been) at the start of its cycle.
     loop_epochs: HashMap<usize, f64>,
-    /// Where audio stood when a cue faded it out, to pick it up there on Back.
-    stopped_at: HashMap<usize, (usize, f64)>,
+    /// Where audio stood when it was stopped by a cue or a second press, for Back.
+    stopped_at: HashMap<usize, Stopped>,
+    /// The operator's steps, oldest first, for Back.
+    steps: Vec<Step>,
+    /// `(entry, cue)`: audio that the cue fired as history entry `entry` stopped (a fade
+    /// out by `music.adjust`, a timecode taken over, an auto-cue on playing audio).
+    stops: Vec<(usize, usize)>,
     /// Where audio stands that the operator paused or placed by hand on its waveform:
     /// `(part, seconds)`. Playing the cue's audio from the waveform starts there.
     paused: HashMap<usize, (usize, f64)>,
@@ -150,11 +192,14 @@ impl Show {
             chains: Vec::new(),
             delays: Vec::new(),
             watches: Vec::new(),
+            ends: Vec::new(),
             mic_off_delay: 0.0,
             mic_hold: None,
             waits_from: HashMap::new(),
             loop_epochs: HashMap::new(),
             stopped_at: HashMap::new(),
+            steps: Vec::new(),
+            stops: Vec::new(),
             paused: HashMap::new(),
             timecode: None,
             effects: Vec::new(),
@@ -178,15 +223,34 @@ impl Show {
         // What the audio that is there was started as, to tell what the edit changed.
         let before: Vec<(usize, Option<CueAudio>, Then)> = self.player.active_cues().into_iter().map(|cue| (cue, self.audio(cue), self.then(cue))).collect();
 
+        // Where each place in the history goes when cues that are gone leave it.
+        let mut kept_before = vec![0];
+        for cue in self.history.cues() {
+            kept_before.push(kept_before.last().unwrap() + usize::from(to(cue).is_some()));
+        }
+        let entry = |entry: usize| kept_before[entry.min(kept_before.len() - 1)];
+
         self.cast = Cast::from_script(&script, self.cast.english);
         self.script = Arc::new(script);
         self.player.remap(to)?;
         self.history.remap(&map);
+        self.steps = std::mem::take(&mut self.steps)
+            .into_iter()
+            .filter_map(|step| {
+                let stopped = match step.stopped {
+                    Some(cue) => Some(to(cue)?),
+                    None => None,
+                };
+                Some(Step { entry: entry(step.entry), armed: step.armed.and_then(to), variant: step.variant.and_then(to), stopped })
+            })
+            .collect();
+        self.stops = self.stops.iter().filter_map(|&(at, cue)| Some((entry(at), to(cue)?))).collect();
         self.armed = self.armed.and_then(to);
         self.selected_variant = self.selected_variant.and_then(to);
         let pairs = |list: &[(usize, usize)]| list.iter().filter_map(|&(a, b)| Some((to(a)?, to(b)?))).collect::<Vec<_>>();
         self.pending_outros = pairs(&self.pending_outros);
         self.chains = pairs(&self.chains);
+        self.ends = pairs(&self.ends);
         self.delays = std::mem::take(&mut self.delays).into_iter().filter_map(|d| Some(Delay { target: to(d.target)?, source: to(d.source)?, ..d })).collect();
         self.watches = std::mem::take(&mut self.watches).into_iter().filter_map(|w| Some(Watch { target: to(w.target)?, source: to(w.source)?, ..w })).collect();
         if let Some(hold) = &mut self.mic_hold {
@@ -336,6 +400,11 @@ impl Show {
                 waits.push(Wait { cue: watch.target, fraction: along(from, status.seconds, watch.at) });
             }
         }
+        for &(target, source) in &self.ends {
+            if let Some(status) = self.player.status(source, self.clock.as_deref()).filter(|s| s.state == VoiceState::Playing && self.then(source) != Then::Loop) {
+                waits.push(Wait { cue: target, fraction: along(status.start, status.seconds, status.end) });
+            }
+        }
         waits.sort_by_key(|wait| wait.cue);
         waits.dedup_by_key(|wait| wait.cue);
         waits
@@ -364,6 +433,7 @@ impl Show {
             || !self.pending_outros.is_empty()
             || !self.chains.is_empty()
             || self.watches.iter().any(|watch| !watch.fired && self.is_playing(watch.source) && self.then(watch.source) != Then::Loop)
+            || self.ends.iter().any(|&(_, source)| self.is_playing(source) && self.then(source) != Then::Loop)
     }
 
     /// The operator's current cue.
@@ -523,10 +593,9 @@ impl Show {
             return Ok(());
         }
         let cue = self.next();
-        self.armed = None;
-        self.selected_variant = None;
+        let before = (self.armed.take(), self.selected_variant.take());
         match cue {
-            Some(cue) => self.fire(cue, false),
+            Some(cue) => self.by_hand(cue, before),
             None => Ok(()),
         }
     }
@@ -534,11 +603,29 @@ impl Show {
     /// Fire the cue carrying this trigger note, whatever the position (remote triggering).
     pub fn fire_note(&mut self, note: Note) -> Result<()> {
         let cue = Cues::new(&self.script).find(note);
-        self.armed = None;
-        self.selected_variant = None;
+        let before = (self.armed.take(), self.selected_variant.take());
         match cue {
-            Some(cue) => self.fire(cue, false),
+            Some(cue) => self.by_hand(cue, before),
             None => Ok(()),
+        }
+    }
+
+    /// Fire a cue for the operator, and note the step for Back with what was armed before.
+    fn by_hand(&mut self, cue: usize, (armed, variant): (Option<usize>, Option<usize>)) -> Result<()> {
+        let entry = self.history.len();
+        let stopped = match self.fire_cue(cue, false)? {
+            Fired::Nothing => return Ok(()),
+            Fired::Stopped => Some(cue),
+            Fired::Queued | Fired::Began => None,
+        };
+        self.steps.push(Step { entry, armed, variant, stopped });
+        Ok(())
+    }
+
+    /// Note where a cue's audio stands before it is stopped, for Back.
+    fn note_stop(&mut self, cue: usize) {
+        if let Some(status) = self.sounding(cue) {
+            self.stopped_at.insert(cue, Stopped { part: status.part, seconds: status.seconds, at: self.now, end: status.end });
         }
     }
 
@@ -549,15 +636,28 @@ impl Show {
     /// the loop's end. While it waits there, firing it again does nothing — a nervous
     /// second Go must not call the transition off; Back does that.
     pub fn fire(&mut self, cue: usize, auto: bool) -> Result<()> {
+        match auto {
+            true => self.fire_cue(cue, true).map(drop),
+            false => self.by_hand(cue, (self.armed, self.selected_variant)),
+        }
+    }
+
+    fn fire_cue(&mut self, cue: usize, auto: bool) -> Result<Fired> {
         let script = self.script.clone();
         let cues = Cues::new(&script);
         if cues.get(cue).is_none() {
-            return Ok(());
+            return Ok(Fired::Nothing);
         }
         if self.is_playing(cue) {
+            self.note_stop(cue);
+            // (One the operator stopped is a step of its own; one an auto-cue stopped
+            // comes back when the cue that set the auto-cue off is taken back.)
+            if auto {
+                self.stops.push((self.history.len(), cue));
+            }
             self.player.stop(cue, 0.0)?;
             self.forget_audio_of(&[cue]);
-            return Ok(());
+            return Ok(Fired::Stopped);
         }
         // (A loop whose outro is a variant takes whichever variant of that group is fired.)
         let running_loop = (0..cues.len()).find(|&l| l != cue && cues.get(l).and_then(|c| c.loop_outro()).is_some_and(|n| cues.refers_to(n, cue)) && self.is_playing(l));
@@ -570,13 +670,15 @@ impl Show {
                 if let Some(status) = self.player.status(looped, self.clock.as_deref()) {
                     self.waits_from.insert(cue, status.seconds);
                 }
+                return Ok(Fired::Queued);
             }
-            return Ok(());
+            return Ok(Fired::Nothing);
         }
         // Fired by hand before its chain got there: the operator has taken over, so the
         // handoff must not fire it a second time.
         self.chains.retain(|&(_, to)| to != cue);
-        self.begin(cue, auto, false)
+        self.begin(cue, auto, false)?;
+        Ok(Fired::Began)
     }
 
     /// Everything a cue does when it fires. `started` means its audio is already running
@@ -632,6 +734,9 @@ impl Show {
             .map(|t| t.base + t.spans.iter().map(|(a, b)| b - a).sum::<f64>());
         if start_tc.is_some() {
             if let Some(previous) = self.timecode.take().filter(|t| t.cue != cue) {
+                self.note_stop(previous.cue);
+                self.stops.push((self.history.len(), previous.cue));
+                self.ends.retain(|&(_, source)| source != previous.cue);
                 self.player.stop(previous.cue, 0.0)?;
             }
         }
@@ -678,9 +783,12 @@ impl Show {
                 }
                 let fade = adjust.fadetime.unwrap_or(DEFAULT_ADJUST_FADE);
                 if adjust.fadeout {
-                    if let Some(status) = self.player.status(target, self.clock.as_deref()) {
-                        self.stopped_at.insert(target, (status.part, status.seconds + fade));
+                    if self.sounding(target).is_some() {
+                        self.note_stop(target);
+                        self.stops.push((self.history.len(), target));
                     }
+                    // (Faded out, it does not end by itself.)
+                    self.ends.retain(|&(_, source)| source != target);
                     self.player.stop(target, fade)?;
                 } else if let Some(volume) = adjust.volume {
                     let own = cues.get(target).and_then(|t| t.audio()).and_then(|a| a.parts.first().map(|p| p.volume)).unwrap_or(1.0);
@@ -703,7 +811,7 @@ impl Show {
                     self.delays.retain(|d| d.target != target);
                     self.delays.push(Delay { target, source: cue, started: self.now, due: self.now + seconds.max(0.0) });
                 }
-                AutoWhen::At(_) => {}
+                AutoWhen::At(_) | AutoWhen::End => {}
             }
         }
         self.watch(cue, None);
@@ -716,10 +824,15 @@ impl Show {
     fn watch(&mut self, cue: usize, resumed: Option<f64>) {
         let cues = Cues::new(&self.script);
         for (target, when) in cues.autos_of(cue) {
-            let AutoWhen::At(at) = when else { continue };
             if cues.in_group(target) {
                 continue;
             }
+            if when == AutoWhen::End {
+                self.ends.retain(|&(t, _)| t != target);
+                self.ends.push((target, cue));
+                continue;
+            }
+            let AutoWhen::At(at) = when else { continue };
             self.watches.retain(|w| w.target != target);
             self.watches.push(Watch { target, source: cue, at, fired: resumed.is_some_and(|from| at <= from), last: None, from: None });
         }
@@ -729,6 +842,7 @@ impl Show {
     fn forget_audio_of(&mut self, cues: &[usize]) {
         self.delays.retain(|d| !cues.contains(&d.source));
         self.watches.retain(|w| !cues.contains(&w.source));
+        self.ends.retain(|(_, source)| !cues.contains(source));
         if self.timecode.as_ref().is_some_and(|t| cues.contains(&t.cue)) {
             self.timecode = None;
         }
@@ -805,6 +919,11 @@ impl Show {
         // A watch lasts as long as its audio is there, paused audio included.
         let (player, paused) = (&self.player, &self.paused);
         self.watches.retain(|w| player.status(w.source, None).is_some_and(|s| s.state != VoiceState::Done) || paused.contains_key(&w.source));
+        // Audio that has ended by itself (or never began: a source without audio).
+        let (player, paused) = (&self.player, &self.paused);
+        let ended: Vec<(usize, usize)> = self.ends.iter().filter(|(_, source)| !player.is_sounding(*source) && !paused.contains_key(source)).copied().collect();
+        self.ends.retain(|end| !ended.contains(end));
+        reached.extend(ended.into_iter().map(|(target, _)| target));
         for target in reached {
             self.fire(target, true)?;
         }
@@ -840,8 +959,9 @@ impl Show {
         Ok((0, spans[0].0))
     }
 
-    /// Bring a stopped cue's audio back at `volume`: loops in beat, other audio where it
-    /// was faded out.
+    /// Bring a stopped cue's audio back at `volume` where it would be now had it never
+    /// stopped: loops in beat, other audio on from where it was stopped — unless it would
+    /// have reached its end by now.
     fn resume(&mut self, cue: usize, volume: f64) -> Result<()> {
         let Some(mut audio) = self.audio(cue) else { return Ok(()) };
         let then = self.then(cue);
@@ -849,8 +969,8 @@ impl Show {
             self.loop_position(cue, &audio)?
         } else {
             match self.stopped_at.get(&cue) {
-                Some(&position) => position,
-                None => return Ok(()),
+                Some(stopped) if stopped.seconds + (self.now - stopped.at) < stopped.end => (stopped.part, stopped.seconds + (self.now - stopped.at)),
+                _ => return Ok(()),
             }
         };
         for part in &mut audio.parts {
@@ -894,8 +1014,12 @@ impl Show {
         Some(base + length)
     }
 
-    /// Back: take back a queued outro or an armed cue; otherwise undo the last Go with
-    /// everything it set off.
+    /// Back: everything as if the last Go had never been pressed. In turn it takes back
+    /// a queued outro, then what is armed (or the variant chosen), then the operator's
+    /// last step: a second press that stopped audio brings it back; a cue that fired is
+    /// undone with every auto-cue it set off — its audio stops, what it stopped or turned
+    /// down comes back (loops in beat, other audio where it would be now), microphones and
+    /// devices are set as before, and what was armed before that Go is armed again.
     pub fn back(&mut self) -> Result<()> {
         if !self.pending_outros.is_empty() {
             let pending = std::mem::take(&mut self.pending_outros);
@@ -905,17 +1029,42 @@ impl Show {
             }
             // One queued outro stays armed as the next Go; several cannot be.
             self.armed = if pending.len() == 1 { Some(pending[0].1) } else { None };
+            // The Go that queued it is taken back with it.
+            if self.steps.last().is_some_and(|step| step.entry == self.history.len() && step.stopped.is_none()) {
+                self.steps.pop();
+            }
             return Ok(());
         }
-        if self.armed.take().is_some() {
+        if self.armed.is_some() || self.selected_variant.is_some() {
+            self.armed = None;
             self.selected_variant = None;
             return Ok(());
         }
-        self.selected_variant = None;
-
         let script = self.script.clone();
         let cues = Cues::new(&script);
+
+        // A second press stopped audio: it comes back.
+        if let Some(cue) = self.steps.last().and_then(|step| step.stopped) {
+            let step = self.steps.pop().expect("there is a last step");
+            let volume = match self.history.fired(cue) {
+                true => self.history.audio_state(&cues, cue).1,
+                false => self.audio(cue).and_then(|audio| audio.parts.first().map(|part| part.volume)).unwrap_or(1.0),
+            };
+            self.resume(cue, volume)?;
+            (self.armed, self.selected_variant) = (step.armed, step.variant);
+            return Ok(());
+        }
+
         let Some(undone) = self.history.back(&cues) else { return Ok(()) };
+        let landed = self.history.len();
+        // What was armed before the Go is armed again.
+        let mut before = None;
+        while self.steps.last().is_some_and(|step| step.entry >= landed && step.stopped.is_none()) {
+            before = self.steps.pop();
+        }
+        if let Some(step) = before.filter(|step| step.entry == landed) {
+            (self.armed, self.selected_variant) = (step.armed, step.variant);
+        }
         let popped = &undone.popped;
         self.forget_audio_of(popped);
         for (from, to) in std::mem::take(&mut self.chains) {
@@ -949,8 +1098,26 @@ impl Show {
             self.resume(cue, volume)?;
         }
 
-        // Audio the undone cues ducked or faded out goes back to what the remaining
-        // history implies. `popped` is newest first, so the latest adjust per target wins.
+        // Audio the undone cues stopped comes back: faded out by an adjust, its timecode
+        // taken over, stopped by an auto-cue.
+        let mut stopped: Vec<usize> = self.stops.iter().rev().filter(|(entry, _)| *entry >= landed).map(|(_, cue)| *cue).collect();
+        self.stops.retain(|(entry, _)| *entry < landed);
+        stopped.dedup();
+        for cue in stopped {
+            if popped.contains(&cue) || self.player.is_sounding(cue) {
+                continue;
+            }
+            let volume = match self.history.fired(cue) {
+                true => self.history.audio_state(&cues, cue),
+                false => (true, self.audio(cue).and_then(|audio| audio.parts.first().map(|part| part.volume)).unwrap_or(1.0)),
+            };
+            if volume.0 && volume.1 > 0.0 {
+                self.resume(cue, volume.1)?;
+            }
+        }
+
+        // Audio the undone cues turned up or down goes back to what the remaining history
+        // implies. `popped` is newest first, so the latest adjust per target wins.
         let mut restored = Vec::new();
         for &cue in popped {
             let Some(named) = cues.get(cue).and_then(|c| c.adjust()).and_then(|a| cues.find(a.target)) else { continue };
@@ -961,22 +1128,23 @@ impl Show {
                 }
                 restored.push(target);
                 let (playing, volume) = self.history.audio_state(&cues, target);
-                if !playing || volume <= 0.0 {
-                    continue;
-                }
-                if self.player.is_sounding(target) {
+                if playing && volume > 0.0 && self.player.is_sounding(target) {
                     self.player.fade(target, volume, BACK_FADE)?;
-                } else {
-                    self.resume(target, volume)?;
                 }
             }
         }
 
-        // Microphones as the remaining cues left them; nothing left means everything off.
+        // Microphones as the remaining cues left them. If none of them set any — or
+        // nothing is left — the microphones the undone cues opened go off.
         self.mic_hold = None;
-        let mic = self.history.mic(&cues, &self.cast);
-        self.effects.push(Effect::Mic(if self.history.is_empty() { Mic::MuteAll } else { mic }).clone());
-        self.effects.retain(|e| *e != Effect::Mic(Mic::Unchanged));
+        let touched = popped.iter().any(|&cue| cues.block_index(cue).is_some_and(|block| script.mic_for_cue(block, &self.cast) != Mic::Unchanged));
+        let mic = match self.history.mic(&cues, &self.cast) {
+            Mic::Unchanged if touched || self.history.is_empty() => Mic::MuteAll,
+            mic => mic,
+        };
+        if mic != Mic::Unchanged {
+            self.effects.push(Effect::Mic(mic));
+        }
         self.effects.extend(resend_effects(&undone.resend));
         self.report_displays();
         Ok(())
@@ -988,6 +1156,7 @@ impl Show {
         self.chains.clear();
         self.delays.clear();
         self.watches.clear();
+        self.ends.clear();
         self.timecode = None;
         self.player.stop_all(BACK_FADE)
     }
@@ -1758,6 +1927,100 @@ mod tests {
         assert_eq!(problems.len(), 1);
         assert!(problems[0].starts_with("Cue 1.0: ") && problems[0].contains("missing.wav"), "{problems:?}");
         assert_eq!(rig.show.next(), Some(1), "and the show goes on");
+    }
+
+    #[test]
+    fn auto_cues_with_a_cue_and_after_its_end() {
+        let mut rig = rig(
+            &[
+                "music:\n    file: a.wav\n    volume: 1",
+                "auto_trigger: {trigger_note: {ch: 1, note: 0}, delay: 0}",
+                "auto_trigger: {trigger_note: {ch: 1, note: 0}, at: end}",
+                "music:\n    file: a.wav\n    volume: 1",
+                "auto_trigger: {trigger_note: {ch: 1, note: 3}, at: end}",
+                "auto_trigger: {trigger_note: {ch: 1, note: 6}, at: end}",
+                "light: no audio",
+            ],
+            &[("a.wav", 1.0, 200)],
+        );
+        rig.show.go().unwrap();
+        rig.run(16);
+        assert_eq!(rig.fired(), [0, 1], "with the cue");
+        assert!(rig.show.go_blocked(), "waiting for the end");
+        rig.run(160);
+        assert_eq!(rig.fired(), [0, 1]);
+        rig.run(48);
+        assert_eq!(rig.fired(), [0, 1, 2], "after the end");
+
+        // Audio that is stopped does not end by itself.
+        rig.show.go().unwrap();
+        rig.run(16);
+        rig.show.stop_cue(3, 0.0).unwrap();
+        rig.run(320);
+        assert_eq!(rig.fired(), [0, 1, 2, 3]);
+        // A source without audio has ended at once.
+        rig.show.arm(Some(6));
+        rig.show.go().unwrap();
+        rig.run(16);
+        assert_eq!(rig.fired(), [0, 1, 2, 3, 6, 5]);
+    }
+
+    #[test]
+    fn back_after_a_jump_arms_the_jump_again() {
+        let mut rig = rig(&["light: A", "light: B", "light: C", "light: D"], &[]);
+        rig.show.go().unwrap();
+        rig.show.arm(Some(2));
+        rig.show.go().unwrap();
+        assert_eq!(rig.fired(), [0, 2]);
+        rig.show.back().unwrap();
+        assert_eq!(rig.fired(), [0]);
+        assert_eq!(rig.show.next(), Some(2), "as before that Go: the jump is armed");
+        rig.show.back().unwrap();
+        assert_eq!(rig.show.next(), Some(1), "a second Back clears it");
+        assert_eq!(rig.fired(), [0]);
+    }
+
+    #[test]
+    fn back_after_a_second_press_brings_the_audio_back_where_it_would_be() {
+        let ramp: Vec<f32> = (0..2000).map(|n| n as f32).collect();
+        let mut rig = rig(&["music:\n    file: ramp.wav\n    volume: 1", "light: B"], &[]);
+        rig.show.player().cache().insert("ramp.wav", Clip::from_planar(SR, vec![ramp]));
+        rig.show.go().unwrap();
+        rig.run(200);
+        rig.show.fire(0, false).unwrap();
+        rig.run(200);
+        assert_eq!(rig.level(), 0.0, "stopped");
+        assert_eq!(rig.fired(), [0]);
+        rig.show.back().unwrap();
+        rig.run(80);
+        assert_eq!(rig.fired(), [0], "Back took back the stop, not the cue");
+        assert_eq!(rig.level(), (rig.frames - 1) as f32, "on as if it had never stopped");
+        assert_eq!(rig.show.next(), Some(1));
+    }
+
+    #[test]
+    fn back_brings_back_audio_a_cue_faded_out_where_it_would_be() {
+        let ramp: Vec<f32> = (0..4000).map(|n| n as f32).collect();
+        let mut rig = rig(&["music:\n    file: ramp.wav\n    volume: 1", "music:\n    adjust: {trigger_note: {ch: 1, note: 0}, fadeout: true, fadetime: 0.016}"], &[]);
+        rig.show.player().cache().insert("ramp.wav", Clip::from_planar(SR, vec![ramp]));
+        rig.show.go().unwrap();
+        rig.run(200);
+        rig.show.go().unwrap();
+        rig.run(400);
+        assert_eq!(rig.level(), 0.0);
+        rig.show.back().unwrap();
+        rig.run(800);
+        assert_eq!(rig.level(), (rig.frames - 1) as f32);
+    }
+
+    #[test]
+    fn back_switches_off_microphones_no_earlier_cue_opened() {
+        let mut rig = rig(&["light: A", "mic: Anna"], &[]);
+        rig.show.go().unwrap();
+        rig.show.go().unwrap();
+        rig.show.take_effects();
+        rig.show.back().unwrap();
+        assert_eq!(rig.show.take_effects(), [Effect::Mic(Mic::MuteAll)]);
     }
 
     #[test]

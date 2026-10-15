@@ -128,6 +128,9 @@ pub struct Snapshot {
     pub emergency_light: bool,
     /// When each cue last fired (this session only).
     pub fired_at: Vec<(usize, std::time::SystemTime)>,
+    /// How many edited scripts the show has taken over: the cue numbers above are those
+    /// of that script.
+    pub script_version: u64,
 }
 
 pub struct Session {
@@ -332,8 +335,10 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
     let started = Instant::now();
     let mut heard = None;
     let mut emergency_light = false;
-    let mut fired_at: Vec<(usize, std::time::SystemTime)> = Vec::new();
-    let mut fired_count = 0;
+    // When each entry of the history fired, in its order: Back takes the newest away,
+    // and a cue shows the time it last fired that is still there.
+    let mut stamps: Vec<(usize, std::time::SystemTime)> = Vec::new();
+    let mut script_version = 0;
     'show: loop {
         let tick_started = Instant::now();
         loop {
@@ -367,10 +372,9 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
                     cast = Cast::from_script(&script, settings.language == "en");
                     // The cues may have new numbers: the times they fired at follow them.
                     let map = mdstage_core::cues::mapping(show.script(), &script);
-                    fired_at = fired_at.iter().filter_map(|&(cue, at)| Some((map.get(cue).copied().flatten()?, at))).collect();
-                    let result = show.replace_script(*script);
-                    fired_count = show.history().cues().count();
-                    result
+                    stamps = stamps.iter().filter_map(|&(cue, at)| Some((map.get(cue).copied().flatten()?, at))).collect();
+                    script_version += 1;
+                    show.replace_script(*script)
                 }
                 Request::Configure(new, now_trusted) => {
                     if new.audio_device != settings.audio_device {
@@ -509,15 +513,11 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
 
         // Note when cues fired; Back takes the entries of undone cues with it.
         let fired: Vec<usize> = show.history().cues().collect();
-        if fired.len() > fired_count {
-            for &cue in &fired[fired_count..] {
-                fired_at.retain(|(c, _)| *c != cue);
-                fired_at.push((cue, std::time::SystemTime::now()));
-            }
-        } else if fired.len() < fired_count {
-            fired_at.retain(|(c, _)| fired.contains(c));
-        }
-        fired_count = fired.len();
+        let same = stamps.iter().zip(&fired).take_while(|((stamped, _), cue)| stamped == *cue).count();
+        stamps.truncate(same);
+        stamps.extend(fired[same..].iter().map(|&cue| (cue, std::time::SystemTime::now())));
+        let mut seen = std::collections::HashSet::new();
+        let fired_at: Vec<(usize, std::time::SystemTime)> = stamps.iter().rev().filter(|(cue, _)| seen.insert(*cue)).copied().collect();
 
         let mic = show.mic();
         *snapshot.lock().unwrap() = Snapshot {
@@ -545,7 +545,8 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
             loading: Some(show.player().cache().loading()).filter(|n| *n > 0),
             audio_memory_mb: (show.player().cache().held_seconds() * sample_rate as f64 * 4.0 / 1e6) as f32,
             emergency_light,
-            fired_at: fired_at.clone(),
+            fired_at,
+            script_version,
         };
         thread::sleep(TICK.saturating_sub(tick_started.elapsed()));
     }

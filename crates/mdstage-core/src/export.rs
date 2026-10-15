@@ -169,7 +169,9 @@ impl Script {
                             "Auto".into(),
                             match auto.when {
                                 AutoWhen::At(at) => format!("bei {} s in {source}", crate::format::seconds(at)),
+                                AutoWhen::Delay(delay) if delay <= 0.0 => format!("mit {source}"),
                                 AutoWhen::Delay(delay) => format!("{} s nach {source}", crate::format::seconds(delay)),
+                                AutoWhen::End => format!("nach dem Ende von {source}"),
                             },
                         ));
                     }

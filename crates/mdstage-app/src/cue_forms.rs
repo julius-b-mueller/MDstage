@@ -20,6 +20,44 @@ pub struct Devices {
     pub display: Vec<String>,
 }
 
+/// The lists of messages a cue sends.
+pub const MESSAGE_KEYS: [&str; 4] = ["cue_midi", "cue_osc", "cue_http", "cue_display"];
+
+/// Messages copied from a cue, for pasting into another: `(list, message)`. They are
+/// kept as long as the program runs, whichever show is open.
+pub fn copied_messages(ctx: &egui::Context) -> Vec<(String, Value)> {
+    ctx.data(|data| data.get_temp(egui::Id::new("copied-messages"))).unwrap_or_default()
+}
+
+pub fn copy_messages(ctx: &egui::Context, messages: Vec<(String, Value)>) {
+    ctx.data_mut(|data| data.insert_temp(egui::Id::new("copied-messages"), messages));
+}
+
+/// All messages a cue sends, in the order of its lists.
+pub fn messages_of(yaml: &Mapping) -> Vec<(String, Value)> {
+    MESSAGE_KEYS.iter().flat_map(|key| yaml.get(*key).and_then(Value::as_sequence).into_iter().flatten().map(|message| (key.to_string(), message.clone()))).collect()
+}
+
+/// Add copied messages to a cue, each to the end of its list.
+pub fn paste_messages(yaml: &mut Mapping, messages: &[(String, Value)]) {
+    for (key, message) in messages {
+        match yaml.get_mut(key.as_str()).and_then(Value::as_sequence_mut) {
+            Some(list) => list.push(message.clone()),
+            None => drop(yaml.insert(key.as_str().into(), Value::Sequence(vec![message.clone()]))),
+        }
+    }
+}
+
+/// How many messages, in words.
+pub fn count_messages(count: usize) -> String {
+    match (count, crate::lang::english()) {
+        (1, true) => "1 message".to_string(),
+        (1, false) => "1 Nachricht".to_string(),
+        (n, true) => format!("{n} messages"),
+        (n, false) => format!("{n} Nachrichten"),
+    }
+}
+
 fn mapping(pairs: &[(&str, Value)]) -> Mapping {
     let mut map = Mapping::new();
     for (key, value) in pairs {
@@ -112,8 +150,10 @@ fn file(ui: &mut Ui, id: impl std::hash::Hash, map: &mut Mapping, files: &[Strin
 }
 
 /// Edit the list under `key`: one row per entry, drawn by `row`, each with a remove
-/// button; `fresh` makes the entry the add button appends. An emptied list is removed.
+/// button (and, for messages, one to copy it); `fresh` makes the entry the add button
+/// appends. An emptied list is removed.
 fn list(ui: &mut Ui, yaml: &mut Mapping, key: &str, add: &str, fresh: impl Fn() -> Mapping, mut row: impl FnMut(&mut Ui, usize, &mut Mapping) -> bool) -> bool {
+    let copyable = MESSAGE_KEYS.contains(&key);
     let mut entries: Vec<Value> = yaml.get(key).and_then(Value::as_sequence).cloned().unwrap_or_default();
     let mut changed = false;
     let mut remove = None;
@@ -121,6 +161,9 @@ fn list(ui: &mut Ui, yaml: &mut Mapping, key: &str, add: &str, fresh: impl Fn() 
         let Some(map) = entry.as_mapping_mut() else { continue };
         ui.horizontal_wrapped(|ui| {
             changed |= row(ui, i, map);
+            if copyable && ui.small_button(t("Kopieren", "Copy")).on_hover_text(t("Diese Nachricht kopieren, um sie in einen anderen Cue einzufügen", "Copy this message to paste it into another cue")).clicked() {
+                copy_messages(ui.ctx(), vec![(key.to_string(), Value::Mapping(map.clone()))]);
+            }
             if ui.small_button("×").on_hover_text(t("Entfernen", "Remove")).clicked() {
                 remove = Some(i);
             }
@@ -271,6 +314,21 @@ pub fn sequence(ui: &mut Ui, yaml: &mut Mapping, files: &[String], channels: &[S
 /// older single OSC path.
 pub fn messages(ui: &mut Ui, yaml: &mut Mapping, devices: &Devices) -> bool {
     let mut changed = false;
+
+    // Copying all of them, and pasting what was copied (here or in another cue).
+    let copied = copied_messages(ui.ctx());
+    let own = messages_of(yaml);
+    ui.horizontal(|ui| {
+        if ui.add_enabled(!own.is_empty(), egui::Button::new(t("Alle Nachrichten kopieren", "Copy all messages")).small()).clicked() {
+            copy_messages(ui.ctx(), own.clone());
+        }
+        let paste = if crate::lang::english() { format!("Paste {}", count_messages(copied.len())) } else { format!("{} einfügen", count_messages(copied.len())) };
+        if !copied.is_empty() && ui.small_button(paste).clicked() {
+            paste_messages(yaml, &copied);
+            changed = true;
+        }
+    });
+    ui.add_space(4.0);
 
     ui.label(RichText::new("MIDI").color(BLUE));
     changed |= list(

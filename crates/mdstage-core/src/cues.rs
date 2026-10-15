@@ -35,8 +35,11 @@ impl std::fmt::Display for Note {
 pub enum AutoWhen {
     /// The source's audio reaches this position (seconds).
     At(f64),
-    /// This many seconds after the source fires.
+    /// This many seconds after the source fires (0: with it).
     Delay(f64),
+    /// When the source's audio has played to its end by itself (`at: end`). Audio that
+    /// is stopped or faded out does not count; a source without audio counts as ended.
+    End,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -96,6 +99,7 @@ impl Cue {
         // delay without end would hold Go back for good.)
         let number = |key: &str| at.get(key).and_then(Value::as_f64).filter(|seconds| seconds.is_finite() && *seconds >= 0.0);
         let when = match (number("at"), number("delay")) {
+            _ if at.get("at").and_then(Value::as_str) == Some("end") => AutoWhen::End,
             (Some(at), _) => AutoWhen::At(at),
             (None, Some(delay)) => AutoWhen::Delay(delay),
             (None, None) => return None,
@@ -275,6 +279,7 @@ impl<'a> Cues<'a> {
         match when {
             AutoWhen::At(at) if once || as_place => Some(at - start),
             AutoWhen::Delay(delay) if once || !as_place => Some(delay),
+            // (How long the audio is, the script does not say.)
             _ => None,
         }
     }
@@ -476,6 +481,11 @@ impl History {
         self.entries.is_empty()
     }
 
+    /// How many cues have fired (a cue that fired twice counts twice).
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
     pub fn fired(&self, cue: usize) -> bool {
         self.cues().any(|c| c == cue)
     }
@@ -673,6 +683,8 @@ mod tests {
         assert_eq!(cues.get(0).unwrap().chain_end(), Some(note(1)));
         assert_eq!(cues.get(1).unwrap().auto_trigger(), Some(AutoTrigger { source: note(0), when: AutoWhen::At(4.5), group: false }));
         assert_eq!(cues.get(2).unwrap().auto_trigger(), Some(AutoTrigger { source: note(1), when: AutoWhen::Delay(8.0), group: false }));
+        let end = show(&["music: a.wav", "auto_trigger: {trigger_note: {ch: 1, note: 0}, at: end}"]);
+        assert_eq!(Cues::new(&end).get(1).unwrap().auto_trigger().unwrap().when, AutoWhen::End);
         assert_eq!(
             cues.get(2).unwrap().adjust(),
             Some(Adjust { target: note(1), fadeout: true, volume: None, fadetime: Some(2.0) })

@@ -524,8 +524,22 @@ impl CueDialog {
         let auto = self.yaml.get("auto_trigger").cloned();
         let source = note_of(auto.as_ref().and_then(|a| a.get("trigger_note")));
         let delay = auto.as_ref().and_then(|a| a.get("delay")).and_then(Value::as_f64);
-        let mut by_delay = delay.is_some();
-        let mut amount = delay.or(auto.as_ref().and_then(|a| a.get("at")).and_then(Value::as_f64)).unwrap_or(0.0);
+        let at = auto.as_ref().and_then(|a| a.get("at"));
+        // How it fires: with the source, at a place in its audio, after a delay, after its end.
+        #[derive(PartialEq, Clone, Copy)]
+        enum When {
+            With,
+            At,
+            Delay,
+            End,
+        }
+        let mut when = match (delay, at.and_then(Value::as_str)) {
+            (_, Some("end")) => When::End,
+            (Some(delay), _) if delay <= 0.0 => When::With,
+            (Some(_), _) => When::Delay,
+            _ => When::At,
+        };
+        let mut amount = delay.or(at.and_then(Value::as_f64)).unwrap_or(0.0);
         let mut new_source = source;
         let mut auto_changed = false;
         ui.horizontal(|ui| {
@@ -536,12 +550,15 @@ impl CueDialog {
             }
         });
         if new_source.is_some() {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.add_space(16.0);
-                auto_changed |= ui.radio_value(&mut by_delay, false, t("wenn dessen Audio bei", "when its audio is at")).changed();
-                auto_changed |= ui.radio_value(&mut by_delay, true, t("nach", "after a delay of")).changed();
-                auto_changed |= ui.add(egui::DragValue::new(&mut amount).speed(0.05).range(0.0..=36000.0).suffix(" s")).changed();
-                ui.label(if by_delay { t("Verzögerung", "") } else { t("ist", "") });
+                auto_changed |= ui.radio_value(&mut when, When::With, t("mit ihm", "with it")).changed();
+                auto_changed |= ui.radio_value(&mut when, When::At, t("wenn dessen Audio bei … ist", "when its audio is at …")).changed();
+                auto_changed |= ui.radio_value(&mut when, When::Delay, t("nach … Verzögerung", "after a delay of …")).changed();
+                auto_changed |= ui.radio_value(&mut when, When::End, t("nach dem Ende seines Audios", "after the end of its audio")).changed();
+                if matches!(when, When::At | When::Delay) {
+                    auto_changed |= ui.add(egui::DragValue::new(&mut amount).speed(0.05).range(0.0..=36000.0).suffix(" s")).changed();
+                }
             });
         }
         if auto_changed {
@@ -550,7 +567,18 @@ impl CueDialog {
                 Some(note) => {
                     let mut map = Mapping::new();
                     map.insert("trigger_note".into(), note_value(note));
-                    map.insert(if by_delay { "delay" } else { "at" }.into(), ((amount * 1000.0).round() / 1000.0).into());
+                    let amount = Value::from((amount * 1000.0).round() / 1000.0);
+                    let (key, value) = match when {
+                        When::With => ("delay", Value::from(0)),
+                        When::At => ("at", amount),
+                        When::Delay => ("delay", amount),
+                        When::End => ("at", Value::from("end")),
+                    };
+                    map.insert(key.into(), value);
+                    // (A delay on a whole variant group stays one.)
+                    if key == "delay" && auto.as_ref().and_then(|a| a.get("group")).and_then(Value::as_bool) == Some(true) {
+                        map.insert("group".into(), true.into());
+                    }
                     self.yaml.insert("auto_trigger".into(), Value::Mapping(map));
                 }
                 None => drop(self.yaml.shift_remove("auto_trigger")),

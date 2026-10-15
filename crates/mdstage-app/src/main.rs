@@ -52,6 +52,10 @@ struct OpenShow {
     /// Another version of MDstage saved the file last (`Some(None)`: it does not say
     /// which). Before this version saves it as its own, the operator is asked.
     saved_by_other: Option<Option<String>>,
+    /// The script as the show last took it over, and how many edits it has taken over
+    /// (see `Snapshot::script_version`).
+    sent: Script,
+    sent_count: u64,
 }
 
 /// This version of MDstage, as it is noted in show files.
@@ -96,8 +100,13 @@ struct App {
     export: Option<(mdstage_core::export::Options, bool)>,
     /// A copied cue's fields, for pasting.
     copied: Option<mdstage_core::yaml::Value>,
+    /// Text to put on the system clipboard in this frame.
+    clipboard: Option<String>,
     /// Show lock: no editing, clicks only arm.
     locked: bool,
+    /// While the live view is open: whether the main view was locked before it opened
+    /// (it locks itself then, and goes back to that when the live view closes).
+    lock_before_live: Option<bool>,
     /// Something that went wrong in the app itself (a file that could not be written …).
     message: Option<String>,
     followed: Option<usize>,
@@ -144,7 +153,9 @@ impl App {
             roles_ui: None,
             export: None,
             copied: None,
+            clipboard: None,
             locked: settings_open_locked,
+            lock_before_live: None,
             message: None,
             followed: None,
             space_cue: None,
@@ -209,6 +220,8 @@ impl App {
             path: path.to_path_buf(),
             cast: Cast::from_script(&loaded.script, self.english()),
             report: loaded.script.validate(),
+            sent: loaded.script.clone(),
+            sent_count: 0,
             script: loaded.script,
             session,
             trusted: loaded.trusted,
@@ -264,9 +277,38 @@ impl App {
             self.message = Some(format!("{}: {e}", lang::t("Nicht gespeichert", "Not saved")));
         }
         show.session.send(Request::SetScript(Box::new(show.script.clone())));
+        // The cue the view follows keeps its place in the edited script, as the show's do:
+        // a cue put in above it moves it down, but it is the same cue.
+        let map = mdstage_core::cues::mapping(&show.sent, &show.script);
+        self.followed = self.followed.and_then(|cue| map.get(cue).copied().flatten());
+        show.sent = show.script.clone();
+        show.sent_count += 1;
         self.view.invalidate();
         self.live.invalidate();
         self.save_settings();
+    }
+
+    /// Text blocks with nothing in them go as soon as no block is being written in: a new
+    /// one that was left without a word, or one whose text was all taken out.
+    fn drop_empty_text(&mut self) {
+        if self.view.is_editing() {
+            return;
+        }
+        let empty = |block: &Block| match block {
+            // (Read from a file, a block always holds something: this touches no file
+            // that is only opened.)
+            Block::Text(text) | Block::Stage(text) => text.trim().is_empty(),
+            _ => false,
+        };
+        let Some(show) = &mut self.show else { return };
+        let gone: Vec<usize> = (0..show.script.blocks.len()).filter(|&i| empty(&show.script.blocks[i])).collect();
+        if gone.is_empty() {
+            return;
+        }
+        for &at in gone.iter().rev() {
+            show.script.delete_block(at);
+        }
+        self.after_edit();
     }
 
     /// Change the cue in `block` and save.
@@ -308,33 +350,19 @@ impl App {
             Link::Chain => self.edit_cue(block, |map| drop(map.insert("chain_end".into(), note_value(note)))),
             Link::LoopOutro => self.edit_cue(block, |map| drop(map.insert("loop_outro".into(), note_value(note)))),
             Link::AutoCue => {
-                // Where the source's audio stands, paused or playing, is where the cue fires.
+                // Where the source's audio stands, paused or playing — unless that is its
+                // very start or end: a place to offer.
                 let paused = self.snapshot.paused.iter().find(|(c, _)| *c == other).map(|(_, seconds)| *seconds);
                 let playing = self.snapshot.audio.iter().find(|(c, s)| *c == other && s.part == 0).map(|(_, s)| s.seconds);
-                // A place that would put this source's auto-cues out of the order they stand
-                // in is not taken.
-                let cues = Cues::new(&show.script);
-                let target = (0..cues.len()).find(|&cue| cues.block_index(cue) == Some(block));
-                let range = target.map_or((None, None), |target| cues.auto_range(target, other, true));
-                let out_of_order = paused.or(playing).is_some_and(|at| range.0.is_some_and(|from| at < from) || range.1.is_some_and(|to| at > to));
-                if out_of_order {
-                    let seconds = |value: Option<f64>| value.map_or("…".to_string(), mdstage_core::format::seconds);
-                    self.message = Some(if lang::english() {
-                        format!("Not set: this source's auto-cues fire in the order they stand in the script. The place has to lie between {} and {} s.", seconds(range.0), seconds(range.1))
-                    } else {
-                        format!("Nicht gesetzt: Die Auto-Cues dieser Quelle lösen in der Reihenfolge aus, in der sie im Skript stehen. Die Stelle muss zwischen {} und {} s liegen.", seconds(range.0), seconds(range.1))
-                    });
-                    return;
-                }
-                match paused.or(playing) {
-                    Some(at) => self.edit_cue(block, |map| {
-                        let mut auto = serde_yaml_mapping();
-                        auto.insert("trigger_note".into(), note_value(note));
-                        auto.insert("at".into(), ((at * 1000.0).round() / 1000.0).into());
-                        map.insert("auto_trigger".into(), auto.into());
-                    }),
-                    None => self.link_dialog = Some(LinkDialog::Delay { block, source: note, seconds: 5.0, at_place: true, in_group: other_in_group, whole_group: true }),
-                }
+                let audio = cues.get(other).and_then(|c| c.audio());
+                let bounds = audio.as_ref().and_then(|audio| {
+                    let part = audio.parts.first()?;
+                    let length = self.view.duration(&part.audios.first()?.file).unwrap_or(f64::MAX);
+                    Some((part.start.unwrap_or(0.0), part.end.unwrap_or(length).min(length)))
+                });
+                let playhead = paused.or(playing).filter(|at| bounds.is_some_and(|(start, end)| *at > start + 0.05 && *at < end - 0.05));
+                let when = if playhead.is_some() { AutoChoice::Playhead } else { AutoChoice::After };
+                self.link_dialog = Some(LinkDialog::Auto { block, source: note, when, seconds: 5.0, at_place: true, in_group: other_in_group, whole_group: true, playhead, has_audio: audio.is_some() });
             }
             Link::Adjust => {
                 let existing = show.script.blocks.get(block).and_then(|b| match b {
@@ -357,7 +385,7 @@ impl App {
         // For an auto-cue: the place in the source's audio that the time typed in would
         // be, if the source has audio that long.
         let place = match &dialog {
-            LinkDialog::Delay { source, seconds, .. } => self.show.as_ref().and_then(|show| {
+            LinkDialog::Auto { source, seconds, .. } => self.show.as_ref().and_then(|show| {
                 let cues = Cues::new(&show.script);
                 let audio = cues.get(cues.find(*source)?)?.audio()?;
                 let part = audio.parts.first()?;
@@ -372,7 +400,7 @@ impl App {
         // seconds that keep it so, as a delay and as a place in the source's audio.
         let between = |range: (Option<f64>, Option<f64>), start: f64| ((range.0.unwrap_or(start) - start).max(0.0), range.1.map_or(36000.0, |to| to - start));
         let (delay_range, place_range) = match &dialog {
-            LinkDialog::Delay { block, source, .. } => self.show.as_ref().and_then(|show| {
+            LinkDialog::Auto { block, source, .. } => self.show.as_ref().and_then(|show| {
                 let cues = Cues::new(&show.script);
                 let target = (0..cues.len()).find(|&cue| cues.block_index(cue) == Some(*block))?;
                 let from = cues.find(*source)?;
@@ -385,60 +413,79 @@ impl App {
         let mut open = true;
         let mut result = None;
         let title = match dialog {
-            LinkDialog::Delay { .. } => lang::t("Verzögerung wählen", "Choose a delay"),
+            LinkDialog::Auto { .. } => lang::t("Auto-Cue: wann auslösen?", "Auto-cue: when to fire?"),
             LinkDialog::Adjust { .. } => lang::t("Bezug konfigurieren", "Set up the adjustment"),
         };
         egui::Window::new(title).open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
             match &mut dialog {
-                LinkDialog::Delay { seconds, at_place, in_group, whole_group, .. } => {
-                    ui.label(lang::t(
-                        "Das Audio der Quelle steht an keiner Stelle. Nach welcher Zeit soll der Cue ausgelöst werden?",
-                        "The source's audio is not standing anywhere. After what time is the cue to fire?",
-                    ));
-                    // What the time may be depends on which of the two kinds below it is.
-                    let (from, to) = if *at_place && place.is_some() { place_range } else { delay_range };
-                    if from <= to {
-                        *seconds = seconds.clamp(from, to);
-                        ui.add(egui::DragValue::new(seconds).speed(0.1).range(from..=to).suffix(" s"));
-                        if from > 0.0 || to < 36000.0 {
-                            let seconds = mdstage_core::format::seconds;
-                            let text = match (from > 0.0, to < 36000.0, lang::english()) {
-                                (true, true, false) => format!("Zwischen {} und {} s: Die Auto-Cues dieser Quelle lösen in der Reihenfolge aus, in der sie im Skript stehen.", seconds(from), seconds(to)),
-                                (true, false, false) => format!("Mindestens {} s: Die Auto-Cues dieser Quelle lösen in der Reihenfolge aus, in der sie im Skript stehen.", seconds(from)),
-                                (false, _, false) => format!("Höchstens {} s: Die Auto-Cues dieser Quelle lösen in der Reihenfolge aus, in der sie im Skript stehen.", seconds(to)),
-                                (true, true, true) => format!("Between {} and {} s: this source's auto-cues fire in the order they stand in the script.", seconds(from), seconds(to)),
-                                (true, false, true) => format!("At least {} s: this source's auto-cues fire in the order they stand in the script.", seconds(from)),
-                                (false, _, true) => format!("At most {} s: this source's auto-cues fire in the order they stand in the script.", seconds(to)),
-                            };
-                            ui.label(RichText::new(text).color(MUTED));
+                LinkDialog::Auto { when, seconds, at_place, in_group, whole_group, playhead, has_audio, .. } => {
+                    let seconds_text = mdstage_core::format::seconds;
+                    // A choice that would put this source's auto-cues out of the order they
+                    // stand in is not offered.
+                    let fits = |value: f64, (from, to): (f64, f64)| value >= from - 1e-9 && value <= to + 1e-9;
+                    let with_fits = fits(0.0, delay_range);
+                    let order = lang::t("Die Auto-Cues dieser Quelle lösen in der Reihenfolge aus, in der sie im Skript stehen.", "This source's auto-cues fire in the order they stand in the script.");
+                    ui.add_enabled_ui(with_fits, |ui| ui.radio_value(when, AutoChoice::With, lang::t("Mit dem Cue", "With the cue")))
+                        .response
+                        .on_disabled_hover_text(order);
+                    if *has_audio {
+                        ui.radio_value(when, AutoChoice::End, lang::t("Nach dem Ende seines Audios (an der eingestellten End-Position)", "After the end of its audio (at the end position set)"))
+                            .on_hover_text(lang::t("Löst aus, wenn das Audio der Quelle von selbst zu Ende gespielt hat. Gestoppt oder ausgeblendet zählt nicht.", "Fires when the source's audio has played to its end by itself. Stopped or faded out does not count."));
+                    }
+                    if let Some(at) = *playhead {
+                        let text = if lang::english() { format!("At the playhead ({} s)", seconds_text(at)) } else { format!("Bei der Abspielposition ({} s)", seconds_text(at)) };
+                        ui.radio_value(when, AutoChoice::Playhead, text);
+                    }
+                    ui.radio_value(when, AutoChoice::After, lang::t("Nach einer Zeit", "After a time"));
+                    if *when == AutoChoice::With && !with_fits {
+                        *when = AutoChoice::After;
+                    }
+                    ui.add_enabled_ui(*when == AutoChoice::After, |ui| ui.indent("auto-after", |ui| {
+                        // What the time may be depends on which of the two kinds below it is.
+                        let (from, to) = if *at_place && place.is_some() { place_range } else { delay_range };
+                        if from <= to {
+                            *seconds = seconds.clamp(from, to);
+                            ui.add(egui::DragValue::new(seconds).speed(0.1).range(from..=to).suffix(" s"));
+                            if from > 0.0 || to < 36000.0 {
+                                let seconds = mdstage_core::format::seconds;
+                                let text = match (from > 0.0, to < 36000.0, lang::english()) {
+                                    (true, true, false) => format!("Zwischen {} und {} s: Die Auto-Cues dieser Quelle lösen in der Reihenfolge aus, in der sie im Skript stehen.", seconds(from), seconds(to)),
+                                    (true, false, false) => format!("Mindestens {} s: Die Auto-Cues dieser Quelle lösen in der Reihenfolge aus, in der sie im Skript stehen.", seconds(from)),
+                                    (false, _, false) => format!("Höchstens {} s: Die Auto-Cues dieser Quelle lösen in der Reihenfolge aus, in der sie im Skript stehen.", seconds(to)),
+                                    (true, true, true) => format!("Between {} and {} s: this source's auto-cues fire in the order they stand in the script.", seconds(from), seconds(to)),
+                                    (true, false, true) => format!("At least {} s: this source's auto-cues fire in the order they stand in the script.", seconds(from)),
+                                    (false, _, true) => format!("At most {} s: this source's auto-cues fire in the order they stand in the script.", seconds(to)),
+                                };
+                                ui.label(RichText::new(text).color(MUTED));
+                            }
+                        } else {
+                            ui.add(egui::DragValue::new(seconds).speed(0.1).range(0.0..=36000.0).suffix(" s"));
                         }
-                    } else {
-                        ui.add(egui::DragValue::new(seconds).speed(0.1).range(0.0..=36000.0).suffix(" s"));
-                    }
-                    ui.add_space(4.0);
-                    // The choice only exists while the time lies within the source's audio.
-                    ui.add_enabled_ui(place.is_some(), |ui| {
-                        ui.radio_value(at_place, true, lang::t("An dieser Stelle im Audio der Quelle (Marke in der Wellenform)", "At that place in the source's audio (marker on the waveform)"))
-                            .on_hover_text(lang::t("Löst aus, sobald das Audio der Quelle die Stelle erreicht: bei einem Loop in jedem Durchgang, und auch nach einem Sprung in der Wellenform.", "Fires when the source's audio reaches the place: on every pass of a loop, and after a jump on the waveform too."));
-                        ui.radio_value(at_place, false, lang::t("Einmal, mit Verzögerung nach dem Start der Quelle", "Once, with a delay after the source starts"))
-                            .on_hover_text(lang::t("Zählt ab dem Auslösen der Quelle und löst genau einmal aus, was auch immer ihr Audio tut.", "Counts from the firing of the source and fires exactly once, whatever its audio does."));
-                    });
-                    if place.is_none() {
-                        ui.label(RichText::new(lang::t("Die Quelle hat kein Audio, das so lang ist: Der Cue wird einmal mit Verzögerung ausgelöst.", "The source has no audio that long: the cue fires once, with a delay.")).color(MUTED));
-                    }
-                    // A delay on a source with variants: from whichever variant, or from this one.
-                    if *in_group {
                         ui.add_space(4.0);
-                        ui.label(lang::t("Die Quelle hat Varianten.", "The source has variants."));
-                        let delayed = !(*at_place && place.is_some());
-                        ui.add_enabled_ui(delayed, |ui| {
-                            ui.radio_value(whole_group, true, lang::t("Verzögerung an der ganzen Gruppe: egal, welche Variante ausgelöst wird", "Delay on the whole group: whichever variant is fired"));
-                            ui.radio_value(whole_group, false, lang::t("Verzögerung nur an dieser Variante", "Delay on this variant only"));
+                        // The choice only exists while the time lies within the source's audio.
+                        ui.add_enabled_ui(place.is_some(), |ui| {
+                            ui.radio_value(at_place, true, lang::t("An dieser Stelle im Audio der Quelle (Marke in der Wellenform)", "At that place in the source's audio (marker on the waveform)"))
+                                .on_hover_text(lang::t("Löst aus, sobald das Audio der Quelle die Stelle erreicht: bei einem Loop in jedem Durchgang, und auch nach einem Sprung in der Wellenform.", "Fires when the source's audio reaches the place: on every pass of a loop, and after a jump on the waveform too."));
+                            ui.radio_value(at_place, false, lang::t("Einmal, mit Verzögerung nach dem Start der Quelle", "Once, with a delay after the source starts"))
+                                .on_hover_text(lang::t("Zählt ab dem Auslösen der Quelle und löst genau einmal aus, was auch immer ihr Audio tut.", "Counts from the firing of the source and fires exactly once, whatever its audio does."));
                         });
-                        if !delayed {
-                            ui.label(RichText::new(lang::t("Eine Stelle im Audio gehört immer zu der einen Variante, in deren Wellenform sie liegt.", "A place in the audio always belongs to the one variant whose waveform it lies in.")).color(MUTED));
+                        if place.is_none() {
+                            ui.label(RichText::new(lang::t("Die Quelle hat kein Audio, das so lang ist: Der Cue wird einmal mit Verzögerung ausgelöst.", "The source has no audio that long: the cue fires once, with a delay.")).color(MUTED));
                         }
-                    }
+                        // A delay on a source with variants: from whichever variant, or from this one.
+                        if *in_group {
+                            ui.add_space(4.0);
+                            ui.label(lang::t("Die Quelle hat Varianten.", "The source has variants."));
+                            let delayed = !(*at_place && place.is_some());
+                            ui.add_enabled_ui(delayed, |ui| {
+                                ui.radio_value(whole_group, true, lang::t("Verzögerung an der ganzen Gruppe: egal, welche Variante ausgelöst wird", "Delay on the whole group: whichever variant is fired"));
+                                ui.radio_value(whole_group, false, lang::t("Verzögerung nur an dieser Variante", "Delay on this variant only"));
+                            });
+                            if !delayed {
+                                ui.label(RichText::new(lang::t("Eine Stelle im Audio gehört immer zu der einen Variante, in deren Wellenform sie liegt.", "A place in the audio always belongs to the one variant whose waveform it lies in.")).color(MUTED));
+                            }
+                        }
+                    }));
                 }
                 LinkDialog::Adjust { fadeout, volume, fadetime, .. } => {
                     ui.radio_value(fadeout, true, lang::t("Ausfaden (stoppen)", "Fade out (stop)"));
@@ -463,19 +510,38 @@ impl App {
             });
         });
         match (result, dialog) {
-            (Some(true), LinkDialog::Delay { block, source, seconds, at_place, in_group, whole_group }) => {
-                // At the place in the source's audio (with its marker on the waveform, as
-                // if it had been set from the playhead), or once after a delay.
-                let place = place.filter(|_| at_place);
+            (Some(true), LinkDialog::Auto { block, source, when, seconds, at_place, in_group, whole_group, playhead, .. }) => {
+                // At the place in the source's audio (with its marker on the waveform), or
+                // once after a delay, or after the audio's end.
+                let place = match when {
+                    AutoChoice::Playhead => playhead,
+                    AutoChoice::After => place.filter(|_| at_place),
+                    _ => None,
+                };
+                if let (AutoChoice::Playhead, Some(at)) = (when, playhead) {
+                    if at < place_range.0 - 1e-9 || at > place_range.1 + 1e-9 {
+                        let text = mdstage_core::format::seconds;
+                        self.message = Some(if lang::english() {
+                            format!("Not set: this source's auto-cues fire in the order they stand in the script. The place has to lie between {} and {} s.", text(place_range.0), text(place_range.1))
+                        } else {
+                            format!("Nicht gesetzt: Die Auto-Cues dieser Quelle lösen in der Reihenfolge aus, in der sie im Skript stehen. Die Stelle muss zwischen {} und {} s liegen.", text(place_range.0), text(place_range.1))
+                        });
+                        return;
+                    }
+                }
                 self.edit_cue(block, |map| {
                     let mut auto = serde_yaml_mapping();
                     auto.insert("trigger_note".into(), note_value(source));
-                    let (key, value) = match place {
-                        Some(at) => ("at", at),
-                        None => ("delay", seconds),
+                    let rounded = |value: f64| mdstage_core::yaml::Value::from((value * 1000.0).round() / 1000.0);
+                    let (key, value) = match (when, place) {
+                        (AutoChoice::End, _) => ("at", "end".into()),
+                        (AutoChoice::With, _) => ("delay", 0.into()),
+                        (_, Some(at)) => ("at", rounded(at)),
+                        (_, None) => ("delay", rounded(seconds)),
                     };
-                    auto.insert(key.into(), ((value * 1000.0).round() / 1000.0).into());
-                    if in_group && whole_group && place.is_none() {
+                    auto.insert(key.into(), value);
+                    let by_delay = auto.contains_key("delay");
+                    if in_group && whole_group && by_delay {
                         auto.insert("group".into(), true.into());
                     }
                     map.insert("auto_trigger".into(), auto.into());
@@ -661,8 +727,12 @@ impl App {
                 Action::Copy(block) => {
                     if let Some(Block::Cue(cue)) = self.show.as_ref().and_then(|s| s.script.blocks.get(*block)) {
                         self.copied = Some(cue.yaml.clone());
+                        // (As text too: pasted into a text editor it is the cue's block.)
+                        self.clipboard = Some(Script { blocks: vec![Block::Cue(cue.clone())] }.to_markdown());
+                        self.message = Some(lang::t("Cue kopiert. Einfügen: Cmd/Strg+V auf einem Cue, das Einfüge-Symbol zwischen zwei Blöcken oder Rechtsklick.", "Cue copied. To paste: Cmd/Ctrl+V on a cue, the paste symbol between two blocks, or right-click.").to_string());
                     }
                 }
+                Action::PasteMessages { block, messages } => self.edit_cue(*block, |map| cue_forms::paste_messages(map, messages)),
                 Action::Paste(at) => {
                     let (Some(show), Some(mut fields)) = (&mut self.show, self.copied.clone()) else { continue };
                     // A pasted cue stands on its own: fresh trigger note, not a variant.
@@ -915,6 +985,20 @@ impl App {
             });
             for digit in digits {
                 self.view.type_scene_digit(digit, now);
+            }
+            // Cmd+C with the pointer on a cue copies it; Cmd+V puts the copied cue after
+            // the cue the pointer is on.
+            if !self.locked && self.cue_dialog.is_none() {
+                let (copy, paste) = ctx.input(|i| (i.events.iter().any(|e| matches!(e, egui::Event::Copy)), i.events.iter().any(|e| matches!(e, egui::Event::Paste(_)))));
+                if let Some(block) = self.view.hovered_block().filter(|_| copy || paste) {
+                    match (copy, self.copied.is_some()) {
+                        (true, _) => {
+                            self.apply(vec![Action::Copy(block)]);
+                        }
+                        (false, true) => self.apply(vec![Action::Paste(block + 1)]),
+                        (false, false) => {}
+                    }
+                }
             }
         }
     }
@@ -1901,13 +1985,28 @@ impl App {
 }
 
 /// The details of a connection from the cue in `block` to another cue.
+/// When an auto-cue is to fire, as chosen when it is made.
+#[derive(Clone, Copy, PartialEq)]
+enum AutoChoice {
+    /// With its source (a delay of 0).
+    With,
+    /// After the source's audio has ended (`at: end`).
+    End,
+    /// Where the source's audio stands now.
+    Playhead,
+    /// After a time: a place in the audio or a delay.
+    After,
+}
+
 enum LinkDialog {
     /// Fire by itself this long after `source` fires.
     /// `at_place`: if the time lies within the source's audio, hang the auto-cue on that
     /// place in it (it then fires on every pass of a loop) instead of counting once.
     /// `in_group`: the source is one of several variants; `whole_group`: a delay then
     /// counts from whichever of them is fired, not only from the one that was clicked.
-    Delay { block: usize, source: mdstage_core::cues::Note, seconds: f64, at_place: bool, in_group: bool, whole_group: bool },
+    /// `when`: which kind of auto-cue; `playhead`: where the source's audio stands, if it
+    /// stands somewhere between its start and its end; `has_audio`: whether it has any.
+    Auto { block: usize, source: mdstage_core::cues::Note, when: AutoChoice, seconds: f64, at_place: bool, in_group: bool, whole_group: bool, playhead: Option<f64>, has_audio: bool },
     /// Change the audio of `target` when the cue fires.
     Adjust { block: usize, target: mdstage_core::cues::Note, fadeout: bool, volume: f64, fadetime: f64 },
 }
@@ -1953,6 +2052,22 @@ fn serde_yaml_mapping() -> mdstage_core::yaml::Mapping {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // With the live view open the main view is locked, unless unlocked by hand.
+        match (self.live_open, self.lock_before_live) {
+            (true, None) => {
+                self.lock_before_live = Some(self.locked);
+                self.locked = true;
+            }
+            (false, Some(before)) => {
+                self.lock_before_live = None;
+                self.locked = before;
+            }
+            _ => {}
+        }
+        self.drop_empty_text();
+        if let Some(text) = self.clipboard.take() {
+            ctx.copy_text(text);
+        }
         lang::set_english(self.english());
         if let Some(show) = &self.show {
             self.snapshot = show.session.snapshot();
@@ -2083,8 +2198,10 @@ impl eframe::App for App {
             }
         }
 
-        // Follow the show: bring the operator's cue into view when it changes.
-        if self.snapshot.current != self.followed {
+        // Follow the show: bring the operator's cue into view when it changes. (Not while
+        // the show has not yet taken over an edit: its cue numbers are the old ones.)
+        let in_step = self.show.as_ref().is_some_and(|show| show.sent_count == self.snapshot.script_version);
+        if in_step && self.snapshot.current != self.followed {
             self.followed = self.snapshot.current;
             if let Some(cue) = self.snapshot.current {
                 self.view.scroll_to_cue(cue);
