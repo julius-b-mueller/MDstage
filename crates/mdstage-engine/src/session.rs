@@ -329,14 +329,24 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
         if let Some(socket) = &artnet {
             let _ = socket.set_broadcast(true);
         }
+        // Addresses are looked up once (and again a while after a failure), not on every
+        // frame: a name lookup can take its time, and the timecode must not wait for it.
+        let mut addresses: std::collections::HashMap<(String, u16), (Option<std::net::SocketAddr>, Instant)> = std::collections::HashMap::new();
         TimecodeSender::spawn(
             move || feed.lock().unwrap().map(|(seconds, at)| seconds + at.elapsed().as_secs_f64()),
             timecode_targets.clone(),
             move |target, bytes| match target {
                 TimecodeTarget::Midi { port, .. } => midi.send(port, bytes),
                 TimecodeTarget::Artnet { host, port, .. } => {
-                    if let Some(socket) = &artnet {
-                        let _ = socket.send_to(bytes, (host.as_str(), *port));
+                    let key = (host.clone(), *port);
+                    let stale = addresses.get(&key).is_none_or(|(address, at)| address.is_none() && at.elapsed() > Duration::from_secs(5));
+                    if stale {
+                        use std::net::ToSocketAddrs;
+                        let address = (host.as_str(), *port).to_socket_addrs().ok().and_then(|mut all| all.next());
+                        addresses.insert(key.clone(), (address, Instant::now()));
+                    }
+                    if let (Some(socket), Some((Some(address), _))) = (&artnet, addresses.get(&key)) {
+                        let _ = socket.send_to(bytes, address);
                     }
                 }
             },

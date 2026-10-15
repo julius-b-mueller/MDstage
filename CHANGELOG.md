@@ -14,7 +14,7 @@ Nichts über den Stand einer Vorstellung steht in der Show-Datei: Welcher Cue de
 ist und wann ein Cue ausgelöst wurde, liegt nur im Programm bzw. in den Einstellungen
 des Rechners. Die Show-Datei wird nur geschrieben, wenn das Skript bearbeitet wird.
 
-## Unveröffentlicht
+## 2.4.0
 
 - Back: alles wie vor dem Go. Was vor dem Go gearmt war (z. B. ein Sprungziel), ist wieder
   gearmt; ein zweites Back hebt das auf. Eine gewählte Variante wird wie ein Arm zuerst
@@ -39,6 +39,9 @@ des Rechners. Die Show-Datei wird nur geschrieben, wenn das Skript bearbeitet wi
   Art-Net-Timecode (Geräteart „Art-Net“, Adresse und Port 6454, einmal pro Frame).
 - Fernsteuerung: Go, Back, ▲ und ▼ (Cue davor/danach vormerken) per OSC, mit eigenem
   UDP-Port und frei wählbaren Adressen; ▲ und ▼ auch per MIDI-Note.
+- Sicherheit: Teilen sich OSC-Cue-Trigger und OSC-Steuerung einen Port, nimmt jede
+  Funktion nur dann Nachrichten aus dem Netzwerk an, wenn sie selbst dafür freigegeben
+  ist. Art-Net-Adressen werden einmal aufgelöst, nicht bei jedem Frame.
 - Cues: Cmd/Strg+C auf einem Cue kopiert ihn (auch als Text), Cmd/Strg+V fügt ihn danach
   ein. Nachrichten (MIDI, OSC, HTTP, Display) lassen sich einzeln oder alle kopieren und in
   einen anderen Cue einfügen – im Cue-Dialog und per Rechtsklick.

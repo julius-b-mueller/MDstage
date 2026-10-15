@@ -129,6 +129,16 @@ impl InputSettings {
     }
 }
 
+/// What an OSC packet on a listening port means. `cues`: whether cue triggers come in
+/// there, and if so whether from the network too; `control`: the commands that do. What
+/// is to come only from this computer is not taken from elsewhere (`local`: the packet
+/// came from this computer), even where the port is open to the network for the other.
+fn osc_input(packet: &[u8], local: bool, cues: Option<bool>, control: Option<&OscControl>) -> Option<Input> {
+    let control = control.filter(|c| c.network || local);
+    let cues = cues.is_some_and(|network| network || local);
+    control.and_then(|c| c.input(packet)).or_else(|| osc_cue_trigger(packet).filter(|_| cues).map(Input::Cue))
+}
+
 /// Open inputs. Dropping this closes them.
 pub struct Inputs {
     _midi: Vec<midir::MidiInputConnection<()>>,
@@ -154,22 +164,22 @@ impl Inputs {
 
         let running = Arc::new(AtomicBool::new(true));
         let mut inputs = Inputs { _midi: connections, ports, running: running.clone(), osc: Vec::new() };
-        // The ports to listen on, and on each whether cue triggers and which commands
-        // come in there.
-        let mut listen: Vec<(u16, bool, bool, Option<OscControl>)> = Vec::new();
+        // The ports to listen on, and on each whether cue triggers come in there (and
+        // from the network or only from this computer) and which commands.
+        let mut listen: Vec<(u16, Option<bool>, Option<OscControl>)> = Vec::new();
         if let CueTrigger::Osc { port, network } = settings.cue_trigger {
-            listen.push((port, network, true, None));
+            listen.push((port, Some(network), None));
         }
         if let Some(control) = settings.osc_control.clone().filter(|c| c.port > 0) {
             match listen.iter_mut().find(|(port, ..)| *port == control.port) {
-                Some(shared) => {
-                    shared.1 |= control.network;
-                    shared.3 = Some(control);
-                }
-                None => listen.push((control.port, control.network, false, Some(control))),
+                Some(shared) => shared.2 = Some(control),
+                None => listen.push((control.port, None, Some(control))),
             }
         }
-        for (port, network, cues, control) in listen {
+        for (port, cues, control) in listen {
+            // A shared port is opened to the network if either wants that; each then
+            // takes from the network only what it was meant to.
+            let network = cues == Some(true) || control.as_ref().is_some_and(|c| c.network);
             // (Should binding fail, the inputs opened so far close again when dropped.)
             let socket = UdpSocket::bind((if network { "0.0.0.0" } else { "127.0.0.1" }, port))?;
             socket.set_read_timeout(Some(Duration::from_millis(50)))?;
@@ -177,10 +187,9 @@ impl Inputs {
             inputs.osc.push(thread::Builder::new().name("mdstage-osc-in".into()).spawn(move || {
                 let mut packet = [0u8; 1024];
                 while flag.load(SeqCst) {
-                    let Ok((len, _)) = socket.recv_from(&mut packet) else { continue };
+                    let Ok((len, from)) = socket.recv_from(&mut packet) else { continue };
                     let packet = &packet[..len];
-                    let input = control.as_ref().and_then(|c| c.input(packet)).or_else(|| osc_cue_trigger(packet).filter(|_| cues).map(Input::Cue));
-                    if let Some(input) = input {
+                    if let Some(input) = osc_input(packet, from.ip().is_loopback(), cues, control.as_ref()) {
                         let _ = events.send(input);
                     }
                 }
@@ -302,6 +311,41 @@ mod tests {
         sender.send_to(&osc_packet("/cue/1/5", &[]), ("127.0.0.1", port)).unwrap();
         let got: Vec<Input> = std::iter::from_fn(|| received.recv_timeout(Duration::from_secs(2)).ok()).take(2).collect();
         assert_eq!(got, [Input::Go, Input::Cue(note(1, 5))]);
+        drop(inputs);
+    }
+
+    #[test]
+    fn a_shared_port_takes_from_the_network_only_what_was_meant_to_come_from_it() {
+        let (go, cue) = (osc_packet("/go", &[]), osc_packet("/cue/1/5", &[]));
+        let control = |network| OscControl { port: 1, network, go: "/go".into(), ..Default::default() };
+        // Commands from the network, cue triggers only from this computer.
+        assert_eq!(osc_input(&go, false, Some(false), Some(&control(true))), Some(Input::Go));
+        assert_eq!(osc_input(&cue, false, Some(false), Some(&control(true))), None);
+        assert_eq!(osc_input(&cue, true, Some(false), Some(&control(true))), Some(Input::Cue(note(1, 5))));
+        // And the other way round.
+        assert_eq!(osc_input(&go, false, Some(true), Some(&control(false))), None);
+        assert_eq!(osc_input(&cue, false, Some(true), Some(&control(false))), Some(Input::Cue(note(1, 5))));
+        assert_eq!(osc_input(&go, true, Some(true), Some(&control(false))), Some(Input::Go));
+        // No cue triggers on a port that only has commands.
+        assert_eq!(osc_input(&cue, true, None, Some(&control(true))), None);
+    }
+
+    #[test]
+    fn a_cue_trigger_from_the_network_is_not_taken_on_a_shared_port() {
+        // This computer's address in the network, if it has one (else nothing to test).
+        let Some(lan) = UdpSocket::bind("0.0.0.0:0").and_then(|s| s.connect("192.0.2.1:9").and_then(|()| s.local_addr())).ok().map(|a| a.ip()).filter(|ip| !ip.is_loopback() && !ip.is_unspecified()) else { return };
+        let port = UdpSocket::bind("0.0.0.0:0").unwrap().local_addr().unwrap().port();
+        let (events, received) = channel();
+        let control = OscControl { port, network: true, go: "/go".into(), ..Default::default() };
+        let settings = InputSettings { cue_trigger: CueTrigger::Osc { port, network: false }, osc_control: Some(control), ..Default::default() };
+        let inputs = Inputs::open(&settings, events).unwrap();
+        let Ok(remote) = UdpSocket::bind((lan, 0)) else { return };
+        remote.send_to(&osc_packet("/cue/1/5", &[]), (lan, port)).unwrap();
+        remote.send_to(&osc_packet("/go", &[]), (lan, port)).unwrap();
+        // (Where packets to this computer's own address are held back — a sandbox, a
+        // firewall — nothing arrives, and there is nothing to check.)
+        let got: Vec<Input> = std::iter::from_fn(|| received.recv_timeout(Duration::from_millis(500)).ok()).collect();
+        assert!(got.is_empty() || got == [Input::Go], "the cue trigger from the network must not be taken: {got:?}");
         drop(inputs);
     }
 
