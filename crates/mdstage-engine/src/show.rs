@@ -135,8 +135,11 @@ pub enum TrackItem {
     Stop(usize),
     /// The microphones are set so.
     Mic(Mic),
-    /// A device gets what this cue (`from`) last told it.
-    Device { kind: DeviceKind, device: String, from: usize },
+    /// Audio that plays on is set to this level (what the cues above left of it).
+    Volume(usize, f64),
+    /// A device gets what this cue (`from`) last told it; a display no cue above
+    /// addressed shows nothing (`from: None`), as at the start of the show.
+    Device { kind: DeviceKind, device: String, from: Option<usize> },
 }
 
 /// A jump waits for the operator to say which variant of some groups going through the
@@ -164,6 +167,10 @@ struct Plan {
     /// Loops to start, at their volume.
     start: Vec<(usize, f64)>,
     stop: Vec<usize>,
+    /// Audio that plays on, to fade to a level.
+    volume: Vec<(usize, f64)>,
+    /// Displays to clear.
+    blank: Vec<String>,
     items: Vec<TrackItem>,
 }
 
@@ -208,6 +215,11 @@ pub struct Show {
     stops: Vec<(usize, usize)>,
     /// `(entry, cue)`: loops tracking started for the jump whose entries begin at `entry`.
     tracking_started: Vec<(usize, usize)>,
+    /// `(entry, cue)`: audio tracking set to another level for such a jump.
+    tracked_levels: Vec<(usize, usize)>,
+    /// `(entry, device)`: displays tracking cleared for such a jump; they stay empty until
+    /// a cue after it addresses them.
+    blanked: Vec<(usize, String)>,
     /// Loops tracking has just started (their audio may not be heard yet): an outro fired
     /// at once waits for their end.
     just_started: Vec<usize>,
@@ -253,6 +265,8 @@ impl Show {
             steps: Vec::new(),
             stops: Vec::new(),
             tracking_started: Vec::new(),
+            tracked_levels: Vec::new(),
+            blanked: Vec::new(),
             just_started: Vec::new(),
             variant_choices: HashMap::new(),
             question: None,
@@ -317,6 +331,8 @@ impl Show {
             .collect();
         self.stops = self.stops.iter().filter_map(|&(at, cue)| Some((entry(at), to(cue)?))).collect();
         self.tracking_started = self.tracking_started.iter().filter_map(|&(at, cue)| Some((entry(at), to(cue)?))).collect();
+        self.tracked_levels = self.tracked_levels.iter().filter_map(|&(at, cue)| Some((entry(at), to(cue)?))).collect();
+        self.blanked = std::mem::take(&mut self.blanked).into_iter().map(|(at, device)| (entry(at), device)).collect();
         self.variant_choices = self.variant_choices.iter().filter_map(|(&root, &variant)| Some((to(root)?, to(variant)?))).collect();
         // (A question about the old script is asked again, if need be, on the next Go.)
         if let Some(question) = self.question.take().filter(|question| question.fire) {
@@ -795,7 +811,7 @@ impl Show {
         };
         let mic = mic.filter(|_| own_mic == Mic::Unchanged);
         items.extend(mic.clone().map(TrackItem::Mic));
-        let mut plan = Plan { sequence, mic, resend: DeviceStates::new(), start: Vec::new(), stop: Vec::new(), items };
+        let mut plan = Plan { sequence, mic, resend: DeviceStates::new(), start: Vec::new(), stop: Vec::new(), volume: Vec::new(), blank: Vec::new(), items };
         if !full {
             return plan;
         }
@@ -810,9 +826,21 @@ impl Show {
             }
             // (Which cue that was, to show.)
             let from = plan.sequence.iter().rev().copied().find(|&cue| History::of([cue]).device_states(&cues).contains_key(&key)).unwrap_or(target);
-            plan.items.push(TrackItem::Device { kind: key.0, device: key.1.clone(), from });
+            plan.items.push(TrackItem::Device { kind: key.0, device: key.1.clone(), from: Some(from) });
             if key.0 != DeviceKind::Display {
                 plan.resend.insert(key, state);
+            }
+        }
+
+        // Displays that show something no cue above put there: empty, as at the start.
+        let imagined_states = imagined.device_states(&cues);
+        let mut shown: Vec<(&String, &String)> = self.shown.iter().filter(|(_, content)| !content.is_empty()).collect();
+        shown.sort();
+        for (device, _) in shown {
+            let key = (DeviceKind::Display, device.clone());
+            if tracks(device) && !addressed.contains_key(&key) && !imagined_states.contains_key(&key) {
+                plan.blank.push(device.clone());
+                plan.items.push(TrackItem::Device { kind: DeviceKind::Display, device: device.clone(), from: None });
             }
         }
 
@@ -831,13 +859,20 @@ impl Show {
             if cue == target || !self.player.is_sounding(cue) {
                 continue;
             }
+            // (Audio from above that a cue above faded out would not be playing there.)
+            let (there, level) = imagined.audio_state(&cues, cue);
+            let known = plan.sequence.contains(&cue);
             let stop = match self.then(cue) == Then::Loop {
                 true => !wanted.contains(&cue),
-                false => cue > target,
+                false => cue > target || (known && !there),
             };
             if stop {
                 plan.stop.push(cue);
                 plan.items.push(TrackItem::Stop(cue));
+            } else if known && (level - self.history.audio_state(&cues, cue).1).abs() > 0.005 {
+                // Plays on, at the level the cues above left it at (ducked, or not).
+                plan.volume.push((cue, level));
+                plan.items.push(TrackItem::Volume(cue, level));
             }
         }
         plan
@@ -865,6 +900,13 @@ impl Show {
             self.effects.push(Effect::Mic(mic));
         }
         self.effects.extend(resend_effects(&plan.resend));
+        for (cue, level) in plan.volume {
+            self.player.fade(cue, level, BACK_FADE)?;
+            self.tracked_levels.push((entry, cue));
+        }
+        for device in plan.blank {
+            self.blanked.push((entry, device));
+        }
         for cue in plan.stop {
             self.note_stop(cue);
             self.stops.push((entry, cue));
@@ -1366,6 +1408,15 @@ impl Show {
             self.forget_audio_of(&[cue]);
         }
         self.tracking_started.retain(|(entry, _)| *entry < landed);
+        // Audio tracking set to another level: back to what the remaining cues left.
+        for (_, cue) in self.tracked_levels.iter().filter(|(entry, _)| *entry >= landed).copied().collect::<Vec<_>>() {
+            let (playing, level) = self.history.audio_state(&cues, cue);
+            if playing && self.player.is_sounding(cue) {
+                self.player.fade(cue, level, BACK_FADE)?;
+            }
+        }
+        self.tracked_levels.retain(|(entry, _)| *entry < landed);
+        self.blanked.retain(|(entry, _)| *entry < landed);
         // What was armed before the Go is armed again.
         let mut before = None;
         while self.steps.last().is_some_and(|step| step.entry >= landed && step.stopped.is_none()) {
@@ -1485,6 +1536,14 @@ impl Show {
         for ((kind, device), state) in &states {
             if let (DeviceKind::Display, DeviceState::Display(markdown)) = (kind, state) {
                 content.insert(device.clone(), markdown.clone());
+            }
+        }
+        // A display tracking cleared stays empty until a cue after that addresses it.
+        let cues = Cues::new(&script);
+        for (entry, device) in &self.blanked {
+            let since = self.history.display_source(&cues, device, &|device| script.device_tracking(device));
+            if since.is_none_or(|at| at < *entry) {
+                content.insert(device.clone(), String::new());
             }
         }
         // A display no remaining cue addresses goes back to empty.
@@ -2317,7 +2376,7 @@ mod tests {
         rig.show.arm(Some(3));
         let preview = rig.show.tracking_preview();
         assert!(preview.contains(&TrackItem::Start(1)) && preview.contains(&TrackItem::Mic(Mic::Open(vec!["Anna".into()]))));
-        assert!(preview.iter().any(|item| matches!(item, TrackItem::Device { device, from: 0, .. } if device == "Licht")));
+        assert!(preview.iter().any(|item| matches!(item, TrackItem::Device { device, from: Some(0), .. } if device == "Licht")));
         assert!(!preview.iter().any(|item| matches!(item, TrackItem::Device { device, .. } if device == "Effekte")), "Effekte does not track");
         rig.show.go().unwrap();
         let effects = rig.show.take_effects();
@@ -2362,6 +2421,47 @@ mod tests {
         rig.show.back().unwrap();
         rig.run(640);
         assert_eq!(rig.level(), 7.0, "Back brings them back");
+    }
+
+    #[test]
+    fn a_jump_sets_audio_that_plays_on_to_its_level_there() {
+        let mut rig = rig(
+            &["light: A", "music:\n    file: bed.wav\n    volume: 1\n    loop: true", "light: C", "music:\n    adjust: {trigger_note: {ch: 1, note: 1}, volume: 0.25, fadetime: 0.016}"],
+            &[("bed.wav", 1.0, 100)],
+        );
+        for _ in 0..4 {
+            rig.show.go().unwrap();
+        }
+        rig.run(96);
+        assert_eq!(rig.level(), 0.25, "ducked");
+        rig.show.arm(Some(2));
+        assert_eq!(rig.show.tracking_preview(), [TrackItem::Volume(1, 1.0)]);
+        rig.show.go().unwrap();
+        rig.run(640);
+        assert_eq!(rig.level(), 1.0, "before the duck it is at full level");
+        rig.show.back().unwrap();
+        rig.run(640);
+        assert_eq!(rig.level(), 0.25, "Back ducks it again");
+    }
+
+    #[test]
+    fn a_jump_clears_a_display_no_cue_above_addressed() {
+        let mut rig = rig(&["light: A", "light: B", "cue_display:\n    - {device: Foyer, markdown: Late}"], &[]);
+        for _ in 0..3 {
+            rig.show.go().unwrap();
+        }
+        rig.show.take_effects();
+        rig.show.arm(Some(1));
+        assert_eq!(rig.show.tracking_preview(), [TrackItem::Device { kind: DeviceKind::Display, device: "Foyer".into(), from: None }]);
+        rig.show.go().unwrap();
+        assert!(rig.show.take_effects().contains(&Effect::Display { device: "Foyer".into(), markdown: String::new() }), "empty, as at the start");
+        rig.show.back().unwrap();
+        assert!(rig.show.take_effects().contains(&Effect::Display { device: "Foyer".into(), markdown: "Late".into() }));
+        // A cue after the jump that addresses it shows its content again.
+        rig.show.arm(Some(1));
+        rig.show.go().unwrap();
+        rig.show.go().unwrap();
+        assert!(rig.show.take_effects().contains(&Effect::Display { device: "Foyer".into(), markdown: "Late".into() }));
     }
 
     #[test]

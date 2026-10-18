@@ -18,8 +18,10 @@ des Rechners. Die Show-Datei wird nur geschrieben, wenn das Skript bearbeitet wi
 
 - Tracking beim Springen (wie am Lichtpult): Wird ein Cue außer der Reihe ausgelöst,
   stellt MDstage her, was der Weg durchs Skript bis dorthin hinterlassen hätte – Loops
-  starten oder enden, einmaliges Audio von weiter unten endet, Geräte mit Tracking
-  bekommen ihren Stand, Mikrofone (immer) ihre Lage. Ein Finish als Ziel kommt nach einem
+  starten oder enden, einmaliges Audio von weiter unten endet, Weiterlaufendes bekommt
+  die Lautstärke, die die Cues darüber ihm lassen, Geräte mit Tracking bekommen ihren
+  Stand (ein Display, das kein Cue darüber angesprochen hat, wird leer), Mikrofone
+  (immer) ihre Lage. Ein Finish als Ziel kommt nach einem
   Durchgang seines Loops. Vor dem Go zeigt die Karte, was Tracking tun wird; bei Varianten
   ohne bisherige Wahl fragt MDstage. Back nimmt Sprung und Tracking zusammen zurück.
   Tracking ist je Show und je Gerät abschaltbar.

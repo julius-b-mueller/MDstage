@@ -993,8 +993,12 @@ impl ScriptView {
                             mdstage_core::cues::DeviceKind::Http => YELLOW,
                             mdstage_core::cues::DeviceKind::Display => RED,
                         };
-                        (format!("{device} {} {}", t("wie", "as"), cues.name(*from)), colour)
+                        match from {
+                            Some(from) => (format!("{device} {} {}", t("wie", "as"), cues.name(*from)), colour),
+                            None => (format!("{device} {}", t("leer", "empty")), colour),
+                        }
                     }
+                    TrackItem::Volume(cue, level) => (format!("{} → {} %", Self::name_with_file(&cues, *cue), (level * 100.0).round()), GREEN),
                 });
             }
             rows.push(Row::plain("Track", spans));

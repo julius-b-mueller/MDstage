@@ -858,13 +858,14 @@ When a cue is fired out of order — armed and Go, clicked, or fired by its trig
 | | On a jump |
 |---|---|
 | Microphones | always (even with tracking off): if the cue sets none, those the cues above left. |
-| Loops | those that would be playing there start (from their beginning, faded in); playing ones that would not fade out. |
-| Audio that plays once | is never started. If it plays and came from a cue **below** the target, it fades out; from **above**, it plays on. |
-| MIDI / OSC / HTTP / displays | each device with **Tracking** ticked gets what the last cue above that addressed it said, unless it has that already or the target addresses it itself. Announcements are never repeated. |
+| Loops | those that would be playing there start (from their beginning, faded in, at the level the cues above leave them); playing ones that would not fade out. |
+| Audio that plays once | is never started. If it plays and came from a cue **below** the target, it fades out; from **above**, it plays on — unless a cue above faded it out. |
+| Levels | audio that plays on is faded to the level the cues above leave it at (ducked by an adjust, or not). |
+| MIDI / OSC / HTTP / displays | each device with **Tracking** ticked gets what the last cue above that addressed it said, unless it has that already or the target addresses it itself. A display no cue above addressed shows nothing, as at the start of the show. Announcements are never repeated. |
 | Finish / bridge as target | the loop it finishes starts (if it is not playing), plays its pass up to where its tail begins, and the finish comes in as usual. |
 | Skipped auto-cues, delays | are not made up for. |
 
-**Before Go:** while a jump is armed, its card (main window and live view) shows a **Track** row with what Go does beyond the cue: `▶` loops that start, `■` audio that stops, the microphones, and each device with the cue whose state it gets.
+**Before Go:** while a jump is armed, its card (main window and live view) shows a **Track** row with what Go does beyond the cue: `▶` loops that start, `■` audio that stops, levels that change, the microphones, and each device with the cue whose state it gets (or "empty" for a display).
 
 **Variants:** if no variant of a group above has been fired yet and the variants differ in something tracking would set, MDstage asks which one counts — when the jump is armed, else before it fires (also for a cue fired from outside: the cue waits for the answer, in the live view if it is open). Cancel fires nothing; Back calls the question off.
 

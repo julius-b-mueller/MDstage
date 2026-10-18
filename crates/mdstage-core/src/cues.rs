@@ -678,6 +678,22 @@ impl History {
         states
     }
 
+    /// The entry whose cue last set what `device` (a display) shows — what tracking put
+    /// in counting only where `tracks` says so — if any.
+    pub fn display_source(&self, cues: &Cues, device: &str, tracks: &dyn Fn(&str) -> bool) -> Option<usize> {
+        self.entries.iter().enumerate().rev().find_map(|(at, &(c, how))| {
+            let counts = match how {
+                Fired::Tracked { full } => full && tracks(device),
+                _ => true,
+            };
+            let sets = cues.get(c)?.messages("cue_display").iter().any(|message| {
+                let filled = |field: &str| message.get(field).and_then(Value::as_str).is_some_and(|s| !s.trim().is_empty());
+                message.get("device").and_then(Value::as_str) == Some(device) && (filled("markdown") || !filled("announce"))
+            });
+            (counts && sets).then_some(at)
+        })
+    }
+
     /// Whether `target`'s audio should be playing, and at which volume, given the fired
     /// cues: its own start, every adjust aimed at it, and the handoff to its successor.
     /// Back uses this to restore audio the undone cues had ducked or faded out.
