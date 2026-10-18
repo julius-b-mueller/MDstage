@@ -37,7 +37,7 @@
   "url": "https://mdstage.org/",
   "applicationCategory": "MultimediaApplication",
   "operatingSystem": "macOS, Windows, Linux",
-  "softwareVersion": "2.4.0",
+  "softwareVersion": "2.5.0",
   "offers": {
     "@type": "Offer",
     "price": "0",
@@ -475,7 +475,7 @@ footer a:hover{text-decoration:underline}
           <rect x="28" y="20" width="224" height="38" rx="6" fill="#282c34"/>
           <text x="36" y="33" font-size="8" fill="#5c6370" font-style="italic" data-de="»Vergiss nicht, was du mir versprochen hast.«" data-en="»Don't forget what you promised me.«">»Vergiss nicht, was du mir versprochen hast.«</text>
           <text x="36" y="48" font-size="9" fill="#abb2bf" font-weight="bold" data-de="ANNA" data-en="ANNA">ANNA</text>
-          <!-- Next cue (white glow) -->
+          <!-- Next cue (white frame) -->
           <rect x="28" y="64" width="224" height="58" rx="7" fill="#1e2430" stroke="rgba(255,255,255,.75)" stroke-width="1.5"/>
           <text x="42" y="79" font-size="8" fill="rgba(255,255,255,.45)" data-de="NÄCHSTER CUE" data-en="NEXT CUE">NÄCHSTER CUE</text>
           <text x="42" y="93" font-size="11" fill="#fff" font-weight="bold" data-de="Cue 4 · Dialog Szene 2" data-en="Cue 4 · Dialogue Scene 2">Cue 4 · Dialog Szene 2</text>
@@ -560,6 +560,91 @@ footer a:hover{text-decoration:underline}
         <h3 data-de="Go zu früh? Back macht es rückgängig" data-en="Go too early? Back undoes it">Go zu früh? Back macht es rückgängig</h3>
         <p data-de="Back macht den letzten Go vollständig rückgängig – Loops, Mikrofone und Licht kehren in den vorherigen Zustand zurück. Bei Loops sogar taktgenau, ohne hörbaren Sprung." data-en="Back fully undoes the last Go – loops, microphones and lighting return to their previous state. With loops even beat-accurately, with no audible jump.">
           Back macht den letzten Go vollständig rückgängig – Loops, Mikrofone und Licht kehren in den vorherigen Zustand zurück. Bei Loops sogar taktgenau, ohne hörbaren Sprung.
+        </p>
+      </div>
+    </div>
+
+    <!-- Feature: Tracking -->
+    <div class="feat-block reverse">
+      <div class="feat-graphic">
+        <svg viewBox="0 0 280 200" width="280" height="200" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Das Skript mit Cues -->
+          <rect x="12" y="12" width="120" height="176" rx="8" fill="#21252b" stroke="#383c44"/>
+          <rect x="22" y="24" width="100" height="18" rx="4" fill="#282c34"/>
+          <rect x="22" y="24" width="4" height="18" rx="2" fill="#4b5263"/>
+          <text x="32" y="36" font-size="8" fill="#abb2bf">Cue 1 · Regen ⟳</text>
+          <rect x="22" y="50" width="100" height="18" rx="4" fill="#282c34"/>
+          <rect x="22" y="50" width="4" height="18" rx="2" fill="#e5c07b"/>
+          <text x="32" y="62" font-size="8" fill="#abb2bf" data-de="Cue 2 · aktuell" data-en="Cue 2 · current">Cue 2 · aktuell</text>
+          <rect x="22" y="76" width="100" height="18" rx="4" fill="#282c34"/>
+          <rect x="22" y="76" width="4" height="18" rx="2" fill="#61afef"/>
+          <text x="32" y="88" font-size="8" fill="#7f848e" data-de="Cue 3 · Licht B" data-en="Cue 3 · Light B">Cue 3 · Licht B</text>
+          <rect x="22" y="102" width="100" height="18" rx="4" fill="#282c34"/>
+          <rect x="22" y="102" width="4" height="18" rx="2" fill="#61afef"/>
+          <text x="32" y="114" font-size="8" fill="#7f848e" data-de="Cue 4 · Mikros" data-en="Cue 4 · Mics">Cue 4 · Mikros</text>
+          <rect x="22" y="128" width="100" height="22" rx="5" fill="#1e2430" stroke="rgba(255,255,255,.8)" stroke-width="1.2"/>
+          <text x="32" y="143" font-size="8.5" fill="#fff" font-weight="700" data-de="Cue 5 · Sprung" data-en="Cue 5 · jump">Cue 5 · Sprung</text>
+          <!-- Sprungpfeil -->
+          <path d="M126 59 C 148 70, 148 128, 126 139" stroke="#e5c07b" stroke-width="1.5" stroke-dasharray="3,2" marker-end="url(#arT)"/>
+          <!-- Was Tracking mitbringt -->
+          <rect x="150" y="40" width="118" height="120" rx="8" fill="#21252b" stroke="#383c44"/>
+          <text x="160" y="58" font-size="8" fill="#7f848e" data-de="Beim Go dazu:" data-en="Go also does:">Beim Go dazu:</text>
+          <text x="160" y="80" font-size="8.5" fill="#98c379" data-de="▶ Regen-Loop" data-en="▶ Rain loop">▶ Regen-Loop</text>
+          <text x="160" y="100" font-size="8.5" fill="#61afef" data-de="Licht wie Cue 3" data-en="Light as cue 3">Licht wie Cue 3</text>
+          <text x="160" y="120" font-size="8.5" fill="#abb2bf" data-de="Mikros: Anna, Ben" data-en="Mics: Anna, Ben">Mikros: Anna, Ben</text>
+          <text x="160" y="140" font-size="8.5" fill="#e06c75" data-de="Effekte: nicht" data-en="Effects: not">Effekte: nicht</text>
+          <defs>
+            <marker id="arT" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="#e5c07b"/>
+            </marker>
+          </defs>
+        </svg>
+      </div>
+      <div class="feat-text">
+        <h3 data-de="Springen mit Tracking – wie am Lichtpult" data-en="Jumping with tracking – as on a lighting desk">Springen mit Tracking – wie am Lichtpult</h3>
+        <p data-de="Wer mitten ins Stück springt, bekommt den Zustand, den der Weg durchs Skript bis dorthin hinterlassen hätte: Loops laufen, Licht und Displays stehen richtig, die Mikrofone sind offen. Vor dem Go zeigt die Karte, was mitkommt. Pro Gerät abschaltbar – etwa für Effekte, die nur mit ihrem Cue feuern sollen – und Back nimmt alles zusammen zurück." data-en="Jump into the middle of the show and you get the state going through the script up to there would have left: loops play, light and displays are right, the microphones are open. Before Go the card shows what comes along. It can be switched off per device – for effects that should fire only with their cue, say – and Back takes it all back together.">
+          Wer mitten ins Stück springt, bekommt den Zustand, den der Weg durchs Skript bis dorthin hinterlassen hätte: Loops laufen, Licht und Displays stehen richtig, die Mikrofone sind offen. Vor dem Go zeigt die Karte, was mitkommt. Pro Gerät abschaltbar – etwa für Effekte, die nur mit ihrem Cue feuern sollen – und Back nimmt alles zusammen zurück.
+        </p>
+      </div>
+    </div>
+
+    <!-- Feature: Remote-Liveansicht -->
+    <div class="feat-block">
+      <div class="feat-graphic">
+        <svg viewBox="0 0 280 200" width="280" height="200" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Laptop mit MDstage -->
+          <rect x="14" y="44" width="104" height="70" rx="6" fill="#21252b" stroke="#383c44"/>
+          <rect x="22" y="52" width="88" height="54" rx="3" fill="#282c34"/>
+          <rect x="28" y="60" width="76" height="12" rx="3" fill="#1e2430" stroke="rgba(255,255,255,.7)"/>
+          <rect x="28" y="78" width="60" height="4" rx="2" fill="#4b5263"/>
+          <rect x="28" y="88" width="70" height="4" rx="2" fill="#4b5263"/>
+          <path d="M6 118 L126 118 L118 124 L14 124 Z" fill="#383c44"/>
+          <text x="66" y="140" text-anchor="middle" font-size="8" fill="#7f848e">MDstage</text>
+          <!-- Funk -->
+          <path d="M136 72 q8 8 0 16" stroke="#61afef" stroke-width="1.5"/>
+          <path d="M142 66 q14 14 0 28" stroke="#61afef88" stroke-width="1.5"/>
+          <path d="M148 60 q20 20 0 40" stroke="#61afef44" stroke-width="1.5"/>
+          <!-- Tablet mit Remote-Liveansicht -->
+          <rect x="166" y="16" width="102" height="168" rx="10" fill="#21252b" stroke="#383c44"/>
+          <text x="176" y="34" font-size="11" fill="#abb2bf" font-family="monospace">20:14:07</text>
+          <rect x="174" y="42" width="86" height="22" rx="4" fill="#282c34"/>
+          <rect x="174" y="42" width="3" height="22" rx="1.5" fill="#e5c07b"/>
+          <text x="182" y="56" font-size="7.5" fill="#abb2bf">Cue 1.12</text>
+          <rect x="174" y="70" width="86" height="34" rx="5" fill="#1e2430" stroke="rgba(255,255,255,.8)" stroke-width="1.2"/>
+          <text x="182" y="86" font-size="9" fill="#fff" font-weight="700">Cue 1.13</text>
+          <rect x="182" y="93" width="44" height="4" rx="2" fill="#98c37966"/>
+          <rect x="174" y="112" width="86" height="12" rx="3" fill="#2c313a"/>
+          <rect x="178" y="116" width="40" height="4" rx="2" fill="#c678dd"/>
+          <rect x="174" y="150" width="24" height="24" rx="5" fill="#383c44"/>
+          <text x="186" y="166" text-anchor="middle" font-size="7" fill="#abb2bf">Back</text>
+          <rect x="202" y="150" width="58" height="24" rx="5" fill="#98c379"/>
+          <text x="231" y="166" text-anchor="middle" font-size="9" fill="#1e2127" font-weight="700">Go</text>
+        </svg>
+      </div>
+      <div class="feat-text">
+        <h3 data-de="Remote-Liveansicht im Browser" data-en="Remote live view in the browser">Remote-Liveansicht im Browser</h3>
+        <p data-de="Die Liveansicht auf Tablet oder Telefon im eigenen Netzwerk – mit Go, Back und ▲ ▼, geschützt durch eine PIN. Nichts zu installieren: Adresse öffnen, PIN eingeben, fertig. Im Menü Geräte lässt sich die Steuerung von dort jederzeit abschalten." data-en="The live view on a tablet or phone in your own network – with Go, Back and ▲ ▼, protected by a PIN. Nothing to install: open the address, enter the PIN, done. The Devices menu switches control from there off at any time.">
+          Die Liveansicht auf Tablet oder Telefon im eigenen Netzwerk – mit Go, Back und ▲ ▼, geschützt durch eine PIN. Nichts zu installieren: Adresse öffnen, PIN eingeben, fertig. Im Menü Geräte lässt sich die Steuerung von dort jederzeit abschalten.
         </p>
       </div>
     </div>

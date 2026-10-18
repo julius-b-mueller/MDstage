@@ -14,7 +14,7 @@ Nichts über den Stand einer Vorstellung steht in der Show-Datei: Welcher Cue de
 ist und wann ein Cue ausgelöst wurde, liegt nur im Programm bzw. in den Einstellungen
 des Rechners. Die Show-Datei wird nur geschrieben, wenn das Skript bearbeitet wird.
 
-## Unveröffentlicht
+## 2.5.0
 
 - Tracking beim Springen (wie am Lichtpult): Wird ein Cue außer der Reihe ausgelöst,
   stellt MDstage her, was der Weg durchs Skript bis dorthin hinterlassen hätte – Loops

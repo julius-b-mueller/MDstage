@@ -2718,7 +2718,7 @@ dependencies = [
 
 [[package]]
 name = "mdstage-app"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "chrono",
  "docx-rs",
@@ -2737,14 +2737,14 @@ dependencies = [
 
 [[package]]
 name = "mdstage-core"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "serde_yaml_ng",
 ]
 
 [[package]]
 name = "mdstage-engine"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "cpal",
  "mdstage-core",
