@@ -24,7 +24,53 @@ impl Config {
     }
 }
 
+/// An output device as the show file declares it (`config.outputDevices`): its name,
+/// kind (`midi`, `osc`, `http`, `display`), colour on the cues, and whether it takes part
+/// in tracking.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OutputDevice {
+    pub name: String,
+    pub kind: String,
+    pub colour: Option<String>,
+    pub tracking: bool,
+}
+
 impl Script {
+    /// Whether tracking is on for the project (`config.tracking`; on unless `false`).
+    /// Microphones are tracked either way.
+    pub fn tracking(&self) -> bool {
+        self.config().and_then(|c| c.get("tracking")).and_then(Value::as_bool) != Some(false)
+    }
+
+    /// Switch tracking for the project on or off. Only "off" is written down.
+    pub fn set_tracking(&mut self, on: bool) {
+        self.edit_config(|config| match on {
+            true => drop(config.shift_remove("tracking")),
+            false => drop(config.insert("tracking".into(), false.into())),
+        });
+    }
+
+    /// Whether an output device takes part in tracking (`config.outputDevices[].tracking`;
+    /// on unless `false`, also for a device the file does not declare).
+    pub fn device_tracking(&self, name: &str) -> bool {
+        let declared = self.config().and_then(|c| c.get("outputDevices")).and_then(Value::as_sequence);
+        !declared.into_iter().flatten().any(|device| device.get("name").and_then(Value::as_str) == Some(name) && device.get("tracking").and_then(Value::as_bool) == Some(false))
+    }
+
+    /// Change the inside of the config block (`config:`), if there is one.
+    fn edit_config(&mut self, change: impl FnOnce(&mut serde_yaml_ng::Mapping)) {
+        for block in &mut self.blocks {
+            let Block::Config(config) = block else { continue };
+            let mut yaml = config.yaml.clone();
+            let Some(Value::Mapping(inner)) = yaml.get_mut("config") else { continue };
+            change(inner);
+            if yaml != config.yaml {
+                config.set_yaml(yaml);
+            }
+            return;
+        }
+    }
+
     /// Names of the show's virtual audio channels (`L` and `R` unless configured).
     pub fn virtual_channels(&self) -> Vec<String> {
         match self.config().and_then(|c| c.get("virtualChannels")) {
@@ -94,19 +140,22 @@ impl Script {
 
     /// Declare the show's output devices in the config block: `(name, type, colour)`,
     /// the colour optional. Addresses are not part of the show file.
-    pub fn set_output_devices(&mut self, devices: &[(String, String, Option<String>)]) {
+    pub fn set_output_devices(&mut self, devices: &[OutputDevice]) {
         for block in &mut self.blocks {
             let Block::Config(config) = block else { continue };
             let mut yaml = config.yaml.clone();
             let Some(Value::Mapping(inner)) = yaml.get_mut("config") else { continue };
             let list: Vec<Value> = devices
                 .iter()
-                .map(|(name, kind, colour)| {
+                .map(|OutputDevice { name, kind, colour, tracking }| {
                     let mut device = serde_yaml_ng::Mapping::new();
                     device.insert("name".into(), name.as_str().into());
                     device.insert("type".into(), kind.as_str().into());
                     if let Some(colour) = colour {
                         device.insert("color".into(), colour.as_str().into());
+                    }
+                    if !tracking {
+                        device.insert("tracking".into(), false.into());
                     }
                     Value::Mapping(device)
                 })
@@ -422,7 +471,7 @@ pub struct Removal {
     path: Vec<Step>,
 }
 
-const CONFIG_KEYS: &[&str] = &["roles", "groups", "app_version", "emLightNote", "virtualChannels", "outputDevices"];
+const CONFIG_KEYS: &[&str] = &["roles", "groups", "app_version", "emLightNote", "virtualChannels", "outputDevices", "tracking"];
 const CUE_KEYS: &[&str] = &[
     "sibling", "trigger_note", "note", "auto_mic", "mic", "music", "music_seq", "osc", "osc_arg", "osc_arg_type",
     "qlcplus", "projection", "start_tc", "auto_trigger", "chain_end", "loop_outro", "cue_midi", "cue_osc",
@@ -1088,11 +1137,20 @@ config:
     #[test]
     fn output_devices_are_declared_in_the_config() {
         let mut script = Script::parse("```yaml\nconfig:\n    roles: {}\n```\n");
-        script.set_output_devices(&[("Licht".into(), "midi".into(), Some("yellow".into())), ("QLab".into(), "osc".into(), None)]);
+        let device = |name: &str, kind: &str, colour: Option<&str>, tracking| OutputDevice { name: name.into(), kind: kind.into(), colour: colour.map(Into::into), tracking };
+        script.set_output_devices(&[device("Licht", "midi", Some("yellow"), true), device("Effekte", "midi", None, false), device("QLab", "osc", None, true)]);
         let declared = script.config().unwrap().get("outputDevices").unwrap().clone();
         assert_eq!(declared[0].get("color").and_then(Value::as_str), Some("yellow"));
-        assert_eq!(declared[1].get("name").and_then(Value::as_str), Some("QLab"));
-        assert!(declared[1].get("color").is_none());
+        assert_eq!(declared[2].get("name").and_then(Value::as_str), Some("QLab"));
+        assert!(declared[2].get("color").is_none());
+        assert!(declared[0].get("tracking").is_none(), "only “off” is written down");
+        assert!(script.device_tracking("Licht") && !script.device_tracking("Effekte") && script.device_tracking("not declared"));
+        assert!(script.tracking());
+        script.set_tracking(false);
+        assert!(!script.tracking());
+        assert!(!Script::parse(&script.to_markdown()).tracking(), "and it is in the file");
+        script.set_tracking(true);
+        assert!(script.config().unwrap().get("tracking").is_none());
         script.set_output_devices(&[]);
         assert!(script.config().unwrap().get("outputDevices").is_none());
     }

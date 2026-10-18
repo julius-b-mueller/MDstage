@@ -41,7 +41,7 @@ const GLOW_REACH: usize = 20;
 
 
 /// One line that tells a cue apart: its note, audio, or the text around it.
-fn summary(script: &Script, cue: usize) -> String {
+pub(crate) fn summary(script: &Script, cue: usize) -> String {
     let cues = Cues::new(script);
     let Some(c) = cues.get(cue) else { return String::new() };
     let mut parts: Vec<String> = Vec::new();

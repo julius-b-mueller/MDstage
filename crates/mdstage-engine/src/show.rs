@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use mdstage_core::audio::CueAudio;
-use mdstage_core::cues::{AutoWhen, Cues, DeviceKind, DeviceState, History, Note};
+use mdstage_core::cues::{AutoWhen, Cues, DeviceKind, DeviceState, DeviceStates, History, Note, tracked_sequence};
 use mdstage_core::effects::{Effect, resend_effects};
 use mdstage_core::mic::{Cast, Mic};
 use mdstage_core::{Block, Script};
@@ -126,6 +126,47 @@ enum Fired {
     Began,
 }
 
+/// Something a jump does beyond firing its cue, because of tracking (shown before Go).
+#[derive(Clone, Debug, PartialEq)]
+pub enum TrackItem {
+    /// A loop that would be playing there starts.
+    Start(usize),
+    /// Audio that would not be playing there fades out.
+    Stop(usize),
+    /// The microphones are set so.
+    Mic(Mic),
+    /// A device gets what this cue (`from`) last told it.
+    Device { kind: DeviceKind, device: String, from: usize },
+}
+
+/// A jump waits for the operator to say which variant of some groups going through the
+/// script would have taken: they differ in what tracking would set.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Question {
+    /// The cue jumped to.
+    pub cue: usize,
+    /// The variants of each group in question.
+    pub groups: Vec<Vec<usize>>,
+    /// Whether the cue fires once the question is answered (otherwise it was only armed).
+    pub fire: bool,
+    /// What was armed and chosen before the jump, for Back.
+    before: (Option<usize>, Option<usize>),
+}
+
+/// What tracking does for a jump to a cue.
+struct Plan {
+    /// The cues going through the script up to there would have fired.
+    sequence: Vec<usize>,
+    /// The microphones, if they change.
+    mic: Option<Mic>,
+    /// Devices (not displays) to tell their state again.
+    resend: DeviceStates,
+    /// Loops to start, at their volume.
+    start: Vec<(usize, f64)>,
+    stop: Vec<usize>,
+    items: Vec<TrackItem>,
+}
+
 /// Progress of a pending delay auto-cue, for the UI.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DelayProgress {
@@ -163,8 +204,17 @@ pub struct Show {
     /// The operator's steps, oldest first, for Back.
     steps: Vec<Step>,
     /// `(entry, cue)`: audio that the cue fired as history entry `entry` stopped (a fade
-    /// out by `music.adjust`, a timecode taken over, an auto-cue on playing audio).
+    /// out by `music.adjust`, a timecode taken over, an auto-cue on playing audio, tracking).
     stops: Vec<(usize, usize)>,
+    /// `(entry, cue)`: loops tracking started for the jump whose entries begin at `entry`.
+    tracking_started: Vec<(usize, usize)>,
+    /// Loops tracking has just started (their audio may not be heard yet): an outro fired
+    /// at once waits for their end.
+    just_started: Vec<usize>,
+    /// Which variant of each group (by its first cue) counts for tracking: the one last
+    /// fired, or the one the operator chose when asked.
+    variant_choices: HashMap<usize, usize>,
+    question: Option<Question>,
     /// Where audio stands that the operator paused or placed by hand on its waveform:
     /// `(part, seconds)`. Playing the cue's audio from the waveform starts there.
     paused: HashMap<usize, (usize, f64)>,
@@ -202,6 +252,10 @@ impl Show {
             stopped_at: HashMap::new(),
             steps: Vec::new(),
             stops: Vec::new(),
+            tracking_started: Vec::new(),
+            just_started: Vec::new(),
+            variant_choices: HashMap::new(),
+            question: None,
             paused: HashMap::new(),
             timecode: None,
             frame_rate: FrameRate::default(),
@@ -242,7 +296,7 @@ impl Show {
 
         // Where each place in the history goes when cues that are gone leave it.
         let mut kept_before = vec![0];
-        for cue in self.history.cues() {
+        for cue in self.history.all() {
             kept_before.push(kept_before.last().unwrap() + usize::from(to(cue).is_some()));
         }
         let entry = |entry: usize| kept_before[entry.min(kept_before.len() - 1)];
@@ -262,6 +316,13 @@ impl Show {
             })
             .collect();
         self.stops = self.stops.iter().filter_map(|&(at, cue)| Some((entry(at), to(cue)?))).collect();
+        self.tracking_started = self.tracking_started.iter().filter_map(|&(at, cue)| Some((entry(at), to(cue)?))).collect();
+        self.variant_choices = self.variant_choices.iter().filter_map(|(&root, &variant)| Some((to(root)?, to(variant)?))).collect();
+        // (A question about the old script is asked again, if need be, on the next Go.)
+        if let Some(question) = self.question.take().filter(|question| question.fire) {
+            self.armed = question.before.0.and_then(to);
+            self.selected_variant = question.before.1.and_then(to);
+        }
         self.armed = self.armed.and_then(to);
         self.selected_variant = self.selected_variant.and_then(to);
         let pairs = |list: &[(usize, usize)]| list.iter().filter_map(|&(a, b)| Some((to(a)?, to(b)?))).collect::<Vec<_>>();
@@ -564,6 +625,14 @@ impl Show {
     /// Make a cue the next Go, whatever the position (jump, "arm in live view").
     pub fn arm(&mut self, cue: Option<usize>) {
         self.armed = cue;
+        // A jump armed: which variants count for tracking is asked now, not at Go.
+        self.question = None;
+        if let Some(target) = cue.filter(|&target| self.is_jump(target)) {
+            let groups = self.open_groups(target);
+            if !groups.is_empty() {
+                self.question = Some(Question { cue: target, groups, fire: false, before: (None, None) });
+            }
+        }
     }
 
     /// One cue back or on from the next Go, without firing anything: the cue gone to is
@@ -579,8 +648,8 @@ impl Show {
             (None, true) => None,
         };
         if to.is_some() {
-            self.armed = to;
             self.selected_variant = None;
+            self.arm(to);
         }
     }
 
@@ -648,13 +717,202 @@ impl Show {
     /// Fire a cue for the operator, and note the step for Back with what was armed before.
     fn by_hand(&mut self, cue: usize, (armed, variant): (Option<usize>, Option<usize>)) -> Result<()> {
         let entry = self.history.len();
-        let stopped = match self.fire_cue(cue, false)? {
+        // A jump: the state going through the script up to there would have left, first
+        // (unless the cue's audio is playing: then the press stops it).
+        if self.is_jump(cue) && !self.is_playing(cue) {
+            let groups = self.open_groups(cue);
+            if !groups.is_empty() {
+                // Not before the operator has said which variants count.
+                self.armed = Some(cue);
+                self.question = Some(Question { cue, groups, fire: true, before: (armed, variant) });
+                return Ok(());
+            }
+            self.track(cue)?;
+        }
+        let fired = self.fire_cue(cue, false);
+        self.just_started.clear();
+        let stopped = match fired? {
             Fired::Nothing => return Ok(()),
             Fired::Stopped => Some(cue),
             Fired::Queued | Fired::Began => None,
         };
         self.steps.push(Step { entry, armed, variant, stopped });
         Ok(())
+    }
+
+    /// Whether firing `cue` by hand is a jump: it is not (a variant of) the next cue.
+    fn is_jump(&self, cue: usize) -> bool {
+        let cues = Cues::new(&self.script);
+        self.history.next(&cues).is_none_or(|next| !cues.group(next).contains(&cue))
+    }
+
+    /// The groups of variants before `target` for which tracking does not know which
+    /// variant counts and whose variants differ in what it would set: microphones, the
+    /// messages to devices that track, loop audio and adjustments.
+    fn open_groups(&self, target: usize) -> Vec<Vec<usize>> {
+        let script = self.script.clone();
+        let cues = Cues::new(&script);
+        let full = script.tracking();
+        let tracked = |key: &str, cue: &mdstage_core::Cue| -> Vec<mdstage_core::yaml::Value> {
+            cue.yaml.get(key).and_then(|v| v.as_sequence()).into_iter().flatten().filter(|m| m.get("device").and_then(|d| d.as_str()).is_none_or(|d| script.device_tracking(d))).cloned().collect()
+        };
+        let signature = |variant: usize| -> String {
+            let Some(c) = cues.get(variant) else { return String::new() };
+            let mic = cues.block_index(variant).map(|block| script.mic_for_cue(block, &self.cast));
+            if !full {
+                return format!("{mic:?}");
+            }
+            let messages: Vec<_> = ["cue_midi", "cue_osc", "cue_http", "cue_display"].iter().map(|key| tracked(key, c)).collect();
+            let looped = (self.then(variant) == Then::Loop).then(|| c.yaml.get("music").cloned());
+            format!("{mic:?} {messages:?} {looped:?} {:?}", c.adjust())
+        };
+        let own = cues.group(target);
+        (0..target)
+            .filter(|&cue| cues.in_group(cue) && cues.group_root(cue) == cue && !own.contains(&cue) && !self.variant_choices.contains_key(&cue))
+            .map(|root| cues.group(root).collect::<Vec<usize>>())
+            .filter(|group| group.iter().any(|&variant| signature(variant) != signature(group[0])))
+            .collect()
+    }
+
+    /// What tracking does for a jump to `target`, worked out from the state now.
+    fn plan(&self, target: usize) -> Plan {
+        let script = self.script.clone();
+        let cues = Cues::new(&script);
+        let full = script.tracking();
+        let tracks = |device: &str| script.device_tracking(device);
+        let sequence = tracked_sequence(&cues, target, |root| self.variant_choices.get(&root).copied());
+        let imagined = History::of(sequence.iter().copied());
+        let mut items = Vec::new();
+
+        // Microphones, always: those going through the script would have left, unless
+        // the cue sets its own.
+        let own_mic = cues.block_index(target).map_or(Mic::Unchanged, |block| script.mic_for_cue(block, &self.cast));
+        // (Where no cue has set any yet, before or there, nothing is sent.)
+        let mic = match (imagined.mic(&cues, &self.cast), self.history.mic(&cues, &self.cast)) {
+            (Mic::Unchanged, Mic::Unchanged) => None,
+            (Mic::Unchanged, _) => Some(Mic::MuteAll),
+            (there, now) => (there != now).then_some(there),
+        };
+        let mic = mic.filter(|_| own_mic == Mic::Unchanged);
+        items.extend(mic.clone().map(TrackItem::Mic));
+        let mut plan = Plan { sequence, mic, resend: DeviceStates::new(), start: Vec::new(), stop: Vec::new(), items };
+        if !full {
+            return plan;
+        }
+
+        // Devices that track and that the cue does not address itself: what the cue that
+        // last addressed them would have left, if they were told something else.
+        let addressed = History::of([target]).device_states(&cues);
+        let now = self.history.device_states_with(&cues, &tracks);
+        for (key, state) in imagined.device_states(&cues) {
+            if !tracks(&key.1) || addressed.contains_key(&key) || now.get(&key) == Some(&state) {
+                continue;
+            }
+            // (Which cue that was, to show.)
+            let from = plan.sequence.iter().rev().copied().find(|&cue| History::of([cue]).device_states(&cues).contains_key(&key)).unwrap_or(target);
+            plan.items.push(TrackItem::Device { kind: key.0, device: key.1.clone(), from });
+            if key.0 != DeviceKind::Display {
+                plan.resend.insert(key, state);
+            }
+        }
+
+        // Loops: those that would be playing there start; playing ones that would not, stop.
+        let mut wanted: Vec<usize> = plan.sequence.iter().copied().filter(|&cue| self.then(cue) == Then::Loop && imagined.audio_state(&cues, cue).0).collect();
+        wanted.dedup();
+        for &cue in &wanted {
+            if !self.player.is_sounding(cue) {
+                plan.start.push((cue, imagined.audio_state(&cues, cue).1));
+                plan.items.push(TrackItem::Start(cue));
+            }
+        }
+        // Audio that plays once goes on if it came from above the cue (it may well be
+        // playing there), and stops if it came from below.
+        for cue in self.player.active_cues() {
+            if cue == target || !self.player.is_sounding(cue) {
+                continue;
+            }
+            let stop = match self.then(cue) == Then::Loop {
+                true => !wanted.contains(&cue),
+                false => cue > target,
+            };
+            if stop {
+                plan.stop.push(cue);
+                plan.items.push(TrackItem::Stop(cue));
+            }
+        }
+        plan
+    }
+
+    /// What Go on the next cue would do because of tracking, if it is a jump.
+    pub fn tracking_preview(&self) -> Vec<TrackItem> {
+        match self.next() {
+            Some(next) if self.is_jump(next) => self.plan(next).items,
+            _ => Vec::new(),
+        }
+    }
+
+    /// Put the show in the state going through the script up to `target` would have left
+    /// (see [`Show::plan`]). What is done here, Back takes back with the cue.
+    fn track(&mut self, target: usize) -> Result<()> {
+        let plan = self.plan(target);
+        let full = self.script.tracking();
+        let entry = self.history.len();
+        for &cue in &plan.sequence {
+            self.history.push_tracked(cue, full);
+        }
+        if let Some(mic) = plan.mic {
+            self.mic_hold = None;
+            self.effects.push(Effect::Mic(mic));
+        }
+        self.effects.extend(resend_effects(&plan.resend));
+        for cue in plan.stop {
+            self.note_stop(cue);
+            self.stops.push((entry, cue));
+            self.player.stop(cue, BACK_FADE)?;
+            self.forget_audio_of(&[cue]);
+        }
+        for (cue, volume) in plan.start {
+            let Some(mut audio) = self.audio(cue) else { continue };
+            for part in &mut audio.parts {
+                part.volume = volume;
+            }
+            if let Err(e) = self.player.start(cue, &audio, Start::now(Then::Loop)) {
+                self.problems.push(format!("{}: {e}", Cues::new(&self.script).name(cue)));
+                continue;
+            }
+            self.loop_epochs.insert(cue, self.now);
+            self.tracking_started.push((entry, cue));
+            self.just_started.push(cue);
+        }
+        Ok(())
+    }
+
+    /// The operator said which variants count for tracking (`(group's first cue,
+    /// variant)`): a jump that waited for it goes ahead.
+    pub fn choose(&mut self, choices: &[(usize, usize)]) -> Result<()> {
+        self.variant_choices.extend(choices.iter().copied());
+        let Some(question) = self.question.take() else { return Ok(()) };
+        if !question.fire {
+            return Ok(());
+        }
+        let still_open = self.open_groups(question.cue);
+        if !still_open.is_empty() {
+            self.question = Some(Question { groups: still_open, ..question });
+            return Ok(());
+        }
+        self.armed = None;
+        self.by_hand(question.cue, question.before)
+    }
+
+    /// The operator did not answer: nothing fires, and what was armed before is again.
+    pub fn cancel_question(&mut self) {
+        if let Some(question) = self.question.take() {
+            (self.armed, self.selected_variant) = if question.fire { question.before } else { (None, None) };
+        }
+    }
+
+    pub fn question(&self) -> Option<&Question> {
+        self.question.as_ref()
     }
 
     /// Note where a cue's audio stands before it is stopped, for Back.
@@ -695,7 +953,7 @@ impl Show {
             return Ok(Fired::Stopped);
         }
         // (A loop whose outro is a variant takes whichever variant of that group is fired.)
-        let running_loop = (0..cues.len()).find(|&l| l != cue && cues.get(l).and_then(|c| c.loop_outro()).is_some_and(|n| cues.refers_to(n, cue)) && self.is_playing(l));
+        let running_loop = (0..cues.len()).find(|&l| l != cue && cues.get(l).and_then(|c| c.loop_outro()).is_some_and(|n| cues.refers_to(n, cue)) && (self.is_playing(l) || self.just_started.contains(&l)));
         if let (Some(looped), Some(audio)) = (running_loop, self.audio(cue)) {
             if !self.pending_outros.contains(&(looped, cue)) {
                 self.player.start(cue, &audio, Start::armed(self.then(cue)))?;
@@ -834,6 +1092,10 @@ impl Show {
 
         self.effects.extend(c.fire_effects());
         self.history.push(cue, auto);
+        // A variant that fires is the one that counts for tracking from now on.
+        if cues.in_group(cue) {
+            self.variant_choices.insert(cues.group_root(cue), cue);
+        }
 
         // Auto-cues that hang on this cue, or with a delay on its variant group. (A
         // variant is never fired by itself: the operator has to choose one.)
@@ -1057,6 +1319,11 @@ impl Show {
     /// down comes back (loops in beat, other audio where it would be now), microphones and
     /// devices are set as before, and what was armed before that Go is armed again.
     pub fn back(&mut self) -> Result<()> {
+        // A jump waiting for the operator to choose variants is called off.
+        if self.question.is_some() {
+            self.cancel_question();
+            return Ok(());
+        }
         if !self.pending_outros.is_empty() {
             let pending = std::mem::take(&mut self.pending_outros);
             for &(looped, outro) in &pending {
@@ -1091,8 +1358,14 @@ impl Show {
             return Ok(());
         }
 
-        let Some(undone) = self.history.back(&cues) else { return Ok(()) };
+        let Some(undone) = self.history.back_with(&cues, &|device| script.device_tracking(device)) else { return Ok(()) };
         let landed = self.history.len();
+        // Loops tracking started for a jump that is taken back.
+        for (_, cue) in self.tracking_started.iter().filter(|(entry, _)| *entry >= landed).copied().collect::<Vec<_>>() {
+            self.player.stop(cue, BACK_FADE)?;
+            self.forget_audio_of(&[cue]);
+        }
+        self.tracking_started.retain(|(entry, _)| *entry < landed);
         // What was armed before the Go is armed again.
         let mut before = None;
         while self.steps.last().is_some_and(|step| step.entry >= landed && step.stopped.is_none()) {
@@ -1173,7 +1446,7 @@ impl Show {
         // Microphones as the remaining cues left them. If none of them set any — or
         // nothing is left — the microphones the undone cues opened go off.
         self.mic_hold = None;
-        let touched = popped.iter().any(|&cue| cues.block_index(cue).is_some_and(|block| script.mic_for_cue(block, &self.cast) != Mic::Unchanged));
+        let touched = !undone.tracked.is_empty() || popped.iter().any(|&cue| cues.block_index(cue).is_some_and(|block| script.mic_for_cue(block, &self.cast) != Mic::Unchanged));
         let mic = match self.history.mic(&cues, &self.cast) {
             Mic::Unchanged if touched || self.history.is_empty() => Mic::MuteAll,
             mic => mic,
@@ -1193,6 +1466,7 @@ impl Show {
         self.delays.clear();
         self.watches.clear();
         self.ends.clear();
+        self.just_started.clear();
         self.timecode = None;
         self.player.stop_all(BACK_FADE)
     }
@@ -1205,7 +1479,8 @@ impl Show {
 
     /// Report display content that changed since it was last reported.
     fn report_displays(&mut self) {
-        let states = self.history.device_states(&Cues::new(&self.script));
+        let script = self.script.clone();
+        let states = self.history.device_states_with(&Cues::new(&script), &|device| script.device_tracking(device));
         let mut content: HashMap<String, String> = HashMap::new();
         for ((kind, device), state) in &states {
             if let (DeviceKind::Display, DeviceState::Display(markdown)) = (kind, state) {
@@ -2010,6 +2285,141 @@ mod tests {
         rig.show.go().unwrap();
         rig.run(16);
         assert_eq!(rig.fired(), [0, 1, 2, 3, 6, 5]);
+    }
+
+    /// A show with an output device "Effekte" whose tracking is off.
+    fn tracking_rig(cues: &[&str], clips: &[(&str, f32, usize)]) -> Rig {
+        let mut rig = rig(cues, clips);
+        let mut script = rig.show.script().clone();
+        script.set_output_devices(&[mdstage_core::edit::OutputDevice { name: "Effekte".into(), kind: "midi".into(), colour: None, tracking: false }]);
+        rig.show.replace_script(script).unwrap();
+        rig
+    }
+
+    fn programs(effects: &[Effect]) -> Vec<(&str, u8)> {
+        effects.iter().filter_map(|e| match e {
+            Effect::Midi { device, bytes, .. } if bytes[0] & 0xF0 == 0xC0 => Some((device.as_str(), bytes[1])),
+            _ => None,
+        }).collect()
+    }
+
+    #[test]
+    fn a_jump_puts_the_show_where_going_through_the_script_would_have() {
+        let mut rig = tracking_rig(
+            &[
+                "mic: Anna\ncue_midi:\n    - {device: Licht, type: pc, ch: 1, program: 1}\n    - {device: Effekte, type: pc, ch: 1, program: 7}",
+                "music:\n    file: rain.wav\n    volume: 1\n    loop: true",
+                "light: C",
+                "light: D",
+            ],
+            &[("rain.wav", 1.0, 100)],
+        );
+        rig.show.arm(Some(3));
+        let preview = rig.show.tracking_preview();
+        assert!(preview.contains(&TrackItem::Start(1)) && preview.contains(&TrackItem::Mic(Mic::Open(vec!["Anna".into()]))));
+        assert!(preview.iter().any(|item| matches!(item, TrackItem::Device { device, from: 0, .. } if device == "Licht")));
+        assert!(!preview.iter().any(|item| matches!(item, TrackItem::Device { device, .. } if device == "Effekte")), "Effekte does not track");
+        rig.show.go().unwrap();
+        let effects = rig.show.take_effects();
+        assert_eq!(effects[0], Effect::Mic(Mic::Open(vec!["Anna".into()])));
+        assert_eq!(programs(&effects), [("Licht", 1)], "the light's scene, not the effect");
+        rig.run(48);
+        assert_eq!(rig.level(), 1.0, "the loop that would be playing there plays");
+        assert_eq!(rig.fired(), [3], "nothing else counts as fired");
+        assert_eq!(rig.show.next(), None);
+
+        // Back: as before the jump. The loop goes, the microphones go off, cue 3 is armed again.
+        rig.show.back().unwrap();
+        let effects = rig.show.take_effects();
+        assert!(effects.contains(&Effect::Mic(Mic::MuteAll)));
+        rig.run(640);
+        assert_eq!(rig.level(), 0.0);
+        assert!(rig.fired().is_empty());
+        assert_eq!(rig.show.next(), Some(3));
+    }
+
+    #[test]
+    fn a_jump_back_stops_what_comes_later_and_keeps_what_came_before() {
+        let mut rig = rig(
+            &[
+                "music:\n    file: song.wav\n    volume: 1",
+                "light: B",
+                "music:\n    file: late.wav\n    volume: 1",
+                "music:\n    file: rain.wav\n    volume: 1\n    loop: true",
+            ],
+            &[("song.wav", 1.0, 4000), ("late.wav", 2.0, 4000), ("rain.wav", 4.0, 100)],
+        );
+        for _ in 0..4 {
+            rig.show.go().unwrap();
+        }
+        rig.run(48);
+        assert_eq!(rig.level(), 7.0);
+        rig.show.arm(Some(1));
+        assert_eq!(rig.show.tracking_preview(), [TrackItem::Stop(2), TrackItem::Stop(3)]);
+        rig.show.go().unwrap();
+        rig.run(640);
+        assert_eq!(rig.level(), 1.0, "the song from above plays on, the later audio and the loop are gone");
+        rig.show.back().unwrap();
+        rig.run(640);
+        assert_eq!(rig.level(), 7.0, "Back brings them back");
+    }
+
+    #[test]
+    fn a_jump_to_a_finish_plays_its_loop_once_and_then_the_finish() {
+        let mut rig = rig(&["light: A", "music:\n    file: loop.wav\n    volume: 1\nloop_outro: {ch: 1, note: 2}", "music:\n    file: finish.wav\n    volume: 1"], &[("loop.wav", 2.0, 200), ("finish.wav", 4.0, 400)]);
+        rig.show.go().unwrap();
+        rig.show.arm(Some(2));
+        rig.show.go().unwrap();
+        assert_eq!(rig.show.pending_outros(), [(1, 2)], "the finish waits for the loop's end");
+        rig.run(96);
+        assert_eq!(rig.level(), 2.0, "the loop plays");
+        rig.run(160);
+        assert_eq!(rig.level(), 4.0, "then the finish");
+        assert_eq!(rig.fired(), [0, 2]);
+    }
+
+    #[test]
+    fn with_tracking_off_only_the_microphones_follow_a_jump() {
+        let mut rig = rig(&["mic: Ben\ncue_midi:\n    - {device: Licht, type: pc, ch: 1, program: 1}", "music:\n    file: rain.wav\n    loop: true", "light: C"], &[("rain.wav", 1.0, 100)]);
+        let mut script = rig.show.script().clone();
+        script.set_tracking(false);
+        rig.show.replace_script(script).unwrap();
+        rig.show.arm(Some(2));
+        assert_eq!(rig.show.tracking_preview(), [TrackItem::Mic(Mic::Open(vec!["Ben".into()]))]);
+        rig.show.go().unwrap();
+        let effects = rig.show.take_effects();
+        assert_eq!(effects[0], Effect::Mic(Mic::Open(vec!["Ben".into()])));
+        assert!(programs(&effects).is_empty());
+        rig.run(48);
+        assert_eq!(rig.level(), 0.0, "no loop");
+    }
+
+    #[test]
+    fn a_jump_asks_which_variant_counts_when_they_differ() {
+        let mut rig = rig(&["mic: Anna", "sibling: true\nmic: Ben", "light: C", "light: D", "sibling: true\nlight: D2", "light: E"], &[]);
+        // Cues 3 and 4 differ in nothing tracked; 0 and 1 in their microphones.
+        rig.show.fire(5, false).unwrap();
+        let question = rig.show.question().cloned().expect("asked");
+        assert_eq!((question.cue, question.groups.clone(), question.fire), (5, vec![vec![0, 1]], true));
+        assert!(rig.fired().is_empty(), "nothing fired yet");
+        rig.show.choose(&[(0, 1)]).unwrap();
+        assert!(rig.show.question().is_none());
+        assert_eq!(rig.fired(), [5]);
+        assert_eq!(rig.show.take_effects()[0], Effect::Mic(Mic::Open(vec!["Ben".into()])));
+
+        // Once chosen it is not asked again; arming asks before Go.
+        rig.show.arm(Some(2));
+        assert!(rig.show.question().is_none());
+        let mut fresh = rig_with(&["mic: Anna", "sibling: true\nmic: Ben", "light: C"]);
+        fresh.show.arm(Some(2));
+        assert_eq!(fresh.show.question().map(|q| q.fire), Some(false), "asked when armed");
+        fresh.show.back().unwrap();
+        assert!(fresh.show.question().is_none(), "Back calls it off");
+        assert_eq!(fresh.show.next(), Some(0));
+    }
+
+    fn rig_with(cues: &[&str]) -> Rig {
+        rig(cues, &[])
     }
 
     #[test]

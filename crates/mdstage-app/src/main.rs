@@ -110,6 +110,10 @@ struct App {
     copied: Option<mdstage_core::yaml::Value>,
     /// Text to put on the system clipboard in this frame.
     clipboard: Option<String>,
+    /// What tracking would do for the next Go, as last shown.
+    tracking_seen: Vec<mdstage_engine::show::TrackItem>,
+    /// The variants picked so far in the tracking question (by group's first cue).
+    question_choices: std::collections::HashMap<usize, usize>,
     /// Show lock: no editing, clicks only arm.
     locked: bool,
     /// While the live view is open: whether the main view was locked before it opened
@@ -162,6 +166,8 @@ impl App {
             export: None,
             copied: None,
             clipboard: None,
+            question_choices: Default::default(),
+            tracking_seen: Vec::new(),
             locked: settings_open_locked,
             lock_before_live: None,
             message: None,
@@ -964,7 +970,7 @@ impl App {
             self.export.get_or_insert((EXPORT_DEFAULTS, false));
         }
         if pressed(ctx, Key::Comma) && self.settings_ui.is_none() {
-            self.settings_ui = Some(SettingsUi::new(&self.settings).with_channels(self.show.as_ref().map(|s| s.script.virtual_channels()).unwrap_or_default()).with_show_dir(self.show.as_ref().and_then(|s| s.path.parent())).with_show_file(self.show.as_ref().map(|s| s.path.to_string_lossy().into_owned())).with_colours(self.device_colours()));
+            self.settings_ui = Some(SettingsUi::new(&self.settings).with_channels(self.show.as_ref().map(|s| s.script.virtual_channels()).unwrap_or_default()).with_show_dir(self.show.as_ref().and_then(|s| s.path.parent())).with_show_file(self.show.as_ref().map(|s| s.path.to_string_lossy().into_owned())).with_colours(self.device_colours()).with_tracking(self.show.as_ref().map(|s| s.script.tracking()), self.untracked_devices()));
         }
         // Go and Back only when nothing is being typed.
         if self.show.is_some() && !self.view.is_editing() && !ctx.wants_keyboard_input() {
@@ -1078,7 +1084,7 @@ impl App {
                 }
                 if ui.button(self.t("Einstellungen…", "Settings…")).clicked() {
                     ui.close_menu();
-                    self.settings_ui = Some(SettingsUi::new(&self.settings).with_channels(self.show.as_ref().map(|s| s.script.virtual_channels()).unwrap_or_default()).with_show_dir(self.show.as_ref().and_then(|s| s.path.parent())).with_show_file(self.show.as_ref().map(|s| s.path.to_string_lossy().into_owned())).with_colours(self.device_colours()));
+                    self.settings_ui = Some(SettingsUi::new(&self.settings).with_channels(self.show.as_ref().map(|s| s.script.virtual_channels()).unwrap_or_default()).with_show_dir(self.show.as_ref().and_then(|s| s.path.parent())).with_show_file(self.show.as_ref().map(|s| s.path.to_string_lossy().into_owned())).with_colours(self.device_colours()).with_tracking(self.show.as_ref().map(|s| s.script.tracking()), self.untracked_devices()));
                 }
                 if ui.button(self.t("Beenden", "Quit")).clicked() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1412,7 +1418,7 @@ impl App {
                     }
                 }
                 // So do the devices' names, kinds and colours (their addresses do not).
-                let colours_changed = form.colours != self.device_colours();
+                let colours_changed = form.colours != self.device_colours() || form.untracked != self.untracked_devices();
                 let mut edited = false;
                 if let Some(show) = &mut self.show {
                     if show.script.virtual_channels() != names {
@@ -1420,7 +1426,7 @@ impl App {
                         edited = true;
                     }
                     if colours_changed {
-                        let devices: Vec<(String, String, Option<String>)> = form
+                        let devices: Vec<mdstage_core::edit::OutputDevice> = form
                             .draft
                             .devices
                             .iter()
@@ -1433,10 +1439,15 @@ impl App {
                                     // (Timecode only: no cue sends to it, the show file need not know it.)
                                     mdstage_engine::settings::DeviceSetting::Artnet { .. } => return None,
                                 };
-                                Some((device.name().to_string(), kind.to_string(), form.colours.get(device.name()).cloned()))
+                                let name = device.name().to_string();
+                                Some(mdstage_core::edit::OutputDevice { kind: kind.to_string(), colour: form.colours.get(&name).cloned(), tracking: !form.untracked.contains(&name), name })
                             })
                             .collect();
                         show.script.set_output_devices(&devices);
+                        edited = true;
+                    }
+                    if let Some(on) = form.project_tracking.filter(|on| *on != show.script.tracking()) {
+                        show.script.set_tracking(on);
                         edited = true;
                     }
                 }
@@ -1638,6 +1649,12 @@ impl App {
     }
 
     /// The colour the open show gives each output device, by device name.
+    /// The devices the open show has tracking off for.
+    fn untracked_devices(&self) -> std::collections::HashSet<String> {
+        let declared = self.show.as_ref().and_then(|s| s.script.config()).and_then(|c| c.get("outputDevices")).and_then(|d| d.as_sequence()).cloned().unwrap_or_default();
+        declared.iter().filter(|d| d.get("tracking").and_then(|t| t.as_bool()) == Some(false)).filter_map(|d| Some(d.get("name")?.as_str()?.to_string())).collect()
+    }
+
     fn device_colours(&self) -> std::collections::HashMap<String, String> {
         let declared = self.show.as_ref().and_then(|s| s.script.config()).and_then(|c| c.get("outputDevices")).and_then(|d| d.as_sequence()).cloned().unwrap_or_default();
         declared.iter().filter_map(|d| Some((d.get("name")?.as_str()?.to_string(), d.get("color")?.as_str()?.to_string()))).collect()
@@ -1907,6 +1924,20 @@ impl App {
         }
     }
 
+    /// The tracking question, in the main window (with the live view open it is asked there).
+    fn question_window(&mut self, ctx: &egui::Context) {
+        if self.snapshot.question.is_none() {
+            self.question_choices.clear();
+        }
+        let Some(show) = &self.show else { return };
+        if self.live_open {
+            return;
+        }
+        if let Some(request) = question_dialog(ctx, &self.snapshot, &show.script, &show.cast, &mut self.question_choices) {
+            show.session.send(request);
+        }
+    }
+
     fn unused_audio_window(&mut self, ctx: &egui::Context) {
         let (Some(files), Some(show)) = (self.unused_audio.take(), &self.show) else { return };
         const SHOWN: usize = 30;
@@ -1984,6 +2015,7 @@ impl App {
         let builder = egui::ViewportBuilder::default().with_title(self.t("MDstage — Live-Ansicht", "MDstage — Live View")).with_inner_size([980.0, 860.0]);
         ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("live"), builder, |ctx, _| {
             requests = self.live.show(ctx, &cx, self.settings.emergency_light.is_some());
+            requests.extend(question_dialog(ctx, &self.snapshot, &show.script, &show.cast, &mut self.question_choices));
             if !ctx.wants_keyboard_input() {
                 if ctx.input(|i| i.key_pressed(Key::Space)) {
                     requests.push(Request::Go);
@@ -2001,6 +2033,50 @@ impl App {
             self.live_open = false;
         }
     }
+}
+
+/// A jump waits for the operator to say which variants going through the script would have
+/// taken (they differ in what tracking sets). Asked whatever set the jump off. Returns the
+/// answer to send, once there is one.
+fn question_dialog(ctx: &egui::Context, snapshot: &Snapshot, script: &Script, cast: &Cast, choices: &mut std::collections::HashMap<usize, usize>) -> Option<Request> {
+    let question = snapshot.question.as_ref()?;
+    let cues = Cues::new(script);
+    let mut answer = None;
+    egui::Window::new(lang::t("Tracking: Welche Variante?", "Tracking: which variant?")).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+        let target = script_view::ScriptView::name_with_file(&cues, question.cue);
+        ui.label(if lang::english() {
+            format!("For the jump to {target}: which of these variants would have been taken? They differ in what tracking sets.")
+        } else {
+            format!("Für den Sprung zu {target}: Welche dieser Varianten wäre genommen worden? Sie unterscheiden sich in dem, was Tracking setzt.")
+        });
+        for group in &question.groups {
+            ui.add_space(8.0);
+            let root = group[0];
+            for &variant in group {
+                let mic = match cues.block_index(variant).map(|block| script.mic_for_cue(block, cast)) {
+                    Some(mdstage_core::mic::Mic::Open(names)) => format!("  ·  {}: {}", lang::t("Mikros", "Mics"), names.join(", ")),
+                    Some(mdstage_core::mic::Mic::MuteAll) => format!("  ·  {}", lang::t("Mikros aus", "mics off")),
+                    _ => String::new(),
+                };
+                let label = format!("{}  {}{mic}", script_view::ScriptView::name_with_file(&cues, variant), live::summary(script, variant));
+                if ui.radio(choices.get(&root) == Some(&variant), label).clicked() {
+                    choices.insert(root, variant);
+                }
+            }
+        }
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            let complete = question.groups.iter().all(|group| choices.contains_key(&group[0]));
+            let go = if question.fire { lang::t("Übernehmen und auslösen", "Take and fire") } else { lang::t("Übernehmen", "Take") };
+            if ui.add_enabled(complete, egui::Button::new(go)).clicked() {
+                answer = Some(Request::Choose(question.groups.iter().filter_map(|group| Some((group[0], *choices.get(&group[0])?))).collect()));
+            }
+            if ui.button(lang::t("Abbrechen", "Cancel")).clicked() {
+                answer = Some(Request::CancelQuestion);
+            }
+        });
+    });
+    answer
 }
 
 /// The details of a connection from the cue in `block` to another cue.
@@ -2084,6 +2160,12 @@ impl eframe::App for App {
             _ => {}
         }
         self.drop_empty_text();
+        // What tracking would do takes room on the next cue's card: measure again.
+        if self.snapshot.tracking != self.tracking_seen {
+            self.tracking_seen = self.snapshot.tracking.clone();
+            self.view.invalidate();
+            self.live.invalidate();
+        }
         if let Some(text) = self.clipboard.take() {
             ctx.copy_text(text);
         }
@@ -2245,6 +2327,7 @@ impl eframe::App for App {
         self.roles_window(ctx);
         self.export_window(ctx);
         self.unused_audio_window(ctx);
+        self.question_window(ctx);
         self.link_window(ctx);
         self.auto_mic_window(ctx);
         self.cleanup_window(ctx);

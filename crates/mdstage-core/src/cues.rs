@@ -440,11 +440,43 @@ pub fn mapping(old: &Script, new: &Script) -> Vec<Option<usize>> {
     map
 }
 
-/// The cues fired so far, oldest first. Each entry notes whether it fired automatically
-/// (auto-cue or chain transition) rather than by an operator action.
+/// The cues that going through the script up to `target` would have fired, in order
+/// (the target and its own variants not included): every cue that is not part of a
+/// variant group and, of each group, the variant `chosen` names for the group's first cue
+/// (a group with none chosen is left out). Cues that fire by themselves are part of it
+/// as they stand in the script.
+pub fn tracked_sequence(cues: &Cues, target: usize, chosen: impl Fn(usize) -> Option<usize>) -> Vec<usize> {
+    let own = cues.group(target);
+    let mut sequence = Vec::new();
+    for cue in (0..target.min(cues.len())).filter(|cue| !own.contains(cue)) {
+        if !cues.in_group(cue) {
+            sequence.push(cue);
+        } else if cues.group_root(cue) == cue {
+            sequence.extend(chosen(cue).filter(|variant| cues.group(cue).contains(variant)));
+        }
+    }
+    sequence
+}
+
+/// How a cue came into the history.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fired {
+    /// By the operator (Go, a click, a remote trigger note).
+    Manual,
+    /// By itself: an auto-cue or a chain transition.
+    Auto,
+    /// Not fired at all: put in by tracking when the operator jumped, so that the state of
+    /// the show is what going through the script up to there would have left. `full`:
+    /// for everything (audio, devices with tracking on, microphones); otherwise for the
+    /// microphones only (tracking is off for the project). Such entries do not count as
+    /// fired anywhere the operator sees it.
+    Tracked { full: bool },
+}
+
+/// The cues fired so far, oldest first, each with how it came in.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct History {
-    entries: Vec<(usize, bool)>,
+    entries: Vec<(usize, Fired)>,
 }
 
 /// What a Back undid.
@@ -453,35 +485,45 @@ pub struct Undone {
     /// The cues removed from the history, newest first: the operator's last cue and
     /// every automatic cue it had set off.
     pub popped: Vec<usize>,
+    /// The entries tracking had put in before that cue (when it was a jump).
+    pub tracked: Vec<usize>,
     /// The cue the operator is on again; `None` if nothing is left.
     pub landed: Option<usize>,
     /// Device states to send again so MIDI/OSC/HTTP devices the undone cues addressed
     /// return to what the remaining history last told them. Devices no earlier cue
-    /// addressed are left alone.
+    /// addressed are left alone, and so are devices with tracking off.
     pub resend: DeviceStates,
 }
 
 impl History {
+    /// The cues that fired (by the operator or by themselves), oldest first: not what
+    /// tracking put in.
     pub fn cues(&self) -> impl Iterator<Item = usize> + '_ {
+        self.entries.iter().filter(|e| !matches!(e.1, Fired::Tracked { .. })).map(|e| e.0)
+    }
+
+    /// Every entry's cue, those tracking put in included.
+    pub fn all(&self) -> impl Iterator<Item = usize> + '_ {
         self.entries.iter().map(|e| e.0)
     }
 
     /// The script was edited: follow the cues to their new numbers (see [`mapping`]).
     /// Cues that are gone leave the history.
     pub fn remap(&mut self, map: &[Option<usize>]) {
-        self.entries = self.entries.iter().filter_map(|&(cue, auto)| Some((map.get(cue).copied().flatten()?, auto))).collect();
+        self.entries = self.entries.iter().filter_map(|&(cue, how)| Some((map.get(cue).copied().flatten()?, how))).collect();
     }
 
     /// Start a history from the cues as they were fired (all by the operator).
     pub fn of(cues: impl IntoIterator<Item = usize>) -> History {
-        History { entries: cues.into_iter().map(|cue| (cue, false)).collect() }
+        History { entries: cues.into_iter().map(|cue| (cue, Fired::Manual)).collect() }
     }
 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
-    /// How many cues have fired (a cue that fired twice counts twice).
+    /// How many entries there are (a cue that fired twice counts twice; what tracking
+    /// put in counts too).
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -493,25 +535,30 @@ impl History {
     /// The cues fired in the operator's current pass through the script: since the last
     /// jump back. These are the ones Go steps over.
     pub fn this_pass(&self) -> impl Iterator<Item = usize> + '_ {
-        self.entries[self.pass_start()..].iter().map(|e| e.0)
+        self.entries[self.pass_start()..].iter().filter(|e| !matches!(e.1, Fired::Tracked { .. })).map(|e| e.0)
     }
 
     /// Record that a cue fired.
     pub fn push(&mut self, cue: usize, auto: bool) {
-        self.entries.push((cue, auto));
+        self.entries.push((cue, if auto { Fired::Auto } else { Fired::Manual }));
+    }
+
+    /// Record what tracking puts in before a jump's cue (see [`Fired::Tracked`]).
+    pub fn push_tracked(&mut self, cue: usize, full: bool) {
+        self.entries.push((cue, Fired::Tracked { full }));
     }
 
     /// The operator's position: the most recent manually fired cue. Automatic cues do
     /// not move it, so it stays put while a loop keeps firing.
     pub fn last_manual(&self) -> Option<usize> {
-        self.entries.iter().rev().find(|e| !e.1).map(|e| e.0)
+        self.entries.iter().rev().find(|e| e.1 == Fired::Manual).map(|e| e.0)
     }
 
     /// Where the operator's current pass through the script begins in the history: at
     /// the last cue fired by hand that was not further down than the one fired by hand
     /// before it — the last jump back — or at the very start.
     fn pass_start(&self) -> usize {
-        let manual: Vec<(usize, usize)> = self.entries.iter().enumerate().filter(|(_, e)| !e.1).map(|(at, e)| (at, e.0)).collect();
+        let manual: Vec<(usize, usize)> = self.entries.iter().enumerate().filter(|(_, e)| e.1 == Fired::Manual).map(|(at, e)| (at, e.0)).collect();
         manual.windows(2).rev().find(|pair| pair[1].1 <= pair[0].1).map_or(0, |pair| pair[1].0)
     }
 
@@ -524,8 +571,8 @@ impl History {
     /// in it is due again.
     pub fn next(&self, cues: &Cues) -> Option<usize> {
         let from = self.last_manual().map_or(0, |c| c + 1);
-        let this_pass = &self.entries[self.pass_start()..];
-        (from..cues.len()).find(|&i| !cues.is_variant(i) && !this_pass.iter().any(|e| e.0 == i))
+        let this_pass: Vec<usize> = self.this_pass().collect();
+        (from..cues.len()).find(|&i| !cues.is_variant(i) && !this_pass.contains(&i))
     }
 
     /// The cue a Go fires. An armed cue wins; otherwise the next cue, or the selected
@@ -540,20 +587,36 @@ impl History {
 
     /// Undo the operator's last Go: remove that cue and every automatic cue it set off.
     pub fn back(&mut self, cues: &Cues) -> Option<Undone> {
+        self.back_with(cues, &|_| true)
+    }
+
+    /// [`History::back`], sending again only to devices for which `tracks` is true. What
+    /// tracking put in before the cue goes with it.
+    pub fn back_with(&mut self, cues: &Cues, tracks: &dyn Fn(&str) -> bool) -> Option<Undone> {
         let mut popped = Vec::new();
-        while let Some((cue, auto)) = self.entries.pop() {
+        while let Some(&(cue, how)) = self.entries.last() {
+            if matches!(how, Fired::Tracked { .. }) && !popped.is_empty() {
+                break;
+            }
+            self.entries.pop();
             popped.push(cue);
-            if !auto {
+            if how == Fired::Manual {
                 break;
             }
         }
         if popped.is_empty() {
             return None;
         }
-        let touched = History { entries: popped.iter().map(|&c| (c, false)).collect() }.device_states(cues);
-        let mut resend = self.device_states(cues);
-        resend.retain(|key, _| key.0 != DeviceKind::Display && touched.contains_key(key));
-        Some(Undone { popped, landed: self.last_manual(), resend })
+        let mut tracked = Vec::new();
+        while let Some(&(cue, Fired::Tracked { .. })) = self.entries.last() {
+            self.entries.pop();
+            tracked.push(cue);
+        }
+        let undone = History { entries: popped.iter().chain(&tracked).map(|&c| (c, Fired::Manual)).collect() };
+        let touched = undone.device_states(cues);
+        let mut resend = self.device_states_with(cues, tracks);
+        resend.retain(|key, _| key.0 != DeviceKind::Display && touched.contains_key(key) && tracks(&key.1));
+        Some(Undone { popped, tracked, landed: self.last_manual(), resend })
     }
 
     /// The microphones as the fired cues left them: the most recent cue that sets them.
@@ -571,12 +634,23 @@ impl History {
     /// it wins. For displays, markdown sets the content, an empty message clears it and an
     /// announce-only message holds whatever an earlier cue set.
     pub fn device_states(&self, cues: &Cues) -> DeviceStates {
+        self.device_states_with(cues, &|_| true)
+    }
+
+    /// [`History::device_states`], where what tracking put in counts only for devices
+    /// for which `tracks` is true.
+    pub fn device_states_with(&self, cues: &Cues, tracks: &dyn Fn(&str) -> bool) -> DeviceStates {
         let mut states = DeviceStates::new();
-        for cue in self.entries.iter().rev().filter_map(|&(c, _)| cues.get(c)) {
+        for &(c, how) in self.entries.iter().rev() {
+            let Some(cue) = cues.get(c) else { continue };
+            let counts = |device: &str| match how {
+                Fired::Tracked { full } => full && tracks(device),
+                _ => true,
+            };
             for (kind, key) in [(DeviceKind::Midi, "cue_midi"), (DeviceKind::Osc, "cue_osc"), (DeviceKind::Http, "cue_http")] {
                 let mut by_device: Vec<(String, Vec<Value>)> = Vec::new();
                 for message in cue.messages(key) {
-                    let Some(device) = message.get("device").and_then(Value::as_str) else { continue };
+                    let Some(device) = message.get("device").and_then(Value::as_str).filter(|d| counts(d)) else { continue };
                     match by_device.iter_mut().find(|(d, _)| d == device) {
                         Some((_, list)) => list.push(message.clone()),
                         None => by_device.push((device.to_string(), vec![message.clone()])),
@@ -587,7 +661,7 @@ impl History {
                 }
             }
             for message in cue.messages("cue_display") {
-                let Some(device) = message.get("device").and_then(Value::as_str) else { continue };
+                let Some(device) = message.get("device").and_then(Value::as_str).filter(|d| counts(d)) else { continue };
                 let key = (DeviceKind::Display, device.to_string());
                 if states.contains_key(&key) {
                     continue;
@@ -615,7 +689,9 @@ impl History {
         let mut volume = own * cues.group_volume(target);
         let mut playing = false;
         let successor = cues.successor(target);
-        for fired in self.cues() {
+        // (What tracking put in for the microphones only does not count.)
+        let counted = self.entries.iter().filter(|e| e.1 != Fired::Tracked { full: false }).map(|e| e.0);
+        for fired in counted {
             let Some(cue) = cues.get(fired) else { continue };
             if fired == target && cue.music_volume().is_some() {
                 playing = true;
@@ -658,6 +734,59 @@ mod tests {
 
     fn note(n: u64) -> Note {
         Note { ch: 1, note: n }
+    }
+
+    #[test]
+    fn what_tracking_puts_in_counts_for_the_state_but_not_as_fired() {
+        let script = show(&[
+            "mic: Anna\ncue_midi:\n    - {device: Licht, type: pc, ch: 1, program: 1}\n    - {device: Effekte, type: pc, ch: 1, program: 7}",
+            "light: B",
+            "sibling: true\nmic: Ben",
+            "music: {file: a.wav, loop: true}",
+            "light: D",
+        ]);
+        let cues = Cues::new(&script);
+        // Up to cue 4: everything but the variants, of which only a chosen one.
+        assert_eq!(tracked_sequence(&cues, 4, |_| None), [0, 3]);
+        assert_eq!(tracked_sequence(&cues, 4, |root| (root == 1).then_some(2)), [0, 2, 3]);
+        assert_eq!(tracked_sequence(&cues, 2, |_| Some(1)), [0], "not the target's own group");
+
+        let mut history = History::default();
+        for cue in tracked_sequence(&cues, 4, |_| Some(2)) {
+            history.push_tracked(cue, true);
+        }
+        history.push(4, false);
+        assert_eq!(history.cues().collect::<Vec<_>>(), [4], "only the jump's cue counts as fired");
+        assert!(!history.fired(0));
+        assert_eq!(history.last_manual(), Some(4));
+        assert_eq!(history.audio_state(&cues, 3), (true, DEFAULT_VOLUME), "the loop plays");
+        let cast = Cast::from_script(&script, false);
+        assert_eq!(history.mic(&cues, &cast), Mic::Open(vec!["Ben".into()]));
+        // Devices with tracking off take nothing from what tracking put in.
+        let states = history.device_states_with(&cues, &|device| device != "Effekte");
+        assert!(states.contains_key(&(DeviceKind::Midi, "Licht".into())) && !states.contains_key(&(DeviceKind::Midi, "Effekte".into())));
+
+        // Back takes the cue and what tracking put in for it.
+        let undone = history.back_with(&cues, &|_| true).unwrap();
+        assert_eq!((undone.popped, undone.tracked), (vec![4], vec![3, 2, 0]));
+        assert!(history.is_empty());
+
+        // Tracking for the microphones only: the loop does not count.
+        let mut mics_only = History::default();
+        mics_only.push_tracked(3, false);
+        assert!(!mics_only.audio_state(&cues, 3).0);
+    }
+
+    #[test]
+    fn back_sends_again_only_to_devices_that_track() {
+        let script = show(&[
+            "cue_midi:\n    - {device: Licht, type: pc, ch: 1, program: 1}\n    - {device: Effekte, type: pc, ch: 1, program: 7}",
+            "cue_midi:\n    - {device: Licht, type: pc, ch: 1, program: 2}\n    - {device: Effekte, type: pc, ch: 1, program: 8}",
+        ]);
+        let cues = Cues::new(&script);
+        let mut history = History::of([0, 1]);
+        let undone = history.back_with(&cues, &|device| device != "Effekte").unwrap();
+        assert_eq!(undone.resend.keys().map(|(_, device)| device.as_str()).collect::<Vec<_>>(), ["Licht"]);
     }
 
     /// Build a show from YAML cue bodies; cue `i` gets trigger note `1/i`.

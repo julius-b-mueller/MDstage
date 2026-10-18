@@ -847,9 +847,30 @@ What the undone cues did to other audio is undone too:
 - **Timecode** follows the audio that comes back.
 - **Fired times** ("fired – hh:mm:ss") go back to the time the cue fired before, or disappear.
 
-**Device state restoration (MIDI/OSC/HTTP):** When Back pops a cue, the app checks which output devices that cue addressed via `cue_midi` / `cue_osc` / `cue_http`. For each such device, it scans backwards through the remaining cue history and resends the message set from the most recent earlier cue that addressed the same device. If no earlier cue addressed that device, nothing is sent — the device is left in its current state.
+**Device state restoration (MIDI/OSC/HTTP):** When Back pops a cue, the app checks which output devices that cue addressed via `cue_midi` / `cue_osc` / `cue_http`. For each such device, it scans backwards through the remaining cue history and resends the message set from the most recent earlier cue that addressed the same device. If no earlier cue addressed that device, nothing is sent — the device is left in its current state. Devices with tracking off (see [Tracking](#tracking-jumping-to-a-cue)) are never sent again on Back: what they do happens with its very cue only.
 
 The old `osc:` field and `trigger_note` are **not** part of this restoration mechanism. Only `cue_midi`, `cue_osc`, `cue_http` and `cue_display` messages participate in device state tracking.
+
+### Tracking (jumping to a cue)
+
+When a cue is fired out of order — armed and Go, clicked, or fired by its trigger note from outside — MDstage first sets up the state going through the script up to there would have left, as a lighting desk does. That state is worked out from the cues above it in script order (of a variant group: the variant fired last in this performance, or the one chosen when asked). An ordinary Go on the next cue is not a jump and changes nothing.
+
+| | On a jump |
+|---|---|
+| Microphones | always (even with tracking off): if the cue sets none, those the cues above left. |
+| Loops | those that would be playing there start (from their beginning, faded in); playing ones that would not fade out. |
+| Audio that plays once | is never started. If it plays and came from a cue **below** the target, it fades out; from **above**, it plays on. |
+| MIDI / OSC / HTTP / displays | each device with **Tracking** ticked gets what the last cue above that addressed it said, unless it has that already or the target addresses it itself. Announcements are never repeated. |
+| Finish / bridge as target | the loop it finishes starts (if it is not playing), plays its pass up to where its tail begins, and the finish comes in as usual. |
+| Skipped auto-cues, delays | are not made up for. |
+
+**Before Go:** while a jump is armed, its card (main window and live view) shows a **Track** row with what Go does beyond the cue: `▶` loops that start, `■` audio that stops, the microphones, and each device with the cue whose state it gets.
+
+**Variants:** if no variant of a group above has been fired yet and the variants differ in something tracking would set, MDstage asks which one counts — when the jump is armed, else before it fires (also for a cue fired from outside: the cue waits for the answer, in the live view if it is open). Cancel fires nothing; Back calls the question off.
+
+**Back** after a jump takes the jump and its tracking back together: loops tracking started fade out, audio it stopped comes back (loops in beat), microphones and devices are as before, and the jump is armed again.
+
+**Settings** (both kept in the show file): *Settings → Tracking → Tracking on jumps (this show)* (`config.tracking: false` switches it off; microphones still follow), and a **Tracking** tick on each output device (`outputDevices[].tracking: false`). One physical device can be set up twice — e.g. a lighting desk once for scenes (tracking on) and once for effects that fire only with their very cue (tracking off).
 
 ---
 

@@ -49,6 +49,10 @@ pub struct SettingsUi {
     /// The colour each output device is marked with on the cues, by device name. Kept
     /// in the show file, with the device's name and kind.
     pub colours: std::collections::HashMap<String, String>,
+    /// The devices with tracking off, and whether tracking is on for the project (`None`
+    /// without a show). Both kept in the show file.
+    pub untracked: std::collections::HashSet<String>,
+    pub project_tracking: Option<bool>,
     /// The window listing the Vim keys is open.
     vim_help: bool,
     /// Stylesheets in the open show's `css/` folder.
@@ -66,6 +70,25 @@ fn field(ui: &mut Ui, value: &mut String, hint: &str, width: f32) {
 
 /// Choose the colour a device is marked with on the cues. `was` is the device's name
 /// before this frame's edit, `name` its name now: the colour moves along with a rename.
+/// Whether a device takes part in tracking (kept in the show file, by device name).
+fn tracking_choice(ui: &mut Ui, untracked: &mut std::collections::HashSet<String>, was: &str, name: &str) {
+    // A renamed device keeps its choice.
+    if was != name && untracked.remove(was) {
+        untracked.insert(name.to_string());
+    }
+    let mut on = !untracked.contains(name);
+    let hint = t(
+        "Tracking: Bei einem Sprung bekommt das Gerät den Stand, den der Weg durchs Skript bis dorthin hinterlassen hätte, und bei Back den vorherigen. Aus für Geräte, die nur genau mit ihrem Cue senden sollen (z. B. Effekte). Steht in der Show-Datei.",
+        "Tracking: on a jump the device gets the state going through the script up to there would have left, and on Back the one before. Off for devices that are to send only with their very cue (effects, say). Kept in the show file.",
+    );
+    if ui.checkbox(&mut on, "Tracking").on_hover_text(hint).changed() {
+        match on {
+            true => drop(untracked.remove(name)),
+            false => drop(untracked.insert(name.to_string())),
+        }
+    }
+}
+
 fn colour_choice(ui: &mut Ui, id: impl std::hash::Hash, colours: &mut std::collections::HashMap<String, String>, was: &str, name: &str) {
     if was != name {
         if let Some(colour) = colours.remove(was) {
@@ -139,12 +162,21 @@ impl SettingsUi {
             channels: Vec::new(),
             test_output: None,
             colours: Default::default(),
+            untracked: Default::default(),
+            project_tracking: None,
             vim_help: false,
             css_files: Vec::new(),
             // Asking which local address a route to the outside would use sends nothing.
             lan_address: std::net::UdpSocket::bind("0.0.0.0:0").and_then(|s| s.connect("192.0.2.1:9").and_then(|()| s.local_addr())).ok().map(|a| a.ip().to_string()),
             show_file: None,
         }
+    }
+
+    /// What the open show says about tracking (see `untracked`, `project_tracking`).
+    pub fn with_tracking(mut self, project: Option<bool>, untracked: std::collections::HashSet<String>) -> SettingsUi {
+        self.project_tracking = project;
+        self.untracked = untracked;
+        self
     }
 
     /// The device colours declared in the open show.
@@ -204,6 +236,8 @@ impl SettingsUi {
         let mut test_output = None;
         let (css_files, lan_address) = (&self.css_files, &self.lan_address);
         let colours = &mut self.colours;
+        let untracked = &mut self.untracked;
+        let project_tracking = &mut self.project_tracking;
         let mut vim_help = self.vim_help;
         egui::ScrollArea::vertical().auto_shrink([false, false]).max_height(ui.available_height() - 44.0).show(ui, |ui| {
             let draft = &mut self.draft;
@@ -290,6 +324,16 @@ impl SettingsUi {
             }
 
             ui.add_space(12.0);
+            ui.heading("Tracking");
+            match project_tracking {
+                Some(on) => {
+                    ui.checkbox(on, t("Tracking beim Springen (diese Show)", "Tracking on jumps (this show)"));
+                    ui.label(RichText::new(t("Wird ein Cue außer der Reihe ausgelöst, stellt MDstage her, was der Weg durchs Skript bis dorthin hinterlassen hätte: Loops, Geräte mit Haken bei „Tracking“, Mikrofone. Mikrofone folgen immer, auch wenn Tracking aus ist. Steht in der Show-Datei.", "When a cue is fired out of order, MDstage sets up what going through the script up to there would have left: loops, devices with “Tracking” ticked, microphones. Microphones always follow, even with tracking off. Kept in the show file.")).color(MUTED));
+                }
+                None => drop(ui.label(RichText::new(t("Tracking wird je Show eingestellt: erst eine Show öffnen.", "Tracking is set per show: open a show first.")).color(MUTED))),
+            }
+
+            ui.add_space(12.0);
             ui.heading(t("Ausgabegeräte", "Output devices"));
             ui.label(RichText::new(t("Der Name muss dem Gerätenamen in der Show-Datei entsprechen. Adressen bleiben auf diesem Rechner.", "The name must match the device name in the show file. Addresses stay on this machine.")).color(MUTED));
             let mut remove = None;
@@ -302,6 +346,7 @@ impl SettingsUi {
                         field(ui, name, "Name", 120.0);
                         if has_show {
                             colour_choice(ui, ("device-colour", i), colours, &was, name);
+                            tracking_choice(ui, untracked, &was, name);
                         }
                         port_picker(ui, ("midi-port", i), port, &self.midi_outputs);
                         ui.checkbox(trigger_notes, t("Trigger-Noten", "Trigger notes"));
@@ -332,6 +377,7 @@ impl SettingsUi {
                         field(ui, name, "Name", 120.0);
                         if has_show {
                             colour_choice(ui, ("device-colour", i), colours, &was, name);
+                            tracking_choice(ui, untracked, &was, name);
                         }
                         field(ui, host, "Host", 130.0);
                         ui.add(egui::DragValue::new(port).range(1..=65535));
@@ -347,6 +393,7 @@ impl SettingsUi {
                         field(ui, name, "Name", 120.0);
                         if has_show {
                             colour_choice(ui, ("device-colour", i), colours, &was, name);
+                            tracking_choice(ui, untracked, &was, name);
                         }
                         field(ui, url, "http://192.168.1.50:8080", 260.0);
                         if ui.small_button("×").clicked() {
@@ -359,6 +406,7 @@ impl SettingsUi {
                         field(ui, name, "Name", 120.0);
                         if has_show {
                             colour_choice(ui, ("device-colour", i), colours, &was, name);
+                            tracking_choice(ui, untracked, &was, name);
                         }
                         egui::ComboBox::from_id_salt(("display-style", i)).selected_text(if style.is_empty() { "dark" } else { style.as_str() }).width(130.0).show_ui(ui, |ui| {
                             for choice in ["dark", "light", "subtitle"].into_iter().chain(css_files.iter().map(String::as_str)) {

@@ -245,8 +245,15 @@ impl Script {
         let mut group = 0;
         for block in &self.blocks {
             let cue = match block {
-                Block::Config(_) => {
+                Block::Config(config) => {
                     number += 1;
+                    // Tracking switched off for the project or a device: `false`, nothing else.
+                    let inner = config.yaml.get("config");
+                    let devices = inner.and_then(|c| c.get("outputDevices")).and_then(Value::as_sequence).into_iter().flatten();
+                    let flags = inner.and_then(|c| present(c, "tracking")).into_iter().chain(devices.filter_map(|d| present(d, "tracking")));
+                    for flag in flags.filter(|flag| !flag.is_bool()) {
+                        report.problems.push(Problem { block: number, message: format!("tracking ungültig: {} (true oder false erwartet)", show(flag)) });
+                    }
                     continue;
                 }
                 Block::Cue(cue) => cue,
@@ -355,6 +362,8 @@ cue_display:
         assert_eq!(messages("start_tc: '1:00:00:00'").len(), 1);
         assert_eq!(messages("start_tc: '01:00:00:30'").len(), 1);
         assert!(messages("start_tc: '01:00:00;29'").is_empty(), "drop-frame, and frames for 30 fps");
+        let tracking = Script::parse("```yaml\nconfig:\n    tracking: nein\n    outputDevices:\n        - {name: Licht, type: midi, tracking: false}\n```\n");
+        assert_eq!(tracking.validate().problems.iter().map(|p| p.message.as_str()).collect::<Vec<_>>(), ["tracking ungültig: nein (true oder false erwartet)"]);
         let script = Script::parse("```yaml\nconfig: {}\n```\n\n```yaml\nstart_tc: '01:00:00:27'\n```\n");
         assert_eq!(script.validate_frames(30), []);
         assert_eq!(script.validate_frames(25).len(), 1);

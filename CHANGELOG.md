@@ -32,6 +32,14 @@ des Rechners. Die Show-Datei wird nur geschrieben, wenn das Skript bearbeitet wi
 - Mit offener Liveansicht ist die Hauptansicht gesperrt (von Hand entsperrbar); beim
   Schließen gilt wieder der vorige Zustand.
 - Leer gelassene Textzeilen werden entfernt.
+- Tracking beim Springen (wie am Lichtpult): Wird ein Cue außer der Reihe ausgelöst,
+  stellt MDstage her, was der Weg durchs Skript bis dorthin hinterlassen hätte – Loops
+  starten oder enden, einmaliges Audio von weiter unten endet, Geräte mit Tracking
+  bekommen ihren Stand, Mikrofone (immer) ihre Lage. Ein Finish als Ziel kommt nach einem
+  Durchgang seines Loops. Vor dem Go zeigt die Karte, was Tracking tun wird; bei Varianten
+  ohne bisherige Wahl fragt MDstage. Back nimmt Sprung und Tracking zusammen zurück.
+  Tracking ist je Show und je Gerät abschaltbar.
+- Back sendet Geräten mit abgeschaltetem Tracking nichts mehr erneut.
 - Timecode: Jede Show hat eine Framerate (24, 25, 29,97 drop oder 30 fps), eingestellt
   in den Einstellungen und auf dem Rechner gespeichert, nicht in der Show-Datei (ohne
   Angabe 25 fps wie bisher). Nach ihr zählen die Frames von `start_tc`, die Anzeige und
@@ -48,6 +56,9 @@ des Rechners. Die Show-Datei wird nur geschrieben, wenn das Skript bearbeitet wi
 
 ### Show-Datei (YAML)
 
+- Neu: `config.tracking: false` – Tracking für die Show aus (fehlt: an; Mikrofone folgen
+  immer). Neu: `config.outputDevices[].tracking: false` – Tracking für dieses Gerät aus
+  (fehlt: an). Ältere Versionen ignorieren beides.
 - Geändert: `start_tc` darf bis zu 29 Frames haben und `;` vor den Frames (drop-frame);
   wie viele Frames gültig sind, richtet sich nach der Framerate der Show. Bestehende
   Dateien gelten weiter (25 fps, wenn keine Rate eingestellt ist).

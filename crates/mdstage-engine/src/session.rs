@@ -56,6 +56,11 @@ pub enum Request {
     Step(bool),
     /// The show's frame rate (see `Settings::frame_rates`).
     FrameRate(crate::mtc::FrameRate),
+    /// Which variant counts for tracking, by group (its first cue): the answer to the
+    /// snapshot's `question`.
+    Choose(Vec<(usize, usize)>),
+    /// The question is not answered: the jump does not happen.
+    CancelQuestion,
     SelectVariant(Option<usize>),
     /// The transport on a cue's waveform: play the cue's audio by itself, or pause it.
     PlayPause(usize),
@@ -137,6 +142,10 @@ pub struct Snapshot {
     pub script_version: u64,
     /// The show's frame rate, for showing timecode.
     pub frame_rate: crate::mtc::FrameRate,
+    /// A jump that waits for the operator to choose variants for tracking.
+    pub question: Option<crate::show::Question>,
+    /// What Go on the next cue does because of tracking, if it is a jump.
+    pub tracking: Vec<crate::show::TrackItem>,
 }
 
 pub struct Session {
@@ -365,6 +374,9 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
     // and a cue shows the time it last fired that is still there.
     let mut stamps: Vec<(usize, std::time::SystemTime)> = Vec::new();
     let mut script_version = 0;
+    // What tracking would do for the next Go, worked out again only when something it
+    // depends on has changed: the next cue, the history, the script, the audio there is.
+    let mut tracking: (Option<(Option<usize>, usize, u64, Vec<usize>)>, Vec<crate::show::TrackItem>) = (None, Vec::new());
     'show: loop {
         let tick_started = Instant::now();
         loop {
@@ -379,6 +391,8 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
                 Request::Fire(cue) => show.fire(cue, false),
                 Request::Arm(cue) => Ok(show.arm(cue)),
                 Request::Step(forward) => Ok(show.step(forward)),
+                Request::Choose(choices) => show.choose(&choices),
+                Request::CancelQuestion => Ok(show.cancel_question()),
                 Request::FrameRate(rate) => {
                     frame_rate = rate;
                     show.set_frame_rate(rate);
@@ -555,6 +569,10 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
         let mut seen = std::collections::HashSet::new();
         let fired_at: Vec<(usize, std::time::SystemTime)> = stamps.iter().rev().filter(|(cue, _)| seen.insert(*cue)).copied().collect();
 
+        let key = Some((show.next(), show.history().len(), script_version, show.player().active_cues()));
+        if tracking.0 != key {
+            tracking = (key, show.tracking_preview());
+        }
         let mic = show.mic();
         *snapshot.lock().unwrap() = Snapshot {
             fired: show.history().cues().collect(),
@@ -584,6 +602,8 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
             fired_at,
             script_version,
             frame_rate,
+            question: show.question().cloned(),
+            tracking: tracking.1.clone(),
         };
         thread::sleep(TICK.saturating_sub(tick_started.elapsed()));
     }

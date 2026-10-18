@@ -973,6 +973,32 @@ impl ScriptView {
             rows.push(Row::plain("♬", spans));
         }
         let cues = Cues::new(cx.script);
+        // What Go on this cue also does because of tracking: it is the next Go, and a jump.
+        if cx.snapshot.next == Some(cue_index) && !cx.snapshot.tracking.is_empty() {
+            use mdstage_engine::show::TrackItem;
+            let mut spans: Vec<(String, Color32)> = Vec::new();
+            for item in &cx.snapshot.tracking {
+                if !spans.is_empty() {
+                    spans.push(("·".to_string(), MUTED));
+                }
+                spans.push(match item {
+                    TrackItem::Start(loop_cue) => (format!("▶ {}", Self::name_with_file(&cues, *loop_cue)), GREEN),
+                    TrackItem::Stop(stopped) => (format!("■ {}", Self::name_with_file(&cues, *stopped)), RED),
+                    TrackItem::Mic(Mic::Open(names)) => (format!("{}: {}", t("Mikros", "Mics"), names.join(", ")), TEXT),
+                    TrackItem::Mic(_) => (t("Mikros aus", "Mics off").to_string(), TEXT),
+                    TrackItem::Device { kind, device, from } => {
+                        let colour = match kind {
+                            mdstage_core::cues::DeviceKind::Midi => BLUE,
+                            mdstage_core::cues::DeviceKind::Osc => GREEN,
+                            mdstage_core::cues::DeviceKind::Http => YELLOW,
+                            mdstage_core::cues::DeviceKind::Display => RED,
+                        };
+                        (format!("{device} {} {}", t("wie", "as"), cues.name(*from)), colour)
+                    }
+                });
+            }
+            rows.push(Row::plain("Track", spans));
+        }
         if cue.text("start_tc").is_none() {
             let rate = cx.snapshot.frame_rate;
             if let Some(derived) = Self::derived_timecode(&cues, cue_index, durations, rate, 0) {
