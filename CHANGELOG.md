@@ -30,6 +30,11 @@ des Rechners. Die Show-Datei wird nur geschrieben, wenn das Skript bearbeitet wi
   mit Go, Back, ▲ ▼ und Variantenwahl. Standardmäßig aus; Schnittstelle, Port und PIN in
   den Einstellungen, die Knöpfe im Menü „Geräte“ abschaltbar (sie werden dann grau). Nur
   in vertrauenswürdigen Netzen: unverschlüsselt.
+- Sicherheit: Display-Server und Remote-Liveansicht senden jedem Browser über eine eigene
+  Warteschlange. Ein Gerät im Netz, das eine Verbindung öffnet und nicht liest, konnte
+  bisher den Show-Ablauf (Go, Back, Timecode) anhalten – beim Display-Server auch ohne
+  jeden Zugang. Die Remote-Seite lässt sich nicht in fremde Seiten einbetten; falsche PINs
+  sind auch über alle Adressen zusammen begrenzt.
 - Liveansicht: Der nächste Cue hat einen weißen Rahmen statt eines Leuchtens.
 - Liveansicht: Die Kurzbeschreibung eines Cues zeigt kein `<br>` aus der Datei mehr.
 

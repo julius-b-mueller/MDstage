@@ -787,7 +787,7 @@ The live view in a browser on another device in the local network — a tablet a
 - It looks like the live view: clock, timecode, devices and microphones, the script with the cards, the audio that plays, the show's progress, the buttons.
 - *Devices → Remote live view: Go, Back, ▲ ▼* switches the buttons off: the page still shows the show, its buttons are grey and do nothing.
 - It keeps working while the MDstage window is in the background: commands go straight to the show. The script shown there is updated when it is edited.
-- **Only in a network of your own that you trust.** The connection is not encrypted (plain HTTP): whoever listens in on the same network sees the PIN. The PIN keeps out whoever merely happens to be on the network; five wrong PINs from one address lock it out for a minute.
+- **Only in a network of your own that you trust.** The connection is not encrypted (plain HTTP): whoever listens in on the same network sees the PIN. The PIN keeps out whoever merely happens to be on the network; five wrong PINs from one address lock it out for a minute, thirty from all addresses together lock out everyone for a minute. The page cannot be shown inside another website (which could otherwise get a click on Go out of someone).
 - No MIDI controllers on the page: browsers allow MIDI only on encrypted pages.
 
 ---

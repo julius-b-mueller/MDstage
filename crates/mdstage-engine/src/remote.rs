@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Sender, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -25,7 +25,7 @@ use mdstage_core::yaml::Value as YamlValue;
 use serde_json::{Value, json};
 
 use crate::clock::VoiceState;
-use crate::display::{query, respond};
+use crate::display::{QUEUE, query, respond, serve_queue};
 use crate::inputs::Input;
 use crate::session::Snapshot;
 use crate::show::TrackItem;
@@ -33,15 +33,25 @@ use crate::show::TrackItem;
 const PAGE: &str = include_str!("../remote/index.html");
 const SCRIPT: &str = include_str!("../remote/app.js");
 
-const KEEP_ALIVE: Duration = Duration::from_secs(20);
 const MAX_REQUEST: usize = 8192;
 /// Each connection has a thread; more than this at once are turned away.
 const MAX_CONNECTIONS: usize = 64;
 /// Wrong PINs from one address before it has to wait, and how long.
 const MAX_FAILURES: u32 = 5;
 const LOCKOUT: Duration = Duration::from_secs(60);
+/// Wrong PINs from all addresses together before every one has to wait.
+const MAX_ALL_FAILURES: u32 = 30;
 
-#[derive(Default)]
+/// What the page may do: nothing from elsewhere, and it must not be shown inside another
+/// site's page (which could get a click on Go out of someone).
+const PAGE_HEADERS: &str = "Content-Security-Policy: default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'\r\nX-Frame-Options: DENY\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n";
+
+/// Answer with a body and the page's headers.
+fn answer(socket: &mut TcpStream, status: &str, content_type: &str, body: &str) {
+    let head = format!("HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-cache\r\n{PAGE_HEADERS}Connection: close\r\n\r\n", body.len());
+    let _ = socket.write_all(head.as_bytes()).and_then(|_| socket.write_all(body.as_bytes()));
+}
+
 struct State {
     pin: String,
     /// Whether Go, Back, ▲ and ▼ are taken (they can be switched off in the Devices menu;
@@ -49,26 +59,38 @@ struct State {
     controls: bool,
     model: String,
     live: String,
-    streams: Vec<TcpStream>,
+    /// The pages' streams: the socket (to close it) and what is to be sent to it (its own
+    /// thread sends it, so that a page that does not read holds up nobody but itself).
+    streams: Vec<(TcpStream, SyncSender<String>)>,
     /// Wrong PINs by address: how many, and since when.
     failures: HashMap<IpAddr, (u32, Instant)>,
+    /// Wrong PINs from anywhere in the last minute, and since when: many addresses at
+    /// once (an IPv6 network has as many as it likes) do not get more tries.
+    all_failures: (u32, Instant),
 }
 
 impl State {
     /// Send an event to every stream; streams that fail are dropped.
     fn push(&mut self, event: &str, data: &str) {
         let message = format!("event: {event}\ndata: {data}\n\n");
-        self.streams.retain_mut(|stream| stream.write_all(message.as_bytes()).is_ok());
+        self.streams.retain(|(socket, queue)| {
+            let kept = queue.try_send(message.clone()).is_ok();
+            if !kept {
+                let _ = socket.shutdown(std::net::Shutdown::Both);
+            }
+            kept
+        });
     }
 
     /// Whether `pin` is right. An address with too many wrong ones is not even asked.
     fn admits(&mut self, from: IpAddr, pin: Option<&String>) -> Result<(), &'static str> {
-        if let Some((count, since)) = self.failures.get(&from).copied() {
-            if since.elapsed() > LOCKOUT {
-                self.failures.remove(&from);
-            } else if count >= MAX_FAILURES {
-                return Err("429 Too Many Requests");
-            }
+        // What is over a minute old is forgotten (so the list cannot grow without end).
+        self.failures.retain(|_, (_, since)| since.elapsed() <= LOCKOUT);
+        if self.all_failures.1.elapsed() > LOCKOUT {
+            self.all_failures = (0, Instant::now());
+        }
+        if self.all_failures.0 >= MAX_ALL_FAILURES || self.failures.get(&from).is_some_and(|(count, _)| *count >= MAX_FAILURES) {
+            return Err("429 Too Many Requests");
         }
         let right = !self.pin.is_empty() && pin.is_some_and(|pin| same(pin.as_bytes(), self.pin.as_bytes()));
         if right {
@@ -77,6 +99,7 @@ impl State {
         }
         let entry = self.failures.entry(from).or_insert((0, Instant::now()));
         entry.0 += 1;
+        self.all_failures.0 += 1;
         Err("403 Forbidden")
     }
 }
@@ -106,8 +129,8 @@ fn handle(mut socket: TcpStream, state: &Arc<Mutex<State>>, running: &AtomicBool
     let params = query(raw_query);
 
     match (method, path) {
-        ("GET", "/") => respond(&mut socket, "200 OK", "text/html; charset=utf-8", PAGE),
-        ("GET", "/__remote/app.js") => respond(&mut socket, "200 OK", "application/javascript; charset=utf-8", SCRIPT),
+        ("GET", "/") => answer(&mut socket, "200 OK", "text/html; charset=utf-8", PAGE),
+        ("GET", "/__remote/app.js") => answer(&mut socket, "200 OK", "application/javascript; charset=utf-8", SCRIPT),
         ("GET", "/__remote/events") => {
             let admitted = state.lock().unwrap().admits(peer.ip(), params.get("pin"));
             match admitted {
@@ -153,32 +176,17 @@ fn handle(mut socket: TcpStream, state: &Arc<Mutex<State>>, running: &AtomicBool
 /// Serve one page's event stream until it goes or the server stops.
 fn stream(mut socket: TcpStream, state: &Arc<Mutex<State>>, running: &AtomicBool) {
     let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n";
+    let (queue, events) = sync_channel(QUEUE);
     {
         let mut state = state.lock().unwrap();
         let hello = format!("{head}event: model\ndata: {}\n\nevent: live\ndata: {}\n\n", state.model, state.live);
-        let Ok(writer) = socket.try_clone() else { return };
-        if socket.write_all(hello.as_bytes()).is_err() {
+        let Ok(closer) = socket.try_clone() else { return };
+        if queue.try_send(hello).is_err() {
             return;
         }
-        state.streams.push(writer);
+        state.streams.push((closer, queue));
     }
-    let _ = socket.set_read_timeout(Some(KEEP_ALIVE));
-    let mut scratch = [0u8; 64];
-    loop {
-        match socket.read(&mut scratch) {
-            Ok(0) => break,
-            Ok(_) => {}
-            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
-                if !running.load(SeqCst) || socket.write_all(b": keep-alive\n\n").is_err() {
-                    break;
-                }
-            }
-            Err(_) => break,
-        }
-        if !running.load(SeqCst) {
-            break;
-        }
-    }
+    serve_queue(&mut socket, &events, running);
     let _ = socket.shutdown(std::net::Shutdown::Both);
 }
 
@@ -295,7 +303,15 @@ impl RemoteServer {
     pub fn start(host: &str, port: u16, pin: &str, events: Sender<Input>) -> std::io::Result<RemoteServer> {
         let listener = TcpListener::bind((host, port))?;
         let address = listener.local_addr()?;
-        let state = Arc::new(Mutex::new(State { pin: pin.to_string(), controls: true, model: "null".into(), live: "null".into(), ..Default::default() }));
+        let state = Arc::new(Mutex::new(State {
+            pin: pin.to_string(),
+            controls: true,
+            model: "null".into(),
+            live: "null".into(),
+            streams: Vec::new(),
+            failures: HashMap::new(),
+            all_failures: (0, Instant::now()),
+        }));
         let running = Arc::new(AtomicBool::new(true));
         let (shared, flag) = (state.clone(), running.clone());
         let open = Arc::new(AtomicUsize::new(0));
@@ -360,8 +376,8 @@ impl RemoteServer {
 impl Drop for RemoteServer {
     fn drop(&mut self) {
         self.running.store(false, SeqCst);
-        for stream in self.state.lock().unwrap().streams.drain(..) {
-            let _ = stream.shutdown(std::net::Shutdown::Both);
+        for (socket, _) in self.state.lock().unwrap().streams.drain(..) {
+            let _ = socket.shutdown(std::net::Shutdown::Both);
         }
         let wake = if self.address.ip().is_unspecified() { SocketAddr::from(([127, 0, 0, 1], self.address.port())) } else { self.address };
         let _ = TcpStream::connect_timeout(&wake, Duration::from_millis(200));
@@ -397,6 +413,31 @@ mod tests {
         server.set_controls(false);
         assert!(request(address, "POST /__remote/back?pin=4711").starts_with("HTTP/1.1 409"));
         assert!(received.try_iter().next().is_none());
+    }
+
+    #[test]
+    fn the_page_may_not_be_framed() {
+        let (events, _received) = channel();
+        let server = RemoteServer::start("127.0.0.1", 0, "4711", events).unwrap();
+        let page = request(server.address(), "GET /");
+        assert!(page.contains("frame-ancestors 'none'") && page.contains("X-Frame-Options: DENY"));
+    }
+
+    #[test]
+    fn a_page_that_does_not_read_holds_up_nothing() {
+        let (events, _received) = channel();
+        let server = RemoteServer::start("127.0.0.1", 0, "4711", events).unwrap();
+        // A stream that is opened and never read from.
+        let mut idle = TcpStream::connect(server.address()).unwrap();
+        idle.write_all(b"GET /__remote/events?pin=4711 HTTP/1.1\r\n\r\n").unwrap();
+        thread::sleep(Duration::from_millis(100));
+        let big = "x".repeat(100_000);
+        let started = Instant::now();
+        for i in 0..200 {
+            server.set_live(&format!("{{\"n\":{i},\"pad\":\"{big}\"}}"));
+        }
+        assert!(started.elapsed() < Duration::from_secs(1), "the show is never held up: {:?}", started.elapsed());
+        drop(idle);
     }
 
     #[test]

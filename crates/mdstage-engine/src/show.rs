@@ -796,7 +796,15 @@ impl Show {
         let cues = Cues::new(&script);
         let full = script.tracking();
         let tracks = |device: &str| script.device_tracking(device);
-        let sequence = tracked_sequence(&cues, target, |root| self.variant_choices.get(&root).copied());
+        // (Only the cues that set anything tracking follows: a long show jumped about in
+        // many times would otherwise fill the history with cues that change nothing.)
+        let contributes = |cue: usize| {
+            let Some(c) = cues.get(cue) else { return false };
+            let sets_mic = cues.block_index(cue).is_some_and(|block| script.mic_for_cue(block, &self.cast) != Mic::Unchanged);
+            let sends = ["cue_midi", "cue_osc", "cue_http", "cue_display"].iter().any(|key| c.yaml.get(*key).is_some());
+            sets_mic || sends || c.audio().is_some() || c.adjust().is_some() || cues.slf(cue).is_some()
+        };
+        let sequence: Vec<usize> = tracked_sequence(&cues, target, |root| self.variant_choices.get(&root).copied()).into_iter().filter(|&cue| contributes(cue)).collect();
         let imagined = History::of(sequence.iter().copied());
         let mut items = Vec::new();
 

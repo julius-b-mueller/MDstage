@@ -10,6 +10,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -196,7 +197,53 @@ impl Content {
 struct Stream {
     client: String,
     slug: String,
+    /// For closing it when the server stops.
     socket: TcpStream,
+    /// What is to be sent to it. Its own thread sends it, so that a client that does not
+    /// read holds up nobody but itself.
+    queue: SyncSender<String>,
+}
+
+/// How many events may wait for a client before it counts as gone.
+pub(crate) const QUEUE: usize = 64;
+/// How long a client may take to take one event.
+pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+/// How often a stream's thread looks for events and whether its client has gone.
+pub(crate) const POLL: Duration = Duration::from_millis(100);
+
+/// Serve an event stream from its queue until the client goes, the queue is dropped or
+/// the server stops: events as they come, a keep-alive when there have been none for a
+/// while. Never blocks anyone else.
+pub(crate) fn serve_queue(socket: &mut TcpStream, queue: &Receiver<String>, running: &AtomicBool) {
+    let _ = socket.set_write_timeout(Some(WRITE_TIMEOUT));
+    let _ = socket.set_read_timeout(Some(Duration::from_millis(1)));
+    let mut quiet = std::time::Instant::now();
+    let mut scratch = [0u8; 64];
+    while running.load(SeqCst) {
+        match queue.recv_timeout(POLL) {
+            Ok(event) => {
+                if socket.write_all(event.as_bytes()).is_err() {
+                    return;
+                }
+                quiet = std::time::Instant::now();
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return,
+        }
+        // Nothing more is read from the client: a read that returns means it has gone.
+        match socket.read(&mut scratch) {
+            Ok(0) => return,
+            Ok(_) => {}
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
+            Err(_) => return,
+        }
+        if quiet.elapsed() >= KEEP_ALIVE {
+            if socket.write_all(b": keep-alive\n\n").is_err() {
+                return;
+            }
+            quiet = std::time::Instant::now();
+        }
+    }
 }
 
 #[derive(Default)]
@@ -212,12 +259,13 @@ struct State {
 }
 
 impl State {
-    /// Send an event to every stream of a display; streams that fail are dropped.
+    /// Send an event to every stream of a display; streams that do not keep up are dropped.
     fn push(&mut self, slug: &str, data: &str) {
         let line = format!("data: {data}\n\n");
         let mut gone = Vec::new();
         for stream in self.streams.iter_mut().filter(|s| s.slug == slug) {
-            if stream.socket.write_all(line.as_bytes()).is_err() {
+            if stream.queue.try_send(line.clone()).is_err() {
+                let _ = stream.socket.shutdown(std::net::Shutdown::Both);
                 gone.push(stream.client.clone());
             }
         }
@@ -394,12 +442,13 @@ fn stream_events(mut socket: TcpStream, slug: String, client: Option<String>, st
     let Ok(peer) = socket.peer_addr() else { return };
     let client = client.map(|c| clamp_field(&c)).filter(|c| !c.is_empty()).unwrap_or_else(|| format!("anon-{peer}"));
     let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n";
+    let (queue, events) = sync_channel(QUEUE);
     {
         let mut state = state.lock().unwrap();
         let current = state.content.get(&slug).cloned().unwrap_or_else(|| Content { style: "dark".into(), ..Default::default() });
-        let hello = format!("{head}data: {}\n\n", current.event());
-        let Ok(writer) = socket.try_clone() else { return };
-        if socket.write_all(hello.as_bytes()).is_err() {
+        let Ok(closer) = socket.try_clone() else { return };
+        // (The first event goes the same way as all others: through the queue.)
+        if queue.try_send(format!("{head}data: {}\n\n", current.event())).is_err() {
             return;
         }
         // Name and voice only ever come through /__display/meta, so a reconnect of the
@@ -407,28 +456,10 @@ fn stream_events(mut socket: TcpStream, slug: String, client: Option<String>, st
         let entry = state.client(&client);
         entry.slug = slug.clone();
         entry.connected = true;
-        state.streams.push(Stream { client: client.clone(), slug, socket: writer });
+        state.streams.push(Stream { client: client.clone(), slug, socket: closer, queue });
         state.changed = true;
     }
-    // Nothing more is read from the client; a read that returns means it has gone, a
-    // timeout is the moment for a keep-alive.
-    let _ = socket.set_read_timeout(Some(KEEP_ALIVE));
-    let mut scratch = [0u8; 64];
-    loop {
-        match socket.read(&mut scratch) {
-            Ok(0) => break,
-            Ok(_) => {}
-            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
-                if !running.load(SeqCst) || socket.write_all(b": keep-alive\n\n").is_err() {
-                    break;
-                }
-            }
-            Err(_) => break,
-        }
-        if !running.load(SeqCst) {
-            break;
-        }
-    }
+    serve_queue(&mut socket, &events, running);
     state.lock().unwrap().disconnect(&client, Some(peer));
 }
 
@@ -674,6 +705,23 @@ mod tests {
         let mut again = events(server.address(), "foyer", "tab-1");
         next_event(&mut again);
         assert!(server.clients()[0].connected && server.clients().len() == 1);
+    }
+
+    #[test]
+    fn a_display_that_does_not_read_holds_up_nothing() {
+        let server = DisplayServer::start("127.0.0.1", 0).unwrap();
+        server.set_devices(&[device("Foyer")]);
+        // A stream that is opened and never read from.
+        let mut idle = TcpStream::connect(server.address()).unwrap();
+        idle.write_all(b"GET /__display/events/foyer?clientId=idle HTTP/1.1\r\n\r\n").unwrap();
+        thread::sleep(Duration::from_millis(100));
+        let big = "x".repeat(100_000);
+        let started = std::time::Instant::now();
+        for i in 0..200 {
+            server.set_content("Foyer", &format!("{i} {big}"));
+        }
+        assert!(started.elapsed() < Duration::from_secs(1), "the show is never held up: {:?}", started.elapsed());
+        drop(idle);
     }
 
     #[test]
