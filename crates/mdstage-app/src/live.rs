@@ -33,11 +33,6 @@ const PURPLE: Color32 = Color32::from_rgb(0xc6, 0x78, 0xdd);
 const STOP_FADE: f64 = 0.5;
 /// How many characters of what a device was last told the info bar shows.
 const SUMMARY: usize = 42;
-/// The light around the next cue: how bright it is right at the card, over how many
-/// pixels it has fallen to about a third, and where it stops being drawn.
-const GLOW_STRENGTH: f32 = 0.30;
-const GLOW_SOFTNESS: f32 = 8.0;
-const GLOW_REACH: usize = 20;
 
 
 /// One line that tells a cue apart: its note, audio, or the text around it.
@@ -53,8 +48,9 @@ pub(crate) fn summary(script: &Script, cue: usize) -> String {
         // Nothing of its own to show: the line spoken right after it.
         let after = cues.block_index(cue).map_or(&[][..], |b| &script.blocks[b + 1..]);
         let line = after.iter().find_map(|b| match b {
-            Block::Role { names, text } => Some(format!("{}: {}", names.join("/"), text.lines().next().unwrap_or_default())),
-            Block::Stage(text) => Some(text.clone()),
+            // (As it reads: without the `<br>` of the file.)
+            Block::Role { names, text } => Some(format!("{}: {}", names.join("/"), mdstage_core::format::shown(text).lines().next().unwrap_or_default().trim())),
+            Block::Stage(text) => Some(mdstage_core::format::shown(text)),
             Block::Cue(_) => Some(String::new()),
             _ => None,
         });
@@ -586,17 +582,8 @@ impl LiveView {
         let size = if is_next { 21.0 } else { 16.0 };
 
         if is_next {
-            // This is what Go fires: a soft white light around the card. Drawn as one
-            // fine ring per pixel, each a little fainter than the one inside it along a
-            // bell curve, so the light thins out evenly and ends without an edge.
+            // This is what Go fires: a white frame around the card.
             let radius = CornerRadius::same(8);
-            painter.add(egui::Shadow { offset: [0, 0], blur: 10, spread: 0, color: Color32::from_black_alpha((160.0 * alpha) as u8) }.as_shape(rect, radius));
-            for step in 0..GLOW_REACH {
-                let distance = step as f32 + 0.5;
-                let strength = GLOW_STRENGTH * (-(distance / GLOW_SOFTNESS).powi(2)).exp();
-                let ring = Stroke::new(1.0_f32, Color32::from_white_alpha((255.0 * strength * alpha).round() as u8));
-                painter.rect_stroke(rect.expand(distance), 8.0 + distance, ring, egui::StrokeKind::Middle);
-            }
             painter.rect_filled(rect, radius, tint(NEXT_FILL));
             painter.rect_stroke(rect, radius, Stroke::new(1.5_f32, tint(Color32::from_white_alpha(217))), egui::StrokeKind::Inside);
         } else {

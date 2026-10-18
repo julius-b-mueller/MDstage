@@ -70,6 +70,14 @@ fn field(ui: &mut Ui, value: &mut String, hint: &str, width: f32) {
 
 /// Choose the colour a device is marked with on the cues. `was` is the device's name
 /// before this frame's edit, `name` its name now: the colour moves along with a rename.
+/// A new PIN for the remote live view: six digits, from the system's randomness.
+fn new_pin() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos()));
+    format!("{:06}", hasher.finish() % 1_000_000)
+}
+
 /// Whether a device takes part in tracking (kept in the show file, by device name).
 fn tracking_choice(ui: &mut Ui, untracked: &mut std::collections::HashSet<String>, was: &str, name: &str) {
     // A renamed device keeps its choice.
@@ -484,6 +492,41 @@ impl SettingsUi {
                         ui.add(egui::Label::new(RichText::new(&url).monospace().color(BRIGHT)).selectable(true));
                     });
                 }
+            }
+
+            ui.add_space(12.0);
+            ui.heading(t("Remote-Liveansicht", "Remote live view"));
+            let remote = &mut draft.remote;
+            if ui.checkbox(&mut remote.enabled, t("Liveansicht im Browser anbieten (mit Go, Back, ▲ ▼)", "Offer the live view in a browser (with Go, Back, ▲ ▼)")).changed() && remote.enabled && remote.pin.trim().is_empty() {
+                remote.pin = new_pin();
+            }
+            if remote.enabled {
+                ui.horizontal(|ui| {
+                    ui.label(t("Schnittstelle", "Interface"));
+                    field(ui, &mut remote.host, "0.0.0.0", 130.0);
+                    ui.label("Port");
+                    ui.add(egui::DragValue::new(&mut remote.port).range(1..=65535));
+                    ui.label("PIN");
+                    field(ui, &mut remote.pin, "", 80.0);
+                    if ui.small_button(t("Neue PIN", "New PIN")).clicked() {
+                        remote.pin = new_pin();
+                    }
+                });
+                let host = match remote.host.as_str() {
+                    "0.0.0.0" | "" => lan_address.clone().unwrap_or_else(|| "127.0.0.1".into()),
+                    host => host.to_string(),
+                };
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(t("Adresse", "Address")).color(MUTED));
+                    ui.add(egui::Label::new(RichText::new(format!("http://{host}:{}/", remote.port)).monospace().color(BRIGHT)).selectable(true));
+                });
+                if remote.pin.trim().is_empty() {
+                    ui.label(RichText::new(t("Ohne PIN wird die Remote-Liveansicht nicht angeboten.", "Without a PIN the remote live view is not offered.")).color(RED));
+                }
+                ui.label(RichText::new(t(
+                    "Nur in einem eigenen, vertrauenswürdigen Netzwerk verwenden, nie in einem öffentlichen: Die Verbindung ist nicht verschlüsselt, und wer im selben Netz mitliest, sieht auch die PIN. Die PIN hält nur fern, wer zufällig im selben Netz ist. Go, Back und ▲ ▼ von dort lassen sich im Menü „Geräte“ abschalten.",
+                    "Use only in a network of your own that you trust, never in a public one: the connection is not encrypted, and whoever listens in on the same network sees the PIN too. The PIN only keeps out whoever happens to be on the same network. Go, Back and ▲ ▼ from there can be switched off in the Devices menu.",
+                )).color(YELLOW));
             }
 
             ui.add_space(12.0);

@@ -770,7 +770,7 @@ impl ScriptView {
         }
     }
 
-    fn role_colour(cast: &Cast, name: &str) -> Color32 {
+    pub(crate) fn role_colour(cast: &Cast, name: &str) -> Color32 {
         let role = cast.role(name).and_then(|r| r.color.as_deref());
         let group = cast.groups.iter().find(|g| g.name == name).and_then(|g| g.color.as_deref());
         named(role.or(group)).unwrap_or(BRIGHT)

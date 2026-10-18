@@ -19,6 +19,9 @@ scripts/bundle-appimage.sh                # AppImage (nur unter Linux)
 
 - Der Display-Client ist eine Webseite: `crates/mdstage-engine/display/index.html` und
   `app.js`, eingebunden von `crates/mdstage-engine/src/display.rs`.
+- Die Remote-Liveansicht ebenso: `crates/mdstage-engine/remote/index.html` und `app.js`,
+  Server in `crates/mdstage-engine/src/remote.rs`; was sie vom Skript zeigt, setzt
+  `crates/mdstage-app/src/remote_model.rs` aus dem Satz der Liveansicht zusammen.
 - App-Symbol und Bilder der Oberfläche: `crates/mdstage-app/assets/`.
 - Texte der Oberfläche: `crates/mdstage-app/src/lang.rs`, an Ort und Stelle als
   `t("Deutsch", "English")`. Neue Texte immer in beiden Sprachen.

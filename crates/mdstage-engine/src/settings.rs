@@ -122,6 +122,26 @@ pub fn artnet_port() -> u16 {
     6454
 }
 
+/// The remote live view (see [`crate::remote`]): off unless switched on.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RemoteSetting {
+    pub enabled: bool,
+    /// Interface to listen on (`0.0.0.0`: every one of this computer's networks).
+    pub host: String,
+    pub port: u16,
+    /// Asked by the page before it shows anything or takes a command.
+    pub pin: String,
+    /// Go, Back, ▲ and ▼ from the page are taken (switched in the Devices menu).
+    pub controls: bool,
+}
+
+impl Default for RemoteSetting {
+    fn default() -> Self {
+        RemoteSetting { enabled: false, host: "0.0.0.0".into(), port: 7591, pin: String::new(), controls: true }
+    }
+}
+
 /// Go, Back, ▲ and ▼ over OSC (see [`crate::inputs::OscControl`]).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -232,6 +252,7 @@ pub struct Settings {
     pub up_note: Option<NoteSetting>,
     pub down_note: Option<NoteSetting>,
     pub osc_control: OscControlSetting,
+    pub remote: RemoteSetting,
     /// MIDI input for Go/Back; `None` listens on all.
     pub control_port: Option<String>,
     pub cue_trigger: CueTriggerSetting,
@@ -286,6 +307,7 @@ impl Default for Settings {
             up_note: None,
             down_note: None,
             osc_control: OscControlSetting::default(),
+            remote: RemoteSetting::default(),
             control_port: None,
             cue_trigger: CueTriggerSetting::Off,
             emergency_light: None,

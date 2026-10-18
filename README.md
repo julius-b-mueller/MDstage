@@ -767,8 +767,8 @@ The app generates timecode synchronised to audio playback, as MIDI Timecode (to 
 A separate window (`Cmd/Ctrl+L`) for the stage or operator monitor.
 
 **Contents:**
-- Current cue (prominently highlighted) with all cue details
-- Next cue with preview
+- Current cue (yellow stripe) with all cue details
+- Next cue in a white frame, larger, with what Go does beyond it because of tracking
 - **Go / Back** buttons
 - Timecode display
 - Progress indicator for running audio and auto-cues
@@ -778,6 +778,17 @@ A separate window (`Cmd/Ctrl+L`) for the stage or operator monitor.
 - The three emergency buttons
 
 Go/Back in the live view works exactly like in the main window. The script scrolls smoothly so that the next cue always sits a little below the middle.
+
+### Remote Live View (browser)
+
+The live view in a browser on another device in the local network — a tablet at the side of the stage, a phone — with **Go**, **Back**, **▲** and **▼** (and a tap on a variant's card to choose it). Off unless switched on under *Settings → Remote live view*, where the interface (`0.0.0.0`: every network of this computer), the port (7591) and a **PIN** are set; the address to open is shown there.
+
+- The page asks for the PIN once and keeps it on that device (browser storage).
+- It looks like the live view: clock, timecode, devices and microphones, the script with the cards, the audio that plays, the show's progress, the buttons.
+- *Devices → Remote live view: Go, Back, ▲ ▼* switches the buttons off: the page still shows the show, its buttons are grey and do nothing.
+- It keeps working while the MDstage window is in the background: commands go straight to the show. The script shown there is updated when it is edited.
+- **Only in a network of your own that you trust.** The connection is not encrypted (plain HTTP): whoever listens in on the same network sees the PIN. The PIN keeps out whoever merely happens to be on the network; five wrong PINs from one address lock it out for a minute.
+- No MIDI controllers on the page: browsers allow MIDI only on encrypted pages.
 
 ---
 

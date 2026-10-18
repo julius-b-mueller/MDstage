@@ -26,6 +26,12 @@ des Rechners. Die Show-Datei wird nur geschrieben, wenn das Skript bearbeitet wi
   ohne bisherige Wahl fragt MDstage. Back nimmt Sprung und Tracking zusammen zurück.
   Tracking ist je Show und je Gerät abschaltbar.
 - Back sendet Geräten mit abgeschaltetem Tracking nichts mehr erneut.
+- Remote-Liveansicht: die Liveansicht im Browser eines anderen Geräts im lokalen Netz,
+  mit Go, Back, ▲ ▼ und Variantenwahl. Standardmäßig aus; Schnittstelle, Port und PIN in
+  den Einstellungen, die Knöpfe im Menü „Geräte“ abschaltbar (sie werden dann grau). Nur
+  in vertrauenswürdigen Netzen: unverschlüsselt.
+- Liveansicht: Der nächste Cue hat einen weißen Rahmen statt eines Leuchtens.
+- Liveansicht: Die Kurzbeschreibung eines Cues zeigt kein `<br>` aus der Datei mehr.
 
 ### Show-Datei (YAML)
 

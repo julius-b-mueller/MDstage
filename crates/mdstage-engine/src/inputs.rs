@@ -24,6 +24,8 @@ pub enum Input {
     /// Arm the cue before or after the next Go (the live view's ▲ ▼).
     Up,
     Down,
+    /// Choose this variant for the next Go (from the remote live view).
+    Variant(usize),
     /// Fire the cue with this trigger note, whatever the position.
     Cue(Note),
     /// Any note that came in, for "MIDI learn" in the settings.

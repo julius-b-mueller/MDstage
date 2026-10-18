@@ -13,6 +13,7 @@ mod export;
 mod lang;
 mod live;
 mod pointer;
+mod remote_model;
 mod roles_ui;
 mod script_view;
 mod settings_ui;
@@ -110,6 +111,8 @@ struct App {
     copied: Option<mdstage_core::yaml::Value>,
     /// Text to put on the system clipboard in this frame.
     clipboard: Option<String>,
+    /// For which show, edit and language the remote live view's script was last made.
+    remote_model_for: Option<(PathBuf, u64, bool)>,
     /// What tracking would do for the next Go, as last shown.
     tracking_seen: Vec<mdstage_engine::show::TrackItem>,
     /// The variants picked so far in the tracking question (by group's first cue).
@@ -168,6 +171,7 @@ impl App {
             clipboard: None,
             question_choices: Default::default(),
             tracking_seen: Vec::new(),
+            remote_model_for: None,
             locked: settings_open_locked,
             lock_before_live: None,
             message: None,
@@ -1128,6 +1132,9 @@ impl App {
                 }
                 if !self.settings.mixers.is_empty() {
                     changed |= ui.checkbox(&mut self.settings.mics_enabled, lang::t("Mikrofonsteuerung (Mischpult)", "Microphone control (mixer)")).on_hover_text(lang::t("Ohne Haken werden keine Mikrofone am Mischpult geschaltet, auch nicht durch „Mics Off“.", "Without the tick no microphones are switched on the mixer, not by \"Mics Off\" either.")).changed();
+                }
+                if self.settings.remote.enabled {
+                    changed |= ui.checkbox(&mut self.settings.remote.controls, lang::t("Remote-Liveansicht: Go, Back, ▲ ▼", "Remote live view: Go, Back, ▲ ▼")).on_hover_text(lang::t("Ohne Haken zeigt die Remote-Liveansicht die Show weiter, ihre Knöpfe sind aber grau und tun nichts.", "Without the tick the remote live view still shows the show, but its buttons are grey and do nothing.")).changed();
                 }
                 ui.separator();
                 changed |= ui.checkbox(&mut self.settings.outputs_blocked, lang::t("Alle Ausgänge blockieren", "Block all outputs")).changed();
@@ -2160,6 +2167,17 @@ impl eframe::App for App {
             _ => {}
         }
         self.drop_empty_text();
+        // The script as the remote live view shows it, whenever it changed.
+        match (&self.show, self.settings.remote.enabled) {
+            (Some(show), true) => {
+                let key = (show.path.clone(), show.sent_count, self.english());
+                if self.remote_model_for.as_ref() != Some(&key) {
+                    show.session.send(Request::RemoteModel(remote_model::model(&show.script, &show.cast)));
+                    self.remote_model_for = Some(key);
+                }
+            }
+            _ => self.remote_model_for = None,
+        }
         // What tracking would do takes room on the next cue's card: measure again.
         if self.snapshot.tracking != self.tracking_seen {
             self.tracking_seen = self.snapshot.tracking.clone();

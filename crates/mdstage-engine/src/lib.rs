@@ -13,6 +13,7 @@ pub mod mixer;
 pub mod mtc;
 pub mod outputs;
 pub mod player;
+pub mod remote;
 pub mod session;
 pub mod settings;
 pub mod show;

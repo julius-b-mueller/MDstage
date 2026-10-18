@@ -280,7 +280,7 @@ fn clamp_field(value: &str) -> String {
     value.chars().take(MAX_FIELD).collect()
 }
 
-fn percent_decode(text: &str) -> Option<String> {
+pub(crate) fn percent_decode(text: &str) -> Option<String> {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -304,7 +304,7 @@ fn percent_decode(text: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-fn query(text: &str) -> HashMap<String, String> {
+pub(crate) fn query(text: &str) -> HashMap<String, String> {
     text.split('&')
         .filter_map(|pair| {
             let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
@@ -317,7 +317,7 @@ fn is_file_name(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
 }
 
-fn respond(socket: &mut TcpStream, status: &str, content_type: &str, body: &str) {
+pub(crate) fn respond(socket: &mut TcpStream, status: &str, content_type: &str, body: &str) {
     let head = format!(
         "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n",
         body.len()

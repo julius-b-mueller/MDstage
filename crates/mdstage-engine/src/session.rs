@@ -21,6 +21,7 @@ use crate::display::{Client, DisplayServer};
 use crate::inputs::{Input, Inputs};
 use crate::mixer::Mixer;
 use crate::mtc::{TimecodeSender, TimecodeTarget};
+use crate::remote::RemoteServer;
 use crate::outputs::{MidiPorts, Sender as WireSender, SystemMidi};
 use crate::player::{ClipCache, Player, Status};
 use crate::settings::Settings;
@@ -36,6 +37,8 @@ const MAX_CHANNELS: usize = 64;
 /// How often a missing audio device is looked for.
 const DEVICE_RETRY: Duration = Duration::from_secs(3);
 /// How often to look whether a MIDI device was plugged in or pulled out.
+/// How often the remote live view is told the state of the show, at most.
+const REMOTE_EVERY: Duration = Duration::from_millis(100);
 const MIDI_RESCAN: Duration = Duration::from_secs(2);
 /// Holding the Back note this long stops everything (as the red music button does)
 /// instead of going back; let go of sooner, it is a Back.
@@ -61,6 +64,8 @@ pub enum Request {
     Choose(Vec<(usize, usize)>),
     /// The question is not answered: the jump does not happen.
     CancelQuestion,
+    /// The script as laid out for the remote live view (JSON, see `crate::remote`).
+    RemoteModel(String),
     SelectVariant(Option<usize>),
     /// The transport on a cue's waveform: play the cue's audio by itself, or pause it.
     PlayPause(usize),
@@ -322,6 +327,27 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
         }
     };
     let mut inputs = open_inputs(&settings, &mut problems);
+
+    // The remote live view, if it is switched on.
+    let open_remote = |settings: &Settings, problems: &mut Vec<String>| {
+        let remote = &settings.remote;
+        if !remote.enabled || remote.pin.trim().is_empty() {
+            return None;
+        }
+        match RemoteServer::start(&remote.host, remote.port, remote.pin.trim(), input_events.clone()) {
+            Ok(server) => {
+                server.set_controls(remote.controls);
+                Some(server)
+            }
+            Err(e) => {
+                problems.push(format!("Remote-Liveansicht ({}:{}): {e}", remote.host, remote.port));
+                None
+            }
+        }
+    };
+    let mut remote = open_remote(&settings, &mut problems);
+    let mut remote_model = String::from("null");
+    let mut remote_sent = Instant::now();
     let mut rescan_midi = Instant::now() + MIDI_RESCAN;
     let mut back_held: Option<Instant> = None;
 
@@ -423,7 +449,26 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
                     script_version += 1;
                     show.replace_script(*script)
                 }
+                Request::RemoteModel(model) => {
+                    if let Some(server) = &remote {
+                        server.set_model(&model);
+                    }
+                    remote_model = model;
+                    Ok(())
+                }
                 Request::Configure(new, now_trusted) => {
+                    // The remote live view opens anew where it is to listen changed.
+                    let (before, after) = (&settings.remote, &new.remote);
+                    if (before.enabled, &before.host, before.port, before.pin.trim()) != (after.enabled, &after.host, after.port, after.pin.trim()) {
+                        drop(remote.take()); // let go of the old port before taking the new
+                        remote = open_remote(&new, &mut problems);
+                        if let Some(server) = &remote {
+                            server.set_model(&remote_model);
+                        }
+                    }
+                    if let Some(server) = &remote {
+                        server.set_controls(new.remote.controls);
+                    }
                     if new.audio_device != settings.audio_device {
                         // Let go of the old device; the new one is opened further down.
                         device = None;
@@ -463,6 +508,7 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
                 Input::Back => show.back(),
                 Input::Up => Ok(show.step(false)),
                 Input::Down => Ok(show.step(true)),
+                Input::Variant(cue) => Ok(show.select_variant(Some(cue))),
                 Input::Cue(note) => show.fire_note(note),
                 Input::Heard(note) => Ok(heard = Some(note)),
             };
@@ -574,7 +620,7 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
             tracking = (key, show.tracking_preview());
         }
         let mic = show.mic();
-        *snapshot.lock().unwrap() = Snapshot {
+        let snapshot_now = Snapshot {
             fired: show.history().cues().collect(),
             done: show.history().this_pass().collect(),
             latest: show.history().cues().last(),
@@ -605,6 +651,12 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
             question: show.question().cloned(),
             tracking: tracking.1.clone(),
         };
+        // The remote live view: at most ten times a second (the audio moves on all the time).
+        if let Some(server) = remote.as_ref().filter(|_| remote_sent.elapsed() >= REMOTE_EVERY) {
+            remote_sent = Instant::now();
+            server.set_live(&crate::remote::live_state(&snapshot_now, show.script(), settings.remote.controls));
+        }
+        *snapshot.lock().unwrap() = snapshot_now;
         thread::sleep(TICK.saturating_sub(tick_started.elapsed()));
     }
 
@@ -626,9 +678,10 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
 mod tests {
     use super::*;
 
-    /// Wait until the snapshot satisfies `check`, or fail after two seconds.
+    /// Wait until the snapshot satisfies `check`, or fail after five seconds (a busy
+    /// machine running all the tests at once is slow).
     fn wait(session: &Session, what: &str, check: impl Fn(&Snapshot) -> bool) -> Snapshot {
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             let snapshot = session.snapshot();
             if check(&snapshot) {
@@ -637,6 +690,56 @@ mod tests {
             assert!(Instant::now() < deadline, "timed out waiting for {what}: {snapshot:?}");
             thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    /// The remote live view of a running show: its state over the event stream, Go from
+    /// the page, and nothing without the PIN or with the controls off.
+    #[test]
+    fn the_remote_live_view_shows_and_steers_the_show() {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let script = Script::parse("```yaml\ntrigger_note: {ch: 1, note: 1}\nlight: A\n```\n\n```yaml\ntrigger_note: {ch: 1, note: 2}\nlight: B\n```\n");
+        let settings: Settings = serde_json::from_str(&format!(r#"{{"audio_device": "no such device", "display_port": 0, "outputs_blocked": true, "remote": {{"enabled": true, "host": "127.0.0.1", "port": {port}, "pin": "2468"}}}}"#)).unwrap();
+        let session = Session::start(script, std::env::temp_dir(), settings.clone(), true).unwrap();
+        wait(&session, "start-up", |s| s.next == Some(0));
+        session.send(Request::RemoteModel("{\"cues\":[]}".into()));
+        let post = |path: &str| {
+            let mut socket = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+            socket.write_all(format!("POST {path} HTTP/1.1\r\n\r\n").as_bytes()).unwrap();
+            let mut answer = String::new();
+            let _ = socket.read_to_string(&mut answer);
+            answer
+        };
+        assert!(post("/__remote/go?pin=1111").starts_with("HTTP/1.1 403"));
+        assert!(post("/__remote/go?pin=2468").starts_with("HTTP/1.1 204"));
+        wait(&session, "Go from the page", |s| s.fired == [0]);
+
+        let mut socket = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        socket.write_all(b"GET /__remote/events?pin=2468 HTTP/1.1\r\n\r\n").unwrap();
+        socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut reader = BufReader::new(socket);
+        let mut line = String::new();
+        let mut model = false;
+        while !line.contains("\"current\":0") {
+            line.clear();
+            reader.read_line(&mut line).unwrap();
+            model |= line.contains("{\"cues\":[]}");
+        }
+        assert!(model, "the script came first");
+        assert!(line.contains("\"next\":1") && line.contains("\"controls\":true"));
+
+        // Control from the page switched off in the Devices menu.
+        let mut off = settings;
+        off.remote.controls = false;
+        session.send(Request::Configure(Box::new(off), true));
+        while !line.contains("\"controls\":false") {
+            line.clear();
+            reader.read_line(&mut line).unwrap();
+        }
+        assert!(post("/__remote/go?pin=2468").starts_with("HTTP/1.1 409"), "the buttons do nothing");
+        thread::sleep(Duration::from_millis(100));
+        assert_eq!(session.snapshot().fired, [0]);
+        drop(session);
     }
 
     /// Auto-cues at a place in the audio fire in a running session, with the audio read
