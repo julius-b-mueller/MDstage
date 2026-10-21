@@ -36,7 +36,18 @@ jobs:
       - run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev libgtk-3-dev
-      - run: cargo test --workspace
+      - run: cargo test --workspace --locked
+
+  # ── Known vulnerabilities in dependencies (always) ────────────────────────
+  # Fails on a security advisory against a crate in Cargo.lock; "unmaintained" only warns.
+  # Advisories that do not reach MDstage are listed, with the reason, in .cargo/audit.toml.
+  audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - run: rustup toolchain install stable --profile minimal
+      - run: cargo install cargo-audit@0.22.2 --locked
+      - run: cargo audit
 
   # ── Versions agree (tags only) ────────────────────────────────────────────
   versions:
@@ -83,7 +94,7 @@ jobs:
           sudo apt-get update
           # desktop-file-utils: appimagetool checks the .desktop file with it.
           sudo apt-get install -y libasound2-dev libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev libgtk-3-dev desktop-file-utils
-      - run: cargo build --release -p mdstage-app
+      - run: cargo build --release -p mdstage-app --locked
       - run: |
           cargo install cargo-deb@3.8.0 cargo-generate-rpm@0.21.0 --locked
           cargo deb -p mdstage-app --no-build
@@ -116,7 +127,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - run: rustup toolchain install stable --profile minimal
-      - run: cargo build --release -p mdstage-app
+      - run: cargo build --release -p mdstage-app --locked
       - run: |
           New-Item -ItemType Directory -Force -Path artifacts, target/bundle | Out-Null
           # Without installing: the program by itself, zipped.
@@ -186,7 +197,7 @@ jobs:
 
   # ── GitHub Release (tags only) ────────────────────────────────────────────
   release:
-    needs: [test, versions, linux, windows, macos]
+    needs: [test, audit, versions, linux, windows, macos]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:

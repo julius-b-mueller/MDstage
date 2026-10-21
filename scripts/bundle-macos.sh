@@ -24,11 +24,11 @@ done
 
 if [ "$arch" = x64 ]; then
     rustup target add x86_64-apple-darwin
-    cargo build --release -p mdstage-app --target x86_64-apple-darwin
+    cargo build --release -p mdstage-app --locked --target x86_64-apple-darwin
     binary=target/x86_64-apple-darwin/release/mdstage
     app=target/bundle/x64/MDstage.app
 else
-    cargo build --release -p mdstage-app
+    cargo build --release -p mdstage-app --locked
     binary=target/release/mdstage
     app=target/bundle/MDstage.app
 fi

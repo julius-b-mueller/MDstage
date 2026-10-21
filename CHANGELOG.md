@@ -14,6 +14,17 @@ Nichts über den Stand einer Vorstellung steht in der Show-Datei: Welcher Cue de
 ist und wann ein Cue ausgelöst wurde, liegt nur im Programm bzw. in den Einstellungen
 des Rechners. Die Show-Datei wird nur geschrieben, wenn das Skript bearbeitet wird.
 
+## Unveröffentlicht
+
+- HTTP-Ausgaben über `https://` nutzen eine TLS-Bibliothek (rustls 0.23.46) ohne die im
+  Oktober 2026 gemeldeten Lücken; die mitgelieferten Stammzertifikate sind aktualisiert.
+- Jeder Build prüft die Abhängigkeiten auf bekannte Sicherheitslücken und baut nur mit den
+  in `Cargo.lock` festgeschriebenen Versionen.
+
+### Show-Datei (YAML)
+
+- Keine Änderungen.
+
 ## 2.5.0
 
 - Tracking beim Springen (wie am Lichtpult): Wird ein Cue außer der Reihe ausgelöst,

@@ -1,0 +1,17 @@
+# `cargo audit` (CI job `audit`). Advisories listed here do not reach MDstage; each one
+# says why. Remove an entry once the crate that pulls it in has been updated.
+
+[advisories]
+ignore = [
+    # zip 8.6 (through docx-rs): the flaws are in ZipArchive::extract and
+    # ZipStreamReader::extract. docx-rs only writes .docx files here and never extracts.
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+    # quick-xml 0.30 (zbus_xml, Linux accessibility over the local D-Bus) and 0.36
+    # (hayagriva, bibliographies in typst; the PDF export loads none). Slow or memory-hungry
+    # parsing of hostile XML only; no XML from outside reaches either. Goes away with
+    # newer eframe and typst.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]

@@ -26,7 +26,7 @@ case "$(uname -m)" in
         ;;
 esac
 
-cargo build --release -p mdstage-app
+cargo build --release -p mdstage-app --locked
 
 dir=target/bundle/MDstage.AppDir
 rm -rf "$dir"
