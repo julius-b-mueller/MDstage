@@ -164,8 +164,9 @@ struct Plan {
     mic: Option<Mic>,
     /// Devices (not displays) to tell their state again.
     resend: DeviceStates,
-    /// Loops to start, at their volume.
-    start: Vec<(usize, f64)>,
+    /// Audio to start, at its volume: loops from their start, the song a cue hangs on
+    /// from that place in it (seconds).
+    start: Vec<(usize, f64, Option<f64>)>,
     stop: Vec<usize>,
     /// Audio that plays on, to fade to a level.
     volume: Vec<(usize, f64)>,
@@ -606,17 +607,70 @@ impl Show {
     /// on from there, audio that is not will start there when played from its waveform.
     pub fn seek(&mut self, cue: usize, seconds: f64) -> Result<()> {
         let Some(audio) = self.audio(cue) else { return Ok(()) };
-        if self.sounding(cue).is_none() {
-            self.paused.insert(cue, (0, seconds.max(0.0)));
+        let seconds = seconds.max(0.0);
+        let Some(status) = self.sounding(cue) else {
+            self.paused.insert(cue, (0, seconds));
             return Ok(());
-        }
-        self.player.start(cue, &audio, Start { armed: false, then: self.then(cue), resume: Some((0, seconds.max(0.0))) })?;
+        };
+        self.player.start(cue, &audio, Start { armed: false, then: self.then(cue), resume: Some((0, seconds)) })?;
         // An outro that was waiting for this loop's end still is.
         for (looped, outro) in self.pending_outros.clone() {
             if looped == cue {
                 self.player.queue_outro(looped, outro)?;
             }
         }
+        if status.part == 0 && seconds > status.seconds {
+            self.skip_autos(cue, seconds)?;
+        }
+        Ok(())
+    }
+
+    /// The audio of `source` was moved on to `to`: the auto-cues on its way there do not
+    /// all fire at once but are tracked. They count as fired, and what they would have
+    /// left is set — microphones, devices that track, loops — as for a jump.
+    fn skip_autos(&mut self, source: usize, to: f64) -> Result<()> {
+        let mut skipped: Vec<(f64, usize)> = Vec::new();
+        for watch in self.watches.iter_mut().filter(|w| w.source == source && !w.fired && w.at <= to) {
+            watch.fired = true;
+            watch.last = Some(to);
+            skipped.push((watch.at, watch.target));
+        }
+        if skipped.is_empty() {
+            return Ok(());
+        }
+        skipped.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let order: Vec<usize> = skipped.into_iter().map(|(_, cue)| cue).collect();
+        let script = self.script.clone();
+        let cues = Cues::new(&script);
+        let passed = History::of(order.iter().copied());
+        let mic = passed.mic(&cues, &self.cast);
+        if mic != Mic::Unchanged {
+            self.mic_hold = None;
+            self.effects.push(Effect::Mic(mic));
+        }
+        // (As cues that fired by themselves: Back takes them back with the operator's cue.)
+        for &cue in &order {
+            self.history.push(cue, true);
+        }
+        if script.tracking() {
+            let states: DeviceStates = passed.device_states(&cues).into_iter().filter(|(key, _)| key.0 != DeviceKind::Display && script.device_tracking(&key.1)).collect();
+            self.effects.extend(resend_effects(&states));
+            for &cue in &order {
+                let (playing, volume) = self.history.audio_state(&cues, cue);
+                if self.then(cue) != Then::Loop || !playing || self.player.is_sounding(cue) {
+                    continue;
+                }
+                let Some(mut audio) = self.audio(cue) else { continue };
+                for part in &mut audio.parts {
+                    part.volume = volume;
+                }
+                match self.player.start(cue, &audio, Start::now(Then::Loop)) {
+                    Ok(()) => drop(self.loop_epochs.insert(cue, self.now)),
+                    Err(e) => self.problems.push(format!("{}: {e}", cues.name(cue))),
+                }
+            }
+        }
+        self.report_displays();
         Ok(())
     }
 
@@ -855,9 +909,11 @@ impl Show {
         // Loops: those that would be playing there start; playing ones that would not, stop.
         let mut wanted: Vec<usize> = plan.sequence.iter().copied().filter(|&cue| self.then(cue) == Then::Loop && imagined.audio_state(&cues, cue).0).collect();
         wanted.dedup();
+        // (Not one the cue itself fades out: it would only start to be faded out at once.)
+        let faded_by_target: Vec<usize> = cues.get(target).and_then(|c| c.adjust()).filter(|adjust| adjust.fadeout).and_then(|adjust| cues.find(adjust.target)).map(|named| cues.group(named).collect()).unwrap_or_default();
         for &cue in &wanted {
-            if !self.player.is_sounding(cue) {
-                plan.start.push((cue, imagined.audio_state(&cues, cue).1));
+            if !self.player.is_sounding(cue) && !faded_by_target.contains(&cue) {
+                plan.start.push((cue, imagined.audio_state(&cues, cue).1, None));
                 plan.items.push(TrackItem::Start(cue));
             }
         }
@@ -881,6 +937,25 @@ impl Show {
                 // Plays on, at the level the cues above left it at (ducked, or not).
                 plan.volume.push((cue, level));
                 plan.items.push(TrackItem::Volume(cue, level));
+            }
+        }
+        // A cue that hangs on a place in a song: the song plays from there, unless it is
+        // playing already, as if it had got that far. The auto-cues before that place are
+        // behind it; those after it fire when it gets to them.
+        let place = cues.get(target).and_then(|c| c.auto_trigger()).and_then(|auto| match auto.when {
+            AutoWhen::At(at) => Some((cues.find(auto.source)?, at)),
+            _ => None,
+        });
+        if let Some((source, at)) = place {
+            let (there, level) = imagined.audio_state(&cues, source);
+            if there && self.audio(source).is_some() && !self.player.is_sounding(source) && !faded_by_target.contains(&source) {
+                match plan.start.iter_mut().find(|(cue, ..)| *cue == source) {
+                    Some(start) => start.2 = Some(at),
+                    None => {
+                        plan.start.push((source, level, Some(at)));
+                        plan.items.push(TrackItem::Start(source));
+                    }
+                }
             }
         }
         plan
@@ -921,16 +996,23 @@ impl Show {
             self.player.stop(cue, BACK_FADE)?;
             self.forget_audio_of(&[cue]);
         }
-        for (cue, volume) in plan.start {
+        for (cue, volume, at) in plan.start {
             let Some(mut audio) = self.audio(cue) else { continue };
             for part in &mut audio.parts {
                 part.volume = volume;
             }
-            if let Err(e) = self.player.start(cue, &audio, Start::now(Then::Loop)) {
+            let then = self.then(cue);
+            if let Err(e) = self.player.start(cue, &audio, Start { armed: false, then, resume: at.map(|seconds| (0, seconds)) }) {
                 self.problems.push(format!("{}: {e}", Cues::new(&self.script).name(cue)));
                 continue;
             }
-            self.loop_epochs.insert(cue, self.now);
+            match then {
+                Then::Loop => drop(self.loop_epochs.insert(cue, self.now - at.unwrap_or(0.0))),
+                Then::Chain(next) => self.arm_chain(cue, next),
+                Then::End => {}
+            }
+            // The auto-cues on its audio from here on.
+            self.watch(cue, at);
             self.tracking_started.push((entry, cue));
             self.just_started.push(cue);
         }
@@ -981,7 +1063,16 @@ impl Show {
     pub fn fire(&mut self, cue: usize, auto: bool) -> Result<()> {
         match auto {
             true => self.fire_cue(cue, true).map(drop),
-            false => self.by_hand(cue, (self.armed, self.selected_variant)),
+            false => {
+                // Fired by hand, the cue is where the operator is: Go goes on after it,
+                // not to whatever was armed before (Back arms that again). A press that
+                // stops playing audio leaves the next Go as it was.
+                let before = (self.armed, self.selected_variant);
+                if !self.is_playing(cue) {
+                    (self.armed, self.selected_variant) = (None, None);
+                }
+                self.by_hand(cue, before)
+            }
         }
     }
 
@@ -1846,6 +1937,21 @@ mod tests {
     }
 
     #[test]
+    fn a_cue_fired_by_hand_arms_the_one_after_it() {
+        let mut rig = rig(&["", "", "", "", ""], &[]);
+        // Armed earlier (or where the show was left the last time it was open).
+        rig.show.arm(Some(4));
+        rig.show.fire(1, false).unwrap();
+        assert_eq!(rig.show.next(), Some(2), "not the cue armed before");
+        rig.show.go().unwrap();
+        assert_eq!(rig.fired(), [1, 2]);
+        // Back takes the click back, and what was armed before is again.
+        rig.show.back().unwrap();
+        rig.show.back().unwrap();
+        assert_eq!(rig.show.next(), Some(4));
+    }
+
+    #[test]
     fn a_second_press_stops_a_playing_cue() {
         let mut rig = rig(&["music:\n    file: a.wav\n    volume: 1\n    loop: true"], &[("a.wav", 1.0, 100)]);
         rig.show.fire(0, false).unwrap();
@@ -2429,6 +2535,66 @@ mod tests {
         rig.show.back().unwrap();
         rig.run(640);
         assert_eq!(rig.level(), 7.0, "Back brings them back");
+    }
+
+    /// A song with auto-cues at 0.5, 1.0 and 1.5 s, each with a scene for the light.
+    const SONG: [&str; 4] = [
+        "music: song.wav",
+        "auto_trigger: {trigger_note: {ch: 1, note: 0}, at: 0.5}\ncue_midi:\n    - {device: Licht, type: pc, ch: 1, program: 1}",
+        "auto_trigger: {trigger_note: {ch: 1, note: 0}, at: 1.0}\ncue_midi:\n    - {device: Licht, type: pc, ch: 1, program: 2}",
+        "auto_trigger: {trigger_note: {ch: 1, note: 0}, at: 1.5}\ncue_midi:\n    - {device: Licht, type: pc, ch: 1, program: 3}",
+    ];
+
+    #[test]
+    fn a_jump_to_an_auto_cue_in_a_song_plays_the_song_from_there() {
+        let mut rig = rig(&SONG, &[("song.wav", 1.0, 2000)]);
+        rig.show.arm(Some(2));
+        assert!(rig.show.tracking_preview().contains(&TrackItem::Start(0)));
+        rig.show.go().unwrap();
+        let effects = rig.show.take_effects();
+        assert_eq!(programs(&effects), [("Licht", 2)], "the cue addresses the light itself");
+        rig.run(16);
+        assert!(rig.level() > 0.0, "the song plays");
+        assert_eq!(rig.fired(), [2]);
+        rig.run(464);
+        assert_eq!(rig.fired(), [2], "the next auto-cue is half a second further on");
+        rig.run(40);
+        assert_eq!(rig.fired(), [2, 3]);
+        assert_eq!(programs(&rig.show.take_effects()), [("Licht", 3)]);
+
+        // Back: the song goes again.
+        rig.show.back().unwrap();
+        rig.run(640);
+        assert_eq!(rig.level(), 0.0);
+    }
+
+    #[test]
+    fn moving_a_song_on_tracks_the_auto_cues_it_skips() {
+        let mut rig = rig(&SONG, &[("song.wav", 1.0, 2000)]);
+        rig.show.go().unwrap();
+        rig.run(48);
+        rig.show.take_effects();
+        rig.show.seek(0, 1.2).unwrap();
+        rig.run(16);
+        assert_eq!(rig.fired(), [0, 1, 2], "they count as fired");
+        assert_eq!(programs(&rig.show.take_effects()), [("Licht", 2)], "only the scene they leave, not one after the other");
+        rig.run(304);
+        assert_eq!(rig.fired(), [0, 1, 2, 3], "the one after the new place fires when the song gets there");
+        assert_eq!(programs(&rig.show.take_effects()), [("Licht", 3)]);
+    }
+
+    #[test]
+    fn a_jump_to_a_cue_that_fades_a_loop_out_does_not_start_it_first() {
+        let mut rig = rig(
+            &["music:\n    file: rain.wav\n    volume: 1\n    loop: true", "light: B", "music:\n    adjust: {trigger_note: {ch: 1, note: 0}, fadeout: true, fadetime: 2}"],
+            &[("rain.wav", 1.0, 100)],
+        );
+        rig.show.arm(Some(2));
+        assert!(!rig.show.tracking_preview().contains(&TrackItem::Start(0)));
+        rig.show.go().unwrap();
+        rig.run(48);
+        assert!(rig.out.iter().all(|&level| level == 0.0), "the loop never sounded");
+        assert_eq!(rig.fired(), [2]);
     }
 
     #[test]

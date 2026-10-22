@@ -2044,7 +2044,8 @@ impl ScriptView {
         // glance — except under the show lock, where nothing can be set.
         let full = !cx.locked;
         let top = panel.top() + 6.0;
-        self.cue_buttons(ui, cx, block, cue_index, cue, full, Rect::from_min_max(pos2(x, top), pos2(panel.right() - 10.0, top + ROW + 4.0)), actions);
+        // Clicks on the buttons, and on disabled ones too, are not clicks on the cue.
+        let mut buttons = vec![self.cue_buttons(ui, cx, block, cue_index, cue, full, Rect::from_min_max(pos2(x, top), pos2(panel.right() - 10.0, top + ROW + 4.0)), actions)];
         self.learn_durations(cx, cue_index);
         y += ROW;
         let mut go_to = None;
@@ -2093,11 +2094,13 @@ impl ScriptView {
             // While a later part plays, the row says so instead of a position in this one.
             let later = snapshot.audio.iter().find(|(c, s)| *c == cue_index && s.part > 0 && s.state == VoiceState::Playing).map(|(_, s)| (s.part, s.seconds));
             self.draw_transport(ui, cx, (block, cue_index), part, sounding, (position, later), duration, row, actions);
+            buttons.push(row);
         }
         // The edit button has a place of its own, in the card's bottom right corner.
         if !cx.locked && !cue.invalid {
             let size = EDIT_BUTTON - 8.0;
             let corner = Rect::from_min_size(pos2(panel.right() - 10.0 - size, panel.bottom() - 9.0 - size), vec2(size, size));
+            buttons.push(corner);
             if ui.put(corner, egui::Button::image(Icon::Pencil.image(17.0, TEXT))).on_hover_text(t("Cue bearbeiten", "Edit cue")).clicked() {
                 actions.push(Action::EditCue(block));
             }
@@ -2115,7 +2118,7 @@ impl ScriptView {
                     }
                 }
             }
-            None if response.clicked() => actions.push(Action::Fire(cue_index)),
+            None if response.clicked() && !response.interact_pointer_pos().is_some_and(|at| buttons.iter().any(|r| r.contains(at))) => actions.push(Action::Fire(cue_index)),
             None => {}
         }
         if cx.locked {
@@ -2171,134 +2174,138 @@ impl ScriptView {
     /// The buttons in a cue's top line, from the right: its trigger note, arm in the
     /// live view, edit, variant, and the connections to other cues.
     #[allow(clippy::too_many_arguments)]
-    fn cue_buttons(&mut self, ui: &mut Ui, cx: &Context, block: usize, cue_index: usize, cue: &Cue, full: bool, rect: Rect, actions: &mut Vec<Action>) {
+    fn cue_buttons(&mut self, ui: &mut Ui, cx: &Context, block: usize, cue_index: usize, cue: &Cue, full: bool, rect: Rect, actions: &mut Vec<Action>) -> Rect {
         let mut row = ui.new_child(UiBuilder::new().id_salt(("cue-buttons", block)).max_rect(rect).layout(egui::Layout::right_to_left(egui::Align::Center)));
         row.spacing_mut().item_spacing.x = 4.0;
         row.spacing_mut().button_padding = vec2(6.0, 1.0);
-        if !full {
-            return;
-        }
-        let shift = row.input(|i| i.modifiers.shift);
-        let small = |text: &str, colour: Color32| egui::Button::new(RichText::new(text).size(13.0).color(colour));
-        let live = egui::Button::image_and_text(egui::Image::new(live_icon()).tint(TEXT).fit_to_exact_size(vec2(13.0, 13.0)), RichText::new("Live").size(13.0).color(TEXT));
-        if row.add(live).on_hover_text(t("Live-Ansicht öffnen und diesen Cue als nächsten scharf schalten", "Open the live view with this cue armed as the next")).clicked() {
-            actions.push(Action::ArmLive(cue_index));
-        }
-        // Arm: the next Go fires this cue (a click on the cue itself would fire it now).
-        let armed = cx.snapshot.next == Some(cue_index);
-        if row.add(small("Arm", if armed { YELLOW } else { TEXT })).on_hover_text(t("Als nächsten Cue vormerken: Das nächste Go löst ihn aus.", "Arm as the next cue: the next Go fires it.")).clicked() {
-            actions.push(Action::Arm(cue_index));
-        }
-        if cx.locked || cue.invalid {
-            return;
-        }
-        for up in [false, true] {
-            let hint = if up { t("Cue nach oben verschieben", "Move the cue up") } else { t("Cue nach unten verschieben", "Move the cue down") };
-            if row.add(small(if up { "▲" } else { "▼" }, TEXT)).on_hover_text(hint).clicked() {
-                actions.push(Action::Move { block, up });
+        // (Returns where the buttons are: a click there is not a click on the cue.)
+        'buttons: {
+            if !full {
+                break 'buttons;
             }
-        }
-        if row.add(small("⊕", TEXT)).on_hover_text(t("Als Variante duplizieren", "Duplicate as a variant")).clicked() {
-            actions.push(Action::Variant(block));
-        }
-
-        // The connections: a click sets one up (then click the other cue), Shift+click
-        // on one that exists removes it.
-        let mut link_button = |row: &mut Ui, link: Link, text: &str, exists: bool, enabled: bool, hint: &str| {
-            // In the colour of its kind once it exists, and it keeps that colour whatever
-            // is clicked: only Shift+click takes the connection (and the colour) away.
-            // While its other end is being picked the button has a bright outline.
-            let kind = if link == Link::AutoCue { ORANGE } else { GREEN };
-            let picking = self.picking == Some((link, block));
-            let colour = if exists { kind } else if picking { BRIGHT } else { TEXT };
-            let hint = if exists { format!("{hint}\n{}", t("Klick stellt neu ein, Shift+Klick löscht.", "Click sets it up anew, Shift+click removes it.")) } else { hint.to_string() };
-            let button = if picking { small(text, colour).stroke(Stroke::new(1.0_f32, BRIGHT)) } else { small(text, colour) };
-            if row.add_enabled(enabled, button).on_hover_text(hint).clicked() {
-                match exists && shift {
-                    true => actions.push(Action::Unlink { link, block }),
-                    false if self.picking == Some((link, block)) => self.picking = None,
-                    false => self.picking = Some((link, block)),
+            let shift = row.input(|i| i.modifiers.shift);
+            let small = |text: &str, colour: Color32| egui::Button::new(RichText::new(text).size(13.0).color(colour));
+            let live = egui::Button::image_and_text(egui::Image::new(live_icon()).tint(TEXT).fit_to_exact_size(vec2(13.0, 13.0)), RichText::new("Live").size(13.0).color(TEXT));
+            if row.add(live).on_hover_text(t("Live-Ansicht öffnen und diesen Cue als nächsten scharf schalten", "Open the live view with this cue armed as the next")).clicked() {
+                actions.push(Action::ArmLive(cue_index));
+            }
+            // Arm: the next Go fires this cue (a click on the cue itself would fire it now).
+            let armed = cx.snapshot.next == Some(cue_index);
+            if row.add(small("Arm", if armed { YELLOW } else { TEXT })).on_hover_text(t("Als nächsten Cue vormerken: Das nächste Go löst ihn aus.", "Arm as the next cue: the next Go fires it.")).clicked() {
+                actions.push(Action::Arm(cue_index));
+            }
+            if cx.locked || cue.invalid {
+                break 'buttons;
+            }
+            for up in [false, true] {
+                let hint = if up { t("Cue nach oben verschieben", "Move the cue up") } else { t("Cue nach unten verschieben", "Move the cue down") };
+                if row.add(small(if up { "▲" } else { "▼" }, TEXT)).on_hover_text(hint).clicked() {
+                    actions.push(Action::Move { block, up });
                 }
             }
-        };
-        let has_audio = cue.audio().is_some();
-        let in_group = Cues::new(cx.script).in_group(cue_index);
-        let auto_hint = match in_group {
-            true => t("Eine Variante wird nie von selbst ausgelöst: Welche genommen wird, wählt der Operator.", "A variant never fires by itself: the operator chooses which one is taken."),
-            false => t("Diesen Cue von selbst auslösen lassen: danach die Quelle anklicken.", "Let this cue fire by itself: then click its source."),
-        };
-        link_button(&mut row, Link::AutoCue, "Auto-Cue", cue.auto_trigger().is_some(), !in_group || cue.auto_trigger().is_some(), auto_hint);
-        link_button(&mut row, Link::Adjust, t("⇢ Bezug", "⇢ Adjust"), cue.adjust().is_some(), true, t("Beim Auslösen das Audio eines anderen Cues ausfaden oder leiser stellen: danach den anderen Cue anklicken. Dieser Cue braucht dafür kein eigenes Audio.", "On firing, fade out or turn down another cue's audio: then click that cue. This cue needs no audio of its own for it."));
-
-        let slf = match Cues::new(cx.script).slf(cue_index) {
-            Some(Slf::Start { .. }) => "Start",
-            Some(Slf::Loop { .. }) => "Loop",
-            Some(Slf::Finish { .. }) => "Finish",
-            Some(Slf::Bridge { .. }) => "Bridge",
-            None => "S/L/F",
-        };
-        let linked = cue.chain_end().is_some() || cue.loop_outro().is_some();
-        // (Purple once the cue has a place in such a structure; that stays while a cue is being picked.)
-        let picking_slf = matches!(self.picking, Some((Link::Chain | Link::LoopOutro, b)) if b == block);
-        let label = RichText::new(if picking_slf { format!("{slf} …") } else { slf.to_string() }).size(13.0).color(if slf != "S/L/F" { PURPLE } else if picking_slf { BRIGHT } else { TEXT });
-        row.add_enabled_ui(has_audio, |row| {
-            row.menu_button(label, |ui| {
-                if ui.button(t("Start: am Ende nahtlos weiter mit … (Cue anklicken)", "Start: at the end carry straight on with … (click a cue)")).clicked() {
-                    self.picking = Some((Link::Chain, block));
-                    ui.close_menu();
-                }
-                if ui.button(t("Loop: läuft, bis dieses Outro kommt … (Cue anklicken)", "Loop: runs until this outro comes … (click a cue)")).clicked() {
-                    self.picking = Some((Link::LoopOutro, block));
-                    ui.close_menu();
-                }
-                if ui.add_enabled(linked, egui::Button::new(t("Verbindung löschen", "Remove the connection"))).clicked() {
-                    actions.push(Action::Unlink { link: Link::Chain, block });
-                    ui.close_menu();
-                }
-            })
-            .response
-            .on_hover_text(t("Loop-Struktur einrichten (Start, Loop, Finish …)", "Set up a loop structure (start, loop, finish …)"));
-        });
-
-        // The loop: a click asks which kind it is to be (and again, to change the kind);
-        // off only by Shift+click, like the connections.
-        let audio = cue.audio();
-        let looped = audio.as_ref().is_some_and(|audio| audio.looped);
-        let crossfade = audio.as_ref().is_some_and(|audio| audio.crossfade().is_some());
-        let hint = match (looped, crossfade) {
-            (false, _) => t("Das Audio in einer Schleife spielen", "Play the audio in a loop").to_string(),
-            (true, false) => format!("{}\n{}", t("Loop: spielt bis zum Ende und beginnt von vorn.", "Loop: plays to the end and starts over."), t("Klick stellt neu ein, Shift+Klick schaltet aus.", "Click sets it up anew, Shift+click switches it off.")),
-            (true, true) => format!("{}\n{}", t("Nahtloser Loop: Ende und Anfang blenden ineinander über.", "Seamless loop: the end crossfades into the start."), t("Klick stellt neu ein, Shift+Klick schaltet aus.", "Click sets it up anew, Shift+click switches it off.")),
-        };
-        // (Just the sign for a plain loop: "Loop" is what the S/L/F button beside it may say.)
-        let label = if crossfade { "⟳ Crossfade" } else { "⟳" };
-        let button = row.add_enabled(has_audio, small(label, if looped { PURPLE } else { TEXT })).on_hover_text(hint);
-        let kinds = Id::new(("loop-kind", block));
-        if button.clicked() {
-            match looped && shift {
-                true => actions.push(Action::Loop { block, on: false, crossfade: false }),
-                false => row.memory_mut(|m| m.toggle_popup(kinds)),
+            if row.add(small("⊕", TEXT)).on_hover_text(t("Als Variante duplizieren", "Duplicate as a variant")).clicked() {
+                actions.push(Action::Variant(block));
             }
-        }
-        egui::popup::popup_below_widget(&row, kinds, &button, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-            ui.set_min_width(300.0);
-            ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                if ui.button(t("⟳  Normaler Loop", "⟳  Plain loop")).on_hover_text(t("Spielt bis zum Ende und beginnt dann von vorn.", "Plays to the end and then starts over.")).clicked() {
-                    actions.push(Action::Loop { block, on: true, crossfade: false });
+
+            // The connections: a click sets one up (then click the other cue), Shift+click
+            // on one that exists removes it.
+            let mut link_button = |row: &mut Ui, link: Link, text: &str, exists: bool, enabled: bool, hint: &str| {
+                // In the colour of its kind once it exists, and it keeps that colour whatever
+                // is clicked: only Shift+click takes the connection (and the colour) away.
+                // While its other end is being picked the button has a bright outline.
+                let kind = if link == Link::AutoCue { ORANGE } else { GREEN };
+                let picking = self.picking == Some((link, block));
+                let colour = if exists { kind } else if picking { BRIGHT } else { TEXT };
+                let hint = if exists { format!("{hint}\n{}", t("Klick stellt neu ein, Shift+Klick löscht.", "Click sets it up anew, Shift+click removes it.")) } else { hint.to_string() };
+                let button = if picking { small(text, colour).stroke(Stroke::new(1.0_f32, BRIGHT)) } else { small(text, colour) };
+                if row.add_enabled(enabled, button).on_hover_text(hint).clicked() {
+                    match exists && shift {
+                        true => actions.push(Action::Unlink { link, block }),
+                        false if self.picking == Some((link, block)) => self.picking = None,
+                        false => self.picking = Some((link, block)),
+                    }
                 }
-                let seamless = ui.button(t("⟳  Nahtloser Loop mit Crossfade", "⟳  Seamless loop with a crossfade"));
-                if seamless.on_hover_text(t("Für Hintergrundgeräusche: Das Ende blendet aus, während der Anfang schon wieder einblendet. Ohne Timecode.", "For background sound: the end fades out while the start already fades in again. Without timecode.")).clicked() {
-                    actions.push(Action::Loop { block, on: true, crossfade: true });
-                }
+            };
+            let has_audio = cue.audio().is_some();
+            let in_group = Cues::new(cx.script).in_group(cue_index);
+            let auto_hint = match in_group {
+                true => t("Eine Variante wird nie von selbst ausgelöst: Welche genommen wird, wählt der Operator.", "A variant never fires by itself: the operator chooses which one is taken."),
+                false => t("Diesen Cue von selbst auslösen lassen: danach die Quelle anklicken.", "Let this cue fire by itself: then click its source."),
+            };
+            link_button(&mut row, Link::AutoCue, "Auto-Cue", cue.auto_trigger().is_some(), !in_group || cue.auto_trigger().is_some(), auto_hint);
+            link_button(&mut row, Link::Adjust, t("⇢ Bezug", "⇢ Adjust"), cue.adjust().is_some(), true, t("Beim Auslösen das Audio eines anderen Cues ausfaden oder leiser stellen: danach den anderen Cue anklicken. Dieser Cue braucht dafür kein eigenes Audio.", "On firing, fade out or turn down another cue's audio: then click that cue. This cue needs no audio of its own for it."));
+
+            let slf = match Cues::new(cx.script).slf(cue_index) {
+                Some(Slf::Start { .. }) => "Start",
+                Some(Slf::Loop { .. }) => "Loop",
+                Some(Slf::Finish { .. }) => "Finish",
+                Some(Slf::Bridge { .. }) => "Bridge",
+                None => "S/L/F",
+            };
+            let linked = cue.chain_end().is_some() || cue.loop_outro().is_some();
+            // (Purple once the cue has a place in such a structure; that stays while a cue is being picked.)
+            let picking_slf = matches!(self.picking, Some((Link::Chain | Link::LoopOutro, b)) if b == block);
+            let label = RichText::new(if picking_slf { format!("{slf} …") } else { slf.to_string() }).size(13.0).color(if slf != "S/L/F" { PURPLE } else if picking_slf { BRIGHT } else { TEXT });
+            row.add_enabled_ui(has_audio, |row| {
+                row.menu_button(label, |ui| {
+                    if ui.button(t("Start: am Ende nahtlos weiter mit … (Cue anklicken)", "Start: at the end carry straight on with … (click a cue)")).clicked() {
+                        self.picking = Some((Link::Chain, block));
+                        ui.close_menu();
+                    }
+                    if ui.button(t("Loop: läuft, bis dieses Outro kommt … (Cue anklicken)", "Loop: runs until this outro comes … (click a cue)")).clicked() {
+                        self.picking = Some((Link::LoopOutro, block));
+                        ui.close_menu();
+                    }
+                    if ui.add_enabled(linked, egui::Button::new(t("Verbindung löschen", "Remove the connection"))).clicked() {
+                        actions.push(Action::Unlink { link: Link::Chain, block });
+                        ui.close_menu();
+                    }
+                })
+                .response
+                .on_hover_text(t("Loop-Struktur einrichten (Start, Loop, Finish …)", "Set up a loop structure (start, loop, finish …)"));
             });
-        });
 
-        let auto_mic = cue.auto_mic();
-        let hint = if auto_mic { t("Auto-Mic ist an: Mikrofone kommen aus dem folgenden Text. Shift+Klick schaltet es aus.", "Auto mic is on: the microphones come from the text that follows. Shift+click switches it off.") } else { t("Auto-Mic: Mikrofone aus dem folgenden Rollentext bestimmen", "Auto mic: work out the microphones from the text that follows") };
-        // On by a click; off only by Shift+click, like the connections.
-        if row.add(small("Auto-Mic", if auto_mic { GREEN } else { TEXT })).on_hover_text(hint).clicked() && (!auto_mic || shift) {
-            actions.push(Action::AutoMic { block, on: !auto_mic });
+            // The loop: a click asks which kind it is to be (and again, to change the kind);
+            // off only by Shift+click, like the connections.
+            let audio = cue.audio();
+            let looped = audio.as_ref().is_some_and(|audio| audio.looped);
+            let crossfade = audio.as_ref().is_some_and(|audio| audio.crossfade().is_some());
+            let hint = match (looped, crossfade) {
+                (false, _) => t("Das Audio in einer Schleife spielen", "Play the audio in a loop").to_string(),
+                (true, false) => format!("{}\n{}", t("Loop: spielt bis zum Ende und beginnt von vorn.", "Loop: plays to the end and starts over."), t("Klick stellt neu ein, Shift+Klick schaltet aus.", "Click sets it up anew, Shift+click switches it off.")),
+                (true, true) => format!("{}\n{}", t("Nahtloser Loop: Ende und Anfang blenden ineinander über.", "Seamless loop: the end crossfades into the start."), t("Klick stellt neu ein, Shift+Klick schaltet aus.", "Click sets it up anew, Shift+click switches it off.")),
+            };
+            // (Just the sign for a plain loop: "Loop" is what the S/L/F button beside it may say.)
+            let label = if crossfade { "⟳ Crossfade" } else { "⟳" };
+            let button = row.add_enabled(has_audio, small(label, if looped { PURPLE } else { TEXT })).on_hover_text(hint);
+            let kinds = Id::new(("loop-kind", block));
+            if button.clicked() {
+                match looped && shift {
+                    true => actions.push(Action::Loop { block, on: false, crossfade: false }),
+                    false => row.memory_mut(|m| m.toggle_popup(kinds)),
+                }
+            }
+            egui::popup::popup_below_widget(&row, kinds, &button, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                ui.set_min_width(300.0);
+                ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                    if ui.button(t("⟳  Normaler Loop", "⟳  Plain loop")).on_hover_text(t("Spielt bis zum Ende und beginnt dann von vorn.", "Plays to the end and then starts over.")).clicked() {
+                        actions.push(Action::Loop { block, on: true, crossfade: false });
+                    }
+                    let seamless = ui.button(t("⟳  Nahtloser Loop mit Crossfade", "⟳  Seamless loop with a crossfade"));
+                    if seamless.on_hover_text(t("Für Hintergrundgeräusche: Das Ende blendet aus, während der Anfang schon wieder einblendet. Ohne Timecode.", "For background sound: the end fades out while the start already fades in again. Without timecode.")).clicked() {
+                        actions.push(Action::Loop { block, on: true, crossfade: true });
+                    }
+                });
+            });
+
+            let auto_mic = cue.auto_mic();
+            let hint = if auto_mic { t("Auto-Mic ist an: Mikrofone kommen aus dem folgenden Text. Shift+Klick schaltet es aus.", "Auto mic is on: the microphones come from the text that follows. Shift+click switches it off.") } else { t("Auto-Mic: Mikrofone aus dem folgenden Rollentext bestimmen", "Auto mic: work out the microphones from the text that follows") };
+            // On by a click; off only by Shift+click, like the connections.
+            if row.add(small("Auto-Mic", if auto_mic { GREEN } else { TEXT })).on_hover_text(hint).clicked() && (!auto_mic || shift) {
+                actions.push(Action::AutoMic { block, on: !auto_mic });
+            }
         }
+        row.min_rect()
     }
 
     /// The row under a waveform: play/pause, stop, zoom and volume.
@@ -2320,7 +2327,7 @@ impl ScriptView {
         row.spacing_mut().button_padding = vec2(7.0, 2.0);
         row.spacing_mut().slider_width = 110.0;
         if cx.locked {
-            // Under the show lock the row only shows; a click on it goes to the cue.
+            // Under the show lock the row only shows (a click on it does nothing).
             row.disable();
         }
         let play_hint = if sounding { t("Pause", "Pause") } else { t("Nur das Audio dieses Cues abspielen", "Play this cue's audio by itself") };
