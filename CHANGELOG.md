@@ -22,10 +22,27 @@ des Rechners. Die Show-Datei wird nur geschrieben, wenn das Skript bearbeitet wi
   in `Cargo.lock` festgeschriebenen Versionen.
 - „Über MDstage" zeigt die Lizenzen der eingebauten Bibliotheken und Schriften; jedes
   Paket enthält sie als `THIRD-PARTY-LICENSES.txt`, dazu MDstages eigene `LICENSE`.
+- Go nach einem Cue, der per Klick ausgelöst wurde, nimmt den Cue danach – nicht mehr
+  einen, der vorher scharf geschaltet war (etwa beim Öffnen der Show die zuletzt erreichte
+  Stelle). Back schaltet den vorherigen wieder scharf.
+- Knöpfe auf einem Cue (Zoom, Transport, Arm, Verbindungen …) lösen den Cue nicht mehr
+  aus, auch nicht, wenn sie ausgegraut sind oder die Show gesperrt ist.
+- Tracking im Song: Ein Sprung auf einen Auto-Cue, der an einer Stelle eines Songs hängt,
+  spielt den Song ab dieser Stelle; die Auto-Cues davor gelten als durchlaufen, die danach
+  kommen wie gewohnt. Wird ein laufender Song in der Wellenform nach vorn verschoben,
+  feuern die übersprungenen Auto-Cues nicht mehr alle auf einmal: Sie zählen als
+  ausgelöst, und nur ihr Stand wird gesetzt (Mikrofone, Geräte mit Tracking, Loops).
+- Ein Sprung auf einen Cue, der ein Audio ausfadet, startet dieses Audio nicht erst.
+- Die Audioauswahl im Cue-Dialog hat ein Suchfeld: Bei offener Liste einfach tippen,
+  Enter nimmt den ersten Treffer.
+- Umbenennen einer Audiodatei bestätigt Enter (Esc bricht ab); der Knopf ist weg.
+- Die alten Felder „OSC-Pfad (alt)", „QLC+" und „Projektion" erscheinen im Cue-Dialog nur
+  noch, wenn ein Cue sie hat; geleert verschwinden sie.
 
 ### Show-Datei (YAML)
 
-- Keine Änderungen.
+- Keine Änderungen. `osc` (mit `osc_arg`, `osc_arg_type`), `qlcplus` und `projection`
+  werden weiter gelesen und `osc` weiter gesendet; der Dialog bietet sie nur nicht mehr an.
 
 ## 2.5.0
 

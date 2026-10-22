@@ -42,6 +42,8 @@ pub struct CueDialog {
     /// Set when the operator asked for an audio file to be renamed: `(from, to)`. The
     /// app does it (on disk and in every cue) and answers with `audio_renamed`.
     pub rename_request: Option<(String, String)>,
+    /// What was typed into the open list of audio files, to find one.
+    audio_query: String,
 }
 
 fn note_of(value: Option<&Value>) -> Option<Note> {
@@ -92,7 +94,7 @@ impl CueDialog {
     pub fn new(block: usize, is_new: bool, cue: Option<&Value>, audio_dir: &Path, auto_mic_in_use: bool, cues: Vec<(Note, String)>) -> CueDialog {
         let yaml = cue.and_then(Value::as_mapping).cloned().unwrap_or_default();
         let audio_files = crate::store::audio_files(audio_dir);
-        CueDialog { block, is_new, delete: false, yaml, audio_files, auto_mic_in_use, taken: Vec::new(), cues, channels: vec!["L".into(), "R".into()], devices: Default::default(), audio_dir: audio_dir.to_path_buf(), info: Default::default(), tempo: (120.0, 4.0), renaming: None, rename_focus: false, rename_error: None, rename_request: None }
+        CueDialog { block, is_new, delete: false, yaml, audio_files, auto_mic_in_use, taken: Vec::new(), cues, channels: vec!["L".into(), "R".into()], devices: Default::default(), audio_dir: audio_dir.to_path_buf(), info: Default::default(), tempo: (120.0, 4.0), renaming: None, rename_focus: false, rename_error: None, rename_request: None, audio_query: String::new() }
     }
 
     /// The cue as it stands is a loop whose passes crossfade.
@@ -295,12 +297,46 @@ impl CueDialog {
             let mut more_audios = false;
             ui.horizontal(|ui| {
                 ui.label("♬ Audio");
-                egui::ComboBox::from_id_salt("cue-audio").selected_text(if file.is_empty() { t("— keines —", "— none —") } else { file.as_str() }).width(320.0).show_ui(ui, |ui| {
-                    ui.selectable_value(&mut file, String::new(), t("— keines —", "— none —"));
-                    for name in &self.audio_files {
-                        ui.selectable_value(&mut file, name.clone(), name);
-                    }
-                });
+                // Typing while the list is open finds a file in it; Enter takes the first found.
+                let query = &mut self.audio_query;
+                let open = egui::ComboBox::from_id_salt("cue-audio")
+                    .selected_text(if file.is_empty() { t("— keines —", "— none —") } else { file.as_str() })
+                    .width(320.0)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                    .show_ui(ui, |ui| {
+                        let field = ui.add(egui::TextEdit::singleline(query).hint_text(t("Suchen …", "Search …")).desired_width(f32::INFINITY));
+                        if !field.has_focus() && !field.lost_focus() {
+                            field.request_focus();
+                        }
+                        let words: Vec<String> = query.to_lowercase().split_whitespace().map(str::to_string).collect();
+                        let found: Vec<&String> = self.audio_files.iter().filter(|name| words.iter().all(|word| name.to_lowercase().contains(word))).collect();
+                        let mut picked = None;
+                        if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            picked = found.first().map(|name| name.to_string());
+                        }
+                        egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                            if words.is_empty() && ui.selectable_label(file.is_empty(), t("— keines —", "— none —")).clicked() {
+                                picked = Some(String::new());
+                            }
+                            for name in &found {
+                                if ui.selectable_label(file == **name, name.as_str()).clicked() {
+                                    picked = Some(name.to_string());
+                                }
+                            }
+                            if found.is_empty() {
+                                ui.label(RichText::new(t("Keine Datei gefunden", "No file found")).color(MUTED));
+                            }
+                        });
+                        if let Some(name) = picked {
+                            file = name;
+                            ui.memory_mut(|m| m.close_popup());
+                        }
+                    })
+                    .inner
+                    .is_some();
+                if !open {
+                    self.audio_query.clear();
+                }
                 if !file.is_empty() && !self.audio_files.contains(&file) {
                     ui.label(RichText::new(t("nicht im Ordner audio/", "not in the audio/ folder")).color(RED));
                 } else if !file.is_empty() && self.renaming.is_none() {
@@ -326,19 +362,19 @@ impl CueDialog {
                         field.request_focus();
                     }
                     ui.label(RichText::new(&ending).color(MUTED));
-                    let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    if ui.button(t("Umbenennen", "Rename")).clicked() || entered {
+                    // Enter renames, Escape (or the button) leaves the name as it is.
+                    if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         if let Some(wanted) = new_name(&file, &name) {
                             self.rename_error = None;
                             self.rename_request = Some((file.clone(), wanted));
                         }
                         keep = false;
                     }
-                    if ui.button(t("Abbrechen", "Cancel")).clicked() {
+                    if ui.button(t("Abbrechen", "Cancel")).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                         keep = false;
                     }
                 });
-                ui.label(RichText::new(t("Die Datei wird im audio-Ordner umbenannt. Alle Cues, die sie verwenden, werden mit angepasst.", "The file is renamed in the audio folder. Every cue using it is updated as well.")).color(MUTED));
+                ui.label(RichText::new(t("Enter benennt die Datei im audio-Ordner um. Alle Cues, die sie verwenden, werden mit angepasst.", "Enter renames the file in the audio folder. Every cue using it is updated as well.")).color(MUTED));
                 if keep {
                     self.renaming = Some(name);
                 }

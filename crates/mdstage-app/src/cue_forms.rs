@@ -436,18 +436,31 @@ pub fn messages(ui: &mut Ui, yaml: &mut Mapping, devices: &Devices) -> bool {
         },
     );
 
-    ui.add_space(4.0);
-    ui.horizontal_wrapped(|ui| {
-        ui.label(RichText::new(t("OSC-Pfad (alt)", "OSC path (legacy)")).color(MUTED));
-        changed |= text(ui, yaml, "osc", "/pfad/{ch}", 200.0);
-        changed |= argument(ui, "legacy-osc-arg", yaml, "osc_arg", "osc_arg_type");
-    });
-    ui.horizontal_wrapped(|ui| {
-        ui.label(RichText::new("QLC+").color(MUTED));
-        changed |= text(ui, yaml, "qlcplus", "", 160.0);
-        ui.label(RichText::new(t("Projektion", "Projection")).color(MUTED));
-        changed |= text(ui, yaml, "projection", "", 160.0);
-    });
+    // Fields of the earliest versions: no longer offered, but a cue that has one shows it
+    // (it is still read, and the OSC path still sent). Emptied, it goes.
+    if ["osc", "qlcplus", "projection"].iter().any(|key| yaml.contains_key(*key)) {
+        ui.add_space(4.0);
+        ui.label(RichText::new(t("Alte Felder (aus früheren Versionen; leeren entfernt sie)", "Old fields (from earlier versions; empty them to remove them)")).color(MUTED));
+    }
+    if yaml.contains_key("osc") {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(t("OSC-Pfad", "OSC path")).color(MUTED));
+            changed |= text(ui, yaml, "osc", "/pfad/{ch}", 200.0);
+            changed |= argument(ui, "legacy-osc-arg", yaml, "osc_arg", "osc_arg_type");
+        });
+        if !yaml.contains_key("osc") {
+            yaml.shift_remove("osc_arg");
+            yaml.shift_remove("osc_arg_type");
+        }
+    }
+    for (key, label) in [("qlcplus", "QLC+"), ("projection", t("Projektion", "Projection"))] {
+        if yaml.contains_key(key) {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(label).color(MUTED));
+                changed |= text(ui, yaml, key, "", 160.0);
+            });
+        }
+    }
     changed
 }
 
