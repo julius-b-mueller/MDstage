@@ -36,6 +36,8 @@ assets = [
     ["target/release/mdstage", "usr/bin/mdstage", "755"],
     ["assets/mdstage-512.png", "usr/share/icons/hicolor/512x512/apps/mdstage.png", "644"],
     ["mdstage.desktop", "usr/share/applications/mdstage.desktop", "644"],
+    ["../../LICENSE", "usr/share/doc/mdstage/LICENSE", "644"],
+    ["../../THIRD-PARTY-LICENSES.txt", "usr/share/doc/mdstage/THIRD-PARTY-LICENSES.txt", "644"],
 ]
 
 [package.metadata.generate-rpm]
@@ -45,4 +47,6 @@ assets = [
     { source = "target/release/mdstage", dest = "/usr/bin/mdstage", mode = "755" },
     { source = "assets/mdstage-512.png", dest = "/usr/share/icons/hicolor/512x512/apps/mdstage.png", mode = "644" },
     { source = "mdstage.desktop", dest = "/usr/share/applications/mdstage.desktop", mode = "644" },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/mdstage/LICENSE", mode = "644", doc = true },
+    { source = "../../THIRD-PARTY-LICENSES.txt", dest = "/usr/share/licenses/mdstage/THIRD-PARTY-LICENSES.txt", mode = "644", doc = true },
 ]

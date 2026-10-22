@@ -38,16 +38,26 @@ jobs:
           sudo apt-get install -y libasound2-dev libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev libgtk-3-dev
       - run: cargo test --workspace --locked
 
-  # ── Known vulnerabilities in dependencies (always) ────────────────────────
+  # ── Dependencies: known vulnerabilities and licenses (always) ─────────────
   # Fails on a security advisory against a crate in Cargo.lock; "unmaintained" only warns.
   # Advisories that do not reach MDstage are listed, with the reason, in .cargo/audit.toml.
+  # Also fails on a crate under a license about.toml does not accept, and when
+  # THIRD-PARTY-LICENSES.txt no longer matches Cargo.lock (scripts/third-party-licenses.sh).
   audit:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - run: rustup toolchain install stable --profile minimal
-      - run: cargo install cargo-audit@0.22.2 --locked
+      - run: |
+          cargo install cargo-audit@0.22.2 --locked
+          cargo install cargo-about@0.9.2 --locked --features cli
       - run: cargo audit
+      - run: |
+          scripts/third-party-licenses.sh
+          if ! git diff --exit-code --stat THIRD-PARTY-LICENSES.txt; then
+            echo "::error::THIRD-PARTY-LICENSES.txt is out of date: run scripts/third-party-licenses.sh and commit it."
+            exit 1
+          fi
 
   # ── Versions agree (tags only) ────────────────────────────────────────────
   versions:
@@ -103,7 +113,8 @@ jobs:
           cargo generate-rpm -p crates/mdstage-app --set-metadata "version = \"$version\""
           scripts/bundle-appimage.sh
           mkdir -p artifacts
-          tar -czf artifacts/MDstage-linux-${{ matrix.arch }}.tar.gz -C target/release mdstage
+          cp LICENSE THIRD-PARTY-LICENSES.txt target/release/
+          tar -czf artifacts/MDstage-linux-${{ matrix.arch }}.tar.gz -C target/release mdstage LICENSE THIRD-PARTY-LICENSES.txt
           cp target/debian/*.deb artifacts/MDstage-linux-${{ matrix.arch }}.deb
           cp target/generate-rpm/*.rpm artifacts/MDstage-linux-${{ matrix.arch }}.rpm
           cp target/bundle/MDstage-linux-${{ matrix.arch }}.AppImage artifacts/
@@ -130,10 +141,12 @@ jobs:
       - run: cargo build --release -p mdstage-app --locked
       - run: |
           New-Item -ItemType Directory -Force -Path artifacts, target/bundle | Out-Null
-          # Without installing: the program by itself, zipped.
-          Copy-Item target/release/mdstage.exe artifacts/MDstage.exe
-          Compress-Archive -Path artifacts/MDstage.exe -DestinationPath artifacts/MDstage-windows-${{ matrix.arch }}-portable.zip
-          Remove-Item artifacts/MDstage.exe
+          # Without installing: the program and its license notices, zipped.
+          New-Item -ItemType Directory -Force -Path portable | Out-Null
+          Copy-Item target/release/mdstage.exe portable/MDstage.exe
+          Copy-Item LICENSE portable/LICENSE.txt
+          Copy-Item THIRD-PARTY-LICENSES.txt portable/
+          Compress-Archive -Path portable/* -DestinationPath artifacts/MDstage-windows-${{ matrix.arch }}-portable.zip
           # The installer. NSIS comes with most runner images; fetch it where it does not.
           if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
             choco install nsis --version 3.13.0 -y --no-progress

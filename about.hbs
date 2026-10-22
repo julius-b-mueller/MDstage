@@ -1,0 +1,25 @@
+MDstage – Third-party licenses / Lizenzen von Drittanbietern
+============================================================
+
+MDstage itself is under the MIT License (LICENSE). It contains the following
+libraries and fonts, each under its own license, listed with the license text.
+
+MDstage selbst steht unter der MIT-Lizenz (LICENSE). Es enthält die folgenden
+Bibliotheken und Schriften, jede unter ihrer eigenen Lizenz, hier mit Lizenztext.
+
+The source code of every library listed here is available at https://crates.io
+under its name and version. / Der Quellcode jeder hier genannten Bibliothek ist
+unter ihrem Namen und ihrer Version auf https://crates.io zu finden.
+
+{{#each licenses}}
+
+--------------------------------------------------------------------------------
+{{{name}}} ({{id}})
+
+Used by / verwendet von:
+{{#each used_by}}
+  {{crate.name}} {{crate.version}}
+{{/each}}
+
+{{{text}}}
+{{/each}}

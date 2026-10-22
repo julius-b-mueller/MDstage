@@ -70,6 +70,10 @@ fn report(script: &Script, rate: mdstage_engine::mtc::FrameRate) -> Report {
 /// This version of MDstage, as it is noted in show files.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// The licenses of the libraries and fonts built into the program, shown from "About
+/// MDstage" (written by scripts/third-party-licenses.sh).
+const THIRD_PARTY_LICENSES: &str = include_str!("../../../THIRD-PARTY-LICENSES.txt");
+
 struct App {
     settings: Settings,
     show: Option<OpenShow>,
@@ -79,6 +83,7 @@ struct App {
     /// Audio files no cue uses, waiting for the operator to confirm moving them away.
     unused_audio: Option<Vec<String>>,
     about_open: bool,
+    licenses_open: bool,
     live: live::LiveView,
     /// The file just opened was saved by another version: tell the operator once.
     version_notice: Option<Option<String>>,
@@ -152,6 +157,7 @@ impl App {
             live_open: false,
             unused_audio: None,
             about_open: false,
+            licenses_open: false,
             live: Default::default(),
             version_notice: None,
             upgrade_prompt: false,
@@ -1822,8 +1828,32 @@ impl App {
             ui.label(RichText::new(lang::t("MDstage prüft nicht automatisch auf Updates – die Software verwendet kein Internet.", "MDstage does not check for updates by itself – the software does not use the internet.")).color(MUTED));
             ui.label(RichText::new(lang::t("Schau gelegentlich auf GitHub nach, ob eine neue Version verfügbar ist.", "Have a look on GitHub now and then for a new version.")).color(MUTED));
             ui.hyperlink_to(lang::t("GitHub Releases öffnen", "Open GitHub Releases"), "https://github.com/julius-b-mueller/MDstage/releases");
+            ui.add_space(8.0);
+            ui.label(RichText::new(lang::t("MDstage steht unter der MIT-Lizenz.", "MDstage is under the MIT License.")).color(MUTED));
+            if ui.button(lang::t("Lizenzen von Drittanbietern…", "Third-party licenses…")).clicked() {
+                self.licenses_open = true;
+            }
         });
         self.about_open = open;
+    }
+
+    fn licenses_window(&mut self, ctx: &egui::Context) {
+        if !self.licenses_open {
+            return;
+        }
+        let mut open = true;
+        egui::Window::new(lang::t("Lizenzen von Drittanbietern", "Third-party licenses")).open(&mut open).default_size([640.0, 520.0]).show(ctx, |ui| {
+            // Some ten thousand lines: only the visible ones are laid out.
+            let lines: Vec<&str> = THIRD_PARTY_LICENSES.lines().collect();
+            let font = egui::TextStyle::Monospace.resolve(ui.style());
+            let row_height = ui.fonts(|f| f.row_height(&font));
+            egui::ScrollArea::both().auto_shrink(false).show_rows(ui, row_height, lines.len(), |ui, rows| {
+                for line in &lines[rows] {
+                    ui.add(egui::Label::new(RichText::new(*line).monospace()).extend());
+                }
+            });
+        });
+        self.licenses_open = open;
     }
 
     /// Audio files were dropped onto the window: copy them into the show's `audio/`
@@ -2350,6 +2380,7 @@ impl eframe::App for App {
         self.auto_mic_window(ctx);
         self.cleanup_window(ctx);
         self.about_window(ctx);
+        self.licenses_window(ctx);
         self.version_windows(ctx);
         self.swap_window(ctx);
     }

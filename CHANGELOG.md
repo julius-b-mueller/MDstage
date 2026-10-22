@@ -20,6 +20,8 @@ des Rechners. Die Show-Datei wird nur geschrieben, wenn das Skript bearbeitet wi
   Oktober 2026 gemeldeten Lücken; die mitgelieferten Stammzertifikate sind aktualisiert.
 - Jeder Build prüft die Abhängigkeiten auf bekannte Sicherheitslücken und baut nur mit den
   in `Cargo.lock` festgeschriebenen Versionen.
+- „Über MDstage" zeigt die Lizenzen der eingebauten Bibliotheken und Schriften; jedes
+  Paket enthält sie als `THIRD-PARTY-LICENSES.txt`, dazu MDstages eigene `LICENSE`.
 
 ### Show-Datei (YAML)
 

@@ -30,8 +30,9 @@ cargo build --release -p mdstage-app --locked
 
 dir=target/bundle/MDstage.AppDir
 rm -rf "$dir"
-mkdir -p "$dir/usr/bin" "$dir/usr/share/applications" "$dir/usr/share/icons/hicolor/512x512/apps"
+mkdir -p "$dir/usr/bin" "$dir/usr/share/applications" "$dir/usr/share/icons/hicolor/512x512/apps" "$dir/usr/share/doc/mdstage"
 cp target/release/mdstage "$dir/usr/bin/mdstage"
+cp LICENSE THIRD-PARTY-LICENSES.txt "$dir/usr/share/doc/mdstage/"
 cp crates/mdstage-app/mdstage.desktop "$dir/mdstage.desktop"
 cp crates/mdstage-app/mdstage.desktop "$dir/usr/share/applications/mdstage.desktop"
 cp crates/mdstage-app/assets/mdstage-512.png "$dir/mdstage.png"

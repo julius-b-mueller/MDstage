@@ -39,6 +39,8 @@ SetCompressor /SOLID lzma
 Section "MDstage"
   SetOutPath "$INSTDIR"
   File "/oname=MDstage.exe" "..\target\release\mdstage.exe"
+  File "/oname=LICENSE.txt" "..\LICENSE"
+  File "..\THIRD-PARTY-LICENSES.txt"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   CreateShortcut "$SMPROGRAMS\MDstage.lnk" "$INSTDIR\MDstage.exe"
 
@@ -56,6 +58,8 @@ SectionEnd
 ; Settings (%APPDATA%\MDstage) and show files stay where they are.
 Section "Uninstall"
   Delete "$INSTDIR\MDstage.exe"
+  Delete "$INSTDIR\LICENSE.txt"
+  Delete "$INSTDIR\THIRD-PARTY-LICENSES.txt"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir "$INSTDIR"
   Delete "$SMPROGRAMS\MDstage.lnk"

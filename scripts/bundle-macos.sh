@@ -36,6 +36,7 @@ fi
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$binary" "$app/Contents/MacOS/MDstage"
+cp LICENSE THIRD-PARTY-LICENSES.txt "$app/Contents/Resources/"
 
 # App icon from the PNG, in the sizes macOS asks for.
 iconset=target/bundle/MDstage.iconset

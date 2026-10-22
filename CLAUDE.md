@@ -28,6 +28,12 @@ scripts/bundle-appimage.sh                # AppImage (nur unter Linux)
 - Audio wird gestreamt (`crates/mdstage-engine/src/stream.rs`), nie ganz geladen. Ob
   Streaming und vollständiges Dekodieren dasselbe liefern, prüft
   `cargo run --release -p mdstage-engine --example stream_probe -- AUDIO_ORDNER`.
+- Nach jeder Änderung an `Cargo.lock`: `scripts/third-party-licenses.sh` (braucht
+  `cargo install cargo-about@0.9.2 --locked --features cli`) schreibt
+  `THIRD-PARTY-LICENSES.txt` neu; die App und alle Pakete enthalten die Datei. Erlaubte
+  Lizenzen stehen in `about.toml`. Der CI-Job `audit` bricht ab, wenn die Datei veraltet
+  ist, eine Abhängigkeit eine andere Lizenz hat oder eine Sicherheitslücke bekannt ist
+  (Ausnahmen mit Begründung: `.cargo/audit.toml`).
 - `scripts/bundle-macos.sh` signiert das ganze App-Bündel ad hoc. Ohne das meldet macOS
   eine geladene App als „beschädigt".
 
