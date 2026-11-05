@@ -280,6 +280,9 @@ pub struct Settings {
     /// Auto-Mic: how many seconds a microphone stays on after the cue that would switch
     /// it off, so that whoever leaves the stage can finish speaking. 0: no delay.
     pub mic_off_delay: f64,
+    /// Debounce for Go and Back (seconds): a second Go (or Back) sooner than this after
+    /// the last is not taken, so that a key that bounces does not fire twice. 0: off.
+    pub go_back_debounce: f64,
     pub recent_files: Vec<String>,
     /// The cue the next Go fires, by show file: where the operator had got to. A show
     /// that is opened again goes on from there.
@@ -322,6 +325,7 @@ impl Default for Settings {
             open_locked: false,
             group_mics: true,
             mic_off_delay: 7.0,
+            go_back_debounce: 0.0,
             recent_files: Vec::new(),
             next_cue: HashMap::new(),
             frame_rates: HashMap::new(),

@@ -77,6 +77,9 @@ pub enum Request {
     Volume(usize, f64),
     /// Play a short tone on a physical output (0-based).
     TestTone(usize),
+    /// Switch one microphone channel on or off and leave the others (the roles editor's
+    /// test buttons): mixer (0-based), channel, on.
+    MicTest(usize, u64, bool),
     /// Emergency: fade all audio out.
     StopAll,
     /// Emergency: mute all microphones.
@@ -190,6 +193,22 @@ impl Drop for Session {
             let _ = thread.join();
         }
     }
+}
+
+/// Whether Go or Back that last acted at `last` would be bouncing now, `debounce`
+/// seconds being the shortest time between two.
+fn bouncing(last: Option<Instant>, debounce: f64) -> bool {
+    let debounce = if debounce.is_finite() { debounce.clamp(0.0, 10.0) } else { 0.0 };
+    last.is_some_and(|last| last.elapsed().as_secs_f64() < debounce)
+}
+
+/// Take Go or Back unless it is bouncing; one that is taken counts from now.
+fn settle(last: &mut Option<Instant>, debounce: f64) -> bool {
+    if bouncing(*last, debounce) {
+        return false;
+    }
+    *last = Some(Instant::now());
+    true
 }
 
 /// Where the audio of the cues numbered `cues` (0-based, in script order) begins:
@@ -350,6 +369,9 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
     let mut remote_sent = Instant::now();
     let mut rescan_midi = Instant::now() + MIDI_RESCAN;
     let mut back_held: Option<Instant> = None;
+    // When Go and Back last acted, for the debounce: whatever they came from (a key, MIDI,
+    // OSC, the live view), one that follows too soon after is not taken.
+    let (mut last_go, mut last_back): (Option<Instant>, Option<Instant>) = (None, None);
 
     // Timecode: the show publishes its position with a timestamp; the MTC thread
     // extrapolates from there, so its pacing does not depend on this loop's.
@@ -412,8 +434,9 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => break 'show,
             };
             let result = match request {
-                Request::Go => show.go(),
-                Request::Back => show.back(),
+                Request::Go if settle(&mut last_go, settings.go_back_debounce) => show.go(),
+                Request::Back if settle(&mut last_back, settings.go_back_debounce) => show.back(),
+                Request::Go | Request::Back => Ok(()),
                 Request::Fire(cue) => show.fire(cue, false),
                 Request::Arm(cue) => Ok(show.arm(cue)),
                 Request::Step(forward) => Ok(show.step(forward)),
@@ -431,6 +454,12 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
                 Request::StopCue(cue, fade) => show.stop_cue(cue, fade),
                 Request::Volume(cue, volume) => show.set_volume(cue, volume),
                 Request::TestTone(output) => show.player().test_tone(output),
+                Request::MicTest(mixer, channel, on) => {
+                    if let Some(wires) = &wires {
+                        wires.send(outputs.mic_test(mixer, channel, on));
+                    }
+                    Ok(())
+                }
                 Request::StopAll => show.stop_all(),
                 Request::MicsOff => Ok(show.mics_off()),
                 Request::ClearProblems => Ok(problems.clear()),
@@ -498,14 +527,18 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
         }
         while let Ok(input) = inputs_incoming.try_recv() {
             let result = match input {
-                Input::Go => show.go(),
-                Input::BackPressed => Ok(back_held = Some(Instant::now())),
+                Input::Go if settle(&mut last_go, settings.go_back_debounce) => show.go(),
+                Input::Go => Ok(()),
+                // (A press that bounces in right after a Back is not one.)
+                Input::BackPressed if !bouncing(last_back, settings.go_back_debounce) => Ok(back_held = Some(Instant::now())),
+                Input::BackPressed => Ok(()),
                 // (Not after a hold that has already stopped everything.)
                 Input::BackReleased => match back_held.take() {
-                    Some(_) => show.back(),
-                    None => Ok(()),
+                    Some(_) if settle(&mut last_back, settings.go_back_debounce) => show.back(),
+                    _ => Ok(()),
                 },
-                Input::Back => show.back(),
+                Input::Back if settle(&mut last_back, settings.go_back_debounce) => show.back(),
+                Input::Back => Ok(()),
                 Input::Up => Ok(show.step(false)),
                 Input::Down => Ok(show.step(true)),
                 Input::Variant(cue) => Ok(show.select_variant(Some(cue))),
@@ -677,6 +710,16 @@ fn run(script: Script, show_dir: PathBuf, mut settings: Settings, mut trusted: b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn go_and_back_are_debounced() {
+        let mut last = None;
+        assert!(settle(&mut last, 0.5), "the first is always taken");
+        assert!(!settle(&mut last, 0.5), "one right after it bounces");
+        assert!(bouncing(last, 0.5));
+        assert!(settle(&mut last, 0.0), "0 switches the debounce off");
+        assert!(!bouncing(last, f64::NAN), "a debounce that is no number is none");
+    }
 
     /// Wait until the snapshot satisfies `check`, or fail after five seconds (a busy
     /// machine running all the tests at once is slow).

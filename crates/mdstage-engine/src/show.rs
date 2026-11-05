@@ -643,14 +643,15 @@ impl Show {
         let script = self.script.clone();
         let cues = Cues::new(&script);
         let passed = History::of(order.iter().copied());
-        let mic = passed.mic(&cues, &self.cast);
-        if mic != Mic::Unchanged {
-            self.mic_hold = None;
-            self.effects.push(Effect::Mic(mic));
-        }
         // (As cues that fired by themselves: Back takes them back with the operator's cue.)
         for &cue in &order {
             self.history.push(cue, true);
+        }
+        // The microphones as the history now has them (an Auto-Mic+ cue among the skipped
+        // adds to what was open before), if one of them sets any.
+        if order.iter().any(|&cue| cues.block_index(cue).is_some_and(|block| script.mic_for_cue(block, &self.cast) != Mic::Unchanged)) {
+            self.mic_hold = None;
+            self.effects.push(Effect::Mic(self.history.mic(&cues, &self.cast)));
         }
         if script.tracking() {
             let states: DeviceStates = passed.device_states(&cues).into_iter().filter(|(key, _)| key.0 != DeviceKind::Display && script.device_tracking(&key.1)).collect();
@@ -1124,8 +1125,10 @@ impl Show {
         let cues = Cues::new(&script);
         let (Some(c), Some(block)) = (cues.get(cue), cues.block_index(cue)) else { return Ok(()) };
 
-        let mic = script.mic_for_cue(block, &self.cast);
-        if mic != Mic::Unchanged {
+        // (An Auto-Mic+ cue adds to what is open, so the microphones are worked out from
+        // the history — as tracking and Back do.)
+        let mic = self.history.mic_with(&cues, &self.cast, cue);
+        if script.mic_for_cue(block, &self.cast) != Mic::Unchanged {
             // An auto-mic cue switches the new microphones on at once and the ones it
             // no longer needs off a little later: who comes on can be heard, who goes
             // off can finish speaking. A cue that comes in between settles it at once.
@@ -1688,13 +1691,18 @@ mod tests {
         for (i, body) in cues.iter().enumerate() {
             text.push_str(&format!("\n```yaml\ntrigger_note: {{ch: 1, note: {i}}}\n{body}\n```\n"));
         }
+        rig_of(&text, clips)
+    }
+
+    /// A show from its whole text, with constant-valued clips.
+    fn rig_of(text: &str, clips: &[(&str, f32, usize)]) -> Rig {
         let (mixer, handle) = Mixer::new();
         let mut cache = ClipCache::new(PathBuf::from("/nonexistent"), SR);
         for &(name, value, frames) in clips {
             cache.insert(name, Clip::from_planar(SR, vec![vec![value; frames]]));
         }
         let player = Player::new(handle, cache, Routing::positional(&["L".to_string()]));
-        Rig { mixer, show: Show::new(Script::parse(&text), player, None, false), frames: 0, out: Vec::new() }
+        Rig { mixer, show: Show::new(Script::parse(text), player, None, false), frames: 0, out: Vec::new() }
     }
 
     impl Rig {
@@ -2581,6 +2589,32 @@ mod tests {
         rig.run(304);
         assert_eq!(rig.fired(), [0, 1, 2, 3], "the one after the new place fires when the song gets there");
         assert_eq!(programs(&rig.show.take_effects()), [("Licht", 3)]);
+    }
+
+    #[test]
+    fn auto_mic_plus_keeps_the_open_microphones_on_go_and_for_a_jump() {
+        let text = "```yaml\nconfig:\n    roles:\n        Anna: {}\n        Ben: {}\n```\n\n```yaml\ntrigger_note: {ch: 1, note: 0}\nauto_mic: true\n```\n\n**Anna**\nHi.\n\n```yaml\ntrigger_note: {ch: 1, note: 1}\nlight: A\n```\n\n```yaml\ntrigger_note: {ch: 1, note: 2}\nauto_mic: true\nauto_mic_plus: true\n```\n\n**Ben**\nHello.\n\n```yaml\ntrigger_note: {ch: 1, note: 3}\nlight: B\n```\n";
+        let both = Mic::Open(vec!["Anna".into(), "Ben".into()]);
+        let mics = |effects: Vec<Effect>| effects.into_iter().filter_map(|e| if let Effect::Mic(mic) = e { Some(mic) } else { None }).collect::<Vec<_>>();
+
+        // Going through: Anna, then Ben added to her.
+        let mut rig = rig_of(text, &[]);
+        for _ in 0..3 {
+            rig.show.go().unwrap();
+        }
+        assert_eq!(mics(rig.show.take_effects()), [Mic::Open(vec!["Anna".into()]), both.clone()]);
+
+        // A jump past them leaves what going through would have.
+        let mut rig = rig_of(text, &[]);
+        rig.show.arm(Some(3));
+        assert!(rig.show.tracking_preview().contains(&TrackItem::Mic(both.clone())));
+        rig.show.go().unwrap();
+        assert_eq!(mics(rig.show.take_effects()), [both.clone()]);
+
+        // A jump onto the Auto-Mic+ cue: it adds Ben to what tracking puts back.
+        let mut rig = rig_of(text, &[]);
+        rig.show.fire(2, false).unwrap();
+        assert_eq!(mics(rig.show.take_effects()).last(), Some(&both));
     }
 
     #[test]

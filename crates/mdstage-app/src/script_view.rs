@@ -64,8 +64,8 @@ pub enum Action {
     Picked { link: Link, block: usize, cue: usize },
     /// Remove a connection from the cue in `block` (`Chain` removes both S/L/F kinds).
     Unlink { link: Link, block: usize },
-    /// Switch Auto-Mic on or off for the cue in `block`.
-    AutoMic { block: usize, on: bool },
+    /// Switch Auto-Mic on or off for the cue in `block`; `plus`: as Auto-Mic+.
+    AutoMic { block: usize, on: bool, plus: bool },
     /// Open the live view with this cue as the next Go.
     ArmLive(usize),
     /// Open an existing text block for editing.
@@ -928,7 +928,9 @@ impl ScriptView {
         // role that is open as part of a group is not named again.
         let mut spans: Vec<Span> = Vec::new();
         let mut chips: Vec<Chip> = Vec::new();
+        let auto = if cue.auto_mic_plus() { "(auto+)" } else { "(auto)" };
         match &mic {
+            Mic::MuteAll if cue.auto_mic() => spans.push((t("alle aus (auto, niemand spricht)", "all off (auto, nobody speaks)").to_string(), MUTED)),
             Mic::MuteAll => spans.push((t("alle aus", "all off").to_string(), MUTED)),
             Mic::Open(_) => {
                 for chip in cx.cast.chips(&mic, cx.group_mics) {
@@ -940,10 +942,10 @@ impl ScriptView {
                     chips.push(kind);
                 }
                 if cue.auto_mic() {
-                    spans.push(("(auto)".to_string(), MUTED));
+                    spans.push((auto.to_string(), MUTED));
                 }
             }
-            Mic::Unchanged if cue.auto_mic() => spans.push((t("(auto, niemand spricht)", "(auto, nobody speaks)").to_string(), MUTED)),
+            Mic::Unchanged if cue.auto_mic() => spans.push((t("(auto+, niemand kommt dazu)", "(auto+, nobody added)").to_string(), MUTED)),
             Mic::Unchanged => {}
         }
         // The microphones this cue is leaving on a little longer, running out.
@@ -2298,11 +2300,20 @@ impl ScriptView {
                 });
             });
 
-            let auto_mic = cue.auto_mic();
-            let hint = if auto_mic { t("Auto-Mic ist an: Mikrofone kommen aus dem folgenden Text. Shift+Klick schaltet es aus.", "Auto mic is on: the microphones come from the text that follows. Shift+click switches it off.") } else { t("Auto-Mic: Mikrofone aus dem folgenden Rollentext bestimmen", "Auto mic: work out the microphones from the text that follows") };
-            // On by a click; off only by Shift+click, like the connections.
-            if row.add(small("Auto-Mic", if auto_mic { GREEN } else { TEXT })).on_hover_text(hint).clicked() && (!auto_mic || shift) {
-                actions.push(Action::AutoMic { block, on: !auto_mic });
+            let (auto_mic, plus) = (cue.auto_mic(), cue.auto_mic_plus());
+            let hint = match (auto_mic, plus) {
+                (false, _) => t("Auto-Mic: Mikrofone aus dem folgenden Rollentext bestimmen. Noch ein Klick: Auto-Mic+.", "Auto mic: work out the microphones from the text that follows. Another click: Auto mic+."),
+                (true, false) => t("Auto-Mic ist an: Es öffnet die Mikrofone der Rollen, die bis zum nächsten Auto-Mic sprechen, und schließt alle anderen. Klick: Auto-Mic+, Shift+Klick schaltet aus.", "Auto mic is on: it opens the microphones of the roles that speak up to the next auto mic and closes all others. Click: Auto mic+, Shift+click switches it off."),
+                (true, true) => t("Auto-Mic+ ist an: Offene Mikrofone bleiben offen, die Rollen, die bis zum nächsten Auto-Mic sprechen, kommen dazu. Klick: Auto-Mic, Shift+Klick schaltet aus.", "Auto mic+ is on: open microphones stay open, and the roles that speak up to the next auto mic are added. Click: Auto mic, Shift+click switches it off."),
+            };
+            // A click switches it on and then between Auto-Mic and Auto-Mic+; only
+            // Shift+click switches it off, like the connections.
+            if row.add(small(if plus { "Auto-Mic+" } else { "Auto-Mic" }, if auto_mic { GREEN } else { TEXT })).on_hover_text(hint).clicked() {
+                actions.push(match (auto_mic, shift) {
+                    (true, true) => Action::AutoMic { block, on: false, plus: false },
+                    (true, false) => Action::AutoMic { block, on: true, plus: !plus },
+                    (false, _) => Action::AutoMic { block, on: true, plus: false },
+                });
             }
         }
         row.min_rect()

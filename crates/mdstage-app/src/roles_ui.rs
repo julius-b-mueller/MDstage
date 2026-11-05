@@ -21,6 +21,8 @@ pub struct RolesUi {
     /// Each role with the name it had when the editor opened (`None` for new roles).
     roles: Vec<(Option<String>, Role)>,
     groups: Vec<Group>,
+    /// A test button was pressed: `(mixer, channel, on)` for the app to send.
+    pub test: Option<(usize, u64, bool)>,
 }
 
 fn colour_picker(ui: &mut Ui, id: impl std::hash::Hash, colour: &mut Option<String>) {
@@ -35,7 +37,7 @@ fn colour_picker(ui: &mut Ui, id: impl std::hash::Hash, colour: &mut Option<Stri
 
 impl RolesUi {
     pub fn new(cast: &Cast) -> RolesUi {
-        RolesUi { roles: cast.roles.iter().map(|r| (Some(r.name.clone()), r.clone())).collect(), groups: cast.groups.clone() }
+        RolesUi { roles: cast.roles.iter().map(|r| (Some(r.name.clone()), r.clone())).collect(), groups: cast.groups.clone(), test: None }
     }
 
     /// What to store: roles, groups, and `(old, new)` for every renamed role.
@@ -68,12 +70,13 @@ impl RolesUi {
         egui::ScrollArea::vertical().auto_shrink([false, false]).max_height(ui.available_height() - 64.0).show(ui, |ui| {
             ui.heading(t("Rollen", "Roles"));
             let mut remove = None;
-            let RolesUi { roles, groups } = self;
-            egui::Grid::new("roles").num_columns(5).show(ui, |ui| {
+            let RolesUi { roles, groups, test } = self;
+            egui::Grid::new("roles").num_columns(6).show(ui, |ui| {
                 ui.label(RichText::new("Name").color(MUTED));
                 ui.label(RichText::new(t("Farbe", "Colour")).color(MUTED));
                 ui.label(RichText::new(t("Mic-Kanal", "Mic channel")).color(MUTED));
                 ui.label(RichText::new(t("Pult", "Mixer")).color(MUTED));
+                ui.label(RichText::new("Test").color(MUTED));
                 ui.end_row();
                 for (i, (_, role)) in roles.iter_mut().enumerate() {
                     let before = role.name.clone();
@@ -93,6 +96,19 @@ impl RolesUi {
                     if ui.add_enabled(mixers > 1 || role.mixer > 0, egui::DragValue::new(&mut mixer).range(1..=mixers.max(role.mixer + 1))).changed() {
                         role.mixer = mixer - 1;
                     }
+                    // Only this role's channel, as set here (saved or not); the others stay.
+                    ui.horizontal(|ui| {
+                        let channel = role.channel.filter(|_| mixers > 0);
+                        let hint = match channel {
+                            Some(_) => t("Nur diesen Mikrofonkanal am Pult stummschalten bzw. öffnen", "Mute or open only this microphone channel on the mixer"),
+                            None => t("Erst einen Mic-Kanal eintragen und unter Einstellungen ein Pult einrichten", "Enter a mic channel first and set up a mixer in the settings"),
+                        };
+                        for (label, on) in [(t("Unmute", "Unmute"), true), (t("Mute", "Mute"), false)] {
+                            if ui.add_enabled(channel.is_some(), egui::Button::new(label).small()).on_hover_text(hint).on_disabled_hover_text(hint).clicked() {
+                                *test = channel.map(|channel| (role.mixer, channel, on));
+                            }
+                        }
+                    });
                     if ui.small_button("×").clicked() {
                         remove = Some(i);
                     }

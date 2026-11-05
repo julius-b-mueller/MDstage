@@ -931,13 +931,23 @@ impl App {
                         }
                     });
                 }
-                Action::AutoMic { block, on } => {
+                Action::AutoMic { block, on, plus } => {
                     let by_hand = |show: &OpenShow| show.script.blocks.iter().any(|b| matches!(b, Block::Cue(c) if c.yaml.get("mic").is_some()));
+                    let plus = *plus;
                     match (*on, &self.show) {
                         // The first Auto-Mic cue makes every hand-picked microphone void.
                         (true, Some(show)) if !show.script.has_auto_mic() && by_hand(show) => self.auto_mic_prompt = Some(*block),
-                        (true, _) => self.edit_cue(*block, |map| drop(map.insert("auto_mic".into(), true.into()))),
-                        (false, _) => self.edit_cue(*block, |map| drop(map.shift_remove("auto_mic"))),
+                        (true, _) => self.edit_cue(*block, |map| {
+                            map.insert("auto_mic".into(), true.into());
+                            match plus {
+                                true => drop(map.insert("auto_mic_plus".into(), true.into())),
+                                false => drop(map.shift_remove("auto_mic_plus")),
+                            }
+                        }),
+                        (false, _) => self.edit_cue(*block, |map| {
+                            map.shift_remove("auto_mic");
+                            map.shift_remove("auto_mic_plus");
+                        }),
                     }
                 }
                 Action::PlayPause(cue) => {
@@ -2029,6 +2039,9 @@ impl App {
             .open(&mut open)
             .default_size([620.0, 560.0])
             .show(ctx, |ui| result = editor.show(ui, mixers));
+        if let Some((mixer, channel, on)) = editor.test.take() {
+            show.session.send(Request::MicTest(mixer, channel, on));
+        }
         match result {
             Some(true) => {
                 let (roles, groups, renames) = editor.result();

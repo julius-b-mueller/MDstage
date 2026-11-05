@@ -720,6 +720,11 @@ impl SettingsUi {
             }
             ui.label(RichText::new(t("„Lernen“ braucht eine geöffnete Show.", "“Learn” needs an open show.")).color(MUTED));
             ui.horizontal(|ui| {
+                ui.label(t("Entprellen von Go und Back", "Debounce for Go and Back"));
+                ui.add(egui::DragValue::new(&mut draft.go_back_debounce).range(0.0..=2.0).speed(0.01).fixed_decimals(2).suffix(" s"))
+                    .on_hover_text(t("Ein zweites Go (oder Back) früher als diese Zeit nach dem letzten wird nicht angenommen – so löst eine prellende Taste nicht doppelt aus. Gilt für Tastatur, MIDI, OSC und Liveansicht. 0 schaltet es aus.", "A second Go (or Back) sooner than this after the last is not taken, so that a key that bounces does not fire twice. Applies to the keyboard, MIDI, OSC and the live view. 0 switches it off."));
+            });
+            ui.horizontal(|ui| {
                 ui.label(t("MIDI-Eingang für Go/Back/▲/▼", "MIDI input for Go/Back/▲/▼"));
                 let current = draft.control_port.clone().unwrap_or_else(|| t("alle", "all").into());
                 egui::ComboBox::from_id_salt("control-port").selected_text(current).width(220.0).show_ui(ui, |ui| {

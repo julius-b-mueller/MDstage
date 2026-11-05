@@ -116,49 +116,58 @@ impl Outputs {
                 None => channels.push((channel, is_open)),
             }
         }
-        let mut wires = Vec::new();
-        for (channel, on) in channels {
-            let zero_based = channel - 1;
-            let midi = |bytes: Vec<u8>, then_off: Option<Vec<u8>>| match &mixer.address {
-                Address::Midi { port } => Some(Wire::Midi { port: port.clone(), bytes, then_off }),
+        channels.into_iter().filter_map(|(channel, on)| Self::channel_message(mixer, channel, on)).collect()
+    }
+
+    /// The message that switches one microphone channel of a mixer on or off.
+    fn channel_message(mixer: &MicMixer, channel: u64, on: bool) -> Option<Wire> {
+        let zero_based = channel - 1;
+        let midi = |bytes: Vec<u8>, then_off: Option<Vec<u8>>| match &mixer.address {
+            Address::Midi { port } => Some(Wire::Midi { port: port.clone(), bytes, then_off }),
+            _ => None,
+        };
+        match &mixer.method {
+            MuteMethod::X32 => midi(vec![0xB1, (zero_based & 0x7F) as u8, if on { 0 } else { 127 }], None),
+            MuteMethod::MidiNote { channel: ch, note, on_velocity, off_velocity } => {
+                let status = number(ch, zero_based).map(|c| c.wrapping_sub(1) & 0x0F);
+                let velocity = if on { on_velocity } else { off_velocity } & 0x7F;
+                status.zip(number(note, zero_based)).and_then(|(c, n)| {
+                    let off = (velocity > 0).then(|| vec![0x80 | c, n & 0x7F, 0]);
+                    midi(vec![0x90 | c, n & 0x7F, velocity], off)
+                })
+            }
+            MuteMethod::MidiCc { channel: ch, controller, on_value, off_value } => {
+                let status = number(ch, zero_based).map(|c| c.wrapping_sub(1) & 0x0F);
+                let value = if on { on_value } else { off_value } & 0x7F;
+                status.zip(number(controller, zero_based)).and_then(|(c, n)| midi(vec![0xB0 | c, n & 0x7F, value], None))
+            }
+            MuteMethod::MidiProgram { channel: ch, on_program, off_program } => {
+                let program = if on { on_program } else { off_program } & 0x7F;
+                number(ch, zero_based).and_then(|c| midi(vec![0xC0 | (c.wrapping_sub(1) & 0x0F), program], None))
+            }
+            MuteMethod::MidiSysex { unmute, mute } => {
+                let bytes = hex_bytes(if on { unmute } else { mute }, zero_based, if on { 0x00 } else { 0x7F });
+                if bytes.is_empty() { None } else { midi(bytes, None) }
+            }
+            MuteMethod::Osc { on_path, on_arg, off_path, off_arg } => match &mixer.address {
+                Address::Osc { host, port } => Some(Wire::Osc {
+                    host: host.clone(),
+                    port: *port,
+                    path: (if on { on_path } else { off_path }).replace("{ch}", &format!("{channel:02}")),
+                    args: (if on { on_arg } else { off_arg }).clone().into_iter().collect(),
+                }),
                 _ => None,
-            };
-            let wire = match &mixer.method {
-                MuteMethod::X32 => midi(vec![0xB1, (zero_based & 0x7F) as u8, if on { 0 } else { 127 }], None),
-                MuteMethod::MidiNote { channel: ch, note, on_velocity, off_velocity } => {
-                    let status = number(ch, zero_based).map(|c| c.wrapping_sub(1) & 0x0F);
-                    let velocity = if on { on_velocity } else { off_velocity } & 0x7F;
-                    status.zip(number(note, zero_based)).and_then(|(c, n)| {
-                        let off = (velocity > 0).then(|| vec![0x80 | c, n & 0x7F, 0]);
-                        midi(vec![0x90 | c, n & 0x7F, velocity], off)
-                    })
-                }
-                MuteMethod::MidiCc { channel: ch, controller, on_value, off_value } => {
-                    let status = number(ch, zero_based).map(|c| c.wrapping_sub(1) & 0x0F);
-                    let value = if on { on_value } else { off_value } & 0x7F;
-                    status.zip(number(controller, zero_based)).and_then(|(c, n)| midi(vec![0xB0 | c, n & 0x7F, value], None))
-                }
-                MuteMethod::MidiProgram { channel: ch, on_program, off_program } => {
-                    let program = if on { on_program } else { off_program } & 0x7F;
-                    number(ch, zero_based).and_then(|c| midi(vec![0xC0 | (c.wrapping_sub(1) & 0x0F), program], None))
-                }
-                MuteMethod::MidiSysex { unmute, mute } => {
-                    let bytes = hex_bytes(if on { unmute } else { mute }, zero_based, if on { 0x00 } else { 0x7F });
-                    if bytes.is_empty() { None } else { midi(bytes, None) }
-                }
-                MuteMethod::Osc { on_path, on_arg, off_path, off_arg } => match &mixer.address {
-                    Address::Osc { host, port } => Some(Wire::Osc {
-                        host: host.clone(),
-                        port: *port,
-                        path: (if on { on_path } else { off_path }).replace("{ch}", &format!("{channel:02}")),
-                        args: (if on { on_arg } else { off_arg }).clone().into_iter().collect(),
-                    }),
-                    _ => None,
-                },
-            };
-            wires.extend(wire);
+            },
         }
-        wires
+    }
+
+    /// Switch one microphone channel on or off, leaving every other as it is: the test
+    /// buttons of the roles editor. `mixer` is the index into the machine's mixers.
+    pub fn mic_test(&self, mixer: usize, channel: u64, on: bool) -> Vec<Wire> {
+        match self.mixers.get(mixer).filter(|_| !self.blocked && channel > 0) {
+            Some(mixer) => Self::channel_message(mixer, channel, on).into_iter().collect(),
+            None => Vec::new(),
+        }
     }
 
     /// The messages that carry out `effects` on this machine, in order. Display content
@@ -455,6 +464,21 @@ mod tests {
         assert_eq!(outputs.wire(&[open(&["Duo"])], &cast())[..2], [wire("X32", 2, 0), wire("X32", 4, 0)]);
         assert_eq!(outputs.wire(&[Effect::Mic(Mic::MuteAll)], &cast()), [wire("X32", 2, 127), wire("X32", 4, 127), wire("Stagebox", 1, 127)]);
         assert!(outputs.wire(&[Effect::Mic(Mic::Unchanged)], &cast()).is_empty());
+    }
+
+    #[test]
+    fn a_mic_test_switches_only_that_channel() {
+        let mut outputs = Outputs {
+            mixers: vec![MicMixer { address: midi("X32"), method: MuteMethod::X32 }, MicMixer { address: midi("Stagebox"), method: MuteMethod::X32 }],
+            ..Default::default()
+        };
+        let wire = |port: &str, controller: u8, value: u8| Wire::Midi { port: port.into(), bytes: vec![0xB1, controller, value], then_off: None };
+        assert_eq!(outputs.mic_test(0, 5, true), [wire("X32", 4, 0)]);
+        assert_eq!(outputs.mic_test(1, 2, false), [wire("Stagebox", 1, 127)]);
+        assert!(outputs.mic_test(2, 1, true).is_empty(), "no such mixer");
+        assert!(outputs.mic_test(0, 0, true).is_empty(), "no channel");
+        outputs.blocked = true;
+        assert!(outputs.mic_test(0, 5, true).is_empty(), "outputs blocked");
     }
 
     #[test]

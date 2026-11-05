@@ -216,7 +216,21 @@ impl CueDialog {
                 self.yaml.insert("auto_mic".into(), true.into());
             } else {
                 self.yaml.shift_remove("auto_mic");
+                self.yaml.shift_remove("auto_mic_plus");
             }
+        }
+        if auto {
+            let mut plus = self.yaml.get("auto_mic_plus").and_then(Value::as_bool) == Some(true);
+            ui.horizontal(|ui| {
+                ui.add_space(22.0);
+                if ui.checkbox(&mut plus, t("Auto-Mic+: offene Mikrofone offen lassen und nur die Rollen dazunehmen, die bis zum nächsten Auto-Mic sprechen", "Auto mic+: leave open microphones open and only add the roles that speak up to the next auto mic")).changed() {
+                    changed = true;
+                    match plus {
+                        true => drop(self.yaml.insert("auto_mic_plus".into(), true.into())),
+                        false => drop(self.yaml.shift_remove("auto_mic_plus")),
+                    }
+                }
+            });
         }
         if auto || self.auto_mic_in_use {
             ui.label(RichText::new(t("Sobald ein Cue Auto-Mic nutzt, werden Mikrofone nirgends mehr von Hand gewählt.", "Once any cue uses auto mic, microphones are no longer chosen by hand anywhere.")).color(MUTED));

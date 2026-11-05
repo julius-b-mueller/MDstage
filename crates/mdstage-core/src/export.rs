@@ -129,7 +129,9 @@ impl Script {
                                     }
                                 })
                                 .collect();
-                            rows.push(("Mic".into(), text.join(", ")));
+                            // (Auto-Mic+ adds these to the microphones that are open.)
+                            let plus = if self.mic_plus(index) { "+ " } else { "" };
+                            rows.push(("Mic".into(), format!("{plus}{}", text.join(", "))));
                         }
                         Mic::Unchanged => {}
                     }

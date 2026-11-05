@@ -473,7 +473,7 @@ pub struct Removal {
 
 const CONFIG_KEYS: &[&str] = &["roles", "groups", "app_version", "emLightNote", "virtualChannels", "outputDevices", "tracking"];
 const CUE_KEYS: &[&str] = &[
-    "sibling", "trigger_note", "note", "auto_mic", "mic", "music", "music_seq", "osc", "osc_arg", "osc_arg_type",
+    "sibling", "trigger_note", "note", "auto_mic", "auto_mic_plus", "mic", "music", "music_seq", "osc", "osc_arg", "osc_arg_type",
     "qlcplus", "projection", "start_tc", "auto_trigger", "chain_end", "loop_outro", "cue_midi", "cue_osc",
     "cue_http", "cue_display", "group_volume",
 ];

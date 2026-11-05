@@ -458,6 +458,14 @@ pub fn tracked_sequence(cues: &Cues, target: usize, chosen: impl Fn(usize) -> Op
     sequence
 }
 
+/// The microphones after `cue` fires, `before` being those open until then.
+fn mic_after(cues: &Cues, cast: &Cast, before: &Mic, cue: usize) -> Mic {
+    match cues.block_index(cue) {
+        Some(block) => before.then(cues.script.mic_for_cue(block, cast), cues.script.mic_plus(block)),
+        None => before.clone(),
+    }
+}
+
 /// How a cue came into the history.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fired {
@@ -619,15 +627,15 @@ impl History {
         Some(Undone { popped, tracked, landed: self.last_manual(), resend })
     }
 
-    /// The microphones as the fired cues left them: the most recent cue that sets them.
+    /// The microphones as the fired cues left them, gone through in order: each cue that
+    /// sets them puts its own in place, an Auto-Mic+ cue adds to those open.
     pub fn mic(&self, cues: &Cues, cast: &Cast) -> Mic {
-        self.entries
-            .iter()
-            .rev()
-            .filter_map(|&(cue, _)| cues.block_index(cue))
-            .map(|block| cues.script.mic_for_cue(block, cast))
-            .find(|mic| *mic != Mic::Unchanged)
-            .unwrap_or(Mic::Unchanged)
+        self.entries.iter().fold(Mic::Unchanged, |mic, &(cue, _)| mic_after(cues, cast, &mic, cue))
+    }
+
+    /// The microphones once `cue` has fired as well.
+    pub fn mic_with(&self, cues: &Cues, cast: &Cast, cue: usize) -> Mic {
+        mic_after(cues, cast, &self.mic(cues, cast), cue)
     }
 
     /// What every output device was last told. Per device the most recent cue addressing
@@ -1123,5 +1131,19 @@ mod tests {
         let conflicts = Cues::new(&script).auto_order_conflicts();
         assert_eq!(conflicts.len(), 1499, "every one of them fires before the one above it");
         assert!(started.elapsed().as_secs_f64() < 5.0, "{:?}", started.elapsed());
+    }
+
+    #[test]
+    fn auto_mic_plus_adds_to_the_microphones_the_cues_before_left() {
+        let script = Script::parse(crate::mic::tests::PLUS);
+        let cast = Cast::from_script(&script, false);
+        let cues = Cues::new(&script);
+        let open = |names: &[&str]| Mic::Open(names.iter().map(|n| n.to_string()).collect());
+        // In order: Anna; Ben added to her; then Clara as well.
+        assert_eq!(History::of([0, 2]).mic(&cues, &cast), open(&["Anna", "Ben"]));
+        assert_eq!(History::of([0, 2, 3]).mic(&cues, &cast), open(&["Anna", "Ben", "Clara"]));
+        // After the cue that mutes, Auto-Mic+ starts from nothing.
+        assert_eq!(History::of([0, 1, 2]).mic(&cues, &cast), open(&["Ben"]));
+        assert_eq!(History::of([0]).mic_with(&cues, &cast, 2), open(&["Anna", "Ben"]));
     }
 }

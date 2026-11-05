@@ -23,6 +23,28 @@ impl Mic {
     fn from_names(names: Vec<String>) -> Mic {
         if names.is_empty() { Mic::Unchanged } else { Mic::Open(names) }
     }
+
+    /// The microphones after a cue that sets `own` has fired, `self` being those open
+    /// before. Auto-Mic+ (`plus`) adds its roles to the open ones; any other cue that sets
+    /// microphones puts its own in their place.
+    pub fn then(&self, own: Mic, plus: bool) -> Mic {
+        match (own, plus) {
+            (Mic::Unchanged, _) => self.clone(),
+            (Mic::Open(names), true) => {
+                let mut open = match self {
+                    Mic::Open(open) => open.clone(),
+                    _ => Vec::new(),
+                };
+                for name in names {
+                    if !open.contains(&name) {
+                        open.push(name);
+                    }
+                }
+                Mic::Open(open)
+            }
+            (own, _) => own,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -182,6 +204,12 @@ impl Cue {
         self.field("auto_mic").and_then(Value::as_bool) == Some(true)
     }
 
+    /// Auto-Mic+ (`auto_mic_plus: true` beside `auto_mic: true`): the microphones that are
+    /// open stay open, and the roles with dialogue up to the next Auto-Mic cue are added.
+    pub fn auto_mic_plus(&self) -> bool {
+        self.auto_mic() && self.field("auto_mic_plus").and_then(Value::as_bool) == Some(true)
+    }
+
     /// The stored `mic` field.
     pub fn mic(&self) -> Mic {
         match self.mics().as_slice() {
@@ -198,12 +226,18 @@ impl Script {
     }
 
     /// The microphones an Auto-Mic cue opens: every role (or group) with dialogue between
-    /// the cue at `block_index` and the next Auto-Mic cue. The last Auto-Mic cue of the
-    /// script mutes everything.
+    /// the cue at `block_index` and the next Auto-Mic cue. Where nobody speaks before the
+    /// next one, all are muted; so does the last Auto-Mic cue of the script.
+    ///
+    /// For Auto-Mic+ these are the roles it adds (up to the end of the script, if no
+    /// Auto-Mic cue follows), and nothing when no one speaks: what is open stays open.
     pub fn auto_mic(&self, block_index: usize, cast: &Cast) -> Mic {
+        let plus = matches!(self.blocks.get(block_index), Some(Block::Cue(c)) if c.auto_mic_plus());
         let after = &self.blocks[(block_index + 1).min(self.blocks.len())..];
-        let Some(next) = after.iter().position(|b| matches!(b, Block::Cue(c) if c.auto_mic())) else {
-            return Mic::MuteAll;
+        let next = match after.iter().position(|b| matches!(b, Block::Cue(c) if c.auto_mic())) {
+            Some(next) => next,
+            None if plus => after.len(),
+            None => return Mic::MuteAll,
         };
         let mut open: Vec<String> = Vec::new();
         // Roles already opened through a group are not listed again.
@@ -225,11 +259,20 @@ impl Script {
                 }
             }
         }
-        Mic::from_names(open)
+        match (Mic::from_names(open), plus) {
+            (Mic::Unchanged, false) => Mic::MuteAll,
+            (mic, _) => mic,
+        }
+    }
+
+    /// Whether the cue at `block_index` is an Auto-Mic+ cue, whose microphones add to
+    /// those open (see [`Mic::then`]).
+    pub fn mic_plus(&self, block_index: usize) -> bool {
+        matches!(self.blocks.get(block_index), Some(Block::Cue(cue)) if cue.auto_mic_plus())
     }
 
     /// The microphones the cue at `block_index` sets when it fires: computed for Auto-Mic
-    /// cues, the stored `mic` field otherwise.
+    /// cues, the stored `mic` field otherwise. For Auto-Mic+ only what it adds.
     pub fn mic_for_cue(&self, block_index: usize, cast: &Cast) -> Mic {
         match self.blocks.get(block_index) {
             Some(Block::Cue(cue)) if cue.auto_mic() => self.auto_mic(block_index, cast),
@@ -240,7 +283,7 @@ impl Script {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     const SHOW: &str = "\
@@ -335,6 +378,62 @@ mic: muteall
         assert_eq!(script.mic_for_cue(cues[2], &cast), open(&["Duo", "Clara"]));
         // The last Auto-Mic cue mutes everything, whatever follows.
         assert_eq!(script.mic_for_cue(cues[3], &cast), Mic::MuteAll);
+    }
+
+    pub(crate) const PLUS: &str = "\
+```yaml
+config:
+    roles:
+        Anna: {}
+        Ben: {}
+        Clara: {}
+```
+
+```yaml
+auto_mic: true
+```
+
+**Anna**
+Hi.
+
+```yaml
+auto_mic: true
+```
+
+```yaml
+auto_mic: true
+auto_mic_plus: true
+```
+
+**Ben**
+Hello.
+
+```yaml
+auto_mic: true
+auto_mic_plus: true
+```
+
+**Clara**
+The end.
+";
+
+    #[test]
+    fn auto_mic_without_dialogue_mutes_and_auto_mic_plus_adds() {
+        let script = Script::parse(PLUS);
+        let cast = Cast::from_script(&script, false);
+        let cues = cue_blocks(&script);
+        assert_eq!(script.mic_for_cue(cues[0], &cast), open(&["Anna"]));
+        // Nobody speaks before the next Auto-Mic cue: nobody needs a microphone.
+        assert_eq!(script.mic_for_cue(cues[1], &cast), Mic::MuteAll);
+        // Auto-Mic+ names what it adds; the last one counts up to the end of the script.
+        assert!(script.mic_plus(cues[2]) && !script.mic_plus(cues[1]));
+        assert_eq!(script.mic_for_cue(cues[2], &cast), open(&["Ben"]));
+        assert_eq!(script.mic_for_cue(cues[3], &cast), open(&["Clara"]));
+
+        assert_eq!(open(&["Anna"]).then(open(&["Ben", "Anna"]), true), open(&["Anna", "Ben"]));
+        assert_eq!(Mic::MuteAll.then(open(&["Ben"]), true), open(&["Ben"]));
+        assert_eq!(open(&["Anna"]).then(open(&["Ben"]), false), open(&["Ben"]));
+        assert_eq!(open(&["Anna"]).then(Mic::Unchanged, true), open(&["Anna"]), "adds nothing: what is open stays");
     }
 
     #[test]

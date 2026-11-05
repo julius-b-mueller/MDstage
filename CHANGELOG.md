@@ -39,9 +39,28 @@ des Rechners. Die Show-Datei wird nur geschrieben, wenn das Skript bearbeitet wi
 - Die alten Felder „OSC-Pfad (alt)", „QLC+" und „Projektion" erscheinen im Cue-Dialog nur
   noch, wenn ein Cue sie hat; geleert verschwinden sie.
 
+- Entprellen von Go und Back (Einstellungen → Fernsteuerung): Ein zweites Go oder Back
+  früher als die eingestellte Zeit nach dem letzten wird nicht angenommen, damit eine
+  prellende MIDI-Taste nicht doppelt auslöst. Gilt für Tastatur, MIDI, OSC und
+  Liveansicht; 0 (Standard) schaltet es aus.
+- Rolleneditor: Unmute- und Mute-Tasten je Rolle schalten nur deren Mikrofonkanal am Pult,
+  mit den Werten, wie sie gerade eingetragen sind.
+- Auto-Mic: Spricht bis zum nächsten Auto-Mic-Cue niemand, schaltet der Cue alle
+  Mikrofone aus (bisher blieben die offenen offen).
+- Auto-Mic+: Offene Mikrofone bleiben offen, die Rollen, die bis zum nächsten Auto-Mic
+  sprechen, kommen dazu (beim letzten Auto-Mic+ bis zum Ende des Skripts). Ein Klick auf
+  „Auto-Mic" am Cue schaltet zwischen Auto-Mic und Auto-Mic+ um, Shift+Klick schaltet es
+  aus; im Cue-Dialog gibt es dafür ein Häkchen. Tracking, Back und das Überspringen von
+  Auto-Cues rechnen den Stand der Mikrofone der Reihe nach durch die Cues, sodass ein
+  Sprung genau die Mikrofone öffnet, die der Weg durchs Skript offen gelassen hätte.
+
 ### Show-Datei (YAML)
 
-- Keine Änderungen. `osc` (mit `osc_arg`, `osc_arg_type`), `qlcplus` und `projection`
+- Neu: `auto_mic_plus: true` (neben `auto_mic: true`) – Auto-Mic+. Ältere Versionen lesen
+  den Cue als normales Auto-Mic; `auto_mic_plus` zeigen sie als unbekannte Eigenschaft.
+- Geändert: Ein `auto_mic`-Cue, nach dem bis zum nächsten niemand spricht, schaltet alle
+  Mikrofone aus, statt sie zu lassen.
+- `osc` (mit `osc_arg`, `osc_arg_type`), `qlcplus` und `projection`
   werden weiter gelesen und `osc` weiter gesendet; der Dialog bietet sie nur nicht mehr an.
 
 ## 2.5.0
