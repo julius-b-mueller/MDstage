@@ -14,7 +14,7 @@ Nichts über den Stand einer Vorstellung steht in der Show-Datei: Welcher Cue de
 ist und wann ein Cue ausgelöst wurde, liegt nur im Programm bzw. in den Einstellungen
 des Rechners. Die Show-Datei wird nur geschrieben, wenn das Skript bearbeitet wird.
 
-## Unveröffentlicht
+## 2.6.0
 
 - HTTP-Ausgaben über `https://` nutzen eine TLS-Bibliothek (rustls 0.23.46) ohne die im
   Oktober 2026 gemeldeten Lücken; die mitgelieferten Stammzertifikate sind aktualisiert.

@@ -630,7 +630,23 @@ impl History {
     /// The microphones as the fired cues left them, gone through in order: each cue that
     /// sets them puts its own in place, an Auto-Mic+ cue adds to those open.
     pub fn mic(&self, cues: &Cues, cast: &Cast) -> Mic {
-        self.entries.iter().fold(Mic::Unchanged, |mic, &(cue, _)| mic_after(cues, cast, &mic, cue))
+        // Only from the last cue that puts its own in place (not Auto-Mic+) on: what came
+        // before it no longer counts. (This is asked for on every tick, and a history that
+        // tracking has filled after many jumps is long.)
+        let mut since = Vec::new();
+        for &(cue, _) in self.entries.iter().rev() {
+            let Some(block) = cues.block_index(cue) else { continue };
+            let own = cues.script.mic_for_cue(block, cast);
+            if own == Mic::Unchanged {
+                continue;
+            }
+            let plus = cues.script.mic_plus(block);
+            since.push((own, plus));
+            if !plus {
+                break;
+            }
+        }
+        since.into_iter().rev().fold(Mic::Unchanged, |mic, (own, plus)| mic.then(own, plus))
     }
 
     /// The microphones once `cue` has fired as well.

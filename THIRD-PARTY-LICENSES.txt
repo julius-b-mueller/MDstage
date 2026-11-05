@@ -7190,9 +7190,9 @@ SOFTWARE.
 MIT License (MIT)
 
 Used by / verwendet von:
-  mdstage-app 2.5.0
-  mdstage-core 2.5.0
-  mdstage-engine 2.5.0
+  mdstage-app 2.6.0
+  mdstage-core 2.6.0
+  mdstage-engine 2.6.0
   accesskit 0.17.1
   accesskit_atspi_common 0.10.1
   accesskit_consumer 0.26.0
@@ -7880,7 +7880,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 MIT License (MIT)
 
 Used by / verwendet von:
-  pulldown-cmark 0.13.4
+  pulldown-cmark 0.13.6
 
 The MIT License
 
